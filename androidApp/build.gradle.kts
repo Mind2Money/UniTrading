@@ -14,6 +14,7 @@ android {
         versionCode = 6
         versionName = "1.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testProguardFiles("test-r8-rules.pro")
         // Separate application ID for credential tests; never replace the normal installation.
         if (providers.gradleProperty("credentialStoreTest").orNull == "true") applicationIdSuffix = ".credentialtest"
     }
