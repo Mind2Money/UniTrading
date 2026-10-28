@@ -87,7 +87,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.1.1"
+            packageVersion = "1.1.2"
         }
     }
 }

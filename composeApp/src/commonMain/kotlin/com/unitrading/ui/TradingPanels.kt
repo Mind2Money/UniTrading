@@ -277,6 +277,7 @@ internal fun TradeTerminal(
                                     OutlinedButton({ onClose(p) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("平仓", fontSize = 11.sp) }
                                 }
                             }
+                            p.protectionNote?.let { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
                             if (compact) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}", Modifier.weight(1f), fontSize = 10.sp, color = TradingColors.Muted)
                                 TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("保护价", fontSize = 11.sp) }
@@ -293,10 +294,15 @@ internal fun TradeTerminal(
                         val instrument = instruments.getValue(r.symbol)
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("${r.symbol}   ${r.side.label()}${r.kind.label()}   ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
-                                Text("触发价 ${r.entryPrice?.let(instrument::formatPrice)} · 未占用保证金", color = TradingColors.Muted, fontSize = 10.sp)
+                                Text("${r.symbol}   ${order.role.label()} · ${r.side.label()}${r.kind.label()}   ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
+                                Text("${order.role.editLabel()} ${r.entryPrice?.let(instrument::formatPrice)}" +
+                                    (if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) " · 未占用保证金" else " · 服务器委托"), color = TradingColors.Muted, fontSize = 10.sp)
+                                if (order.filledLotsHundredths > 0) Text("已成交 ${instrument.formatQuantity(order.filledLotsHundredths)} ${instrument.quantityUnit}", color = TradingColors.Muted, fontSize = 10.sp)
+                                order.note?.let { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
                             }
-                            TextButton({ onEditOrder(order) }, enabled = !busy && plugin.capabilities.modifyPendingOrders) { Text("入场价", fontSize = 11.sp) }
+                            TextButton({ onEditOrder(order) }, enabled = !busy && order.editable &&
+                                (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders),
+                                modifier = Modifier.testTag("edit-order-${order.id}")) { Text(order.role.editLabel(), fontSize = 11.sp) }
                             TextButton({ onCancel(order) }, enabled = !busy) { Text("撤单") }
                         }
                         DividerLine()

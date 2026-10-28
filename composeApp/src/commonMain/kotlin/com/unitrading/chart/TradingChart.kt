@@ -107,12 +107,15 @@ fun TradingChart(
     val currentProtectionCallback by rememberUpdatedState(onProtection)
     val currentShowPositions by rememberUpdatedState(showPositions)
     val currentTrades by rememberUpdatedState(trades)
-    val currentOrders by rememberUpdatedState(if (showOrders && allowOrderEdit) orders else emptyList())
+    val representedProtectionIds = if (showPositions) setOfNotNull(selectedPosition?.stopLossOrderId, selectedPosition?.takeProfitOrderId) else emptySet()
+    val currentOrders by rememberUpdatedState(if (showOrders && allowOrderEdit) orders.filter { it.editable } else emptyList())
+    val currentPositions by rememberUpdatedState(positions)
+    val currentRepresentedProtectionIds by rememberUpdatedState(representedProtectionIds)
     val currentDraft by rememberUpdatedState(draft)
     val currentPendingCallback by rememberUpdatedState(onPendingEntry)
     val currentDraftCallback by rememberUpdatedState(onDraftEntry)
     val currentTotal by rememberUpdatedState(candles.size)
-    val orderVersions = orders.map { it.id to it.version }
+    val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths) }
     val activeDraft = drag?.let { edit -> (edit.line as? EditableLine.Draft)?.request?.copy(entryPrice = edit.price) } ?: draft
     val dragEstimate = drag?.let { edit ->
         when (val line = edit.line) {
@@ -206,7 +209,13 @@ fun TradingChart(
                                 val s = currentScale
                                 val candidates = buildList<EditableLine> {
                                     currentDraft?.takeIf { it.kind != OrderKind.MARKET && it.entryPrice != null }?.let { add(EditableLine.Draft(it)) }
-                                    currentOrders.filter { it.request.entryPrice != null }.forEach { add(EditableLine.Pending(it)) }
+                                    currentOrders.filter { it.request.entryPrice != null }.forEach { order ->
+                                        if (order.role == OrderRole.ENTRY) add(EditableLine.Pending(order))
+                                        else if (order.isProtection && order.id !in currentRepresentedProtectionIds) {
+                                            val position = currentPositions.firstOrNull { it.id == order.positionId && it.protectionEditable }
+                                            if (position != null) add(EditableLine.Protection(position, order.role == OrderRole.STOP_LOSS, order.request.entryPrice!!))
+                                        }
+                                    }
                                     if (p != null && p.protectionEditable && currentShowPositions) {
                                         p.stopLoss?.let { add(EditableLine.Protection(p, true, it)) }
                                         p.takeProfit?.let { add(EditableLine.Protection(p, false, it)) }
@@ -372,11 +381,27 @@ fun TradingChart(
                         tp?.let { priceLine(it, label(it, false), TradingColors.Target) }
                     }
                 }
-                if (showOrders) orders.forEach { order ->
-                    val moving = drag?.takeIf { (it.line as? EditableLine.Pending)?.order?.id == order.id }
+                if (showOrders) orders.filterNot { it.isProtection && it.id in representedProtectionIds }.forEach { order ->
+                    val moving = drag?.takeIf { edit ->
+                        when (val line = edit.line) {
+                            is EditableLine.Pending -> line.order.id == order.id
+                            is EditableLine.Protection -> order.id == if (line.stop) line.position.stopLossOrderId else line.position.takeProfitOrderId
+                            else -> false
+                        }
+                    }
                     val price = moving?.price ?: order.request.entryPrice!!
-                    priceLine(price, "挂单 ${order.request.side.label()} ${order.request.kind.name}  #${order.id.substringAfterLast(':')}${if (moving != null) " · 预览" else if (allowOrderEdit) " · 拖动入场" else ""}",
-                        if (moving != null) TradingColors.Accent else TradingColors.Muted)
+                    val suffix = if (moving != null) " · 预览" else if (!allowOrderEdit || !order.editable) " · 仅显示" else when (order.role) {
+                        OrderRole.ENTRY -> " · 拖动入场"
+                        OrderRole.STOP_LOSS -> " · 拖动止损"
+                        OrderRole.TAKE_PROFIT -> " · 拖动止盈"
+                        OrderRole.UNRESOLVED -> " · 仅显示"
+                    }
+                    val color = when (order.role) {
+                        OrderRole.STOP_LOSS -> TradingColors.Stop
+                        OrderRole.TAKE_PROFIT -> TradingColors.Target
+                        else -> TradingColors.Muted
+                    }
+                    priceLine(price, "${order.role.label()} ${order.request.side.label()} ${order.request.kind.name}  #${order.id.substringAfterLast(':')}$suffix", color)
                 }
                 if (activeDraft != null && draftEntry != null && draftEntry > 0) {
                     priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${instrument.formatQuantity(activeDraft.lotsHundredths)} ${instrument.quantityUnit}${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", TradingColors.Muted)
@@ -413,6 +438,9 @@ fun TradingChart(
                 else "${dateTime(bar.timeMs)} UTC   开 ${instrument.formatPrice(bar.open)}   高 ${instrument.formatPrice(bar.high)}   低 ${instrument.formatPrice(bar.low)}   收 ${instrument.formatPrice(bar.close)}",
                 Modifier.fillMaxWidth().testTag("chart-readout").horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 5.dp), color = TradingColors.Muted, fontSize = 10.sp,
             )
+            selectedPosition?.protectionNote?.let { note ->
+                Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = TradingColors.Muted)
+            }
             selectedTrade?.let { trade ->
                 Text("选中历史  #${trade.id} · ${trade.side.label()} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
             }

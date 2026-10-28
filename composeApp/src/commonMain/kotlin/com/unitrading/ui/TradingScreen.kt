@@ -129,19 +129,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         }
         fun editProtection(position: Position, sl: Long? = position.stopLoss, tp: Long? = position.takeProfit) {
             if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
-            val spec = plugin.instruments.first { it.symbol == position.symbol }
+            val spec = plugin.instruments.firstOrNull { it.symbol == position.symbol }
+                ?: run { notice = "品种或账户已切换，请重新选择仓位"; return }
             symbol = position.symbol
             selectedPositionId = position.id
             protection = ProtectionEdit(position, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
         }
 
         fun editPending(order: PendingOrder, price: Long = order.request.entryPrice!!) {
-            if (!plugin.capabilities.modifyPendingOrders || busy) return
-            val spec = plugin.instruments.first { it.symbol == order.request.symbol }
-            symbol = order.request.symbol
+            if (busy) return
+            val current = account.orders.firstOrNull { it.id == order.id }
+            if (current == null || current.version != order.version || current.role != order.role || !current.editable) {
+                notice = "订单状态或保护关联已变化，请重新选择"
+                return
+            }
+            if (current.isProtection) {
+                val position = account.positions.firstOrNull { it.id == current.positionId && it.protectionEditable }
+                if (position == null) { notice = "保护单尚未唯一关联到当前仓位"; return }
+                pendingEdit = null
+                editProtection(position, if (current.role == OrderRole.STOP_LOSS) price else position.stopLoss,
+                    if (current.role == OrderRole.TAKE_PROFIT) price else position.takeProfit)
+                return
+            }
+            if (current.role != OrderRole.ENTRY || !plugin.capabilities.modifyPendingOrders) return
+            val spec = plugin.instruments.first { it.symbol == current.request.symbol }
+            symbol = current.request.symbol
             protection = null
             showDraft = false
-            pendingEdit = PendingEntryEdit(order, spec.formatPrice(price))
+            pendingEdit = PendingEntryEdit(current, spec.formatPrice(price))
         }
 
         Surface(Modifier.fillMaxSize(), color = TradingColors.Shell) {
@@ -200,8 +215,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     Column(Modifier.weight(1f).fillMaxHeight()) {
                                         InstrumentHeader(instrument, quote, false) { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true }
                                         TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
-                                            selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, ::editProtection,
-                                            visibleOrders, plugin.capabilities.modifyPendingOrders, ::editPending,
+                                            selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
+                                            visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                     }
@@ -224,8 +239,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             1 -> Column(Modifier.weight(1f)) {
                                 if (!compactShort) InstrumentHeader(instrument, quote, true) { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true }
                                 TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
-                                    selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, ::editProtection,
-                                            visibleOrders, plugin.capabilities.modifyPendingOrders, ::editPending,
+                                    selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
+                                            visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -308,7 +323,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     livePreview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 12.sp) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${plugin.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${plugin.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
-                                is Confirmation.Cancel -> Text("撤销挂单 #${action.order.id}。若已被触发，交易商将拒绝撤单。")
+                                is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${action.order.id}。" +
+                                    if (action.order.isProtection) "这会移除该项保护，服务器可能联动关联订单。" else "若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
                         } },
@@ -331,7 +347,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     val current = account.orders.firstOrNull { it.id == order.id }
                     val price = spec.parsePrice(edit.entry)
                     val estimate = price?.let { session.previewOrderModification(order.id, it) }
-                    val validVersion = current?.version == order.version
+                    val validVersion = current != null && current.version == order.version && current.role == OrderRole.ENTRY && current.editable
                     AlertDialog(
                         modifier = Modifier.testTag("pending-entry-dialog"),
                         onDismissRequest = { if (!busy) pendingEdit = null },

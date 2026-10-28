@@ -41,3 +41,15 @@ internal sealed interface Confirmation {
 
 internal fun Side.label() = if (this == Side.BUY) "买入" else "卖出"
 internal fun OrderKind.label() = when (this) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "突破" }
+internal fun OrderRole.label() = when (this) {
+    OrderRole.ENTRY -> "入场挂单"
+    OrderRole.STOP_LOSS -> "SL 止损"
+    OrderRole.TAKE_PROFIT -> "TP 止盈"
+    OrderRole.UNRESOLVED -> "关联待确认"
+}
+internal fun OrderRole.editLabel() = when (this) {
+    OrderRole.ENTRY -> "入场价"
+    OrderRole.STOP_LOSS -> "止损价"
+    OrderRole.TAKE_PROFIT -> "止盈价"
+    OrderRole.UNRESOLVED -> "待确认"
+}

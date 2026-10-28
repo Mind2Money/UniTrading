@@ -96,7 +96,7 @@ class TradovateBroker(
         val snapshot = account.request("user/syncrequest", buildJsonObject {
             put("splitResponses", false)
             putJsonArray("entityTypes") {
-                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract").forEach { add(it) }
+                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
             }
         })
         if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
@@ -348,6 +348,8 @@ class TradovateBroker(
             val aid = account.id.toLong()
             val orders = book.list("order").filter { it.long("accountId") == aid }
             val active = orders.filter(::activeOrder)
+            val classifier = ProtectionClassifier(book, aid)
+            val protectionByContract = mutableMapOf<Long, PositionProtection>()
             val old = accountFlows[account.id]?.value
             val rawPositions = book.list("position").filter { it.long("accountId") == aid && (it.long("netPos") ?: 0) != 0L }
             val positions = rawPositions.mapNotNull { p ->
@@ -357,29 +359,44 @@ class TradovateBroker(
                 val entry = p.priceValue("netPrice") ?: return@mapNotNull null
                 if (entry <= 0) return@mapNotNull null
                 val side = if (net > 0) Side.BUY else Side.SELL
-                val protection = protectionOrders(aid, cid, side, abs(net))
-                val sl = protection.first?.let { book.orderVersion(it)?.priceValue("stopPrice") }
-                val tp = protection.second?.let { book.orderVersion(it)?.priceValue("price") }
+                val protection = classifier.forPosition(cid, side, abs(net))
+                protectionByContract[cid] = protection
+                val sl = protection.stopId?.let { book.orderVersion(it)?.priceValue("stopPrice") }
+                val tp = protection.targetId?.let { book.orderVersion(it)?.priceValue("price") }
                 val id = "$aid:$cid"
                 val candidate = Position(id, spec.symbol, side, checkedMultiply(abs(net), 100), entry, p.str("timestamp")?.let(::timestamp) ?: now(),
-                    sl, tp, 0, version = 1, protectionEditable = protection.first != null || protection.second != null, feesKnown = false)
+                    sl, tp, 0, version = 1, protectionEditable = protection.editable, feesKnown = false,
+                    stopLossOrderId = protection.stopId?.toString(), takeProfitOrderId = protection.targetId?.toString(),
+                    protectionRevision = protection.revision, protectionNote = protection.note)
                 val prior = old?.positions?.firstOrNull { it.id == id }
                 candidate.copy(version = if (prior?.copy(version = 1) == candidate) prior.version else (prior?.version ?: 0) + 1)
             }
             if (positions.size != rawPositions.size) incomplete.add(account.id)
-            val pending = active.filter { (it.long("parentId") ?: 0) == 0L }.mapNotNull { order ->
+            val pending = active.mapNotNull { order ->
                 val id = order.long("id") ?: return@mapNotNull null
                 val version = book.orderVersion(id) ?: return@mapNotNull null
                 val spec = contractSpecs[order.long("contractId")] ?: return@mapNotNull null
                 val kind = when (version.str("orderType")) { "Limit" -> OrderKind.LIMIT; "Stop" -> OrderKind.STOP; else -> return@mapNotNull null }
                 val side = if (order.str("action") == "Buy") Side.BUY else Side.SELL
                 val price = version.priceValue(if (kind == OrderKind.LIMIT) "price" else "stopPrice") ?: return@mapNotNull null
-                val children = active.filter { it.long("parentId") == id }
-                val stop = children.firstOrNull { book.orderVersion(it.long("id") ?: 0)?.str("orderType") == "Stop" }
-                val target = children.firstOrNull { book.orderVersion(it.long("id") ?: 0)?.str("orderType") == "Limit" }
+                val relation = classifier.relation(id)
+                val stop = classifier.children(id, OrderRole.STOP_LOSS).singleOrNull()
+                val target = classifier.children(id, OrderRole.TAKE_PROFIT).singleOrNull()
+                val contract = order.long("contractId")!!
+                val protection = protectionByContract[contract]
+                val associated = relation.role == OrderRole.STOP_LOSS && protection?.stopId == id ||
+                    relation.role == OrderRole.TAKE_PROFIT && protection?.targetId == id
+                val editable = if (relation.role == OrderRole.ENTRY) classifier.entryEditable(id) else associated && protection?.editable == true
+                val note = relation.note ?: when {
+                    relation.role == OrderRole.ENTRY && !editable -> "订单正在处理或已部分成交，暂不可改价"
+                    relation.role in setOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT) && !editable -> protection?.note ?: "保护关联尚未匹配当前净仓，仅显示"
+                    else -> null
+                }
                 PendingOrder(id.toString(), OrderRequest(spec.symbol, side, kind, (version.long("orderQty") ?: return@mapNotNull null) * 100, price,
-                    stop?.long("id")?.let { book.orderVersion(it)?.priceValue("stopPrice") }, target?.long("id")?.let { book.orderVersion(it)?.priceValue("price") }),
-                    order.str("timestamp")?.let(::timestamp) ?: 0, version.long("id") ?: 1)
+                    stop?.let { book.orderVersion(it)?.priceValue("stopPrice") }, target?.let { book.orderVersion(it)?.priceValue("price") }),
+                    order.str("timestamp")?.let(::timestamp) ?: 0, version.long("id") ?: 1,
+                    role = relation.role, positionId = if (associated) "$aid:$contract" else null, editable = editable, note = note,
+                    filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100))
             }
             val fills = book.list("fill").filter { f -> f.bool("active") != false && orders.any { it.long("id") == f.long("orderId") } }.mapNotNull { f ->
                 val spec = contractSpecs[f.long("contractId")] ?: return@mapNotNull null
@@ -404,22 +421,6 @@ class TradovateBroker(
         accountFlows = nextFlows.toMap()
         mutableCatalog.value = BrokerCatalog(contractSpecs.values.distinctBy { it.symbol }.sortedBy { it.symbol }, mappedAccounts)
         publish()
-    }
-
-    private fun protectionOrders(account: Long, contract: Long, side: Side, quantity: Long): Pair<Long?, Long?> {
-        val candidates = book.list("order").filter { activeOrder(it) && it.long("accountId") == account && it.long("contractId") == contract &&
-            it.str("action") == (if (side == Side.BUY) "Sell" else "Buy") }
-            .filter { it.long("parentId") != null && book.orderVersion(it.long("id") ?: 0)?.long("orderQty") == quantity }
-        if (candidates.mapNotNull { it.long("parentId") }.distinct().size != 1) return null to null
-        val stops = candidates.filter { book.orderVersion(it.long("id") ?: 0)?.str("orderType") == "Stop" }
-        val targets = candidates.filter { book.orderVersion(it.long("id") ?: 0)?.str("orderType") == "Limit" }
-        if (stops.size > 1 || targets.size > 1) return null to null
-        if (stops.isNotEmpty() && targets.isNotEmpty()) {
-            val a = stops.single(); val b = targets.single()
-            if (a.long("ocoId") != b.long("id") && b.long("ocoId") != a.long("id") &&
-                (a.long("ocoId") == null || a.long("ocoId") != b.long("ocoId"))) return null to null
-        }
-        return stops.firstOrNull()?.long("id") to targets.firstOrNull()?.long("id")
     }
 
     private fun publish() {
@@ -454,6 +455,7 @@ class TradovateBroker(
             override fun preview(request: OrderRequest) = estimate(accountId, request)
             override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {
                 val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
+                if (order.role != OrderRole.ENTRY || !order.editable) return OrderPreview(null, errors = listOf("该单不是可编辑入场单；保护单请使用仓位保护价入口，关联待确认的订单不可改价"))
                 return estimate(accountId, order.request.copy(entryPrice = entryPrice), modifying = true)
             }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
@@ -470,6 +472,7 @@ class TradovateBroker(
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = command(accountId, requestId, "modify:$orderId:$expectedVersion:$entryPrice") {
                 val order = state.value.orders.firstOrNull { it.id == orderId } ?: errorArgument("挂单已成交、撤销或不属于当前账户")
                 require(order.version == expectedVersion) { "挂单版本已变化，请重新选择" }
+                require(order.role == OrderRole.ENTRY && order.editable) { "保护单或关联待确认订单不能按入场单改价" }
                 val request = order.request.copy(entryPrice = entryPrice)
                 val estimate = estimate(accountId, request, modifying = true)
                 require(estimate.valid) { estimate.errors.joinToString("；") }
@@ -501,10 +504,17 @@ class TradovateBroker(
                 val price = requireNotNull(if (stop) stopLoss else takeProfit) { "首版仅修改已有保护价；增删保护请在官网操作" }
                 val spec = instruments.first { it.symbol == p.symbol }
                 validateProtection(spec, p.side, quotes[p.symbol], stopLoss, takeProfit)
-                val ids = lock.withLock { protectionOrders(accountId.toLong(), positionId.substringAfter(':').toLong(), p.side, p.lotsHundredths / 100) }
-                val id = requireNotNull(if (stop) ids.first else ids.second) { "没有唯一可修改的保护订单" }
+                val binding = lock.withLock {
+                    val resolution = ProtectionClassifier(book, accountId.toLong()).forPosition(positionId.substringAfter(':').toLong(), p.side, p.lotsHundredths / 100)
+                    require(resolution.editable && resolution.revision == p.protectionRevision) { "保护订单关联或版本已变化，请重新选择" }
+                    val id = requireNotNull(if (stop) resolution.stopId else resolution.targetId) { "没有唯一可修改的保护订单" }
+                    require(id.toString() == if (stop) p.stopLossOrderId else p.takeProfitOrderId) { "保护订单已被替换" }
+                    val quantity = requireNotNull(book.orderVersion(id)?.long("orderQty"))
+                    id to quantity
+                }
+                val id = binding.first
                 sendWrite(accountId, requestId, "modify", id, "order/modifyorder", buildJsonObject {
-                    put("orderId", id); put("orderQty", p.lotsHundredths / 100); put("orderType", if (stop) "Stop" else "Limit")
+                    put("orderId", id); put("orderQty", binding.second); put("orderType", if (stop) "Stop" else "Limit")
                     put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
                 })
             }

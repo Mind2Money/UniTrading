@@ -111,9 +111,27 @@ data class Position(
     val version: Long = 1,
     val protectionEditable: Boolean = true,
     val feesKnown: Boolean = true,
+    val stopLossOrderId: String? = null,
+    val takeProfitOrderId: String? = null,
+    val protectionRevision: String? = null,
+    val protectionNote: String? = null,
 )
 @Serializable
-data class PendingOrder(val id: String, val request: OrderRequest, val createdAtMs: Long, val version: Long = 1)
+enum class OrderRole { ENTRY, STOP_LOSS, TAKE_PROFIT, UNRESOLVED }
+@Serializable
+data class PendingOrder(
+    val id: String,
+    val request: OrderRequest,
+    val createdAtMs: Long,
+    val version: Long = 1,
+    val role: OrderRole = OrderRole.ENTRY,
+    val positionId: String? = null,
+    val editable: Boolean = true,
+    val note: String? = null,
+    val filledLotsHundredths: Long = 0,
+) {
+    val isProtection: Boolean get() = role == OrderRole.STOP_LOSS || role == OrderRole.TAKE_PROFIT
+}
 @Serializable
 data class ClosedTrade(
     val id: String,

@@ -69,7 +69,8 @@ internal class EntityBook {
         clear()
         mapOf("accounts" to "account", "positions" to "position", "orders" to "order", "orderVersions" to "orderVersion",
             "cashBalances" to "cashBalance", "fills" to "fill", "fillPairs" to "fillPair", "contracts" to "contract",
-            "contractMaturities" to "contractMaturity", "products" to "product", "currencies" to "currency").forEach { (plural, type) ->
+            "contractMaturities" to "contractMaturity", "products" to "product", "currencies" to "currency",
+            "orderStrategies" to "orderStrategy", "orderStrategyLinks" to "orderStrategyLink").forEach { (plural, type) ->
             data.array(plural).forEach { apply(type, it) }
         }
     }
