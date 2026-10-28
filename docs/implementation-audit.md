@@ -1,5 +1,7 @@
 # 代码与文档核对：1.1.4
 
+> 以下是修复前的审计记录。当前 A1–A7 的实现与验证进度见[修复进度](remediation-progress.md)；原来的缺陷观测探针已转换为常规恢复测试。
+
 日期：2026-10-29。业务代码基线：`main` / `2dcf7e1`。覆盖 README、全部 `docs/*.md`、native host 说明、Gradle/CI、共享 UI、图表、平台入口与 Tradovate 状态/命令流程。本次提交同步文档并保存离线诊断，以下业务缺口尚未修复。
 
 ## 已确认的代码缺口
@@ -76,6 +78,6 @@ iOS 除了缺少 Mac 构建验证，还缺网页认证实现和凭据存储接�
 ./gradlew.bat :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest --init-script docs/audit-probes/audit.init.gradle
 ```
 
-诊断代码：[ImplementationAuditProbeTest.kt](audit-probes/ImplementationAuditProbeTest.kt)。初始化脚本仅在显式传入时将该目录加入测试源，报告写入 `artifacts/docs-audit/`；不加入正常测试或产品源集。
+原诊断已经转为默认套件中的 [ReconciliationRecoveryTest.kt](../tradovate-broker/src/commonTest/kotlin/com/unitrading/tradovate/ReconciliationRecoveryTest.kt)。上述初始化脚本现在只将报告写入 `artifacts/docs-audit/`，不再注入断言缺陷现状的测试源。
 
 结果：原有 127 项回归结果通过，新增 3 个探针也通过，合计 130 项；验证任务保留 Gradle 增量和缓存复用。探针断言的是“等待状态仍然存在”的**缺陷现状**；将来修复后应改成正确恢复的回归测试，而非继续维持这些观测断言。报告、日志为本机生成文件，不纳入 Git。

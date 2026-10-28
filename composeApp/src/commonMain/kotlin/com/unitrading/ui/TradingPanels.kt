@@ -262,7 +262,7 @@ internal fun TradeTerminal(
                 0 -> {
                     if (account.positions.isEmpty()) item { EmptyState("暂无持仓", "选择品种，在订单面板检查当前环境和账户后提交。") }
                     items(account.positions, key = { it.id }) { p ->
-                        val instrument = instruments.getValue(p.symbol)
+                        val instrument = instruments[p.symbol] ?: run { EmptyState(p.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
                         val q = market.quotes[p.symbol]
                         val pnl = q?.let { positionPnl(instrument, p, it) }
                         Column(Modifier.fillMaxWidth().background(if (selectedPosition == p.id) TradingColors.Raised.copy(alpha = .7f) else Color.Transparent).clickable { onSelectPosition(p) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -293,7 +293,7 @@ internal fun TradeTerminal(
                     if (account.orders.isEmpty()) item { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。") }
                     items(account.orders, key = { it.id }) { order ->
                         val r = order.request
-                        val instrument = instruments.getValue(r.symbol)
+                        val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("${r.symbol}   ${order.role.label()} · ${r.side.label()}${r.kind.label()}   ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
@@ -324,7 +324,7 @@ internal fun TradeTerminal(
                         }
                     }
                     items(account.trades.asReversed(), key = { it.id }) { t ->
-                        val instrument = instruments.getValue(t.symbol)
+                        val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
                         Row(Modifier.fillMaxWidth().clickable { onSelectTrade(t) }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("${t.symbol}   ${t.side.label()} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)

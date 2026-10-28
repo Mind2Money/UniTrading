@@ -21,7 +21,8 @@ class TradovateBroker(
     override val descriptor = BrokerDescriptor("tradovate-${credentials.environment.wire}-${credentials.userId}",
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
-    override val capabilities = BrokerCapabilities(hedging = false)
+    override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -35,6 +36,7 @@ class TradovateBroker(
     private val lock = Mutex()
     private val metadataLock = Mutex()
     private val commandLock = Mutex()
+    private val synchronizationLock = Mutex()
     private val requestPace = Mutex()
     private var lastRequestMs: Long? = null
     private val financials = mutableMapOf<Long, JsonObject>()
@@ -61,12 +63,15 @@ class TradovateBroker(
     private var reconnectJob: Job? = null
     private var metadataJob: Job? = null
     private var balanceJob: Job? = null
+    private var recoveryJob: Job? = null
     private var watching: Pair<String, Timeframe>? = null
     private val results = mutableMapOf<String, Pair<String, TradeResult>>()
     private val unknownCommands = mutableSetOf<String>()
     private val awaiting = mutableMapOf<String, Awaiting>()
+    private val attemptedRecovery = mutableSetOf<String>()
     private data class Awaiting(val account: String, val kind: String, val entity: Long?, val tag: String, val started: Long,
-        val baselineVersion: Long = 0, val priceKey: String? = null, val expectedPrice: Long? = null)
+        val baselineVersion: Long = 0, val priceKey: String? = null, val expectedPrice: Long? = null,
+        val baselinePositionId: Long? = null)
 
     suspend fun connect(onProgress: (String) -> Unit = {}) {
         check(!stopped)
@@ -94,27 +99,7 @@ class TradovateBroker(
         onProgress("正在验证账户访问令牌…")
         account.authorize(credentials.accessToken)
         onProgress("账户授权成功，正在读取完整账户快照…")
-        lock.withLock { synchronizing = true; queuedEvents.clear() }
-        val snapshot = account.request("user/syncrequest", buildJsonObject {
-            put("splitResponses", false)
-            putJsonArray("entityTypes") {
-                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
-            }
-        })
-        if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
-            throw TradovateRemoteException(0, "账户快照不完整，未将缺失的订单或仓位当作空账户；请重新同步")
-        }
-        if (discoveredIds.isNotEmpty() && snapshot.array("accounts").none { it.long("id") in discoveredIds }) {
-            throw TradovateRemoteException(0, "已发现授权账户，但账户流未返回对应记录；未将缺失状态当作空仓")
-        }
-        lock.withLock {
-            book.snapshot(snapshot)
-            queuedEvents.forEach(book::event)
-            queuedEvents.clear()
-            synchronizing = false
-            connected = true
-            rebuild()
-        }
+        synchronizeAccount(account)
         onProgress("已同步 ${accounts.size} 个账户，正在读取合约规格…")
         val metadataLoaded = withTimeoutOrNull(30_000) { hydrateContracts(); true } == true
         onProgress("账户已同步，正在读取资金快照…")
@@ -130,17 +115,76 @@ class TradovateBroker(
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
-                lock.withLock { publish() }
+                val recover = lock.withLock {
+                    val expired = awaiting.filter { (key, wait) -> now() - wait.started >= 30_000 && key !in attemptedRecovery }.keys
+                    attemptedRecovery.addAll(expired)
+                    unknownCommands.addAll(expired)
+                    publish()
+                    expired.isNotEmpty()
+                }
+                if (recover && recoveryJob?.isActive != true) recoveryJob = scope.launch {
+                    try { resynchronize() }
+                    catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { lock.withLock { problem = "重新同步失败，未重发交易指令；请重试同步或在官网核对"; publish() } }
+                }
                 val expiry = credentials.expiresAtMs
                 if (expiry != null && expiry - now() < 120_000) {
-                    try {
-                        renewSession()
-                    } catch (cancel: CancellationException) { throw cancel }
+                    try { renewSession() }
+                    catch (cancel: CancellationException) { throw cancel }
                     catch (_: Exception) {
                         connected = false; marketReady = false; problem = "登录会话已失效，请重新打开官方登录页"; publish(); return@launch
                     }
                 }
             }
+        }
+    }
+
+    override suspend fun resynchronize() = commandLock.withLock {
+        check(!stopped && connected) { "账户连接已断开，请先恢复连接" }
+        val socket = checkNotNull(accountSocket)
+        problem = "正在重新读取账户状态；不会重发交易指令"
+        publish()
+        synchronizeAccount(socket)
+        hydrateContracts()
+        refreshBalances()
+        problem = "账户状态已重新同步"
+        publish()
+    }
+
+    private suspend fun synchronizeAccount(account: TradovateSocket) = synchronizationLock.withLock {
+        lock.withLock { synchronizing = true; queuedEvents.clear() }
+        try {
+        val snapshot = account.request("user/syncrequest", buildJsonObject {
+            put("splitResponses", false)
+            putJsonArray("entityTypes") {
+                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
+            }
+        })
+        if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
+            throw TradovateRemoteException(0, "账户快照不完整，未将缺失的订单或仓位当作空账户；请重新同步")
+        }
+        if (authorizedAccounts.isNotEmpty() && snapshot.array("accounts").none { it.long("id") in authorizedAccounts }) {
+            throw TradovateRemoteException(0, "已发现授权账户，但账户流未返回对应记录；未将缺失状态当作空仓")
+        }
+        lock.withLock {
+            book.snapshot(snapshot)
+            queuedEvents.forEach(book::event)
+            queuedEvents.clear()
+            synchronizing = false
+            connected = true
+            reconcile(fullSnapshot = true)
+            rebuild()
+        }
+        } finally {
+            withContext(NonCancellable) { lock.withLock {
+                if (synchronizing) {
+                    queuedEvents.forEach(book::event)
+                    queuedEvents.clear()
+                    synchronizing = false
+                    reconcile()
+                    rebuild()
+                }
+            } }
         }
     }
 
@@ -194,7 +238,7 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel()
+        maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel()
         scope.launch { runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }; wire.close(); scope.cancel() }
     }
 
@@ -256,7 +300,9 @@ class TradovateBroker(
                     financials.clear()
                     if (balanceJob?.isActive != true) balanceJob = scope.launch { delay(2_000); refreshBalances() }
                 }
-                reconcile()
+                val deletedId = if (data.str("eventType").equals("Deleted", true)) (data["entity"] as? JsonObject)?.long("id") else null
+                reconcile(deletedPositionId = deletedId.takeIf { data.str("entityType") == "position" },
+                    deletedOrderId = deletedId.takeIf { data.str("entityType") == "order" })
                 rebuild()
             }
         }
@@ -437,7 +483,7 @@ class TradovateBroker(
         val unresolved = unknownCommands.isNotEmpty()
         val pending = awaiting.isNotEmpty()
         val message = when {
-            unresolved -> "存在结果未知的交易指令，请在 Tradovate 官网核对；本会话已禁止继续写入"
+            unresolved -> "存在待核对的交易指令，已禁止继续写入；请重新同步账户或在 Tradovate 官网核对"
             pending -> "指令已受理，等待服务端订单/仓位更新"
             else -> problem
         }
@@ -603,7 +649,8 @@ class TradovateBroker(
         val wait = lock.withLock { Awaiting(account, kind, entity, tag(requestId), now(),
             entity?.let { book.orderVersion(it)?.long("id") } ?: 0,
             if (body["stopPrice"] != null) "stopPrice" else if (body["price"] != null) "price" else null,
-            body.priceValue("stopPrice") ?: body.priceValue("price")) }
+            body.priceValue("stopPrice") ?: body.priceValue("price"),
+            if (kind == "close") book.list("position").firstOrNull { it.long("accountId")?.toString() == account && it.long("contractId") == entity }?.long("id") else null) }
         lock.withLock { awaiting[key] = wait; publish() }
         return try {
             val response = rest("POST", route, body).jsonObject
@@ -620,18 +667,20 @@ class TradovateBroker(
                 TradeResult(true, "Tradovate 已受理，最终结果以服务器订单/成交更新为准", response.long("orderId")?.toString() ?: entity?.toString())
             }
         } catch (cancel: CancellationException) {
-            lock.withLock { unknownCommands.add(key); awaiting.remove(key); publish() }
+            withContext(NonCancellable) { lock.withLock { unknownCommands.add(key); publish() } }
             throw cancel
         } catch (error: Exception) {
             val certainRejection = error is TradovateRemoteException && error.status in 400..499
-            lock.withLock { awaiting.remove(key); if (!certainRejection) unknownCommands.add(key); publish() }
+            lock.withLock { if (certainRejection) awaiting.remove(key) else unknownCommands.add(key); publish() }
             if (certainRejection) TradeResult(false, safeMessage(error.message ?: "请求被拒绝"))
             else TradeResult(false, "交易结果未知，未自动重试。请在 Tradovate 官网核对，当前会话禁止继续写入。", outcome = CommandOutcome.UNKNOWN)
         }
     }
 
-    private fun reconcile() {
+    private fun reconcile(fullSnapshot: Boolean = false, deletedPositionId: Long? = null, deletedOrderId: Long? = null) {
         val completed = awaiting.filter { (_, wait) ->
+            if (wait.account.toLongOrNull() !in authorizedAccounts) return@filter false
+            val completeAccount = fullSnapshot && book.list("account").any { it.long("id")?.toString() == wait.account }
             when (wait.kind) {
                 "place" -> book.list("order").any { it.long("accountId")?.toString() == wait.account &&
                     (wait.entity != null && it.long("id") == wait.entity || it.str("clOrdId") == wait.tag) }
@@ -640,12 +689,24 @@ class TradovateBroker(
                     !activeOrder(order) || order.str("clOrdId") == wait.tag || version != null &&
                         (version.long("id") ?: 0) > wait.baselineVersion && wait.priceKey != null && version.priceValue(wait.priceKey) == wait.expectedPrice
                 } == true
-                "cancel" -> book.item("order", wait.entity ?: 0)?.let { !activeOrder(it) } == true
-                "close" -> book.list("position").any { it.long("accountId")?.toString() == wait.account && it.long("contractId") == wait.entity && it.long("netPos") == 0L }
+                "cancel" -> book.item("order", wait.entity ?: 0)?.let { !activeOrder(it) }
+                    ?: (wait.entity != null && (deletedOrderId == wait.entity || completeAccount))
+                "close" -> {
+                    val rows = book.list("position").filter { it.long("accountId")?.toString() == wait.account && it.long("contractId") == wait.entity }
+                    rows.any { it.long("netPos") == 0L } || rows.isEmpty() && wait.baselinePositionId != null &&
+                        (wait.baselinePositionId == deletedPositionId || completeAccount)
+                }
                 else -> false
             }
         }.keys
-        completed.forEach(awaiting::remove)
+        completed.forEach { key ->
+            val wait = awaiting.remove(key)!!
+            unknownCommands.remove(key)
+            attemptedRecovery.remove(key)
+            results[key]?.let { (signature, result) ->
+                if (result.outcome == CommandOutcome.UNKNOWN) results[key] = signature to TradeResult(true, "服务器状态已确认；未重发指令", wait.entity?.toString())
+            }
+        }
     }
     private fun tag(id: String) = "UT-$id"
     private fun errorArgument(message: String): Nothing = throw IllegalArgumentException(message)

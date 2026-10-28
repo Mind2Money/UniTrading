@@ -60,6 +60,10 @@ data class BrokerCapabilities(
     val modifyProtection: Boolean = true,
     val modifyPendingOrders: Boolean = true,
     val hedging: Boolean = true,
+    val resynchronize: Boolean = false,
+    val addProtection: Boolean = true,
+    val removeProtection: Boolean = true,
+    val atomicProtectionEdit: Boolean = true,
 )
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)

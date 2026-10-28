@@ -95,8 +95,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
         val accountKey = "$brokerId/$accountId/${plugin.hashCode()}"
-        var symbol by remember(plugin) { mutableStateOf(catalog.instruments.first().symbol) }
-        val instrument = plugin.instruments.first { it.symbol == symbol }
+        var chosenSymbol by remember(plugin) { mutableStateOf(catalog.instruments.first().symbol) }
+        val instrument = catalog.instruments.firstOrNull { it.symbol == chosenSymbol } ?: catalog.instruments.first()
+        val symbol = instrument.symbol
         val quote = market.quotes[symbol]
         var timeframe by remember { mutableStateOf(Timeframe.M5) }
         var draft by remember(accountKey, symbol) { mutableStateOf(OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")) }
@@ -122,9 +123,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         LaunchedEffect(runtime) { runtime.run() }
         LaunchedEffect(plugin, symbol, timeframe) { plugin.watch(symbol, timeframe) }
         LaunchedEffect(accountKey) { showOrder = false; notice = null }
+        LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
+            if (chosenSymbol != symbol) {
+                chosenSymbol = symbol
+                selectedPositionId = null; focusedTrade = null; protection = null; pendingEdit = null; confirmation = null
+            }
+        }
 
         fun chooseSymbol(value: String) {
-            symbol = value
+            chosenSymbol = value
             focusedTrade = null
             selectedPositionId = null
             protection = null
@@ -162,7 +169,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
             if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
             val spec = plugin.instruments.firstOrNull { it.symbol == position.symbol }
                 ?: run { notice = "品种或账户已切换，请重新选择仓位"; return }
-            symbol = position.symbol
+            chosenSymbol = position.symbol
             selectedPositionId = position.id
             protection = ProtectionEdit(position, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
         }
@@ -183,8 +190,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                 return
             }
             if (current.role != OrderRole.ENTRY || !plugin.capabilities.modifyPendingOrders) return
-            val spec = plugin.instruments.first { it.symbol == current.request.symbol }
-            symbol = current.request.symbol
+            val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
+            chosenSymbol = current.request.symbol
             protection = null
             showDraft = false
             pendingEdit = PendingEntryEdit(current, spec.formatPrice(price))
@@ -222,7 +229,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     }
                     DividerLine()
                     loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = colors.Muted) }
-                    if (!localDemo) Text(market.statusMessage, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), color = colors.Muted, fontSize = 11.sp)
+                    if (!localDemo) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(market.statusMessage, Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
+                        if (plugin.capabilities.resynchronize) TextButton({
+                            busy = true
+                            scope.launch {
+                                try { plugin.resynchronize(); notice = "账户状态已同步" }
+                                catch (cancel: CancellationException) { throw cancel }
+                                catch (_: Exception) { notice = "同步失败，请检查连接后重试；未重发交易指令" }
+                                finally { busy = false }
+                            }
+                        }, enabled = !busy && market.connected, modifier = Modifier.testTag("resynchronize-account")) { Text("同步账户") }
+                    }
                     if (storageError != null) {
                         Row(Modifier.fillMaxWidth().background(colors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = colors.Loss)
@@ -260,8 +278,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                 }
                                 DividerLine()
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> symbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> symbol = t.symbol; focusedTrade = t; selectedPositionId = null },
+                                    onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
+                                    onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.fillMaxWidth().height(terminalHeight))
                             }
@@ -282,8 +300,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                 }
                             }
                             2 -> TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                onSelectPosition = { p -> symbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                onSelectTrade = { t -> symbol = t.symbol; focusedTrade = t; mobileTab = 1 },
+                                onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
                                 onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                 modifier = Modifier.weight(1f).fillMaxWidth())
                             else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -341,7 +359,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     dismissButton = { if (localDemo) TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
                 )
 
-                confirmation?.let { action ->
+                confirmation?.takeIf { action ->
+                    val target = when (action) {
+                        is Confirmation.Place -> action.request.symbol
+                        is Confirmation.Close -> action.position.symbol
+                        is Confirmation.Cancel -> action.order.request.symbol
+                        Confirmation.Reset -> null
+                    }
+                    target == null || catalog.instruments.any { it.symbol == target }
+                }?.let { action ->
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
                     val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request) }
                     AlertDialog(
@@ -358,7 +384,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     Text("提交时按最新报价与账户状态再次校验，预估不是锁定成交价。", fontSize = 12.sp, color = colors.Muted)
                                     livePreview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 12.sp) }
                                 }
-                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${plugin.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${plugin.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
+                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${action.order.id}。" +
                                     if (action.order.isProtection) "这会移除该项保护，服务器可能联动关联订单。" else "若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
@@ -377,9 +403,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
-                pendingEdit?.let { edit ->
+                pendingEdit?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.order.request.symbol } }?.let { edit ->
                     val order = edit.order
-                    val spec = plugin.instruments.first { it.symbol == order.request.symbol }
+                    val spec = catalog.instruments.first { it.symbol == order.request.symbol }
                     val current = account.orders.firstOrNull { it.id == order.id }
                     val price = spec.parsePrice(edit.entry)
                     val estimate = price?.let { session.previewOrderModification(order.id, it) }
@@ -408,14 +434,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         dismissButton = { TextButton({ pendingEdit = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
-                protection?.let { edit ->
+                protection?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.position.symbol } }?.let { edit ->
                     val p = edit.position
-                    val spec = plugin.instruments.first { it.symbol == p.symbol }
+                    val spec = catalog.instruments.first { it.symbol == p.symbol }
                     val current = account.positions.firstOrNull { it.id == p.id }
                     val sl = if (edit.stopLoss.isBlank()) null else spec.parsePrice(edit.stopLoss)
                     val tp = if (edit.takeProfit.isBlank()) null else spec.parsePrice(edit.takeProfit)
                     val validInput = (edit.stopLoss.isBlank() || sl != null && sl > 0 && sl % spec.tickSize == 0L) && (edit.takeProfit.isBlank() || tp != null && tp > 0 && tp % spec.tickSize == 0L)
                     val validVersion = current?.version == p.version
+                    val capabilityError = protectionEditError(plugin.capabilities, p, sl, tp)
                     fun estimate(price: Long?): String = price?.takeIf { it > 0 }?.let {
                         runCatching { "${money(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, it) - p.entryFeeMicros - commission(spec, p.lotsHundredths), true)} USD" }.getOrDefault("超出范围")
                     } ?: "未设置"
@@ -426,8 +453,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${p.id}", fontSize = 12.sp)
                             Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
-                            PriceInput("新止损 SL（留空移除）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
-                            PriceInput("新止盈 TP（留空移除）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
+                            PriceInput(if (plugin.capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
+                            PriceInput(if (plugin.capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
+                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次修改一条保护线；修改另一条前请等待服务器确认。", fontSize = 11.sp)
+                            capabilityError?.let { Text(it, color = colors.Loss, fontSize = 11.sp) }
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate(sl))
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate(tp))
                             Text("当前为预览，确认后交易商才会校验并更新。跳空时实际结果可能不同。", color = colors.Muted, fontSize = 11.sp)
@@ -437,7 +466,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         confirmButton = { Button({
                             protection = null
                             perform { session.modifyProtection(requestId(), p.id, p.version, sl, tp) }
-                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && !busy) { Text("确认修改") } },
+                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && !busy) { Text("确认修改") } },
                         dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
                     )
                 }

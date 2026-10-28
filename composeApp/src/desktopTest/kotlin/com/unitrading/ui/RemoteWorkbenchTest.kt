@@ -17,6 +17,25 @@ import org.junit.Test
 import kotlin.test.assertTrue
 
 class RemoteWorkbenchTest {
+    @Test fun removingSelectedInstrumentFallsBackAndEmptyCatalogCanRecover() {
+        val source = remote()
+        val changes = MutableStateFlow(source.catalog.value)
+        val plugin = object : BrokerPlugin by source {
+            override val catalog = changes
+            override val instruments get() = changes.value.instruments
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.onNodeWithTag("order-quantity").performTextReplacement("3")
+        val replacement = source.instruments.single().copy(symbol = "ALTZ6")
+        compose.runOnIdle { changes.value = changes.value.copy(instruments = listOf(replacement)) }
+        compose.onAllNodesWithText("ALTZ6").onFirst().assertExists()
+        compose.onNodeWithTag("order-quantity").assertTextContains("1")
+        compose.runOnIdle { changes.value = changes.value.copy(instruments = emptyList()) }
+        compose.onNodeWithText("查询合约").assertExists()
+        compose.runOnIdle { changes.value = changes.value.copy(instruments = listOf(replacement)) }
+        compose.onNodeWithTag("order-quantity").assertExists()
+    }
     @get:Rule val compose = createComposeRule()
     @Test fun expiredSavedLoginIsVisibleAndClearingRequiresConfirmation() {
         val store = object : CredentialStore {

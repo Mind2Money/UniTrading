@@ -1,14 +1,19 @@
 package com.unitrading
 
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.window.ComposeUIViewController
 import com.unitrading.app.SnapshotStore
-import com.unitrading.ui.UniTradingApp
+import com.unitrading.app.NativePlatformBridge
+import com.unitrading.app.TradingRuntime
+import com.unitrading.ui.TradingScreen
 import platform.Foundation.NSUserDefaults
 
-fun MainViewController() = ComposeUIViewController {
+fun MainViewController(platform: NativePlatformBridge) = ComposeUIViewController {
     val store = remember { AppleSnapshotStore() }
-    UniTradingApp(store)
+    val runtime = remember { TradingRuntime(store, credentialStore = platform.credentials) }
+    DisposableEffect(runtime) { onDispose { runtime.registry.plugins.forEach { it.disconnect() } } }
+    TradingScreen(runtime, platform.login)
 }
 
 private class AppleSnapshotStore : SnapshotStore {

@@ -23,7 +23,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            if (providers.gradleProperty("credentialStoreTest").orNull == "true") signingConfig = signingConfigs.getByName("debug")
         }
+    }
+    testBuildType = providers.gradleProperty("instrumentationBuildType").getOrElse("debug").also {
+        require(it in setOf("debug", "release"))
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

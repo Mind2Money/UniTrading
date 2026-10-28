@@ -11,6 +11,7 @@ interface BrokerPlugin {
     val market: StateFlow<MarketSnapshot>
     suspend fun searchInstruments(query: String) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
+    suspend fun resynchronize() {}
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession
     fun history(symbol: String, timeframe: Timeframe): List<Candle>

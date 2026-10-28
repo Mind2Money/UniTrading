@@ -1,8 +1,5 @@
 allprojects {
     afterEvaluate {
-        if (name == 'tradovate-broker') {
-            kotlin.sourceSets.getByName('commonTest').kotlin.srcDir(rootProject.file('docs/audit-probes'))
-        }
         tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
             reports.junitXml.outputLocation = rootProject.layout.projectDirectory.dir("artifacts/docs-audit/results/${project.name}")
             reports.html.outputLocation = rootProject.layout.projectDirectory.dir("artifacts/docs-audit/reports/${project.name}")
