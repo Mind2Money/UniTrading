@@ -31,6 +31,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val theme = ThemeController(store)
     /** Interval favourites and custom intervals; read lazily so startup only touches the theme and demo snapshots. */
     val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
+    /** Chart indicator stack; also read lazily, when the first chart asks for it. */
+    val indicators: IndicatorController by lazy { IndicatorController(store) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->
         try {
             DemoBroker(config, store.read(config.id))

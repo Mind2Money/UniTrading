@@ -52,6 +52,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         }
         var showTheme by remember { mutableStateOf(false) }
         if (showTheme) ThemeSettingsDialog(runtime.theme) { showTheme = false }
+        var showIndicators by remember { mutableStateOf(false) }
+        if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
         var showConnection by remember { mutableStateOf(false) }
         if (showConnection) TradovateConnectionDialog(runtime, login, ::selectBroker, { showConnection = false })
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
@@ -121,6 +123,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         val request = draft.request(instrument)
         val preview = remember(session, instrument, request, market.revision, account) { request?.let(session::preview) }
         val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
+        val indicatorSettings by runtime.indicators.settings.collectAsState()
         val visiblePositions = account.positions.filter { it.symbol == symbol }
         val visibleTrades = account.trades.filter { it.symbol == symbol }
         val visibleOrders = account.orders.filter { it.request.symbol == symbol }
@@ -273,7 +276,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                             selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
                                             instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals,
                                             connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true })
                                     }
@@ -298,7 +301,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
                                             connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true },
                                             instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, legendCollapsed = compactShort)
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

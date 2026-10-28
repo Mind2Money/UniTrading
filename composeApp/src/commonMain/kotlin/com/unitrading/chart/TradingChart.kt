@@ -48,7 +48,7 @@ private sealed interface EditableLine {
     data class Pending(val order: PendingOrder) : EditableLine { override val price get() = order.request.entryPrice!! }
     data class Draft(val request: OrderRequest) : EditableLine { override val price get() = request.entryPrice!! }
 }
-private enum class ChartDragMode { PRICE, TIME, PLOT, NONE }
+private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
 private data class LineDrag(val line: EditableLine, val scale: PriceScale, val price: Long)
 private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
 
@@ -83,6 +83,8 @@ fun TradingChart(
     onSymbol: (String) -> Unit = {},
     intervals: IntervalOptions = IntervalOptions(),
     legendCollapsed: Boolean = false,
+    indicators: List<IndicatorConfig> = emptyList(),
+    onIndicators: (() -> Unit)? = null,
 ) {
     val colors = TradingColors
     var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
@@ -105,6 +107,12 @@ fun TradingChart(
     val plotWidth = right - left
     val range = viewport.range(candles.size)
     val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
+    // Indicators use every loaded bar; separate panes take the bottom of the drawable area, above the time axis.
+    val computedIndicators = remember(candles, indicators) { computeIndicators(indicators, candles) }
+    val overlays = computedIndicators.filter { it.overlay }
+    val panes = computedIndicators.filterNot { it.overlay }
+    val paneHeight = if (panes.isEmpty()) 0f else paneAreaHeight(bottom - top, panes.size) / panes.size
+    val plotBottom = (bottom - paneHeight * panes.size).coerceAtLeast(top + 1)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
     val extras = buildList {
         quote?.let { add(it.bid); add(it.ask) }
@@ -112,8 +120,9 @@ fun TradingChart(
         if (showOrders) orders.forEach { it.request.entryPrice?.let(::add) }
         draft?.entryPrice?.let(::add)
         if (preview?.valid == true) { preview.entryPrice?.let(::add); draft?.stopLoss?.let(::add); draft?.takeProfit?.let(::add) }
+        addAll(overlayScaleValues(overlays, range))
     }
-    val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = bottom) ?: PriceScale.from(visible, extras, top, bottom)
+    val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)
     val currentPosition by rememberUpdatedState(selectedPosition)
     val currentVisible by rememberUpdatedState(visible)
@@ -175,7 +184,7 @@ fun TradingChart(
         ChartToggle("挂单", showOrders) { showOrders = !showOrders },
         ChartToggle("历史", showHistory) { showHistory = !showHistory },
         ChartToggle("数据表", showData) { showData = !showData },
-    )
+    ) + listOfNotNull(onIndicators?.let { open -> ChartToggle(if (indicators.isEmpty()) "指标" else "指标 ${indicators.size}", indicators.any { it.visible }, open) })
     val toolbar: @Composable (Modifier) -> Unit = { m -> ChartToolbar(instrument, instruments.ifEmpty { listOf(instrument) }, onSymbol, timeframe, onTimeframe, intervals, toggles, m) }
 
     Column(modifier.background(colors.Surface)) {
@@ -206,7 +215,7 @@ fun TradingChart(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .semantics {
                             contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。订单线可拖动预览。"
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null}"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size}"
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
                             awaitPointerEventScope {
@@ -220,7 +229,7 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory, panes.size) {
                             detectTapGestures(onTap = { point ->
                                 val bars = currentVisible
                                 if (bars.isNotEmpty() && point.x < right && point.y < bottom) {
@@ -232,7 +241,7 @@ fun TradingChart(
                                 }
                             }, onLongPress = { point -> crosshair = visibleIndex(point.x) })
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size) {
                             var mode = ChartDragMode.NONE
                             detectDragGestures(
                                 orientationLock = null,
@@ -242,7 +251,8 @@ fun TradingChart(
                                     mode = when {
                                         point.x >= right && point.y < bottom -> ChartDragMode.PRICE
                                         point.y >= bottom && point.x < right -> ChartDragMode.TIME
-                                        point.x in left..right && point.y in top..bottom -> ChartDragMode.PLOT
+                                        point.x in left..right && point.y in top..plotBottom -> ChartDragMode.PLOT
+                                        point.x in left..right && point.y in plotBottom..bottom -> ChartDragMode.PANE
                                         else -> ChartDragMode.NONE
                                     }
                                     val p = currentPosition
@@ -279,6 +289,7 @@ fun TradingChart(
                                             viewport = viewport.pan(amount.x, plotWidth, currentTotal)
                                             manualScale = (manualScale ?: currentScale).pan(amount.y)
                                         }
+                                        ChartDragMode.PANE -> viewport = viewport.pan(amount.x, plotWidth, currentTotal)
                                         ChartDragMode.NONE -> Unit
                                     }
                                 },
@@ -319,7 +330,7 @@ fun TradingChart(
                     val priceTags = mutableListOf<PriceTag>()
                     fun priceLine(price: Long, label: String, color: Color, dashed: Boolean = true, alpha: Float = 1f) {
                         val y = scale.y(price)
-                        if (y !in top..bottom) return
+                        if (y !in top..plotBottom) return
                         drawLine(color.copy(alpha = alpha), Offset(left, y), Offset(right, y), strokeWidth = 1.3f,
                             pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
                         val measured = textMeasurer.measure(label, labelStyle)
@@ -330,7 +341,7 @@ fun TradingChart(
                         priceTags.add(PriceTag(price, colors.Ink, colors.Surface))
                     }
                     for (i in 0..5) {
-                        val y = top + (bottom - top) * i / 5
+                        val y = top + (plotBottom - top) * i / 5
                         drawLine(colors.Grid, Offset(left, y), Offset(right, y), 1f)
                         text(instrument.formatPrice(scale.price(y, instrument.tickSize)), right + 8f, y - labelHeight / 2)
                     }
@@ -341,7 +352,7 @@ fun TradingChart(
                         drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
                         text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
-                    clipRect(left, top, right, bottom) {
+                    clipRect(left, top, right, plotBottom) {
                     val draftEntry = activeDraft?.entryPrice ?: activePreview?.entryPrice
                     if (activePreview?.valid == true && activeDraft != null && draftEntry != null) {
                         val entryY = scale.y(draftEntry)
@@ -362,6 +373,7 @@ fun TradingChart(
                         if (candle.close >= candle.open) drawRect(color, Offset(center - width / 2, y), Size(width, height), style = Stroke(1.4f))
                         else drawRect(color, Offset(center - width / 2, y), Size(width, height))
                     }
+                    drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     quote?.let {
                         val y = scale.y(it.bid)
                         drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
@@ -462,13 +474,15 @@ fun TradingChart(
                         }
                     }
                     }
+                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, plotBottom, paneHeight, step,
+                        textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawLine(colors.Border, Offset(right, top), Offset(right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
                     val tagGap = labelHeight + labelPadding * 2 + 2.dp.toPx()
-                    val capacity = ((bottom - top) / tagGap).toInt().coerceAtLeast(1)
-                    val tags = priceTags.filter { scale.y(it.price) in top..bottom }.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
+                    val capacity = ((plotBottom - top) / tagGap).toInt().coerceAtLeast(1)
+                    val tags = priceTags.filter { scale.y(it.price) in top..plotBottom }.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
                     val firstCenter = top + labelHeight / 2 + labelPadding
-                    val lastCenter = maxOf(firstCenter, bottom - labelHeight / 2 - labelPadding)
+                    val lastCenter = maxOf(firstCenter, plotBottom - labelHeight / 2 - labelPadding)
                     val lineHeight = labelHeight + labelPadding * 2
                     // Reserve a line above the live price for the contract name and one below for the countdown, so a
                     // position or order tag right next to the price moves aside instead of hiding them.
@@ -504,6 +518,7 @@ fun TradingChart(
                 Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed }, onSide, readout)
+                    if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
                 }
                 ChartNavigation(
                     onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
@@ -511,7 +526,7 @@ fun TradingChart(
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null },
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 38.dp),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 38.dp + with(density) { (paneHeight * panes.size).toDp() }),
                 )
             }
             selectedPosition?.protectionNote?.let { note ->

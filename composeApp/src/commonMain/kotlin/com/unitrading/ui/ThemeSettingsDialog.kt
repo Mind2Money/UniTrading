@@ -98,7 +98,7 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
 }
 
 @Composable
-private fun ColorPicker(title: String, initial: Color, onDismiss: () -> Unit, onColor: (Color) -> Unit) {
+internal fun ColorPicker(title: String, initial: Color, onDismiss: () -> Unit, onColor: (Color) -> Unit) {
     var red by remember { mutableStateOf(initial.red * 255) }
     var green by remember { mutableStateOf(initial.green * 255) }
     var blue by remember { mutableStateOf(initial.blue * 255) }

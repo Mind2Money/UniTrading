@@ -11,6 +11,7 @@
 - [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
+- [图表指标](indicators.md)：MA/EXPMA/BOLL 叠加线与 RSI/MACD/KDJ/ATR 副图，多指标叠加、参数与颜色自定义、本机保存。
 - [验证记录索引](verification.md)：当前摘要及首版本地 Demo 的历史证据。
 
 ## 历史设计与版本记录
