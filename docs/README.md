@@ -1,12 +1,25 @@
 # UniTrading 文档
 
-当前阶段：Windows Desktop 与 Android 本地 Demo 已验收；新增 Tradovate 登录与服务器插件已实现，真实账户联调结果与限制见专用文档。iOS 保留工程骨架，未在 Mac/Xcode 验证。
+当前代码：`main`，应用 **1.1.4 / Android versionCode 6**。Windows 与 Android 默认从登录页开始，恢复有效的已保存 Tradovate 会话；不再默认注册本地模拟券商。iOS 有工程入口，但缺少登录与凭据存储接线，不能视为可用交易端。
 
-- [实施计划](implementation-plan.md)：已确认的平台范围、构建环境、插件架构、交易规则、实施顺序与验收门槛。
-- [UI 与图表交互计划](ui-and-chart-design.md)：视觉规范、桌面/手机布局、图表图层、拖动 SL/TP 和订单预览。
-- [插件接入](plugin-guide.md)：接口职责、数值单位与注册示例。
-- [验证记录](verification.md)：本地 Demo 初版测试与运行记录。
-- [Tradovate 接入计划](tradovate-integration-plan.md)：源码参考、鉴权选择与接入边界。
-- [Tradovate 使用与验证](tradovate.md)：网页登录、密码管理、远程交易语义和验证状态。
+## 当前实现与使用
 
-长期目标为 Windows 桌面、Android 与 iOS 的 Kotlin Multiplatform 本地模拟交易终端；本次验收包含 Desktop 与 Android。交易商通过接口注册，行情、标的、账户及执行结果均来自交易商插件。iOS 构建与运行需要 macOS/Xcode，当前未验证。
+- [当前实现、构建与验证状态](current-status.md)：功能矩阵、代码入口、构建命令、CI 与验证边界；作为当前状态入口。
+- [代码与文档核对](implementation-audit.md)：1.1.4 已确认的实现缺口、文档差异和可复现诊断。
+- [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
+- [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
+- [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
+- [验证记录索引](verification.md)：当前摘要及首版本地 Demo 的历史证据。
+
+## 历史设计与版本记录
+
+以下文件按当时版本保留，不把其中的旧产品范围、测试数量或产物 hash 当成当前状态。
+
+- [初版实施计划](implementation-plan.md)：本地 Demo 阶段的设计基线，当前默认登录流程已替代该启动方案。
+- [初版 UI 与图表设计](ui-and-chart-design.md)：初版布局与交互要求，固定深色配色已由可配置主题替代。
+- [Tradovate 初版接入计划](tradovate-integration-plan.md)：协议来源及最初方案，仅内存会话已被加密保存替代。
+- [1.1.1 登录交接修复](tradovate-login-fix.md)：Windows Tradovate Demo 真实只读链路的历史实测。
+- [1.1.2 TP/SL 分类修复](tpsl-classification-fix.md)：父子、OCO、ATM 保护关联的离线验收。
+- [1.1.3 登录保存修复](saved-login-fix.md)：DPAPI / Keystore 存储及恢复测试。
+
+仓库当前只使用 `main` 分支。文档分别标注“未实现”“已实现但未实测”和“已验证”；历史设计不等于已交付功能。

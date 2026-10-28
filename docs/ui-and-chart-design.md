@@ -1,5 +1,7 @@
 # UniTrading UI 与图表交互计划
 
+> 文档类型：初版历史设计。固定深色、本地模拟及文字底栏等方案已由 1.1.4 的登录优先、可配置主题和 Material 3 导航替代。实际图表能力与尚未完成项见 [当前状态](current-status.md) 和 [实现核对](implementation-audit.md)。
+
 状态：实施前设计基线，2026-10-28 更新为 Desktop + Android 验收范围；iOS 仍需 Mac/Xcode 验证。
 
 ## 1. 设计目标

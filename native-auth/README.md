@@ -2,6 +2,8 @@
 
 独立的 x64 WinForms / WebView2 host，供 Kotlin Desktop 以重定向进程管道调用。只用于用户主动打开的 Tradovate 官方登录页，不读取其他浏览器的密码、cookie 或配置。
 
+host 当前独立版本为 1.1.1，与主应用 1.1.4 的版本号不同。主应用在交接后通过 DPAPI 保存会话，host 的管道协议和浏览器 profile 路径未因此改变；见[当前状态](../docs/current-status.md)。
+
 ## 构建
 
 需要 Windows .NET Framework 4.x 自带 C# 编译器和 Microsoft Edge WebView2 Runtime。不要求安装 .NET SDK。脚本固定 WebView2 SDK `1.0.4314.35` 并验证 NuGet 包 SHA-256：

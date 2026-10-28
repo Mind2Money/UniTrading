@@ -2,7 +2,7 @@
 
 ## 接入方式
 
-从“账户 / 切换账户”选择“连接 Tradovate”，选 Demo 或 Live，再打开官方登录页。
+当前应用 1.1.4 默认不注册本地模拟券商。首次启动点击“登录 Tradovate”；已有连接时从“账户 / 切换账户”选择“连接 Tradovate”，选 Demo 或 Live，再打开官方登录页。完整功能与验证矩阵见[当前状态](current-status.md)。
 
 - 页面为 `https://trader.tradovate.com/welcome`，由官方网页执行签名与登录，MFA/验证码保持原流程。
 - 只读取本应用弹出的登录窗口返回的 `accessToken`、`mdAccessToken` 等会话字段；不扫描 Chrome/Edge 的用户资料，不从密码输入框读取账号密码。
@@ -33,6 +33,7 @@
 - 当前支持 USD 线性期货，数量为正整数张；均价保留六位十进制，允许均价不在报价 tick 上。
 - 净额仓位按账户 + 合约显示，外部增减仓/反向成交以服务器推送更新。
 - 原始成交以服务器 fill 显示。不能可靠配对或没有费用数据时，不伪造完整的已实现净盈亏。
+- 远程暂未生成配对 `ClosedTrade`，没有点击原始成交定位图表的流程；历史图表每品种/周期保留最近 500 根，未实现更早历史分页。
 - 支持 Market / Limit / Stop、撤单、服务器 liquidation、挂单入场价修改。
 - 带保护价的新订单使用一个 `order/placeoso` 请求；双保护由服务器关联为 OCO。已有该合约净仓时不叠加新括号单，避免保护数量失配。
 - 保护单识别支持原生父子关系、无父订单的 OCO 以及单层 ATM 的 `orderStrategy/orderStrategyLink`。只有同账户、同合约、方向/剩余数量及关联证据一致时才开放保护价修改；不靠价格高低猜测 SL/TP。
@@ -41,6 +42,7 @@
 - 预估盈亏标为毛结果，不把缺失手续费/保证金显示为 0。实时净值若由余额 + 浮盈计算则标记“估算”。
 - 报价超过 15 秒不能用于新下单/改保护；撤单不依赖实时行情，服务器 liquidation 不使用本地反向市价单冒充平仓。
 - 受理不等于成交；回执后仍以订单/仓位推送为准。网络结果未知时不自动重发，当前会话停止继续写入，须先到官网核对。
+- 已受理后缺少实体事件、重连快照对账及仓位删除的等待状态恢复尚不完整，可能持续阻止后续写入；离线复现见[审计 A1](implementation-audit.md)。
 - REST 请求有统一最小间隔，不会通过轮换身份/端点规避频率限制；429/授权拒绝如实报告。
 - 本地版本只阻止陈旧 UI 提交，不宣称 Tradovate 服务端支持客户端 CAS。
 - 不包含跨账户跟单、自动策略、负价格期货、外币换算、第三方 SSO 白名单扩展、iOS 登录组件。
@@ -70,9 +72,15 @@ native-auth/build/1.1.1/UniTrading.TradovateLogin.exe --self-test
 
 浏览器桥还运行 Node.js 隔离测试，因此全套测试需要 Node.js。测试不访问登录账户或发送真实订单。
 
-### 当前验证边界
+### 当前验证边界（1.1.4）
 
-最终结果：**86 项 JVM/KMP/Compose 自动测试通过，0 失败、0 跳过**；Windows native 策略 self-test 另有 **52 项断言通过**。Android debug APK 构建成功（1.1.1 / versionCode 3）。
+常规 JVM/KMP/Compose 套件 127 项通过，当前主题/导航/图表验收见 [1.1.4 记录](theme-navigation-chart.md)。登录保存与恢复使用合成会话、DPAPI/Keystore 及 Android 进程恢复测试；没有将这些测试等同于真实账户免登录验收。
+
+真实账户读取证据仍来自以下 1.1.1 的 Windows Demo 只读流程。真实下单、改价、成交回执未联调；Android 完整登录到账户/行情链路、iOS、真机和 release 设备运行尚未形成通过记录。本次审计重跑回归并确认了待处理缺口，见[实现核对](implementation-audit.md)。
+
+### 历史验证边界（1.1.1）
+
+该版本结果：**86 项 JVM/KMP/Compose 自动测试通过，0 失败、0 跳过**；Windows native 策略 self-test 另有 **52 项断言通过**。Android debug APK 构建成功（1.1.1 / versionCode 3）。
 
 APK SHA-256：`a11173e4cac3042b7595ee84c8ce6aa7b02d5f3211be8da74cae73785bba750c`。
 

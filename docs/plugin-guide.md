@@ -9,7 +9,7 @@
 - UI 只读状态并提交请求；不得在插件外直接增加余额、订单或仓位。
 - 交易商 ID 全局唯一，账户 ID 在交易商内唯一；同名品种不代表同一市场。
 
-目前包含本地 Demo 与 `tradovate-broker`。Tradovate 走官方网页登录与服务器权威状态；代码/协议测试不等于真实账户联调，具体边界见 [Tradovate 使用与验证](tradovate.md)。
+当前默认注册表为空，由登录成功后注册 `tradovate-broker`。本地 Demo 实现保留为编译依赖与离线测试引擎，需显式启用 `includeDemoBrokers = true`。Tradovate 走官方网页登录与服务器权威状态；代码/协议测试不等于真实交易联调，边界见 [Tradovate 使用与验证](tradovate.md)。
 
 ## 注册
 
@@ -23,7 +23,9 @@ val runtime = TradingRuntime(
 TradingScreen(runtime)
 ```
 
-`TradingRuntime` 的 Demo 时钟和快照只管理内置 Demo 实例。附加插件自行管理行情更新、交易执行和持久化，不会被本地模拟撮合接管。构造注册表时重复 ID 被拒绝；`registry.register(plugin)` 用于成功登录后更新同一交易商连接，并断开旧实例。
+`TradingRuntime` 的 Demo 时钟和快照仅在显式启用测试引擎时管理 Demo 实例。附加插件自行管理行情更新和交易执行；Tradovate 凭据由应用层 `SavedTradovateAccounts` 配合平台 `CredentialStore` 保存，服务器账户状态仍重新同步。构造注册表时重复 ID 被拒绝；`registry.register(plugin)` 更新连接并断开旧实例。`registry.unregister(id)` 允许移除最后一个插件，UI 回到登录页。
+
+目录支持异步发布，但当前 UI 对“非空目录移除已选品种”的回退不完整；接入会替换/删减品种的插件前需处理[审计 A5](implementation-audit.md)。
 
 工作台按 `BrokerEnvironment` 区分本地模拟、远程 Demo 和 Live；未知费用、保证金与资金值必须携带 `Known=false`，不能用 0 冒充已知数值。
 
@@ -44,7 +46,7 @@ TradingScreen(runtime)
 | `preview(request)` | 纯估算，不下单、不占用资金；返回错误与当前估值 |
 | `placeOrder(requestId, request)` | 执行前重新校验品种、行情、资金、数量、价格和保护规则 |
 | `closePosition` / `cancelOrder` | 按当前状态执行，未知/过期实体拒绝，不串改其他账户 |
-| `modifyProtection` | 包含仓位版本，`null` 表示移除对应保护价 |
+| `modifyProtection` | 包含仓位版本；本地 Demo 接受 `null` 移除保护。Tradovate 仅改一条已有保护价，拒绝增加/移除；接口当前没有单独表达这些细粒度能力 |
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
 | `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
 
@@ -61,9 +63,9 @@ TradingScreen(runtime)
 
 例如 EURUSD 的 1.08725 用 `108725` 表示，`priceDecimals=5`、`tickSize=1`。若每手每 tick 为 1 USD，则 0.10 手移动 100 tick 的毛盈亏为 10 USD。
 
-`FixedPoint.kt` 提供严格十进制解析、溢出检查、盈亏、手续费及保证金计算。`Double/Float` 仅用于绘图和展示比值，不用于余额或订单账本。当前实现只支持 USD 线性合约，不能直接套用到反向合约、期权或多币种换算。
+`FixedPoint.kt` 提供严格十进制解析、溢出检查、盈亏、手续费及保证金计算。`Double/Float` 仅用于绘图和展示比值，不用于余额或订单账本。当前实现只支持 USD 线性合约，不能直接套用到反向合约、期权或多币种换算。Tradovate 价格内部保留六位小数，`displayPriceDecimals` 控制显示；远程费用/订单保证金尚无完整估算，不得套用 Demo 杠杆与费用。
 
-## Demo 规则
+## 离线 Demo 引擎规则（默认不注册）
 
 - 市价买入按 Ask、卖出按 Bid；多头退出看 Bid，空头退出看 Ask。
 - Limit 按可成交报价执行且不劣于限价；Stop 越过触发价后按实际报价执行。
@@ -77,7 +79,7 @@ TradingScreen(runtime)
 ## 测试入口
 
 ```bash
-./gradlew :broker-api:desktopTest :demo-broker:desktopTest
+./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
 ```
 
 新增适配器至少要验证：Bid/Ask 方向、数量/价格精度、账户隔离、重复请求、过期仓位版本、断连/过期行情、挂单触发、SL/TP 跳空、费用与保证金、持久化恢复。

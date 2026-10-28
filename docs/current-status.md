@@ -1,0 +1,66 @@
+# 当前实现与验证状态
+
+核对日期：2026-10-29。业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计提交不修改业务实现。
+
+## 功能与代码对应
+
+| 能力 | 当前状态 | 代码入口与边界 |
+| --- | --- | --- |
+| 首次启动 | 已实现并测试 | `TradingRuntime` 默认空注册表，`TradingScreen` 转到 `LoginWelcome`；旧模拟账本不加载、不自动删除 |
+| Windows / Android 网页登录 | 已实现 | `DesktopTradovateLogin`、`AndroidTradovateLogin`；Windows Demo 只读账户/行情链路曾实测，Android 完整授权账户链路未记录为通过 |
+| 多用户、Demo/Live 登录恢复 | 已实现并用合成会话测试 | `SavedTradovateAccounts`；Windows DPAPI、Android Keystore AES-GCM；过期或撤销仍需认证，不保存密码字段 |
+| 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统主题，页面、面板、图表、K 线、盈亏等分别配置 |
+| Android Material 3 导航 | 已实现并实测 | `MobileNavigation`：行情、图表、交易、账户；设备 UI 测试注入合成账户 |
+| 图表缩放和平移 | 已实现并测试 | `TradingChart`、`ChartViewport`、`PriceScale`；两轴分别缩放、图内双向平移、复位 |
+| 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期只保留最近 500 根，没有更早历史分页加载 |
+| 净额持仓、挂单、原始成交 | 已实现并用协议测试覆盖 | `TradovateBroker.rebuild` 从服务器实体映射，不生成远程替代数据 |
+| 市价、Limit、Stop、撤单、全量净仓平仓 | 已实现，真实交易未联调 | `AccountSession` 命令及 Tradovate REST；受理不等于成交，不支持部分平仓命令 |
+| 新订单附带 SL/TP | 已实现，真实交易未联调 | 新订单通过 `order/placeoso`；不允许在已有同合约净仓上叠加括号保护 |
+| 已有保护价修改 | 有条件实现 | 仅修改唯一确认且数量匹配的保护单，每次一条；已有净仓补加/删除保护、复杂 ATM/OCO 管理未实现 |
+| 挂单改价 | 有条件实现并测试 | 仅可编辑入场 Limit/Stop；保护单走独立入口，部分成交等状态拒绝编辑 |
+| 费用、保证金、预计净盈亏 | 远程实现有限 | Tradovate 订单预估仅算毛盈亏，费用/预计保证金为未知；账户资金快照与订单预估是不同能力 |
+| 已配对平仓历史/实现净盈亏 | 仅本地 Demo 提供 | 远程输出 `Execution`，没有配对的 `ClosedTrade`；缺少手续费核算与点击远程成交定位图表 |
+| 指令结果恢复 | 部分实现，有确认缺口 | HTTP 不确定结果不重发；受理后等待事件的超时/重连对账不完整，见[审计 A1](implementation-audit.md) |
+| 十字线、图层及时间缺口 | 部分实现 | 当前为竖线和收盘点，无完整横向价格十字线；保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
+| iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |
+| 本地 Demo | 保留实现，默认关闭 | `demo-broker` 仍是 `composeApp` 的编译依赖，未从产物完全移除；离线测试显式启用 `includeDemoBrokers = true` |
+
+主要源目录：[应用运行时](../composeApp/src/commonMain/kotlin/com/unitrading/app/)、[共享 UI](../composeApp/src/commonMain/kotlin/com/unitrading/ui/)、[图表](../composeApp/src/commonMain/kotlin/com/unitrading/chart/)、[Tradovate 插件](../tradovate-broker/src/commonMain/kotlin/com/unitrading/tradovate/)。
+
+## 构建与 CI
+
+- 共享 JVM 编译使用 JDK 21 toolchain；Kotlin 2.4.20、Compose Multiplatform 1.12.0、Gradle 9.7.1、AGP 9.4.0。
+- Android compileSdk 37、targetSdk 36、minSdk 26。CI 安装包标识为 `platforms;android-37.0`；本机 SDK 路径放在不提交的 `local.properties`。
+- Windows 打包需要完整 JDK 的 `jpackage.exe`。本机 JBR 21 缺少该工具，1.1.3/1.1.4 分发目录使用 Microsoft JDK 25.0.2 打包；JBR 可编译不代表可打包。
+
+```powershell
+./gradlew.bat :composeApp:run
+./gradlew.bat :composeApp:createDistributable
+./gradlew.bat :androidApp:assembleDebug
+./gradlew.bat :androidApp:assembleRelease
+./gradlew.bat :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
+```
+
+Android debug 使用调试签名；本机构建 release 默认为未签名 APK。release 已启用 R8 代码压缩和资源裁剪，debug 编译成功不等同于 release 运行通过。
+
+[GitHub workflow](../.github/workflows/build.yml) 的现有流程：
+
+| 阶段 | 实际配置 |
+| --- | --- |
+| 构建 | branch push / PR / 手动执行 `:androidApp:assembleRelease`，检查 mapping/resources 输出并上传 unsigned APK |
+| 签名 | main/master 或 `v*` tag 的 push 使用 secrets 签名，再上传 signed APK |
+| 通知 | 对上述发布 push 调用 Telegram；未配置 Telegram secrets 时跳过 |
+| 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
+| Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
+| 测试门禁 | **没有**调用 JVM/Compose 或 Android instrumentation 测试；没有 Windows/iOS 构建 job |
+
+本次只核对仓库配置，不读取 secrets、不触发发布/消息，也不将 workflow 存在写成云端签名或发布已经成功。仓库目前仅使用 main；workflow 中兼容 master 的条件不代表存在 master 分支。
+
+## 验证证据及限制
+
+- 1.1.4 常规测试为 **127 项**：broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48，0 失败、0 跳过。
+- 本次审计重跑上述测试，并额外运行 3 个显式启用的诊断探针，合计 130 项；探针确认 A1 的缺陷现状，**通过不表示缺陷已修复**。命令及用例见[审计](implementation-audit.md)。
+- Android 1.1.4 已有模拟器触摸 UI 证据：导航、主题保存/Activity 重建、两轴缩放；1.1.3 另有 Keystore 加密、篡改拒绝和跨进程读取测试。本次未重新操作设备。
+- Windows Tradovate Demo 只读证据来自 1.1.1：2 个授权账户、2 个合约、155 根历史 K 线，订单请求 0。这不是最新版本真实交易或保存会话后的真实免登录验收。
+- Windows 可运行目录、Android 1.1.4 debug APK 曾构建成功。真机、真实下单/改价/成交回执、iOS、Windows MSI、release APK 的设备运行均未在本次核对中验证。
+- 日志、截图、报告、APK 位于被 Git 忽略的 `artifacts/` / `build/`，克隆源码不会自带这些文件。历史 APK hash 只对应当时的产物。

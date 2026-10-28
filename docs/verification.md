@@ -1,4 +1,18 @@
-# Desktop / Android 验证记录
+# 验证记录索引
+
+## 当前：1.1.4 / 2dcf7e1
+
+2026-10-29 核对：常规套件 127 项（broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48），全部通过。本次另用 3 个显式启用的审计探针确认指令等待/重连对账缺口；探针通过表示复现成功，不表示业务缺口已修复。详见[实现核对](implementation-audit.md)。
+
+- Windows 可运行目录、Android 1.1.4 debug APK 已构建；模拟器 UI 已验证主题、导航、两轴缩放和 Activity 重建后的主题恢复，见[1.1.4 记录](theme-navigation-chart.md)。
+- 加密会话保存、DPAPI / Keystore、篡改拒绝与恢复测试见[1.1.3 记录](saved-login-fix.md)；没有将其写成真实账户长期免登录实测。
+- Tradovate Demo 真实只读账户、报价和历史证据来自[1.1.1 登录交接记录](tradovate-login-fix.md)。真实下单、改价及成交回执尚未联调。
+- Android release/R8、CI 签名和 Telegram 流程有实现；其配置及测试门禁缺口见[当前状态](current-status.md)。不以 debug 测试代替 release 验收。
+- iOS 同时缺少登录实现与 Mac 构建验证；真机、MSI 和本次云端发布状态未验证。
+
+下面保留初版本地 Demo 的原始记录。52 项测试、hash、模拟账户流程和“未接入真实交易商”等描述只对应当时版本，不是当前状态。
+
+## 历史：首版本地 Demo 验证记录
 
 日期：2026-10-28。按用户最新范围验收 Windows Desktop 与 Android，并增加 Limit/Stop 草稿及已挂单入场线拖动。iOS 仅保留工程骨架，未在 Mac/Xcode 编译或运行。
 

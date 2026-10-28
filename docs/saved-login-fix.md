@@ -1,5 +1,7 @@
 # Windows / Android 登录保存修复
 
+> 版本记录：1.1.3。119 项测试、APK hash 与版本号保留历史值；当前应用版本、测试及已知缺口见 [current-status](current-status.md)。
+
 日期：2026-10-28；版本：1.1.3。
 
 ## 原因与行为

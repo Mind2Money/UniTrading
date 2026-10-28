@@ -1,5 +1,7 @@
 # UniTrading：Kotlin Multiplatform 本地交易终端实施计划
 
+> 文档类型：初版历史设计。当前默认无模拟券商，已接入 Tradovate、加密会话保存及可配置主题；旧阶段要求不代表当前承诺。当前状态见 [current-status](current-status.md)，未完成项见 [实现核对](implementation-audit.md)。
+
 日期：2026-10-27 制定，2026-10-28 更新。状态：Desktop/Android 本地 Demo 已实现并验证；iOS 工程未验证。本计划先于业务代码写入，以下阶段描述保留为实施基线，实际结果以 [验证记录](verification.md) 为准。
 
 > 范围调整：2026-10-27 先以 Desktop 完成基础功能；2026-10-28 用户再次确认 **Android 也纳入**。本次验收包含 Windows Desktop 与 Android；iOS 保留工程骨架，因无 Mac/Xcode 不声明编译或运行通过。
@@ -242,6 +244,8 @@ androidApp / iosApp / desktopMain
 | iOS | 共享入口、框架导出、Xcode 工程静态检查 | 编译、签名、模拟器/真机运行须 Mac；当前未验证 |
 
 ## 9. Git 交付
+
+当前工作方式（2026-10-29 核对）：按用户要求仅保留并使用 `main`，不再新建任务分支。下列项目描述最初空仓库阶段。
 
 - 当前空仓库没有已有实现可迁移。
 - 实现使用任务分支，保留用户后续产生的无关修改。

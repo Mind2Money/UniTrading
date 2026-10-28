@@ -2,7 +2,7 @@
 
 Kotlin Multiplatform 交易终端，通过 Tradovate 登录连接服务器账户。**Windows Desktop / Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。**
 
-**本地 Demo 不使用真实资金；Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 的 Demo 登录、账户、报价及历史已通过只读实测；没有发送订单，真实下单与成交回执仍未联调。
+**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 的 Tradovate Demo 登录、账户、报价及历史曾通过只读实测；真实下单与成交回执仍未联调。当前应用 1.1.4；[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
 ## 功能
 
@@ -10,14 +10,14 @@ Kotlin Multiplatform 交易终端，通过 Tradovate 登录连接服务器账户
 - Android 使用 Material 3 图标底部导航；桌面保留多栏工作台。
 - 深色、浅色、跟随系统主题；可单独配置页面/面板/图表背景、网格、K 线、盈亏数字和保护线颜色，RGB 选色与十六进制输入，保存后重启恢复。
 - 由插件提供品种、合约规格、Bid/Ask、历史 K 线、账户、订单及成交。
-- 市价、限价、突破挂单；撤单、全量平仓、独立仓位 SL/TP。
+- 市价、限价、突破挂单；撤单、全量净仓平仓；新订单附带 SL/TP，或修改满足关联条件的已有保护单。
 - M1/M5/M15/H1 图表、十字线、OHLC 数据表；右侧价格轴纵向滑动缩放价格，底部时间轴横向滑动缩放时间，图表自由双向平移与重置视图。
-- 当前仓位和历史开/平仓标记；选中历史可查看连线。
+- 当前仓位和成交标记；本地 Demo 配对历史可选中查看连线，Tradovate 当前提供原始成交列表/标记，未实现开平配对和点击原始成交定位。
 - Tradovate 原生父子、OCO、单层 ATM 保护关联识别；挂单与图表区分入场、TP、SL 和待确认订单。
 - 拖动 SL/TP 先预览，再确认提交；也可以使用价格输入框。
 - Limit/Stop 草稿入场线可拖动并回填表单；已提交挂单可拖动后确认改价，保持类型、数量及 SL/TP 不变。
-- 下单前显示预计净盈亏、收益/风险、保证金和双边手续费。
-- 整数价格/数量/微美元账本、账户隔离、请求幂等、快照恢复。
+- 下单前显示收益/风险及估算；Tradovate 使用毛盈亏，费用和预计保证金标为未知。本地 Demo 测试引擎才有完整净结果、费用和保证金估算。
+- 整数价格/数量/微美元模型与账户隔离；远程命令仅按会话去重，不承诺跨重启幂等。本地 Demo 测试引擎保存账本快照，远程状态从服务器重建。
 - 桌面多栏工作台和手机导航/下单面板。
 
 ## 工程
@@ -33,7 +33,7 @@ iosApp/        SwiftUI 容器、Xcode 工程
 docs/          计划、插件接入与验证记录
 ```
 
-依赖关系：应用入口 → composeApp → broker-api / demo-broker；demo-broker → broker-api。界面不直接修改交易账本。
+依赖关系：应用入口 → composeApp → broker-api / tradovate-broker / demo-broker；两个 broker 模块依赖 broker-api。demo-broker 默认不注册，但仍是编译依赖。界面不直接修改交易账本。
 
 ## 构建要求
 
@@ -73,7 +73,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。实际通过状态和平台限制见 [验证记录](docs/verification.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.1.4 常规套件为 127 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 另有 R8 release 构建、签名及 Telegram 通知配置，但尚无测试 job，见[构建与 CI](docs/current-status.md)。
 
 ### iOS（必须在 Mac 上）
 
@@ -103,7 +103,7 @@ Windows 和 Android 登录后会在本机加密保存会话，重启自动恢复
 
 Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务。密码和令牌不会写入 Demo 存档、命令行或日志。旧版本从未保存应用会话，升级到 1.1.3 后需要登录一次，之后才能自动恢复。
 
-**限制**：网页登录成功不保证 API 或实时行情权限；受理不等于成交。超时结果未知时不自动重发，当前会话阻止继续写入，需要先在官网核对。已有保护价仅在服务器括号/OCO 关系和数量唯一匹配时允许修改；首次添加保护通过服务端 OSO；复杂、部分匹配或增删保护请在官网处理。
+**限制**：网页登录成功不保证 API 或实时行情权限；受理不等于成交。超时结果未知时不自动重发，当前会话阻止继续写入，需要先在官网核对。已受理后缺失事件、重连或仓位删除的对账仍有[已确认缺口](docs/implementation-audit.md)。已有保护价仅在服务器关系和数量唯一匹配时允许修改；OSO 用于新入场订单携带保护，已有净仓补加/删除保护及复杂关联需在官网处理。
 
 详细边界和证据见 [Tradovate 使用与验证](docs/tradovate.md)；网页登录后卡住的修复及只读实测见 [登录交接修复](docs/tradovate-login-fix.md)。
 
@@ -116,14 +116,17 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 ## 数据与验证边界
 
-- 默认运行不注册本地模拟券商，不加载、生成或覆盖旧模拟账本；未登录不会显示假账户或假行情。`demo-broker` 模块只用于离线回归测试，测试须显式启用。
+- 默认运行不注册本地模拟券商，不加载、生成或覆盖旧模拟账本；未登录不会显示假账户或假行情。`demo-broker` 保留为编译依赖和离线测试引擎，测试须显式启用。
 - Windows 主题设置沿用本机数据目录的 `theme-v1.json`；Android 使用应用私有文件。`UNITRADING_DATA_DIR` 可将桌面测试数据隔离到其他目录。
 - 已保存登录与主题分开存储；清除登录不清除主题。旧模拟文件不会被自动删除。
 - 真实交易遵循 Tradovate 服务器授权与状态，图表视图及配色变化不会提交交易。
-- iOS 保留工程骨架，尚未实测构建或运行。
+- iOS 保留工程骨架，缺少网页登录和凭据存储接线；默认无交易商时没有可用登录路径，也尚未实测构建或运行。
 
 ## 文档
 
+- [文档索引](docs/README.md)
+- [当前实现与验证状态](docs/current-status.md)
+- [代码与文档核对](docs/implementation-audit.md)
 - [实施计划](docs/implementation-plan.md)
 - [UI 与图表交互计划](docs/ui-and-chart-design.md)
 - [交易商插件接入](docs/plugin-guide.md)

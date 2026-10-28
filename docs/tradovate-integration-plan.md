@@ -1,6 +1,8 @@
 # Tradovate 接入计划
 
-日期：2026-10-28。此文件保留初版接入方案。后续按 BatchTradovate 对照修复了认证域、自动交接、账户实体订阅和 K 线时间解析；最新 86 项自动测试、52 项 native 断言及真实 Demo 只读结果见 [登录交接修复](tradovate-login-fix.md)。已验证账户与行情/历史读取，未发送交易。
+> 文档类型：Tradovate 初版历史设计。当前应用 1.1.4 默认从登录页开始，1.1.3 起加密保存会话；下文保留早期方案和来源证据。当前状态及缺口见 [current-status](current-status.md) 与 [实现核对](implementation-audit.md)。
+
+日期：2026-10-28。此文件保留初版接入方案。后续按 BatchTradovate 对照修复了认证域、自动交接、账户实体订阅和 K 线时间解析；1.1.1 的 86 项自动测试、52 项 native 断言及真实 Demo 只读结果见 [登录交接修复](tradovate-login-fix.md)。已验证账户与行情/历史读取，未发送交易。
 
 ## Context
 
@@ -29,7 +31,7 @@
 - Windows 使用 WebView2 独立原生登录窗（系统 WebView2 Runtime + .NET Framework WinForms 小型 host）。开启密码保存/自动填充；由浏览器提示用户保存，profile 按环境独立。
 - Android 使用 WebView + AndroidX WebKit 文档起始脚本和限定 origin 的消息监听。保存/自动填充由用户选择的 Android Autofill 服务处理；无服务时明确提示配置，不声称 WebView 自带密码库。
 - 登录桥只接收官方 HTTPS 主文档，白名单核对响应/WS 地址与环境；不读取密码字段、不给不可信页面开放本机方法。
-- 令牌通过进程管道（Desktop）或 origin-scoped WebMessage（Android）交接，只存内存，不经命令行、日志、剪贴板或 Demo JSON。
+- 令牌通过进程管道（Desktop）或 origin-scoped WebMessage（Android）交接，初版只存内存（1.1.3 起改为平台加密保存），不经命令行、日志、剪贴板或 Demo JSON。
 - 保留官方登录流程中的验证码/MFA，失败显示真实原因；不绕过授权、不切换第三方中转站。
 
 Demo/Live 显式选择，默认 Demo；获取会话后自动连接只同步数据，不自动提交交易。用户点击确认的订单由原生 Tradovate API 执行；参考扩展选择 TV 代理的理由是跨账户跟单路径一致性，本项目不做自动跟单。
@@ -51,7 +53,7 @@ tradovate-broker → 可替换 HTTP / WebSocket transport
 - 新增 `tradovate-broker` KMP 模块：认证/连接、协议帧、REST/WS 客户端、状态归并、合约解析、行情/历史、订单适配。
 - 使用共享 Ktor 网络层，Desktop/Android 使用适配引擎；测试通过 mock transport，不需要真实账户。
 - 端点按环境固定白名单，不接受任意 URL + token 组合；日志和异常清除密码、token、授权头。
-- 用户选择记住密码时，由 WebView2 / Android 系统密码服务保存；应用自身只在内存中保留会话 token，不将敏感字段写入现有 JSON Demo 快照。
+- 用户选择记住密码时，由 WebView2 / Android 系统密码服务保存；初版应用自身只在内存中保留会话 token（1.1.3 后已被加密会话存储替代），不将敏感字段写入现有 JSON Demo 快照。
 - 生命周期包含连接中、已连接、认证失效、行情未授权、数据过期、断线/重连、数据重新同步；退出时关闭连接和取消订阅。
 
 ## 4. 共享契约需要补充
