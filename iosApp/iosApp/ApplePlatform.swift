@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import UIKit
 import WebKit
 import Security
@@ -26,7 +27,9 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
         navigation.modalPresentationStyle = .fullScreen
         navigation.isModalInPresentation = true
         loginWindow = navigation
-        presenter.present(navigation, animated: true)
+        var active = presenter.viewIfLoaded?.window?.windowScene?.windows.first(where: { $0.isKeyWindow })?.rootViewController ?? presenter
+        while let presented = active.presentedViewController { active = presented }
+        active.present(navigation, animated: true)
     }
 
     func close() {
@@ -36,6 +39,30 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
     func read() -> NativeStorageResult { keychain.read() }
     func write(value: String) -> NativeStorageResult { keychain.write(value) }
     func clear() -> NativeStorageResult { keychain.clear() }
+
+    #if DEBUG
+    func runUISelfTest(attempts: Int = 50) {
+        guard presentingController?.viewIfLoaded?.window != nil else {
+            precondition(attempts > 0, "Compose root did not attach to a window")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.runUISelfTest(attempts: attempts - 1) }
+            return
+        }
+        // Exercise the exported presenter protocol and the real WebKit controller without account credentials.
+        bridge.presenter?.open(environment: "demo", script: "/* UI host smoke test */")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard let window = self.loginWindow, let login = window.topViewController as? TradovateWebLogin else {
+                preconditionFailure("Native login controller was not presented")
+            }
+            precondition(window.view.window != nil && login.bridgeIsInstalled)
+            self.close()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                precondition(self.loginWindow == nil && window.presentingViewController == nil)
+                print("NATIVE_UI_SELF_TEST PASS")
+                exit(0)
+            }
+        }
+    }
+    #endif
 }
 
 final class SessionKeychain {
@@ -53,7 +80,7 @@ final class SessionKeychain {
         let status = SecItemCopyMatching(request as CFDictionary, &result)
         if status == errSecItemNotFound { return NativeStorageResult(value: nil, error: nil) }
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            return NativeStorageResult(value: nil, error: "Keychain read failed")
+            return NativeStorageResult(value: nil, error: "Keychain read failed (OSStatus \(status))")
         }
         return NativeStorageResult(value: value, error: nil)
     }
@@ -64,11 +91,11 @@ final class SessionKeychain {
         if status == errSecItemNotFound {
             status = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
         }
-        return NativeStorageResult(value: nil, error: status == errSecSuccess ? nil : "Keychain write failed")
+        return NativeStorageResult(value: nil, error: status == errSecSuccess ? nil : "Keychain write failed (OSStatus \(status))")
     }
     func clear() -> NativeStorageResult {
         let status = SecItemDelete(query as CFDictionary)
-        return NativeStorageResult(value: nil, error: status == errSecSuccess || status == errSecItemNotFound ? nil : "Keychain delete failed")
+        return NativeStorageResult(value: nil, error: status == errSecSuccess || status == errSecItemNotFound ? nil : "Keychain delete failed (OSStatus \(status))")
     }
 }
 
@@ -92,6 +119,14 @@ final class TradovateWebLogin: UIViewController, WKScriptMessageHandler, WKNavig
     private var completed = false
     private var captured = false
     private var automaticReturn: DispatchWorkItem?
+    #if DEBUG
+    var bridgeIsInstalled: Bool {
+        guard let web = web else { return false }
+        let scripts = web.configuration.userContentController.userScripts
+        return !web.configuration.websiteDataStore.isPersistent && scripts.count == 1 &&
+            scripts[0].isForMainFrameOnly && scripts[0].injectionTime == .atDocumentStart
+    }
+    #endif
 
     init(environment: String, script: String, bridge: NativePlatformBridge) {
         self.environment = environment; self.script = script; self.bridge = bridge
@@ -173,8 +208,10 @@ enum NativePlatformSelfTest {
     static func run() {
         let store = SessionKeychain(service: "com.unitrading.tests.\(UUID().uuidString)")
         defer { _ = store.clear() }
-        precondition(store.read().value == nil && store.read().error == nil)
-        precondition(store.write("synthetic-platform-test").error == nil)
+        let initial = store.read()
+        precondition(initial.value == nil && initial.error == nil, initial.error ?? "Unexpected existing test item")
+        let firstWrite = store.write("synthetic-platform-test")
+        precondition(firstWrite.error == nil, firstWrite.error ?? "")
         precondition(store.read().value == "synthetic-platform-test")
         precondition(store.write("synthetic-platform-update").error == nil)
         precondition(store.read().value == "synthetic-platform-update")

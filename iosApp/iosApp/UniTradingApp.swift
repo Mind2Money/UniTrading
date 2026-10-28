@@ -25,6 +25,11 @@ struct TradingView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
         let controller = MainViewControllerKt.MainViewController(platform: context.coordinator.bridge)
         context.coordinator.presentingController = controller
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--native-ui-self-test") {
+            DispatchQueue.main.async { context.coordinator.runUISelfTest() }
+        }
+        #endif
         return controller
     }
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}

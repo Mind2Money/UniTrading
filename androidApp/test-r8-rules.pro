@@ -2,3 +2,8 @@
 # Its deprecated enum type belongs to the JDK compiler, not the Android runtime.
 # Keep this rule limited to the test APK and this metadata-only type.
 -dontwarn javax.lang.model.element.Modifier
+
+# AndroidJUnitRunner discovers these classes and their @Test methods reflectively.
+# This preserves only test APK entrypoints; production application shrinking stays enabled.
+-keep class com.unitrading.android.**Test { *; }
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault,InnerClasses,EnclosingMethod
