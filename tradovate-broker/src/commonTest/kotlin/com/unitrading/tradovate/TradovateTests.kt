@@ -1,0 +1,293 @@
+package com.unitrading.tradovate
+
+import com.unitrading.broker.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.*
+import kotlin.io.encoding.Base64
+import kotlin.test.*
+
+private const val TEST_TIME = 1_798_589_000_000L
+private val TEST_INSTANT get() = kotlin.time.Instant.fromEpochMilliseconds(TEST_TIME).toString()
+private fun obj(value: String) = Json.parseToJsonElement(value).jsonObject
+private fun fakeToken(user: Long = 42) = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe.encode("{\"sub\":$user,\"exp\":4102444800}".encodeToByteArray()).trimEnd('=') + ".test-signature-only"
+
+internal class MockTradovateWire : TradovateWire {
+    data class Request(val method: String, val path: String, val body: JsonObject?)
+    val requests = mutableListOf<Request>()
+    val account = MockSocket(false)
+    val market = MockSocket(true)
+    var failWrite = false
+    var rejectWrite = false
+    var rejectMarket = false
+    var snapshot = obj("""{
+      "accounts":[{"id":100,"name":"Demo account","userId":42},{"id":101,"name":"Second account","userId":42},{"id":999,"name":"Foreign account","userId":9}],
+      "contracts":[{"id":200,"name":"MESZ6","contractMaturityId":300}],
+      "contractMaturities":[{"id":300,"productId":400,"expirationMonth":202612}],
+      "products":[{"id":400,"name":"MES","description":"Micro E-mini S&P","currencyId":1,"productType":"Futures","tickSize":0.25,"valuePerPoint":5}],
+      "currencies":[{"id":1,"name":"USD"}],
+      "cashBalances":[{"id":1,"accountId":100,"currencyId":1,"amount":25000,"timestamp":"$TEST_INSTANT"}],
+      "positions":[],"orders":[],"orderVersions":[],"fills":[]
+    }""")
+    override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+        requests.add(Request(method, path, body))
+        if (path.startsWith("cashBalance/")) return obj("""{"totalCashValue":25000,"netLiq":25000,"initialMargin":0}""")
+        if (path.startsWith("contract/suggest")) return snapshot["contracts"]!!
+        if (path.startsWith("order/")) {
+            if (failWrite) throw TradovateRemoteException(0, "timeout")
+            if (rejectWrite) return obj("""{"failureReason":"Unauthorized","failureText":"Trading disabled"}""")
+            return obj("""{"orderId":700,"oso1Id":701,"oso2Id":702}""")
+        }
+        error("Unexpected REST request: $path")
+    }
+    override suspend fun socket(url: String): TradovateWireSocket = if (url.contains("md")) market else account
+    override fun close() { account.queue.close(); market.queue.close() }
+
+    inner class MockSocket(private val md: Boolean) : TradovateWireSocket {
+        val queue = Channel<String>(Channel.UNLIMITED).apply { trySend("o") }
+        val sent = mutableListOf<String>()
+        override suspend fun send(text: String) {
+            if (text == "[]") return
+            val parts = text.split('\n')
+            val route = parts[0]; val id = parts[1].toInt()
+            sent.add(route)
+            val data = when (route) {
+                "user/syncrequest" -> snapshot
+                "md/subscribequote" -> if (rejectMarket) obj("""{"errorCode":"AccessDenied","errorText":"No market entitlement"}""") else obj("""{"mode":"RealTime"}""")
+                "md/getChart" -> obj("""{"historicalId":12,"realtimeId":13}""")
+                else -> obj("{}")
+            }
+            queue.send("a[${buildJsonObject { put("s", 200); put("i", id); put("d", data) }}]")
+            if (route == "md/subscribequote" && !rejectMarket) quote()
+            if (route == "md/getChart") queue.send("""a[{"e":"chart","d":{"charts":[{"id":12,"bars":[{"timestamp":"$TEST_INSTANT","open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+        }
+        suspend fun quote(bid: String = "5500", ask: String = "5500.25", time: Long = TEST_TIME) {
+            queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(time)}","entries":{"Bid":{"price":$bid},"Offer":{"price":$ask}}}]}}]""")
+        }
+        suspend fun entity(type: String, data: JsonObject) { queue.send("a[${buildJsonObject { put("e", "props"); putJsonObject("d") { put("entityType", type); put("eventType", "Updated"); put("entity", data) } }}]") }
+        override suspend fun receive() = queue.receiveCatching().getOrNull()
+        override suspend fun close() { queue.close() }
+    }
+}
+
+class TradovateTests {
+    private fun session() = TradovateSession(TradovateEnvironment.DEMO, fakeToken(), fakeToken(), 42, "test", 4_102_444_800_000)
+    private suspend fun TestScope.ready(wire: MockTradovateWire = MockTradovateWire()): Pair<TradovateBroker, MockTradovateWire> {
+        val broker = TradovateBroker(session(), wire, backgroundScope, now = { TEST_TIME })
+        broker.connect()
+        broker.watch("MESZ6", Timeframe.M5)
+        runCurrent()
+        assertTrue(broker.market.value.quotes.containsKey("MESZ6"))
+        return broker to wire
+    }
+
+    @Test fun originEnvironmentAndMainFrameAreMandatory() {
+        val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)
+        val message = """{"kind":"auth","environment":"demo","accessToken":"${fakeToken()}","userId":42}"""
+        assertFalse(accumulator.accept(message, "https://evil.example", true))
+        assertFalse(accumulator.accept(message, "https://trader.tradovate.com.evil.example", true))
+        assertFalse(accumulator.accept(message, "https://trader.tradovate.com", false))
+        assertFalse(accumulator.accept(message.replace("\"demo\"", "\"live\""), "https://trader.tradovate.com", true))
+        assertTrue(accumulator.accept(message, "https://trader.tradovate.com", true))
+        assertEquals(42, accumulator.result().userId)
+        assertFalse(accumulator.result().toString().contains(fakeToken()))
+    }
+    @Test fun websocketCaptureCanRecoverUserIdWithoutReadingBrowserStorage() {
+        val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)
+        assertFalse(accumulator.accept("""{"kind":"auth","environment":"demo","mdAccessToken":"${fakeToken()}"}""", "https://trader.tradovate.com", true))
+        assertTrue(accumulator.accept("""{"kind":"auth","environment":"demo","accessToken":"${fakeToken()}"}""", "https://trader.tradovate.com", true))
+        assertEquals(fakeToken(), accumulator.result().mdAccessToken)
+        assertEquals(42, accumulator.result().userId)
+    }
+    @Test fun loginScriptDoesNotReadPasswordFieldsOrStorage() {
+        val script = TradovateLoginScript.forEnvironment(TradovateEnvironment.DEMO)
+        for (forbidden in listOf("localStorage", "sessionStorage", "input[type", ".password", "document.cookie")) assertFalse(script.contains(forbidden), forbidden)
+        assertTrue(script.contains("window.top !== window"))
+        assertTrue(script.contains("demo.tradovateapi.com"))
+    }
+    @Test fun frameDecoderHandlesAllMessagesAndIgnoresHeartbeats() {
+        assertEquals(2, decodeFrames("a[{\"s\":200,\"i\":1},{\"e\":\"props\",\"d\":{}}]").size)
+        assertTrue(decodeFrames("h").isEmpty())
+        assertTrue(decodeFrames("o").isEmpty())
+        assertTrue(decodeFrames("c[1000,\"closed\"]").isEmpty())
+    }
+    @Test fun exactDecimalsAndAveragePriceNeedNotLandOnTick() {
+        assertEquals(250_000, decimalUnits("2.5e-1", 6))
+        assertEquals(5_500_083_333, decimalUnits("5500.083333333", 6))
+        assertNull(decimalUnits("NaN", 6))
+        assertNull(decimalUnits("1e100", 6))
+        val spec = Instrument("MESZ6", "MES", "Futures", 6, 250_000, 1_250_000, quantityUnit = "张", quantityDecimals = 0)
+        assertEquals(3_750_000, grossPnl(spec, Side.BUY, 300, 5_500_250_000, 5_500_500_000))
+        assertEquals(2_500_005, grossPnl(spec, Side.BUY, 300, 5_500_083_333, 5_500_250_000))
+        assertNull(spec.parseQuantity("0.01"))
+        assertEquals(100, spec.parseQuantity("1"))
+    }
+    @Test fun entityVersionsDoNotRegressAndDeletedOrdersDisappear() {
+        val book = EntityBook()
+        book.apply("orderVersion", obj("""{"id":12,"orderId":7,"orderQty":2,"price":5500}"""))
+        book.apply("orderVersion", obj("""{"id":9,"orderId":7,"orderQty":1,"price":5400}"""))
+        assertEquals(2, book.orderVersion(7)?.long("orderQty"))
+        book.apply("order", obj("""{"id":7,"ordStatus":"Working"}"""))
+        book.apply("order", obj("""{"id":7}"""), deleted = true)
+        assertNull(book.item("order", 7))
+    }
+    @Test fun connectLoadsServerCatalogQuoteAndHistoryWithoutAnyOrder() = runTest {
+        val (broker, wire) = ready()
+        assertEquals(listOf("100", "101"), broker.accounts.map { it.id })
+        assertEquals("MESZ6", broker.instruments.single().symbol)
+        assertEquals(250_000, broker.instruments.single().tickSize)
+        assertEquals(1_250_000, broker.instruments.single().tickValueMicrosPerLot)
+        assertEquals(100, broker.instruments.single().lotStepHundredths)
+        assertEquals(5_500_000_000, broker.market.value.quotes.getValue("MESZ6").bid)
+        assertEquals(1, broker.history("MESZ6", Timeframe.M5).size)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+        assertFalse(broker.capabilities.hedging)
+    }
+    @Test fun remotePreviewUsesIntegerContractsAndUnknownFeesMargin() = runTest {
+        val (broker, _) = ready()
+        val account = broker.openSession("100")
+        val request = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100, stopLoss = 5_490_000_000, takeProfit = 5_510_000_000)
+        val preview = account.preview(request)
+        assertTrue(preview.valid, preview.errors.toString())
+        assertFalse(preview.marginKnown)
+        assertFalse(preview.feesKnown)
+        assertEquals(-51_250_000, preview.stopLossPnlMicros)
+        assertFalse(account.preview(request.copy(lotsHundredths = 1)).valid)
+        assertFalse(account.preview(request.copy(stopLoss = 5_499_900_000)).valid)
+    }
+    @Test fun bracketOrderIsOneServerOsoRequestNotTwoIndependentOrders() = runTest {
+        val (broker, wire) = ready()
+        val account = broker.openSession("100")
+        val request = OrderRequest("MESZ6", Side.BUY, OrderKind.LIMIT, 100, 5_499_000_000, 5_490_000_000, 5_510_000_000)
+        val first = account.placeOrder("test-1", request)
+        assertTrue(first.accepted, first.message)
+        val sent = wire.requests.single { it.path.startsWith("order/") }
+        assertEquals("order/placeoso", sent.path)
+        assertEquals(1, sent.body?.long("orderQty"))
+        assertEquals("5499.000000", sent.body?.str("price"))
+        assertEquals("Stop", (sent.body?.get("bracket1") as JsonObject).str("orderType"))
+        assertEquals("Limit", (sent.body?.get("bracket2") as JsonObject).str("orderType"))
+        assertEquals(first, account.placeOrder("test-1", request))
+        assertEquals(1, wire.requests.count { it.path.startsWith("order/") })
+        assertTrue(account.state.value.positions.isEmpty())
+    }
+    @Test fun timeoutBlocksDuplicateWritesInsteadOfPretendingFailure() = runTest {
+        val wire = MockTradovateWire().apply { failWrite = true }
+        val (broker, _) = ready(wire)
+        val account = broker.openSession("100")
+        val request = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)
+        val result = account.placeOrder("unknown", request)
+        assertEquals(CommandOutcome.UNKNOWN, result.outcome)
+        assertFalse(result.accepted)
+        assertEquals(result, account.placeOrder("unknown", request))
+        assertFalse(account.placeOrder("new-id", request).accepted)
+        assertEquals(1, wire.requests.count { it.path.startsWith("order/") })
+        assertFalse(broker.market.value.tradingReady)
+    }
+    @Test fun rejectedOrderDoesNotCreateLocalPosition() = runTest {
+        val wire = MockTradovateWire().apply { rejectWrite = true }
+        val (broker, _) = ready(wire)
+        val account = broker.openSession("100")
+        val result = account.placeOrder("reject", OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100))
+        assertFalse(result.accepted)
+        assertTrue(account.state.value.positions.isEmpty())
+        assertTrue(broker.market.value.tradingReady)
+    }
+    @Test fun missingMarketPermissionNeverGeneratesSyntheticQuotes() = runTest {
+        val wire = MockTradovateWire().apply { rejectMarket = true }
+        val broker = TradovateBroker(session(), wire, backgroundScope, now = { TEST_TIME })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertTrue(broker.market.value.quotes.isEmpty())
+        assertFalse(broker.openSession("100").preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).valid)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+    @Test fun netPositionAndRawFillsRemainServerAuthoritative() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":3,"netPrice":5500.083333333,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("order", obj("""{"id":700,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Filled","timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("fill", obj("""{"id":800,"orderId":700,"contractId":200,"action":"Buy","qty":3,"price":5500.25,"active":true,"timestamp":"$TEST_INSTANT"}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        assertEquals(300, account.state.value.positions.single().lotsHundredths)
+        assertFalse(account.state.value.positions.single().protectionEditable)
+        assertEquals(1, account.state.value.executions.size)
+        assertTrue(account.state.value.trades.isEmpty())
+        assertTrue(broker.openSession("101").state.value.positions.isEmpty())
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":-1,"netPrice":5500.25,"timestamp":"$TEST_INSTANT"}"""))
+        runCurrent()
+        assertEquals(Side.SELL, account.state.value.positions.single().side)
+        assertEquals(100, account.state.value.positions.single().lotsHundredths)
+    }
+    @Test fun stopEntryModificationUsesStopPriceAndRejectsStaleVersions() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("order", obj("""{"id":710,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Working","timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1110,"orderId":710,"orderQty":1,"orderType":"Stop","stopPrice":5510}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        assertFalse(account.modifyOrder("stale", "710", 1100, 5_511_000_000).accepted)
+        assertFalse(broker.openSession("101").modifyOrder("foreign", "710", 1110, 5_511_000_000).accepted)
+        assertTrue(account.modifyOrder("move", "710", 1110, 5_511_000_000).accepted)
+        val body = wire.requests.last().body!!
+        assertEquals("5511.000000", body.str("stopPrice"))
+        assertNull(body["price"])
+        assertFalse(broker.market.value.tradingReady)
+        wire.account.entity("orderVersion", obj("""{"id":1111,"orderId":710,"orderQty":1,"orderType":"Stop","stopPrice":5511}"""))
+        runCurrent()
+        assertTrue(broker.market.value.tradingReady)
+        assertEquals(5_511_000_000, account.state.value.orders.single().request.entryPrice)
+    }
+    @Test fun protectiveOrdersRequireAnUnambiguousServerBracket() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":1,"netPrice":5500,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("order", obj("""{"id":701,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Working","parentId":700,"ocoId":702,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("order", obj("""{"id":702,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Working","parentId":700,"ocoId":701,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1701,"orderId":701,"orderQty":1,"orderType":"Stop","stopPrice":5490}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1702,"orderId":702,"orderQty":1,"orderType":"Limit","price":5510}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        val p = account.state.value.positions.single()
+        assertTrue(p.protectionEditable)
+        assertEquals(5_490_000_000, p.stopLoss)
+        assertFalse(account.modifyProtection("both", p.id, p.version, 5_491_000_000, 5_512_000_000).accepted)
+        assertTrue(account.modifyProtection("stop", p.id, p.version, 5_491_000_000, p.takeProfit).accepted)
+        assertEquals(701, wire.requests.last().body!!.long("orderId"))
+        wire.account.entity("orderVersion", obj("""{"id":1703,"orderId":701,"orderQty":1,"orderType":"Stop","stopPrice":5491}"""))
+        runCurrent()
+        assertTrue(broker.market.value.tradingReady)
+        assertEquals(5_491_000_000, account.state.value.positions.single().stopLoss)
+    }
+    @Test fun incompletePositionsCannotBeMistakenForAFlatAccount() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":1,"timestamp":"$TEST_INSTANT"}"""))
+        runCurrent()
+        val preview = broker.openSession("100").preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100))
+        assertFalse(preview.valid)
+        assertTrue(preview.errors.any { it.contains("未加载") })
+    }
+    @Test fun staleQuotesBlockNewOrdersButNotCancellation() = runTest {
+        var clock = TEST_TIME
+        val wire = MockTradovateWire()
+        val broker = TradovateBroker(session(), wire, backgroundScope, now = { clock })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.account.entity("order", obj("""{"id":710,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Working","timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1110,"orderId":710,"orderQty":1,"orderType":"Limit","price":5490}"""))
+        runCurrent()
+        clock += 16_000
+        val account = broker.openSession("100")
+        assertFalse(account.preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).valid)
+        assertTrue(account.cancelOrder("cancel", "710").accepted)
+        assertEquals("order/cancelorder", wire.requests.last().path)
+    }
+    @Test fun closeUsesServerLiquidationAndDoesNotLocallyFlatten() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":1,"netPrice":5500,"timestamp":"$TEST_INSTANT"}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        val result = account.closePosition("close", account.state.value.positions.single().id)
+        assertTrue(result.accepted)
+        assertEquals("order/liquidateposition", wire.requests.last().path)
+        assertEquals(200, wire.requests.last().body?.long("contractId"))
+        assertEquals(1, account.state.value.positions.size)
+    }
+}

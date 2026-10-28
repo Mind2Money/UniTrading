@@ -40,11 +40,24 @@ fun checkedAdd(a: Long, b: Long): Long {
     return result
 }
 
+fun multiplyDivide(a: Long, b: Long, c: Long, divisor: Long): Long {
+    require(divisor > 0 && a != Long.MIN_VALUE && b != Long.MIN_VALUE && c != Long.MIN_VALUE)
+    var remaining = divisor
+    val factors = longArrayOf(a, b, c)
+    for (i in factors.indices) {
+        var x = kotlin.math.abs(factors[i])
+        var y = remaining
+        while (y != 0L) { val next = x % y; x = y; y = next }
+        factors[i] /= x
+        remaining /= x
+    }
+    return checkedMultiply(checkedMultiply(factors[0], factors[1]), factors[2]) / remaining
+}
+
 fun grossPnl(instrument: Instrument, side: Side, lotsHundredths: Long, entry: Long, exit: Long): Long {
     require(entry > 0 && exit > 0 && lotsHundredths > 0 && instrument.tickSize > 0)
     val delta = if (side == Side.BUY) exit - entry else entry - exit
-    require(delta % instrument.tickSize == 0L) { "价格不符合最小变动单位" }
-    return checkedMultiply(checkedMultiply(delta / instrument.tickSize, instrument.tickValueMicrosPerLot), lotsHundredths) / 100
+    return multiplyDivide(delta, instrument.tickValueMicrosPerLot, lotsHundredths, checkedMultiply(instrument.tickSize, 100))
 }
 
 fun commission(instrument: Instrument, lotsHundredths: Long): Long =

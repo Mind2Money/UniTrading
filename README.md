@@ -1,12 +1,12 @@
 # UniTrading
 
-Kotlin Multiplatform 本地模拟交易终端。**本次交付包含 Windows Desktop 与 Android；iOS 保留共享代码和工程骨架，尚未在 Mac/Xcode 编译或运行。**
+Kotlin Multiplatform 交易终端，包含本地 Demo 与 Tradovate 插件。**Windows Desktop / Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。**
 
-**当前只支持本地模拟，不连接真实交易商，不使用真实资金。** 价格和初始交易均为演示数据，不能作为市场报价或交易建议。
+**本地 Demo 不使用真实资金；Tradovate Live 模式会把用户确认的指令发送至真实账户。** 本轮已验证离线协议与平台构建，真实登录、行情授权和服务器成交仍需用获授权账户联调。
 
 ## 功能
 
-- 接口注册式交易商：两组 Demo 交易商，每组两个独立账户。
+- 接口注册式交易商：两组本地 Demo（各两个账户），以及 Tradovate 网页登录接入。
 - 由插件提供品种、合约规格、Bid/Ask、历史 K 线、账户、订单及成交。
 - 市价、限价、突破挂单；撤单、全量平仓、独立仓位 SL/TP。
 - M1/M5/M15/H1 图表、十字线、缩放/浏览、OHLC 数据表。
@@ -22,6 +22,8 @@ Kotlin Multiplatform 本地模拟交易终端。**本次交付包含 Windows Des
 ```text
 broker-api/    共享模型、定点计算、BrokerPlugin / AccountSession
 demo-broker/   模拟报价、K线聚合、撮合、账户账本和快照
+tradovate-broker/  登录会话、REST/WS 协议、净额期货账户与服务器订单
+native-auth/   Windows WebView2 登录 host 与安全策略测试
 composeApp/    Compose 共享界面、图表、桌面/iOS 入口
 androidApp/    Android Activity 和应用配置
 iosApp/        SwiftUI 容器、Xcode 工程
@@ -65,7 +67,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ### 测试
 
 ```bash
-./gradlew :broker-api:desktopTest :demo-broker:desktopTest :composeApp:desktopTest
+./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
 ```
 
 包含领域测试、图表坐标测试与 Compose UI 交互测试。实际通过状态和平台限制见 [验证记录](docs/verification.md)。
@@ -83,6 +85,22 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 ```
 
 **当前开发环境为 Windows；iOS 工程的存在不等于已通过编译或真机验证。**
+
+## Tradovate 登录
+
+1. 点击“账户 / 切换账户”→“连接 Tradovate”，选择 **Demo** 或 **Live**。
+2. 点击“打开官方登录页”，只在 `trader.tradovate.com` 的内嵌浏览器中输入账号、密码及 MFA。
+3. 官方网页完成签名与登录；应用自动接收本窗口的账户/行情令牌。可先处理保存密码提示，再点击“完成登录”。
+4. 账户与品种由服务器加载；在行情栏输入合约前缀（如 MES），点击“查询服务器合约”。只支持已加载规格的 USD 线性期货。
+5. 数量单位为整数“张”；按服务器净额持仓显示，禁止将 0.01 手直接映射成期货订单。
+
+Windows 需要 WebView2 Runtime 与系统 .NET Framework。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 需要较新 System WebView；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
+
+登录令牌只在内存和进程管道/受限 WebMessage 中传递。Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务。不会把密码或 token 写进 Demo 存档、命令行或日志。
+
+**限制**：网页登录成功不保证 API 或实时行情权限；受理不等于成交。超时结果未知时不自动重发，当前会话阻止继续写入，需要先在官网核对。已有保护价仅在服务器括号/OCO 关系和数量唯一匹配时允许修改；首次添加保护通过服务端 OSO；复杂、部分匹配或增删保护请在官网处理。
+
+详细边界和证据见 [Tradovate 使用与验证](docs/tradovate.md)。
 
 ## 演示操作
 
@@ -102,7 +120,7 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 - 自动化演示可设置 `UNITRADING_DATA_DIR` 指向独立目录，不污染正常用户存档。
 - 保存失败会暂停行情并显示警告；损坏存档不会静默覆盖，重置需要确认。
 - 重置只影响本地模拟数据。首次演示仓位和历史来自同一模拟撮合引擎，恢复存档时不重复注入。
-- 首版仅 USD 线性合约、对冲持仓；无多币种换算、部分成交/平仓、隔夜费、真实流动性模型。
+- 本地 Demo 只支持 USD 线性合约与对冲持仓；Tradovate 使用服务器净额期货仓位，费用/保证金未知时明确显示未知。均未实现外币换算。
 - 挂单不预占保证金，触发时再次校验；跳空按实际模拟报价执行，止损结果不保证等于预估。
 
 ## 文档
@@ -111,3 +129,5 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 - [UI 与图表交互计划](docs/ui-and-chart-design.md)
 - [交易商插件接入](docs/plugin-guide.md)
 - [构建与验证记录](docs/verification.md)
+- [Tradovate 接入计划](docs/tradovate-integration-plan.md)
+- [Tradovate 使用与验证](docs/tradovate.md)

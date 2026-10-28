@@ -12,4 +12,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "UniTrading"
-include(":broker-api", ":demo-broker", ":composeApp", ":androidApp")
+include(":broker-api", ":demo-broker", ":tradovate-broker", ":composeApp", ":androidApp")

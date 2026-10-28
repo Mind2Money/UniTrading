@@ -26,9 +26,22 @@ data class Instrument(
     val minStopTicks: Long = 10,
     val commissionMicrosPerLot: Long = 0,
     val currency: String = "USD",
+    val quantityUnit: String = "手",
+    val quantityDecimals: Int = 2,
+    val displayPriceDecimals: Int = priceDecimals,
+    val estimatesIncludeFees: Boolean = true,
 ) {
-    fun formatPrice(price: Long) = formatFixed(price, priceDecimals)
+    fun formatPrice(price: Long): String {
+        val full = formatFixed(price, priceDecimals)
+        if (displayPriceDecimals >= priceDecimals) return full
+        val trimmed = full.trimEnd('0').trimEnd('.')
+        val parts = trimmed.split('.')
+        return if (displayPriceDecimals == 0 && parts.size == 1) trimmed
+            else parts[0] + "." + parts.getOrElse(1) { "" }.padEnd(displayPriceDecimals, '0')
+    }
     fun parsePrice(text: String) = parseFixed(text, priceDecimals)
+    fun formatQuantity(value: Long) = if (quantityDecimals == 0) (value / 100).toString() else formatFixed(value, 2)
+    fun parseQuantity(text: String): Long? = if (quantityDecimals == 0) parseFixed(text, 0)?.let { runCatching { checkedMultiply(it, 100) }.getOrNull() } else parseFixed(text, 2)
 }
 
 @Serializable
@@ -36,7 +49,11 @@ data class Quote(val bid: Long, val ask: Long, val timeMs: Long)
 @Serializable
 data class Candle(val timeMs: Long, val open: Long, val high: Long, val low: Long, val close: Long)
 @Serializable
-data class BrokerDescriptor(val id: String, val name: String, val description: String, val simulated: Boolean = true)
+enum class BrokerEnvironment(val label: String) { LOCAL_DEMO("本地模拟"), REMOTE_DEMO("Tradovate Demo"), LIVE("Tradovate Live · 真实账户") }
+@Serializable
+data class BrokerDescriptor(val id: String, val name: String, val description: String, val simulated: Boolean = true,
+    val environment: BrokerEnvironment = if (simulated) BrokerEnvironment.LOCAL_DEMO else BrokerEnvironment.LIVE)
+data class BrokerCatalog(val instruments: List<Instrument>, val accounts: List<AccountInfo>)
 @Serializable
 data class BrokerCapabilities(
     val orderKinds: Set<OrderKind> = OrderKind.entries.toSet(),
@@ -45,13 +62,15 @@ data class BrokerCapabilities(
     val hedging: Boolean = true,
 )
 @Serializable
-data class AccountInfo(val id: String, val name: String, val currency: String = "USD")
+data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)
 @Serializable
 data class MarketSnapshot(
     val quotes: Map<String, Quote> = emptyMap(),
     val simulatedTimeMs: Long = 0,
     val revision: Long = 0,
     val connected: Boolean = true,
+    val statusMessage: String = "",
+    val tradingReady: Boolean = true,
 )
 @Serializable
 data class OrderRequest(
@@ -72,6 +91,9 @@ data class OrderPreview(
     val takeProfitPnlMicros: Long? = null,
     val errors: List<String> = emptyList(),
     val quoteRevision: Long = 0,
+    val marginKnown: Boolean = true,
+    val feesKnown: Boolean = true,
+    val warnings: List<String> = emptyList(),
 ) { val valid: Boolean get() = errors.isEmpty() && entryPrice != null }
 
 @Serializable
@@ -87,6 +109,8 @@ data class Position(
     val marginMicros: Long,
     val entryFeeMicros: Long = 0,
     val version: Long = 1,
+    val protectionEditable: Boolean = true,
+    val feesKnown: Boolean = true,
 )
 @Serializable
 data class PendingOrder(val id: String, val request: OrderRequest, val createdAtMs: Long, val version: Long = 1)
@@ -107,6 +131,8 @@ data class ClosedTrade(
 @Serializable
 data class ActivityEvent(val timeMs: Long, val message: String)
 @Serializable
+data class Execution(val id: String, val symbol: String, val side: Side, val lotsHundredths: Long, val price: Long, val timeMs: Long, val orderId: String)
+@Serializable
 data class AccountSnapshot(
     val accountId: String,
     val balanceMicros: Long,
@@ -116,9 +142,17 @@ data class AccountSnapshot(
     val orders: List<PendingOrder> = emptyList(),
     val trades: List<ClosedTrade> = emptyList(),
     val events: List<ActivityEvent> = emptyList(),
+    val executions: List<Execution> = emptyList(),
+    val balanceKnown: Boolean = true,
+    val equityKnown: Boolean = true,
+    val marginKnown: Boolean = true,
+    val equityEstimated: Boolean = false,
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros
 }
 @Serializable
-data class TradeResult(val accepted: Boolean, val message: String, val entityId: String? = null)
+enum class CommandOutcome { ACCEPTED, REJECTED, UNKNOWN }
+@Serializable
+data class TradeResult(val accepted: Boolean, val message: String, val entityId: String? = null,
+    val outcome: CommandOutcome = if (accepted) CommandOutcome.ACCEPTED else CommandOutcome.REJECTED)

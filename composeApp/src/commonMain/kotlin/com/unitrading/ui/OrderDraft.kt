@@ -11,7 +11,7 @@ internal data class OrderDraft(
     val takeProfit: String = "",
 ) {
     fun request(instrument: Instrument): OrderRequest? {
-        val lots = parseFixed(quantity, 2) ?: return null
+        val lots = instrument.parseQuantity(quantity) ?: return null
         val price = if (kind == OrderKind.MARKET) null else instrument.parsePrice(entry) ?: return null
         val sl = if (stopLoss.isBlank()) null else instrument.parsePrice(stopLoss) ?: return null
         val tp = if (takeProfit.isBlank()) null else instrument.parsePrice(takeProfit) ?: return null

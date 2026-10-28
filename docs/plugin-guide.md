@@ -9,7 +9,7 @@
 - UI 只读状态并提交请求；不得在插件外直接增加余额、订单或仓位。
 - 交易商 ID 全局唯一，账户 ID 在交易商内唯一；同名品种不代表同一市场。
 
-当前只实现模拟交易商。新增真实交易商时必须自行实现认证、连接生命周期、服务端账户权限、重连与订单对账；此 Demo 没有完成这些生产能力。
+目前包含本地 Demo 与 `tradovate-broker`。Tradovate 走官方网页登录与服务器权威状态；代码/协议测试不等于真实账户联调，具体边界见 [Tradovate 使用与验证](tradovate.md)。
 
 ## 注册
 
@@ -23,9 +23,9 @@ val runtime = TradingRuntime(
 TradingScreen(runtime)
 ```
 
-`TradingRuntime` 的 Demo 时钟和快照只管理内置 Demo 实例。附加插件自行管理行情更新、交易执行和持久化，不会被本地模拟撮合接管。注册时重复 ID 会被拒绝。
+`TradingRuntime` 的 Demo 时钟和快照只管理内置 Demo 实例。附加插件自行管理行情更新、交易执行和持久化，不会被本地模拟撮合接管。构造注册表时重复 ID 被拒绝；`registry.register(plugin)` 用于成功登录后更新同一交易商连接，并断开旧实例。
 
-界面当前面向本地模拟；生产接入前必须同步替换模拟提示、确认策略与平台凭证存储，不能仅更换接口实现就宣称可用于实盘。
+工作台按 `BrokerEnvironment` 区分本地模拟、远程 Demo 和 Live；未知费用、保证金与资金值必须携带 `Known=false`，不能用 0 冒充已知数值。
 
 ## 接口职责
 
@@ -35,6 +35,8 @@ TradingScreen(runtime)
 | `capabilities` | 支持的订单类型、保护价修改、挂单改价、对冲模式 |
 | `instruments` | 本交易商品种与完整合约规格 |
 | `accounts` | 该插件所提供的账户，不跨交易商合并 |
+| `catalog: StateFlow<BrokerCatalog>` | 异步发布当前账户与品种目录；允许空列表，不生成本地替代数据 |
+| `searchInstruments` / `watch` / `disconnect` | 搜索服务器合约、订阅所选行情/周期、关闭连接；本地 Demo 可为空实现 |
 | `market: StateFlow<MarketSnapshot>` | 报价、模拟/服务器时间、连接状态与递增 revision |
 | `history(symbol, timeframe)` | 时间升序 OHLC；各周期来自同源价格，不能重新随机生成 |
 | `openSession(accountId)` | 返回独立会话；未知账户应拒绝 |
@@ -44,15 +46,15 @@ TradingScreen(runtime)
 | `closePosition` / `cancelOrder` | 按当前状态执行，未知/过期实体拒绝，不串改其他账户 |
 | `modifyProtection` | 包含仓位版本，`null` 表示移除对应保护价 |
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
-| `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 原子修改 Limit/Stop 入场价，保留类型/数量/SL/TP，重新校验价格规则；过期、已成交、已撤销或跨账户订单拒绝 |
+| `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
 
-交易命令返回 `TradeResult`。`accepted=false` 必须有可读原因；超时不能直接解释为“未成交”，真实适配器需用 requestId 对账。相同账户相同 requestId 的重复命令不能二次成交。
+交易命令返回 `TradeResult`。`outcome` 区分 ACCEPTED、REJECTED、UNKNOWN；`accepted=true` 在远程插件中只表示已受理，不等于成交。结果未知不能解释为“未成交”或自动重发。示例远程插件按会话去重，同请求 ID 不重复发送；重新登录后仍应先核对服务器事实，不把内存去重当作跨会话交易保证。
 
 ## 数值单位
 
 - `price`：价格最小十进制单位的整数，显示精度为 `priceDecimals`。
 - `tickSize`：最小价格变动，占多少个上述整数单位。
-- `lotsHundredths`：0.01 手为 1，1.00 手为 100。
+- `lotsHundredths`：内部百分之一数量单位。Demo 的 1.00 手和期货的 1 张均表示为 100；实际输入/显示由 `quantityUnit` 与 `quantityDecimals` 决定。
 - 金额：微美元，1 USD = 1,000,000；展示时转为分，账本保留微美元。
 - `tickValueMicrosPerLot`：**一整手**变动一个 `tickSize` 的毛盈亏。
 - `commissionMicrosPerLot`：一整手的**单边**手续费。

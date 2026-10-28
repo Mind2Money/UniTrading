@@ -26,7 +26,8 @@ kotlin {
     jvmToolchain(21)
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":broker-api"))
+            api(project(":broker-api"))
+            api(project(":tradovate-broker"))
             implementation(project(":demo-broker"))
             implementation(compose.runtime)
             implementation(compose.foundation)
@@ -45,13 +46,28 @@ kotlin {
         getByName("desktopTest").dependencies { implementation(compose.desktop.uiTestJUnit4) }
     }
 }
+val isWindows = System.getProperty("os.name").startsWith("Windows")
+val buildTradovateLoginHost = tasks.register<Exec>("buildTradovateLoginHost") {
+    onlyIf { isWindows }
+    inputs.files(rootProject.file("native-auth/TradovateLogin.cs"), rootProject.file("native-auth/build.ps1"))
+    outputs.file(rootProject.file("native-auth/build/UniTrading.TradovateLogin.exe"))
+    commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rootProject.file("native-auth/build.ps1").absolutePath)
+}
+val stageTradovateLoginHost = tasks.register<Copy>("stageTradovateLoginHost") {
+    dependsOn(buildTradovateLoginHost)
+    onlyIf { isWindows }
+    from(rootProject.file("native-auth/build")) { include("*.exe", "*.dll", "*.txt") }
+    into(layout.buildDirectory.dir("appResources/tradovate-login"))
+}
+tasks.matching { it.name in setOf("run", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
         nativeDistributions {
+            appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
         }
     }
 }

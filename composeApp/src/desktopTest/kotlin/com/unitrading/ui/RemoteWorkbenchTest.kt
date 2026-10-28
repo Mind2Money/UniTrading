@@ -1,0 +1,62 @@
+package com.unitrading.ui
+
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.Density
+import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.TradingRuntime
+import com.unitrading.broker.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.Rule
+import org.junit.Test
+import kotlin.test.assertTrue
+
+class RemoteWorkbenchTest {
+    @get:Rule val compose = createComposeRule()
+    private fun remote(empty: Boolean = false): BrokerPlugin = object : BrokerPlugin {
+        override val descriptor = BrokerDescriptor("remote-test", "Remote test", "Server data", false, BrokerEnvironment.LIVE)
+        override val capabilities = BrokerCapabilities(hedging = false)
+        override val instruments = if (empty) emptyList() else listOf(Instrument("MESZ6", "Micro S&P", "Futures", 6, 250000, 1250000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityUnit = "张", quantityDecimals = 0, displayPriceDecimals = 2, estimatesIncludeFees = false))
+        override val accounts = if (empty) emptyList() else listOf(AccountInfo("123", "Remote account"))
+        override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
+        override val market = MutableStateFlow(MarketSnapshot(connected = true, tradingReady = true, statusMessage = "服务器状态"))
+        override fun history(symbol: String, timeframe: Timeframe): List<Candle> = emptyList()
+        override fun openSession(accountId: String) = object : AccountSession {
+            override val account = accounts.first()
+            override val state = MutableStateFlow(AccountSnapshot(accountId, 0, balanceKnown = false, equityKnown = false, marginKnown = false))
+            override fun preview(request: OrderRequest) = OrderPreview(5_500_000_000, marginKnown = false, feesKnown = false)
+            override fun previewOrderModification(orderId: String, entryPrice: Long) = preview(OrderRequest("MESZ6", Side.BUY, OrderKind.LIMIT, 100, entryPrice))
+            override suspend fun placeOrder(requestId: String, request: OrderRequest) = TradeResult(false, "Test fixture: no orders")
+            override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = TradeResult(false, "Test fixture")
+            override suspend fun closePosition(requestId: String, positionId: String) = TradeResult(false, "Test fixture")
+            override suspend fun cancelOrder(requestId: String, orderId: String) = TradeResult(false, "Test fixture")
+            override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = TradeResult(false, "Test fixture")
+        }
+    }
+    private fun render(plugin: BrokerPlugin) {
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.onNodeWithTag("broker-picker").performClick()
+        compose.onNodeWithText("Remote test").performClick()
+    }
+    @Test fun remoteEnvironmentAndIntegerContractsAreVisibleBeforeConfirmation() {
+        render(remote())
+        compose.onAllNodesWithText("Live 实盘").onFirst().assertExists()
+        compose.onNodeWithTag("order-quantity").assertTextContains("1")
+        compose.onNodeWithText("数量（张）").assertExists()
+        compose.onNodeWithText("全部为本地生成的模拟行情").assertDoesNotExist()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithText("确认 Tradovate Live · 真实账户 下单").assertExists()
+        compose.onNodeWithText("未知 / 服务器校验").assertExists()
+        compose.onNodeWithText("取消").performClick()
+    }
+    @Test fun emptyRemoteCatalogDoesNotCrashOrCreateMockInstruments() {
+        render(remote(empty = true))
+        compose.onNodeWithText("查询合约").assertExists()
+        compose.onNodeWithText("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。").assertExists()
+        compose.onNodeWithTag("review-order").assertDoesNotExist()
+    }
+}

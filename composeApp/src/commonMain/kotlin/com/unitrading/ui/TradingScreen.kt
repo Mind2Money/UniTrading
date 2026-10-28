@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -19,34 +20,61 @@ import androidx.compose.ui.window.Dialog
 import com.unitrading.app.*
 import com.unitrading.broker.*
 import com.unitrading.chart.TradingChart
+import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-fun UniTradingApp(store: SnapshotStore) {
+fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
     val runtime = remember(store) { TradingRuntime(store) }
-    TradingScreen(runtime)
+    TradingScreen(runtime, login)
 }
 
 @Composable
-fun TradingScreen(runtime: TradingRuntime) {
+fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
     TradingTheme {
         val registry = runtime.registry
-        var brokerId by remember { mutableStateOf(registry.plugins.first().descriptor.id) }
-        val plugin = registry.get(brokerId)
-        var accountId by remember(brokerId) { mutableStateOf(plugin.accounts.first().id) }
+        val plugins by registry.state.collectAsState()
+        var brokerId by rememberSaveable { mutableStateOf(plugins.first().descriptor.id) }
+        val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.first()
+        val catalog by key(plugin) { plugin.catalog.collectAsState() }
+        var showConnection by remember { mutableStateOf(false) }
+        if (showConnection) TradovateConnectionDialog(runtime, login, { brokerId = it }, { showConnection = false })
+        if (catalog.accounts.isEmpty() || catalog.instruments.isEmpty()) {
+            val feed by key(plugin) { plugin.market.collectAsState() }
+            val emptyScope = rememberCoroutineScope()
+            var query by remember(plugin) { mutableStateOf("MES") }
+            var searchError by remember(plugin) { mutableStateOf<String?>(null) }
+            Surface(Modifier.fillMaxSize(), color = TradingColors.Shell) {
+                Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("UniTrading · ${plugin.descriptor.name}", fontSize = 20.sp)
+                    Text(feed.statusMessage, color = TradingColors.Muted)
+                    Text("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。", fontSize = 12.sp)
+                    BrokerAccountChooser(registry, plugin, "", { brokerId = it }, {})
+                    OutlinedTextField(query, { query = it }, label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
+                    Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
+                    searchError?.let { Text(it, color = TradingColors.Loss) }
+                    TextButton({ showConnection = true }) { Text("连接 / 重新登录 Tradovate") }
+                    TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id }) { Text("返回本地 Demo") }
+                }
+            }
+            return@TradingTheme
+        }
+        var chosenAccountId by remember(plugin) { mutableStateOf(catalog.accounts.first().id) }
+        val accountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+        val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
         val session = remember(plugin, accountId) { plugin.openSession(accountId) }
         val account by key(session) { session.state.collectAsState() }
         val market by key(plugin) { plugin.market.collectAsState() }
         val paused by runtime.paused.collectAsState()
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
-        val accountKey = "$brokerId/$accountId"
-        var symbol by remember(brokerId) { mutableStateOf(plugin.instruments.first().symbol) }
+        val accountKey = "$brokerId/$accountId/${plugin.hashCode()}"
+        var symbol by remember(plugin) { mutableStateOf(catalog.instruments.first().symbol) }
         val instrument = plugin.instruments.first { it.symbol == symbol }
         val quote = market.quotes[symbol]
         var timeframe by remember { mutableStateOf(Timeframe.M5) }
-        var draft by remember(accountKey, symbol) { mutableStateOf(OrderDraft()) }
+        var draft by remember(accountKey, symbol) { mutableStateOf(OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")) }
         var showDraft by remember(accountKey, symbol) { mutableStateOf(false) }
         var selectedPositionId by remember(accountKey) { mutableStateOf<String?>(null) }
         var focusedTrade by remember(accountKey) { mutableStateOf<ClosedTrade?>(null) }
@@ -67,6 +95,7 @@ fun TradingScreen(runtime: TradingRuntime) {
         val visibleOrders = account.orders.filter { it.request.symbol == symbol }
 
         LaunchedEffect(runtime) { runtime.run() }
+        LaunchedEffect(plugin, symbol, timeframe) { plugin.watch(symbol, timeframe) }
         LaunchedEffect(accountKey) { showOrder = false; notice = null }
 
         fun chooseSymbol(value: String) {
@@ -79,7 +108,7 @@ fun TradingScreen(runtime: TradingRuntime) {
             mobileTab = 1
         }
         fun chooseBroker(value: String) { if (!busy) brokerId = value }
-        fun chooseAccount(value: String) { if (!busy) accountId = value }
+        fun chooseAccount(value: String) { if (!busy) chosenAccountId = value }
         fun changeDraft(value: OrderDraft) { draft = value; showDraft = true }
         fun perform(action: suspend () -> TradeResult) {
             if (busy) return
@@ -99,7 +128,7 @@ fun TradingScreen(runtime: TradingRuntime) {
             }
         }
         fun editProtection(position: Position, sl: Long? = position.stopLoss, tp: Long? = position.takeProfit) {
-            if (!plugin.capabilities.modifyProtection || busy) return
+            if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
             val spec = plugin.instruments.first { it.symbol == position.symbol }
             symbol = position.symbol
             selectedPositionId = position.id
@@ -134,17 +163,18 @@ fun TradingScreen(runtime: TradingRuntime) {
                             Text(if (compactShort) instrument.symbol else "UniTrading", fontSize = if (compact) 18.sp else 21.sp, fontWeight = FontWeight.SemiBold)
                             if (compact) Text(session.account.name, fontSize = 10.sp, color = TradingColors.Muted, maxLines = 1)
                         }
-                        Badge("本地模拟")
+                        Badge(if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo")
                         Spacer(Modifier.weight(1f))
                         if (desktop) {
-                            Text("${plugin.descriptor.name} / ${session.account.name}", fontSize = 12.sp, color = TradingColors.Muted)
-                            TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
+                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = TradingColors.Muted)
+                            if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
                         }
                         if (showCompactQuotes) Text("Bid ${quote?.bid?.let(instrument::formatPrice) ?: "—"} / Ask ${quote?.ask?.let(instrument::formatPrice) ?: "—"}", fontSize = 11.sp, color = TradingColors.Muted)
                         TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text(if (compact) "账户" else "切换账户", fontSize = 12.sp) }
                         if (desktop && !wide || compactShort) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                     }
                     DividerLine()
+                    if (!localDemo) Text(market.statusMessage, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), color = TradingColors.Muted, fontSize = 11.sp)
                     if (storageError != null) {
                         Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = TradingColors.Loss)
@@ -173,11 +203,11 @@ fun TradingScreen(runtime: TradingRuntime) {
                                             selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, ::editProtection,
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, ::editPending,
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f))
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                     }
                                     if (wide) {
                                         VerticalDivider(color = TradingColors.Border)
-                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.width(296.dp).fillMaxHeight().background(TradingColors.Shell))
+                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.width(296.dp).fillMaxHeight().background(TradingColors.Shell), environment = plugin.descriptor.environment)
                                     }
                                 }
                                 DividerLine()
@@ -197,7 +227,7 @@ fun TradingScreen(runtime: TradingRuntime) {
                                     selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, ::editProtection,
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, ::editPending,
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f))
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = TradingColors.Muted, fontSize = 11.sp)
                                     Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("新建订单") }
@@ -213,9 +243,11 @@ fun TradingScreen(runtime: TradingRuntime) {
                                 if (compactShort) AccountStrip(account)
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(plugin.descriptor.description, fontSize = 12.sp, color = TradingColors.Muted)
-                                    Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = TradingColors.Muted)
-                                    OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
-                                    TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
+                                    if (localDemo) Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = TradingColors.Muted)
+                                    if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
+                                    if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
+                                    TextButton({ showConnection = true }) { Text("连接 Tradovate") }
+                                    if (!localDemo) TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id }) { Text("断开 Tradovate") }
                                 }
                             }
                         }
@@ -232,9 +264,9 @@ fun TradingScreen(runtime: TradingRuntime) {
                         }
                     } else {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
-                            Text(if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = TradingColors.Muted, fontSize = 10.sp)
+                            Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = TradingColors.Muted, fontSize = 10.sp)
                             Spacer(Modifier.weight(1f))
-                            Text("报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金", color = TradingColors.Muted, fontSize = 10.sp)
+                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   服务器权威状态   |   ${plugin.descriptor.environment.label}", color = TradingColors.Muted, fontSize = 10.sp)
                         }
                     }
                 }
@@ -245,7 +277,7 @@ fun TradingScreen(runtime: TradingRuntime) {
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) { TextButton({ showOrder = false }) { Text("返回图表") } }
                                 OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
                                     request?.let { confirmation = Confirmation.Place(it); showOrder = false }
-                                }, Modifier.weight(1f))
+                                }, Modifier.weight(1f), environment = plugin.descriptor.environment)
                             }
                         }
                     }
@@ -253,29 +285,29 @@ fun TradingScreen(runtime: TradingRuntime) {
                 if (showAccounts) AlertDialog(
                     onDismissRequest = { showAccounts = false },
                     title = { Text("交易商与账户") },
-                    text = { Column { BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount); Text("所有账户仅供本地演示，不连接真实市场。", fontSize = 12.sp, color = TradingColors.Muted) } },
+                    text = { Column { BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount); Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = TradingColors.Muted); TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }; if (!localDemo) TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id; showAccounts = false }) { Text("断开 Tradovate") } } },
                     confirmButton = { TextButton({ showAccounts = false }) { Text("完成") } },
-                    dismissButton = { TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
+                    dismissButton = { if (localDemo) TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
                 )
 
                 confirmation?.let { action ->
-                    val title = when (action) { is Confirmation.Place -> "确认模拟下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
+                    val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
                     val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request) }
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
                         text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${plugin.descriptor.name} / ${session.account.name}", color = TradingColors.Muted, fontSize = 12.sp)
+                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", color = TradingColors.Muted, fontSize = 12.sp)
                             when (action) {
                                 is Confirmation.Place -> {
                                     val r = action.request
-                                    Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${formatFixed(r.lotsHundredths, 2)} 手")
+                                    Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}")
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
-                                    EstimateRow("预计保证金 USD", money(livePreview?.marginMicros ?: 0))
+                                    EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
                                     Text("提交时按最新报价与账户状态再次校验，预估不是锁定成交价。", fontSize = 12.sp, color = TradingColors.Muted)
                                     livePreview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 12.sp) }
                                 }
-                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${formatFixed(action.position.lotsHundredths, 2)} 手，按当前可成交报价执行。")
+                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${plugin.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${plugin.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销挂单 #${action.order.id}。若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
@@ -305,12 +337,12 @@ fun TradingScreen(runtime: TradingRuntime) {
                         onDismissRequest = { if (!busy) pendingEdit = null },
                         title = { Text("修改挂单入场价") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("${order.request.symbol} · ${order.request.side.label()} ${order.request.kind.name} · ${formatFixed(order.request.lotsHundredths, 2)} 手", fontSize = 12.sp)
+                            Text("${order.request.symbol} · ${order.request.side.label()} ${order.request.kind.name} · ${spec.formatQuantity(order.request.lotsHundredths)} ${spec.quantityUnit}", fontSize = 12.sp)
                             Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = TradingColors.Muted, fontSize = 11.sp)
                             PriceInput("新入场价", edit.entry, { pendingEdit = edit.copy(entry = it) }, "pending-entry")
-                            EstimateRow("预计保证金", estimate?.let { "${money(it.marginMicros)} USD" } ?: "—")
-                            EstimateRow("止损净结果", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-                            EstimateRow("止盈净结果", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            EstimateRow("预计保证金", estimate?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
                             Text("仅修改入场价；原订单类型、数量、SL/TP 保持不变。确认后按最新报价重新校验。", color = TradingColors.Muted, fontSize = 11.sp)
                             if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = TradingColors.Loss, fontSize = 11.sp)
                             if (price == null) Text("请输入符合品种精度的有效价格。", color = TradingColors.Loss, fontSize = 11.sp)
@@ -340,12 +372,12 @@ fun TradingScreen(runtime: TradingRuntime) {
                         onDismissRequest = { if (!busy) protection = null },
                         title = { Text("修改止损 / 止盈") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("${p.symbol} · ${p.side.label()} ${formatFixed(p.lotsHundredths, 2)} 手 · #${p.id}", fontSize = 12.sp)
+                            Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${p.id}", fontSize = 12.sp)
                             Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = TradingColors.Muted, fontSize = 11.sp)
                             PriceInput("新止损 SL（留空移除）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
                             PriceInput("新止盈 TP（留空移除）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
-                            EstimateRow("止损净结果", estimate(sl))
-                            EstimateRow("止盈净结果", estimate(tp))
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate(sl))
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate(tp))
                             Text("当前为预览，确认后交易商才会校验并更新。跳空时实际结果可能不同。", color = TradingColors.Muted, fontSize = 11.sp)
                             if (!validVersion) Text("仓位已关闭或保护价版本已更新，请取消后重新选择。", color = TradingColors.Loss, fontSize = 11.sp)
                             if (!validInput) Text("价格必须为正数并符合品种最小变动单位。", color = TradingColors.Loss, fontSize = 11.sp)

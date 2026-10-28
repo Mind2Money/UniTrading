@@ -11,8 +11,8 @@ android {
         applicationId = "com.unitrading.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -24,4 +24,5 @@ kotlin { compilerOptions.jvmTarget.set(JvmTarget.JVM_17) }
 dependencies {
     implementation(project(":composeApp"))
     implementation(libs.activity.compose)
+    implementation("androidx.webkit:webkit:1.18.0")
 }

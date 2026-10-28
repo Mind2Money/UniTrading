@@ -70,6 +70,8 @@ fun TradingChart(
     estimateDraft: (OrderRequest) -> OrderPreview,
     estimatePending: (String, Long) -> OrderPreview,
     modifier: Modifier = Modifier,
+    environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
+    executions: List<Execution> = emptyList(),
 ) {
     var count by remember(accountKey, instrument.symbol) { mutableStateOf(80) }
     var offset by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(0) }
@@ -152,7 +154,7 @@ fun TradingChart(
         DividerLine()
         if (showData) {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("模拟 UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = TradingColors.Muted)
+                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = TradingColors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
@@ -205,7 +207,7 @@ fun TradingChart(
                                 val candidates = buildList<EditableLine> {
                                     currentDraft?.takeIf { it.kind != OrderKind.MARKET && it.entryPrice != null }?.let { add(EditableLine.Draft(it)) }
                                     currentOrders.filter { it.request.entryPrice != null }.forEach { add(EditableLine.Pending(it)) }
-                                    if (p != null && currentShowPositions) {
+                                    if (p != null && p.protectionEditable && currentShowPositions) {
                                         p.stopLoss?.let { add(EditableLine.Protection(p, true, it)) }
                                         p.takeProfit?.let { add(EditableLine.Protection(p, false, it)) }
                                     }
@@ -315,6 +317,21 @@ fun TradingChart(
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 4f)))
                     priceTags.add(PriceTag(it.bid, TradingColors.Shell, TradingColors.Accent, priority = 2))
                 }
+                if (showHistory) executions.forEach { execution ->
+                    val x = x(execution.timeMs)
+                    if (x != null) {
+                        val y = scale.y(execution.price)
+                        val up = execution.side == Side.BUY
+                        val marker = Path().apply {
+                            moveTo(x, y + if (up) -6f else 6f)
+                            lineTo(x - 5f, y + if (up) 5f else -5f)
+                            lineTo(x + 5f, y + if (up) 5f else -5f)
+                            close()
+                        }
+                        drawPath(marker, TradingColors.Surface, style = Stroke(4f))
+                        drawPath(marker, if (up) TradingColors.Up else TradingColors.Down)
+                    }
+                }
                 if (showHistory) trades.forEach { trade ->
                     fun marker(time: Long, price: Long, opening: Boolean) {
                         val x = x(time) ?: return
@@ -341,7 +358,7 @@ fun TradingChart(
                 if (showPositions) {
                     positions.forEach { p ->
                         val selected = p.id == selectedPosition?.id
-                        priceLine(p.entryPrice, "${p.side.label()} ${formatFixed(p.lotsHundredths, 2)}  #${p.id.takeLast(5)}", TradingColors.Accent, false, if (selected) .85f else .3f)
+                        priceLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)}  #${p.id.takeLast(5)}", TradingColors.Accent, false, if (selected) .85f else .3f)
                     }
                     selectedPosition?.let { p ->
                         val protectionDrag = drag?.takeIf { (it.line as? EditableLine.Protection)?.position?.id == p.id }
@@ -349,7 +366,7 @@ fun TradingChart(
                         val tp = protectionDrag?.takeIf { !(it.line as EditableLine.Protection).stop }?.price ?: p.takeProfit
                         fun label(price: Long, stop: Boolean): String {
                             val pnl = grossPnl(instrument, p.side, p.lotsHundredths, p.entryPrice, price) - p.entryFeeMicros - commission(instrument, p.lotsHundredths)
-                            return "${if (stop) "SL 止损" else "TP 止盈"}  ${money(pnl, true)} USD${if (protectionDrag != null) " · 预览" else " · 拖动"}"
+                            return "${if (stop) "SL 止损" else "TP 止盈"} ${if (!p.feesKnown) "毛" else ""} ${money(pnl, true)} USD${if (protectionDrag != null) " · 预览" else if (p.protectionEditable) " · 拖动" else " · 仅显示"}"
                         }
                         sl?.let { priceLine(it, label(it, true), TradingColors.Stop) }
                         tp?.let { priceLine(it, label(it, false), TradingColors.Target) }
@@ -362,7 +379,7 @@ fun TradingChart(
                         if (moving != null) TradingColors.Accent else TradingColors.Muted)
                 }
                 if (activeDraft != null && draftEntry != null && draftEntry > 0) {
-                    priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${formatFixed(activeDraft.lotsHundredths, 2)} 手${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", TradingColors.Muted)
+                    priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${instrument.formatQuantity(activeDraft.lotsHundredths)} ${instrument.quantityUnit}${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", TradingColors.Muted)
                     if (activePreview?.valid == true) {
                         activeDraft.stopLoss?.let { priceLine(it, "预览 SL · ${activePreview.stopLossPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", TradingColors.Stop, alpha = .65f) }
                         activeDraft.takeProfit?.let { priceLine(it, "预览 TP · ${activePreview.takeProfitPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", TradingColors.Target, alpha = .65f) }
@@ -392,19 +409,19 @@ fun TradingChart(
             }
             val bar = visible.getOrNull(crosshair ?: visible.lastIndex)
             if (bar != null) Text(
-                if (dragEstimate != null) "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${dragEstimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${dragEstimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${money(dragEstimate.marginMicros)} USD   ${dragEstimate.errors.joinToString("；")}"
+                if (dragEstimate != null) "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${dragEstimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${dragEstimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${if (dragEstimate.marginKnown) money(dragEstimate.marginMicros) + " USD" else "未知"}   ${dragEstimate.errors.joinToString("；")}"
                 else "${dateTime(bar.timeMs)} UTC   开 ${instrument.formatPrice(bar.open)}   高 ${instrument.formatPrice(bar.high)}   低 ${instrument.formatPrice(bar.low)}   收 ${instrument.formatPrice(bar.close)}",
                 Modifier.fillMaxWidth().testTag("chart-readout").horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 5.dp), color = TradingColors.Muted, fontSize = 10.sp,
             )
             selectedTrade?.let { trade ->
-                Text("选中历史  #${trade.id} · ${trade.side.label()} ${formatFixed(trade.lotsHundredths, 2)} 手 · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
+                Text("选中历史  #${trade.id} · ${trade.side.label()} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("△ 买入 / 上涨空心", fontSize = 10.sp, color = TradingColors.Muted)
             Text("▽ 卖出 / 下跌实心", fontSize = 10.sp, color = TradingColors.Muted)
             Text("SL 止损   TP 止盈", fontSize = 10.sp, color = TradingColors.Muted)
-            Text("模拟行情 · UTC", fontSize = 10.sp, color = TradingColors.Muted)
+            Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟行情 · UTC" else "服务器行情 · UTC", fontSize = 10.sp, color = TradingColors.Muted)
         }
     }
 }

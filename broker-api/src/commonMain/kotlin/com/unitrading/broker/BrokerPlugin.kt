@@ -7,7 +7,11 @@ interface BrokerPlugin {
     val capabilities: BrokerCapabilities
     val instruments: List<Instrument>
     val accounts: List<AccountInfo>
+    val catalog: StateFlow<BrokerCatalog>
     val market: StateFlow<MarketSnapshot>
+    suspend fun searchInstruments(query: String) {}
+    fun watch(symbol: String, timeframe: Timeframe) {}
+    fun disconnect() {}
     fun openSession(accountId: String): AccountSession
     fun history(symbol: String, timeframe: Timeframe): List<Candle>
 }
@@ -30,10 +34,19 @@ interface AccountSession {
     ): TradeResult
 }
 
-class BrokerRegistry(val plugins: List<BrokerPlugin>) {
+class BrokerRegistry(plugins: List<BrokerPlugin>) {
+    private val mutablePlugins = kotlinx.coroutines.flow.MutableStateFlow(plugins)
+    val state: StateFlow<List<BrokerPlugin>> = mutablePlugins
+    val plugins: List<BrokerPlugin> get() = state.value
     init {
         require(plugins.isNotEmpty()) { "至少注册一个交易商" }
         require(plugins.map { it.descriptor.id }.distinct().size == plugins.size) { "交易商 ID 重复" }
+    }
+    fun register(plugin: BrokerPlugin) {
+        val previous = plugins.firstOrNull { it.descriptor.id == plugin.descriptor.id }
+        if (previous === plugin) return
+        previous?.disconnect()
+        mutablePlugins.value = plugins.filterNot { it.descriptor.id == plugin.descriptor.id } + plugin
     }
     fun get(id: String): BrokerPlugin = plugins.first { it.descriptor.id == id }
 }

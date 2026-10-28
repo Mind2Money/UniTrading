@@ -47,11 +47,14 @@ fun main() = application {
         if (!closing) {
             closing = true
             scope.launch {
-                if (runtime.startupError.value != null || runtime.save()) exitApplication()
+                if (runtime.startupError.value != null || runtime.save()) {
+                    runtime.registry.plugins.forEach { it.disconnect() }
+                    exitApplication()
+                }
                 else closing = false
             }
         }
-    }, title = "UniTrading · 本地模拟交易", state = rememberWindowState(width = 1440.dp, height = 940.dp)) {
-        TradingScreen(runtime)
+    }, title = "UniTrading · 交易终端", state = rememberWindowState(width = 1440.dp, height = 940.dp)) {
+        TradingScreen(runtime, remember { DesktopTradovateLogin() })
     }
 }

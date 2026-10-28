@@ -34,6 +34,7 @@ class DemoBroker(
     override val capabilities = BrokerCapabilities()
     override val instruments: List<Instrument> = settings.instruments.toList()
     override val accounts: List<AccountInfo> = settings.accounts.toList()
+    override val catalog: StateFlow<BrokerCatalog> = MutableStateFlow(BrokerCatalog(instruments, accounts))
     private val bySymbol = instruments.associateBy { it.symbol }
 
     // One lock also serializes ticks with every account's requests. A committed, detached

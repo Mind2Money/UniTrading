@@ -7,16 +7,29 @@ import androidx.activity.compose.setContent
 import android.graphics.Color
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModelProvider
+import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
-import com.unitrading.ui.UniTradingApp
+import com.unitrading.ui.TradingScreen
 import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
-        val store = AndroidSnapshotStore(File(filesDir, "demo-v1"))
-        setContent { UniTradingApp(store) }
+        val model = ViewModelProvider(this)[TradingRuntimeModel::class.java]
+        val login = AndroidTradovateLogin(this)
+        setContent { TradingScreen(model.runtime, login) }
+    }
+}
+
+class TradingRuntimeModel(application: Application) : AndroidViewModel(application) {
+    val runtime = TradingRuntime(AndroidSnapshotStore(File(application.filesDir, "demo-v1")))
+    override fun onCleared() {
+        runtime.registry.plugins.forEach { it.disconnect() }
+        super.onCleared()
     }
 }
 

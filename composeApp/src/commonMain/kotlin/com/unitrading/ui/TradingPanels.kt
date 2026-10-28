@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.chart.dateTime
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun BrokerAccountChooser(
@@ -69,6 +70,8 @@ internal fun BrokerAccountChooser(
 @Composable
 internal fun MarketWatch(plugin: BrokerPlugin, market: MarketSnapshot, selected: String, onSymbol: (String) -> Unit, modifier: Modifier = Modifier) {
     var query by remember(plugin.descriptor.id) { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    var searchError by remember(plugin) { mutableStateOf<String?>(null) }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("市场报价", modifier = Modifier.weight(1f))
@@ -76,6 +79,10 @@ internal fun MarketWatch(plugin: BrokerPlugin, market: MarketSnapshot, selected:
         }
         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 14.dp).testTag("symbol-search"),
             placeholder = { Text("搜索品种", fontSize = 12.sp) }, singleLine = true, shape = RoundedCornerShape(8.dp))
+        if (plugin.descriptor.environment != BrokerEnvironment.LOCAL_DEMO) {
+            TextButton({ scope.launch { try { plugin.searchInstruments(query) ; searchError = null } catch (_: Exception) { searchError = "合约搜索失败，请检查连接与授权" } } }, enabled = query.isNotBlank() && market.connected) { Text("查询服务器合约", fontSize = 11.sp) }
+            searchError?.let { Text(it, color = TradingColors.Loss, fontSize = 10.sp) }
+        }
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text("交易品种", Modifier.weight(1f), fontSize = 10.sp, color = TradingColors.Muted)
             Text("Bid / Ask", fontSize = 10.sp, color = TradingColors.Muted)
@@ -102,7 +109,7 @@ internal fun MarketWatch(plugin: BrokerPlugin, market: MarketSnapshot, selected:
         }
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Text("${plugin.descriptor.name} 提供", fontSize = 10.sp, color = TradingColors.Muted)
-            Text("全部为本地生成的模拟行情", fontSize = 10.sp, color = TradingColors.Muted)
+            Text(if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) "全部为本地生成的模拟行情" else "行情与标的由 Tradovate 提供", fontSize = 10.sp, color = TradingColors.Muted)
         }
     }
 }
@@ -137,11 +144,12 @@ internal fun OrderTicket(
     busy: Boolean,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
 ) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("新建订单", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Badge("模拟")
+            Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment == BrokerEnvironment.LIVE) "Live 实盘" else "Demo")
         }
         Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -161,8 +169,8 @@ internal fun OrderTicket(
                 }, label = { Text(kind.label(), fontSize = 11.sp) })
             }
         }
-        PriceInput("数量（手）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity")
-        Text("范围 ${formatFixed(instrument.minLotsHundredths, 2)}–${formatFixed(instrument.maxLotsHundredths, 2)} · 步长 ${formatFixed(instrument.lotStepHundredths, 2)}", color = TradingColors.Muted, fontSize = 10.sp)
+        PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity")
+        Text("范围 ${instrument.formatQuantity(instrument.minLotsHundredths)}–${instrument.formatQuantity(instrument.maxLotsHundredths)} · 步长 ${instrument.formatQuantity(instrument.lotStepHundredths)}", color = TradingColors.Muted, fontSize = 10.sp)
         if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价", draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry")
         PriceInput("止损 SL（可选）", draft.stopLoss, { onDraft(draft.copy(stopLoss = it)) }, "order-sl")
         PriceInput("止盈 TP（可选）", draft.takeProfit, { onDraft(draft.copy(takeProfit = it)) }, "order-tp")
@@ -172,22 +180,23 @@ internal fun OrderTicket(
         DividerLine()
         Text("下单前预估", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         EstimateRow("预计入场", preview?.entryPrice?.let(instrument::formatPrice) ?: "—")
-        EstimateRow("止损净结果", preview?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-        EstimateRow("止盈净结果", preview?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+        EstimateRow(if (instrument.estimatesIncludeFees) "止损净结果" else "止损毛结果", preview?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+        EstimateRow(if (instrument.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", preview?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
         val risk = preview?.stopLossPnlMicros
         val reward = preview?.takeProfitPnlMicros
         val ratio = if (risk != null && reward != null && risk < 0 && reward > 0) formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—"
         EstimateRow("收益 / 风险", ratio)
-        EstimateRow("预计保证金", preview?.let { "${money(it.marginMicros)} USD" } ?: "—")
-        EstimateRow("双边手续费", preview?.let { "${money(it.feesMicros)} USD" } ?: "—")
+        EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
+        EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} USD" } ?: "—")
         Text("按当前报价估算；成交和止损可能受后续报价及跳空影响。", fontSize = 10.sp, color = TradingColors.Muted)
         if (draft.kind != OrderKind.MARKET) Text("挂单不预占保证金，触发时重新校验资金与保护价。", color = TradingColors.Muted, fontSize = 10.sp)
         if (preview == null) Text("请输入有效数量与价格，不能超过品种的小数精度。", color = TradingColors.Loss, fontSize = 11.sp)
+        preview?.warnings?.forEach { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
         preview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 11.sp) }
         Button(onSubmit, Modifier.fillMaxWidth().height(46.dp).testTag("review-order"), enabled = preview?.valid == true && !busy) {
-            Text(if (busy) "处理中…" else "检查并模拟${draft.side.label()}")
+            Text(if (busy) "处理中…" else if (environment == BrokerEnvironment.LOCAL_DEMO) "检查并模拟${draft.side.label()}" else "检查并${draft.side.label()}")
         }
-        Text("订单只提交给当前模拟交易商。", color = TradingColors.Muted, fontSize = 10.sp)
+        Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "订单只提交给当前模拟交易商。" else "订单将发送至当前 Tradovate ${environment.label} 账户。", color = TradingColors.Muted, fontSize = 10.sp)
     }
 }
 
@@ -208,9 +217,9 @@ internal fun EstimateRow(label: String, value: String) {
 @Composable
 internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().background(TradingColors.Shell).horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-        val level = if (account.marginMicros > 0) "${account.equityMicros.toDouble().div(account.marginMicros).times(100).toInt()}%" else "—"
-        listOf("余额 USD" to money(account.balanceMicros), "净值 USD" to money(account.equityMicros), "浮动盈亏" to money(account.floatingPnlMicros, true),
-            "已用保证金" to money(account.marginMicros), "可用保证金" to money(account.freeMarginMicros), "保证金比例" to level).forEach { (label, value) ->
+        val level = if (account.marginKnown && account.equityKnown && account.marginMicros > 0) "${account.equityMicros.toDouble().div(account.marginMicros).times(100).toInt()}%" else "—"
+        listOf("余额 USD" to if (account.balanceKnown) money(account.balanceMicros) else "—", (if (account.equityEstimated) "净值 USD（估算）" else "净值 USD") to if (account.equityKnown) money(account.equityMicros) else "—", "浮动盈亏" to if (account.equityKnown && account.balanceKnown) money(account.floatingPnlMicros, true) else "—",
+            "已用保证金" to if (account.marginKnown) money(account.marginMicros) else "—", "可用保证金" to if (account.equityKnown && account.marginKnown) money(account.freeMarginMicros) else "—", "保证金比例" to level).forEach { (label, value) ->
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(label, color = TradingColors.Muted, fontSize = 10.sp)
                 Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -239,7 +248,7 @@ internal fun TradeTerminal(
     val instruments = plugin.instruments.associateBy { it.symbol }
     Column(modifier.background(TradingColors.Surface)) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("持仓 ${account.positions.size}", "挂单 ${account.orders.size}", "历史 ${account.trades.size}", "活动").forEachIndexed { index, title ->
+            listOf("持仓 ${account.positions.size}", "挂单 ${account.orders.size}", "历史 ${if (account.executions.isEmpty()) account.trades.size else account.executions.size}", "活动").forEachIndexed { index, title ->
                 TextButton({ tab = index }, Modifier.testTag("terminal-tab-$index")) {
                     Text(title, color = if (tab == index) TradingColors.Accent else TradingColors.Muted, fontSize = 12.sp, fontWeight = if (tab == index) FontWeight.SemiBold else FontWeight.Normal)
                 }
@@ -249,7 +258,7 @@ internal fun TradeTerminal(
         LazyColumn(Modifier.weight(1f).testTag("trade-terminal")) {
             when (tab) {
                 0 -> {
-                    if (account.positions.isEmpty()) item { EmptyState("暂无持仓", "选择品种，在订单面板检查后提交模拟订单。") }
+                    if (account.positions.isEmpty()) item { EmptyState("暂无持仓", "选择品种，在订单面板检查当前环境和账户后提交。") }
                     items(account.positions, key = { it.id }) { p ->
                         val instrument = instruments.getValue(p.symbol)
                         val q = market.quotes[p.symbol]
@@ -258,19 +267,19 @@ internal fun TradeTerminal(
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Box(Modifier.width(3.dp).height(26.dp).background(if (p.side == Side.BUY) TradingColors.Up else TradingColors.Down))
                                 Column(Modifier.weight(1f)) {
-                                    Text("${p.symbol}   ${p.side.label()}   ${formatFixed(p.lotsHundredths, 2)} 手", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    Text("${p.symbol}   ${p.side.label()}   ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                     Text("入场 ${instrument.formatPrice(p.entryPrice)}    #${p.id.takeLast(7)}", color = TradingColors.Muted, fontSize = 10.sp)
                                 }
                                 Text(pnl?.let { money(it, true) } ?: "—", fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                 if (!compact) {
                                     Text("SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"}\nTP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}", fontSize = 10.sp, color = TradingColors.Muted)
-                                    TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection) { Text("保护价", fontSize = 11.sp) }
+                                    TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("保护价", fontSize = 11.sp) }
                                     OutlinedButton({ onClose(p) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("平仓", fontSize = 11.sp) }
                                 }
                             }
                             if (compact) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text("SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}", Modifier.weight(1f), fontSize = 10.sp, color = TradingColors.Muted)
-                                TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection) { Text("保护价", fontSize = 11.sp) }
+                                TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("保护价", fontSize = 11.sp) }
                                 TextButton({ onClose(p) }, enabled = !busy) { Text("平仓", fontSize = 11.sp) }
                             }
                         }
@@ -284,7 +293,7 @@ internal fun TradeTerminal(
                         val instrument = instruments.getValue(r.symbol)
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("${r.symbol}   ${r.side.label()}${r.kind.label()}   ${formatFixed(r.lotsHundredths, 2)} 手", fontSize = 12.sp)
+                                Text("${r.symbol}   ${r.side.label()}${r.kind.label()}   ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
                                 Text("触发价 ${r.entryPrice?.let(instrument::formatPrice)} · 未占用保证金", color = TradingColors.Muted, fontSize = 10.sp)
                             }
                             TextButton({ onEditOrder(order) }, enabled = !busy && plugin.capabilities.modifyPendingOrders) { Text("入场价", fontSize = 11.sp) }
@@ -294,12 +303,23 @@ internal fun TradeTerminal(
                     }
                 }
                 2 -> {
-                    if (account.trades.isEmpty()) item { EmptyState("暂无已平仓交易", "平仓后可在这里和图表中查看成交记录。") }
+                    if (account.trades.isEmpty() && account.executions.isEmpty()) item { EmptyState("暂无已平仓交易", "平仓后可在这里和图表中查看成交记录。") }
+                    items(account.executions.asReversed(), key = { "fill-${it.id}" }) { fill ->
+                        val spec = instruments[fill.symbol]
+                        if (spec != null) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                Text("${fill.symbol}   ${fill.side.label()} ${spec.formatQuantity(fill.lotsHundredths)} ${spec.quantityUnit}   ${spec.formatPrice(fill.price)}", fontSize = 12.sp)
+                                Text("${dateTime(fill.timeMs)} · 成交 #${fill.id} / 订单 #${fill.orderId}", color = TradingColors.Muted, fontSize = 10.sp)
+                                Text("原始成交；未将未配对成交伪装为含费用的已实现净盈亏", color = TradingColors.Muted, fontSize = 10.sp)
+                            }
+                            DividerLine()
+                        }
+                    }
                     items(account.trades.asReversed(), key = { it.id }) { t ->
                         val instrument = instruments.getValue(t.symbol)
                         Row(Modifier.fillMaxWidth().clickable { onSelectTrade(t) }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("${t.symbol}   ${t.side.label()} ${formatFixed(t.lotsHundredths, 2)} 手", fontSize = 12.sp)
+                                Text("${t.symbol}   ${t.side.label()} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
                                 Text("${instrument.formatPrice(t.entryPrice)} → ${instrument.formatPrice(t.exitPrice)}", color = TradingColors.Muted, fontSize = 10.sp)
                                 if (compact) Text("${dateTime(t.closedAtMs)} · ${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
                             }
