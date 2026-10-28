@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import com.unitrading.chart.IntervalOptions
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
@@ -113,6 +114,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         var busy by remember { mutableStateOf(false) }
         var notice by remember { mutableStateOf<String?>(null) }
         val scope = rememberCoroutineScope()
+        val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
+        val intervals = IntervalOptions(chartPreferences.favorites, chartPreferences.custom,
+            onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
+            onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
         val request = draft.request(instrument)
         val preview = remember(session, instrument, request, market.revision, account) { request?.let(session::preview) }
         val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
@@ -269,6 +274,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
+                                            instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals,
                                             connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true })
                                     }
                                     if (wide) {
@@ -294,7 +300,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
                                             connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true },
-                                            onSymbolSearch = { mobileTab = 0 }, legendCollapsed = compactShort)
+                                            instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, legendCollapsed = compactShort)
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
                                     Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("新建订单") }

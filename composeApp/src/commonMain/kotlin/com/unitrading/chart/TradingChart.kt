@@ -79,7 +79,9 @@ fun TradingChart(
     executions: List<Execution> = emptyList(),
     connected: Boolean = true,
     onSide: (Side) -> Unit = {},
-    onSymbolSearch: (() -> Unit)? = null,
+    instruments: List<Instrument> = emptyList(),
+    onSymbol: (String) -> Unit = {},
+    intervals: IntervalOptions = IntervalOptions(),
     legendCollapsed: Boolean = false,
 ) {
     val colors = TradingColors
@@ -174,7 +176,7 @@ fun TradingChart(
         ChartToggle("历史", showHistory) { showHistory = !showHistory },
         ChartToggle("数据表", showData) { showData = !showData },
     )
-    val toolbar: @Composable (Modifier) -> Unit = { m -> ChartToolbar(instrument, timeframe, onTimeframe, toggles, onSymbolSearch, m) }
+    val toolbar: @Composable (Modifier) -> Unit = { m -> ChartToolbar(instrument, instruments.ifEmpty { listOf(instrument) }, onSymbol, timeframe, onTimeframe, intervals, toggles, m) }
 
     Column(modifier.background(colors.Surface)) {
         if (showData) {
@@ -337,7 +339,7 @@ fun TradingChart(
                         val index = ((visible.size - 1) * i / 4)
                         val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
-                        text(clockLabel(visible[index].timeMs), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
+                        text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
                     clipRect(left, top, right, bottom) {
                     val draftEntry = activeDraft?.entryPrice ?: activePreview?.entryPrice

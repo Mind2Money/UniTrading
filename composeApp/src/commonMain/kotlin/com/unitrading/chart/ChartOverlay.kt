@@ -8,15 +8,19 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -24,6 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +39,14 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 
 internal data class ChartToggle(val label: String, val active: Boolean, val onToggle: () -> Unit)
+
+/** Interval menu state: starred intervals show inline on the toolbar, custom intervals join the dropdown. */
+data class IntervalOptions(
+    val favorites: List<Timeframe> = Timeframe.defaultFavorites,
+    val custom: List<Timeframe> = emptyList(),
+    val onToggleFavorite: (Timeframe) -> Unit = {},
+    val onAddCustom: (Timeframe) -> Unit = {},
+)
 
 /** Close against the previous close (or the bar's own open when there is no previous bar); percent kept as integer basis points. */
 data class BarChange(val diff: Long, val basisPoints: Long) {
@@ -69,34 +82,131 @@ fun barCountdown(barOpenMs: Long, periodMs: Long, nowMs: Long): String? {
     return if (hours > 0) "$hours:$minutes:$seconds" else "$minutes:$seconds"
 }
 
-/** Symbol pill, timeframe segments and layer toggles; floats over the plot or sits above the data table. */
+/** Time-axis label: clock time for intraday bars, calendar day for daily and longer bars. */
+fun axisTimeLabel(timeMs: Long, timeframe: Timeframe): String =
+    if (timeframe.minutes >= 1440) dateTime(timeMs).substring(5, 10) else clockLabel(timeMs)
+
+/** Symbol picker, interval picker and layer toggles; floats over the plot or sits above the data table. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ChartToolbar(
     instrument: Instrument,
+    instruments: List<Instrument>,
+    onSymbol: (String) -> Unit,
     timeframe: Timeframe,
     onTimeframe: (Timeframe) -> Unit,
+    intervals: IntervalOptions,
     toggles: List<ChartToggle>,
-    onSymbolSearch: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val colors = TradingColors
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SymbolPill(instrument, instruments, onSymbol)
+        IntervalPill(timeframe, onTimeframe, intervals)
+        ToolbarPill {
+            Row { toggles.forEach { toggle -> PillSegment(toggle.label, toggle.active, colors.Accent, onClick = toggle.onToggle) } }
+        }
+    }
+}
+
+/** Current symbol with a TradingView-style search menu over the broker's instruments. */
+@Composable
+private fun SymbolPill(instrument: Instrument, instruments: List<Instrument>, onSymbol: (String) -> Unit) {
+    val colors = TradingColors
+    var expanded by remember { mutableStateOf(false) }
+    var query by remember(expanded) { mutableStateOf("") }
+    Box {
         ToolbarPill {
             Row(
-                Modifier.then(if (onSymbolSearch != null) Modifier.clickable(role = Role.Button, onClick = onSymbolSearch) else Modifier)
-                    .padding(horizontal = 10.dp, vertical = 6.dp).testTag("chart-symbol"),
+                Modifier.clickable(role = Role.Button) { expanded = true }.padding(horizontal = 10.dp, vertical = 6.dp)
+                    .semantics { contentDescription = "选择品种" }.testTag("chart-symbol"),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(instrument.symbol, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = colors.Ink)
-                if (onSymbolSearch != null) SearchGlyph(colors.Muted)
+                SearchGlyph(colors.Muted)
             }
         }
-        ToolbarPill {
-            Row { Timeframe.entries.forEach { frame -> PillSegment(frame.label, frame == timeframe, colors.Ink) { onTimeframe(frame) } } }
+        DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 240.dp, max = 320.dp)) {
+            MenuTextField(query, { query = it }, "搜索品种代码或名称", "symbol-filter", Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp))
+            val matches = instruments.filter { it.symbol.contains(query, true) || it.name.contains(query, true) }
+            if (matches.isEmpty()) Text("未找到品种", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 11.sp, color = colors.Muted)
+            matches.take(40).forEach { candidate ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(candidate.symbol, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = colors.Ink)
+                            Text("${candidate.name} · ${candidate.category}", fontSize = 10.sp, color = colors.Muted)
+                        }
+                    },
+                    onClick = { expanded = false; onSymbol(candidate.symbol) },
+                    trailingIcon = { if (candidate.symbol == instrument.symbol) Text("✓", color = colors.Accent, fontSize = 12.sp) },
+                    modifier = Modifier.testTag("symbol-option-${candidate.symbol}"),
+                )
+            }
         }
+    }
+}
+
+/** Starred intervals inline plus a dropdown with minute / hour / day presets, favourites and custom intervals. */
+@Composable
+private fun IntervalPill(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
+    val colors = TradingColors
+    var expanded by remember { mutableStateOf(false) }
+    Box {
         ToolbarPill {
-            Row { toggles.forEach { toggle -> PillSegment(toggle.label, toggle.active, colors.Accent, toggle.onToggle) } }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val inline = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
+                inline.forEach { frame -> PillSegment(frame.label, frame == timeframe, colors.Ink, Modifier.testTag("interval-inline-${frame.minutes}")) { onTimeframe(frame) } }
+                Box(
+                    Modifier.padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(role = Role.Button) { expanded = true }
+                        .semantics { contentDescription = "选择时间周期" }.testTag("interval-menu").padding(horizontal = 7.dp, vertical = 8.dp),
+                ) { Chevron(down = true, colors.Muted) }
+            }
+        }
+        DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 210.dp)) {
+            CustomIntervalRow { frame -> intervals.onAddCustom(frame); onTimeframe(frame); expanded = false }
+            val listed = (Timeframe.presets + intervals.custom + intervals.favorites + timeframe).distinct().sortedBy { it.minutes }
+            listOf("分钟" to (1 until 60), "小时" to (60 until 1440), "天" to (1440..Timeframe.MAX_MINUTES)).forEach { (title, range) ->
+                val members = listed.filter { it.minutes in range }
+                if (members.isEmpty()) return@forEach
+                Text(title, Modifier.padding(start = 14.dp, top = 8.dp, bottom = 2.dp), fontSize = 10.sp, color = colors.Muted)
+                members.forEach { frame ->
+                    val starred = frame in intervals.favorites
+                    val current = frame == timeframe
+                    DropdownMenuItem(
+                        text = { Text(frame.label, fontSize = 12.sp, fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal, color = if (current) colors.Accent else colors.Ink) },
+                        onClick = { expanded = false; onTimeframe(frame) },
+                        trailingIcon = {
+                            Text(
+                                if (starred) "★" else "☆",
+                                Modifier.clip(RoundedCornerShape(4.dp)).clickable(role = Role.Checkbox) { intervals.onToggleFavorite(frame) }
+                                    .semantics { contentDescription = if (starred) "取消收藏 ${frame.label}" else "收藏 ${frame.label}" }
+                                    .testTag("interval-favorite-${frame.minutes}").padding(horizontal = 6.dp, vertical = 2.dp),
+                                color = if (starred) colors.Accent else colors.Muted, fontSize = 14.sp,
+                            )
+                        },
+                        modifier = Modifier.testTag("interval-option-${frame.minutes}"),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CustomIntervalRow(onAdd: (Timeframe) -> Unit) {
+    val colors = TradingColors
+    var count by remember { mutableStateOf("") }
+    var unitMinutes by remember { mutableStateOf(1) }
+    val candidate = count.toIntOrNull()?.let { Timeframe.of(it, unitMinutes) }
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("添加自定义周期", fontSize = 10.sp, color = colors.Muted)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            MenuTextField(count, { if (it.length <= 4 && it.all(Char::isDigit)) count = it }, "数量", "interval-custom-count", Modifier.width(60.dp))
+            listOf(1 to "分钟", 60 to "小时", 1440 to "天").forEach { (minutes, label) ->
+                PillSegment(label, unitMinutes == minutes, colors.Ink, Modifier.testTag("interval-custom-unit-$minutes")) { unitMinutes = minutes }
+            }
+            PillSegment("添加", candidate != null, colors.Accent, Modifier.testTag("interval-custom-add")) { candidate?.let(onAdd) }
         }
     }
 }
@@ -116,9 +226,9 @@ internal fun ChartNavigation(
         Row(verticalAlignment = Alignment.CenterVertically) {
             GlyphSegment("＋", "放大图表", onZoomIn)
             GlyphSegment("－", "缩小图表", onZoomOut)
-            PillSegment("较早", false, colors.Ink, onEarlier)
-            PillSegment("较新", false, colors.Ink, onLater)
-            PillSegment("重置视图", false, colors.Ink, onReset)
+            PillSegment("较早", false, colors.Ink, onClick = onEarlier)
+            PillSegment("较新", false, colors.Ink, onClick = onLater)
+            PillSegment("重置视图", false, colors.Ink, onClick = onReset)
         }
     }
 }
@@ -194,9 +304,9 @@ private fun ToolbarPill(modifier: Modifier = Modifier, content: @Composable () -
 }
 
 @Composable
-private fun PillSegment(label: String, selected: Boolean, activeColor: Color, onClick: () -> Unit) {
+private fun PillSegment(label: String, selected: Boolean, activeColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = TradingColors
-    Box(Modifier.padding(2.dp).clip(RoundedCornerShape(5.dp)).background(if (selected) colors.Raised else Color.Transparent)
+    Box(modifier.padding(2.dp).clip(RoundedCornerShape(5.dp)).background(if (selected) colors.Raised else Color.Transparent)
         .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 8.dp, vertical = 5.dp)) {
         Text(label, fontSize = 11.sp, color = if (selected) activeColor else colors.Muted,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
@@ -210,6 +320,22 @@ private fun GlyphSegment(glyph: String, description: String, onClick: () -> Unit
         .semantics { contentDescription = description }.padding(horizontal = 8.dp, vertical = 4.dp)) {
         Text(glyph, fontSize = 13.sp, color = colors.Ink)
     }
+}
+
+@Composable
+private fun MenuTextField(value: String, onValue: (String) -> Unit, placeholder: String, tag: String, modifier: Modifier = Modifier) {
+    val colors = TradingColors
+    BasicTextField(
+        value, onValue, modifier.testTag(tag), singleLine = true,
+        textStyle = TextStyle(color = colors.Ink, fontSize = 12.sp), cursorBrush = SolidColor(colors.Accent),
+        decorationBox = { inner ->
+            Box(Modifier.background(colors.Raised.copy(alpha = .6f), RoundedCornerShape(6.dp)).border(1.dp, colors.Border, RoundedCornerShape(6.dp))
+                .padding(horizontal = 8.dp, vertical = 7.dp)) {
+                if (value.isEmpty()) Text(placeholder, fontSize = 12.sp, color = colors.Muted)
+                inner()
+            }
+        },
+    )
 }
 
 @Composable
@@ -233,14 +359,17 @@ private fun CollapseToggle(collapsed: Boolean, onClick: () -> Unit) {
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = if (collapsed) "展开图例" else "收起图例" }.testTag("legend-toggle"),
         contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(8.dp, 5.dp)) {
-            val path = Path().apply {
-                if (collapsed) { moveTo(0f, 0f); lineTo(size.width / 2, size.height); lineTo(size.width, 0f) }
-                else { moveTo(0f, size.height); lineTo(size.width / 2, 0f); lineTo(size.width, size.height) }
-            }
-            drawPath(path, colors.Muted, style = Stroke(1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    ) { Chevron(down = collapsed, colors.Muted) }
+}
+
+@Composable
+private fun Chevron(down: Boolean, color: Color) {
+    Canvas(Modifier.size(8.dp, 5.dp)) {
+        val path = Path().apply {
+            if (down) { moveTo(0f, 0f); lineTo(size.width / 2, size.height); lineTo(size.width, 0f) }
+            else { moveTo(0f, size.height); lineTo(size.width / 2, 0f); lineTo(size.width, size.height) }
         }
+        drawPath(path, color, style = Stroke(1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

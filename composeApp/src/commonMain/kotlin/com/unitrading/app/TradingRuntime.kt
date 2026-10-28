@@ -29,6 +29,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val paused = MutableStateFlow(false)
     private val saveMutex = Mutex()
     val theme = ThemeController(store)
+    /** Interval favourites and custom intervals; read lazily so startup only touches the theme and demo snapshots. */
+    val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->
         try {
             DemoBroker(config, store.read(config.id))

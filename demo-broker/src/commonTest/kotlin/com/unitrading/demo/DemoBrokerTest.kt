@@ -417,12 +417,12 @@ class DemoBrokerTest {
         assertEquals(Candle(start, 10_000, 10_050, 9_950, 10_025), minutes.first { it.timeMs == start })
         assertEquals(10_010L, minutes.last().close)
         val before = broker.exportState()
-        for (timeframe in Timeframe.entries) {
+        for (timeframe in Timeframe.presets) {
             val width = timeframe.minutes * 60_000L
             val expected = minutes.groupBy { it.timeMs / width * width }.map { (time, group) ->
                 Candle(time, group.first().open, group.maxOf { it.high }, group.minOf { it.low }, group.last().close)
             }
-            assertEquals(expected, broker.history(SYMBOL, timeframe), timeframe.name)
+            assertEquals(expected, broker.history(SYMBOL, timeframe), timeframe.label)
         }
         assertEquals(before, broker.exportState())
     }

@@ -332,7 +332,7 @@ class TradovateBroker(
                 for (id in oldCharts) socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
                 val response = socket.request("md/getChart", buildJsonObject {
                     put("symbol", symbol)
-                    putJsonObject("chartDescription") { put("underlyingType", "MinuteBar"); put("elementSize", timeframe.minutes); put("elementSizeUnit", "UnderlyingUnits"); put("withHistogram", false) }
+                    put("chartDescription", chartDescription(timeframe))
                     putJsonObject("timeRange") { put("asMuchAsElements", 500) }
                 })
                 lock.withLock {

@@ -6,9 +6,30 @@ import kotlinx.serialization.Serializable
 enum class Side { BUY, SELL }
 @Serializable
 enum class OrderKind { MARKET, LIMIT, STOP }
+/** Bar interval in minutes; whole days are multiples of 1440. Equality is by minutes, so custom intervals compare with presets. */
 @Serializable
-enum class Timeframe(val minutes: Int, val label: String) {
-    M1(1, "1分"), M5(5, "5分"), M15(15, "15分"), H1(60, "1时")
+data class Timeframe(val minutes: Int) {
+    init { require(minutes in 1..MAX_MINUTES) { "周期必须在 1 分钟到 ${MAX_MINUTES / 1440} 天之间" } }
+    val label: String get() = when {
+        minutes % 1440 == 0 -> "${minutes / 1440}天"
+        minutes % 60 == 0 -> "${minutes / 60}小时"
+        else -> "${minutes}分钟"
+    }
+    companion object {
+        const val MAX_MINUTES = 1440 * 366
+        val M1 = Timeframe(1)
+        val M5 = Timeframe(5)
+        val M15 = Timeframe(15)
+        val H1 = Timeframe(60)
+        /** Dropdown presets grouped by unit like TradingView: minutes, hours, days. */
+        val presets: List<Timeframe> = listOf(1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440).map(::Timeframe)
+        val defaultFavorites: List<Timeframe> = listOf(M1, M5, M15, H1)
+        /** [count] units of [unitMinutes] (1, 60 or 1440), or null when outside the supported range. */
+        fun of(count: Int, unitMinutes: Int): Timeframe? {
+            if (count <= 0 || unitMinutes <= 0 || count > MAX_MINUTES / unitMinutes) return null
+            return Timeframe(count * unitMinutes)
+        }
+    }
 }
 
 @Serializable

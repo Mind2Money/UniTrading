@@ -2,6 +2,7 @@ package com.unitrading.chart
 
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
+import com.unitrading.broker.Timeframe
 import kotlin.test.*
 
 class ChartOverlayTest {
@@ -36,5 +37,13 @@ class ChartOverlayTest {
         assertNull(barCountdown(open, 3_600_000, open + 3_600_001))
         assertNull(barCountdown(open, 3_600_000, open - 1))
         assertNull(barCountdown(open, 0, open))
+    }
+
+    @Test fun axisLabelsSwitchFromClockToDateForDailyBars() {
+        val midnight = 1_798_588_800_000L // 2026-12-30 00:00 UTC
+        assertEquals("00:00", axisTimeLabel(midnight, Timeframe.M5))
+        assertEquals("01:00", axisTimeLabel(midnight + 3_600_000, Timeframe(240)))
+        assertEquals("12-30", axisTimeLabel(midnight, Timeframe(1440)))
+        assertEquals("12-30", axisTimeLabel(midnight + 3_600_000, Timeframe(2 * 1440)))
     }
 }

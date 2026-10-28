@@ -206,4 +206,24 @@ class TradingScreenTest {
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("chart-readout").assertExists()
     }
+    @Test fun intervalMenuOffersPresetsFavouritesCustomIntervalsAndSymbols() {
+        render()
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-option-240").performClick()
+        compose.onNodeWithText("${instrument.name} · 4小时 · ${instrument.category}").assertExists()
+        compose.onNodeWithTag("interval-inline-240").assertExists()
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-favorite-240").performClick()
+        compose.waitUntil(5_000) { 240 in runtime.chartPreferences.preferences.value.favoriteMinutes }
+        compose.onNodeWithTag("interval-custom-count").performTextReplacement("7")
+        compose.onNodeWithTag("interval-custom-add").performClick()
+        compose.onNodeWithText("${instrument.name} · 7分钟 · ${instrument.category}").assertExists()
+        compose.waitUntil(5_000) { 7 in runtime.chartPreferences.preferences.value.customMinutes }
+        val other = plugin.instruments[1]
+        compose.onNodeWithTag("chart-symbol").performClick()
+        compose.onNodeWithTag("symbol-filter").performTextReplacement(other.symbol.take(3))
+        compose.onNodeWithTag("symbol-option-${other.symbol}").performClick()
+        compose.onNodeWithText("${other.name} · 7分钟 · ${other.category}").assertExists()
+        compose.onNodeWithTag("order-quantity").assertExists()
+    }
 }
