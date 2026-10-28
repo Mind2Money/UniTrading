@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
+import com.unitrading.app.CredentialStore
 import com.unitrading.broker.*
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.awaitCancellation
@@ -17,6 +18,27 @@ import kotlin.test.assertTrue
 
 class RemoteWorkbenchTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun expiredSavedLoginIsVisibleAndClearingRequiresConfirmation() {
+        val store = object : CredentialStore {
+            var payload: String? = """{"sessions":[{"environment":"DEMO","accessToken":"synthetic-test-token-1234567890","mdAccessToken":null,"userId":42,"userName":"test","expiresAtMs":1}]}"""
+            override suspend fun read() = payload
+            override suspend fun write(value: String) { payload = value }
+            override suspend fun clear() { payload = null }
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), credentialStore = store).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.waitUntil(5_000) { runtime.savedLogins.message.value?.contains("已过期") == true }
+        compose.onNodeWithTag("saved-login-status").assertTextContains("已过期", substring = true)
+        compose.onNodeWithTag("open-accounts").performClick()
+        compose.onNodeWithText("本机已保存 1 个 Tradovate 登录").assertExists()
+        compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
+        compose.onNodeWithText("取消").performClick()
+        kotlin.test.assertEquals(1, runtime.savedLogins.savedCount.value)
+        compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
+        compose.onNodeWithText("确认清除").performClick()
+        compose.waitUntil(5_000) { runtime.savedLogins.savedCount.value == 0 }
+        kotlin.test.assertFalse(store.payload.orEmpty().contains("synthetic-test-token"))
+    }
     private fun remote(empty: Boolean = false): BrokerPlugin = object : BrokerPlugin {
         override val descriptor = BrokerDescriptor("remote-test", "Remote test", "Server data", false, BrokerEnvironment.LIVE)
         override val capabilities = BrokerCapabilities(hedging = false)

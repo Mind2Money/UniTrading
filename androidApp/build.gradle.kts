@@ -11,8 +11,11 @@ android {
         applicationId = "com.unitrading.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.1.2"
+        versionCode = 5
+        versionName = "1.1.3"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Separate application ID for credential tests; never replace the normal installation.
+        if (providers.gradleProperty("credentialStoreTest").orNull == "true") applicationIdSuffix = ".credentialtest"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -25,4 +28,6 @@ dependencies {
     implementation(project(":composeApp"))
     implementation(libs.activity.compose)
     implementation("androidx.webkit:webkit:1.18.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

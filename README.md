@@ -97,7 +97,9 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 
 Windows 需要 WebView2 Runtime 与系统 .NET Framework。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 需要较新 System WebView；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
 
-登录令牌只在内存和进程管道/受限 WebMessage 中传递。Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务。不会把密码或 token 写进 Demo 存档、命令行或日志。
+Windows 和 Android 登录后会在本机加密保存会话，重启自动恢复仍有效的登录及上次选择的账户；续期后的会话同步更新。Windows 使用当前用户的 DPAPI，Android 使用 Keystore 密钥与 AES-GCM。支持保存多个用户及独立的 Demo/Live 登录；账户页可以重试恢复或清除全部已保存登录。会话过期或被服务器撤销后仍需重新认证。
+
+Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务。密码和令牌不会写入 Demo 存档、命令行或日志。旧版本从未保存应用会话，升级到 1.1.3 后需要登录一次，之后才能自动恢复。
 
 **限制**：网页登录成功不保证 API 或实时行情权限；受理不等于成交。超时结果未知时不自动重发，当前会话阻止继续写入，需要先在官网核对。已有保护价仅在服务器括号/OCO 关系和数量唯一匹配时允许修改；首次添加保护通过服务端 OSO；复杂、部分匹配或增删保护请在官网处理。
 

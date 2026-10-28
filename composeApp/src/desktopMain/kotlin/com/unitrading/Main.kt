@@ -40,7 +40,7 @@ private fun defaultDataDirectory(): Path = (System.getProperty("unitrading.dataD
     ?: Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "demo-v1")
 
 fun main() = application {
-    val runtime = remember { TradingRuntime(DesktopSnapshotStore()) }
+    val runtime = remember { TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore()) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
     Window(onCloseRequest = {

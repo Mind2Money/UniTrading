@@ -16,6 +16,7 @@ class TradovateBroker(
     private val wire: TradovateWire = KtorTradovateWire(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val onSessionRenewed: suspend (TradovateSession) -> Unit = {},
 ) : BrokerPlugin {
     override val descriptor = BrokerDescriptor("tradovate-${credentials.environment.wire}-${credentials.userId}",
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
@@ -69,6 +70,7 @@ class TradovateBroker(
 
     suspend fun connect(onProgress: (String) -> Unit = {}) {
         check(!stopped)
+        if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession()
         connected = false
         marketReady = false
         problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
@@ -132,10 +134,7 @@ class TradovateBroker(
                 val expiry = credentials.expiresAtMs
                 if (expiry != null && expiry - now() < 120_000) {
                     try {
-                        val renewed = rest("GET", "auth/renewaccesstoken").jsonObject
-                        val token = renewed.str("accessToken") ?: error("renewal denied")
-                        credentials = TradovateSession(credentials.environment, token, renewed.str("mdAccessToken") ?: credentials.mdAccessToken,
-                            credentials.userId, credentials.userName, renewed.str("expirationTime")?.let(::timestamp), credentials.marketUrl)
+                        renewSession()
                     } catch (cancel: CancellationException) { throw cancel }
                     catch (_: Exception) {
                         connected = false; marketReady = false; problem = "登录会话已失效，请重新打开官方登录页"; publish(); return@launch
@@ -143,6 +142,17 @@ class TradovateBroker(
                 }
             }
         }
+    }
+
+    private suspend fun renewSession() {
+        val renewed = rest("GET", "auth/renewaccesstoken").jsonObject
+        val token = renewed.str("accessToken") ?: error("renewal denied")
+        val expiry = renewed.str("expirationTime")?.let(::timestamp)
+            ?: jwtClaims(token)?.long("exp")?.takeIf { it in 1..253_402_300_799L }?.times(1_000)
+        check(expiry != null && expiry > now()) { "renewal expiry missing or invalid" }
+        credentials = TradovateSession(credentials.environment, token, renewed.str("mdAccessToken") ?: credentials.mdAccessToken,
+            credentials.userId, credentials.userName, expiry, credentials.marketUrl)
+        onSessionRenewed(credentials)
     }
 
     private suspend fun connectMarket() {

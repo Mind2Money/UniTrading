@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
 }
 
 class TradingRuntimeModel(application: Application) : AndroidViewModel(application) {
-    val runtime = TradingRuntime(AndroidSnapshotStore(File(application.filesDir, "demo-v1")))
+    val runtime = TradingRuntime(AndroidSnapshotStore(File(application.filesDir, "demo-v1")), credentialStore = AndroidCredentialStore(application))
     override fun onCleared() {
         runtime.registry.plugins.forEach { it.disconnect() }
         super.onCleared()

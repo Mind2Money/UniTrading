@@ -34,10 +34,12 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.ui)
             implementation(compose.components.resources)
+            implementation(libs.serialization.json)
         }
         getByName("desktopMain").dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.coroutines.swing)
+            implementation("net.java.dev.jna:jna-platform:5.14.0")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -87,7 +89,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.1.2"
+            packageVersion = "1.1.3"
         }
     }
 }

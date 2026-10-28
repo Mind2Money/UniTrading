@@ -36,10 +36,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         val registry = runtime.registry
         val plugins by registry.state.collectAsState()
         var brokerId by rememberSaveable { mutableStateOf(plugins.first().descriptor.id) }
+        val loginScope = rememberCoroutineScope()
+        val restoredBrokerId by runtime.savedLogins.restoredBrokerId.collectAsState()
+        val loginMessage by runtime.savedLogins.message.collectAsState()
+        var manuallySelected by remember { mutableStateOf(false) }
+        LaunchedEffect(runtime) { runtime.savedLogins.restore() }
+        LaunchedEffect(restoredBrokerId) { if (!manuallySelected) restoredBrokerId?.let { brokerId = it } }
+        fun selectBroker(id: String) {
+            manuallySelected = true
+            brokerId = id
+            loginScope.launch { runtime.savedLogins.select(id) }
+        }
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.first()
         val catalog by key(plugin) { plugin.catalog.collectAsState() }
         var showConnection by remember { mutableStateOf(false) }
-        if (showConnection) TradovateConnectionDialog(runtime, login, { brokerId = it }, { showConnection = false })
+        if (showConnection) TradovateConnectionDialog(runtime, login, ::selectBroker, { showConnection = false })
         if (catalog.accounts.isEmpty() || catalog.instruments.isEmpty()) {
             val feed by key(plugin) { plugin.market.collectAsState() }
             val emptyScope = rememberCoroutineScope()
@@ -50,17 +61,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     Text("UniTrading · ${plugin.descriptor.name}", fontSize = 20.sp)
                     Text(feed.statusMessage, color = TradingColors.Muted)
                     Text("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。", fontSize = 12.sp)
-                    BrokerAccountChooser(registry, plugin, "", { brokerId = it }, {})
+                    BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
                     OutlinedTextField(query, { query = it }, label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
                     Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
                     searchError?.let { Text(it, color = TradingColors.Loss) }
                     TextButton({ showConnection = true }) { Text("连接 / 重新登录 Tradovate") }
-                    TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id }) { Text("返回本地 Demo") }
+                    TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id) }) { Text("返回本地 Demo") }
+                    SavedLoginControls(runtime.savedLogins) { selectBroker(plugins.first().descriptor.id) }
                 }
             }
             return@TradingTheme
         }
-        var chosenAccountId by remember(plugin) { mutableStateOf(catalog.accounts.first().id) }
+        var chosenAccountId by remember(plugin) { mutableStateOf(runtime.savedLogins.selectedAccount(plugin.descriptor.id) ?: catalog.accounts.first().id) }
         val accountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
         val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
         val session = remember(plugin, accountId) { plugin.openSession(accountId) }
@@ -107,8 +119,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
             confirmation = null
             mobileTab = 1
         }
-        fun chooseBroker(value: String) { if (!busy) brokerId = value }
-        fun chooseAccount(value: String) { if (!busy) chosenAccountId = value }
+        fun chooseBroker(value: String) { if (!busy) selectBroker(value) }
+        fun chooseAccount(value: String) {
+            if (!busy) {
+                chosenAccountId = value
+                loginScope.launch { runtime.savedLogins.select(plugin.descriptor.id, value) }
+            }
+        }
         fun changeDraft(value: OrderDraft) { draft = value; showDraft = true }
         fun perform(action: suspend () -> TradeResult) {
             if (busy) return
@@ -189,6 +206,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         if (desktop && !wide || compactShort) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                     }
                     DividerLine()
+                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = TradingColors.Muted) }
                     if (!localDemo) Text(market.statusMessage, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), color = TradingColors.Muted, fontSize = 11.sp)
                     if (storageError != null) {
                         Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -262,7 +280,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
                                     if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
                                     TextButton({ showConnection = true }) { Text("连接 Tradovate") }
-                                    if (!localDemo) TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id }) { Text("断开 Tradovate") }
+                                    if (!localDemo) TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id) }) { Text("断开 Tradovate") }
                                 }
                             }
                         }
@@ -300,7 +318,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                 if (showAccounts) AlertDialog(
                     onDismissRequest = { showAccounts = false },
                     title = { Text("交易商与账户") },
-                    text = { Column { BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount); Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = TradingColors.Muted); TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }; if (!localDemo) TextButton({ plugin.disconnect(); brokerId = plugins.first().descriptor.id; showAccounts = false }) { Text("断开 Tradovate") } } },
+                    text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+                        BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
+                        Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = TradingColors.Muted)
+                        TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }
+                        if (!localDemo) TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id); showAccounts = false }) { Text("断开 Tradovate") }
+                        SavedLoginControls(runtime.savedLogins) { selectBroker(plugins.first().descriptor.id); showAccounts = false }
+                    } },
                     confirmButton = { TextButton({ showAccounts = false }) { Text("完成") } },
                     dismissButton = { if (localDemo) TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
                 )

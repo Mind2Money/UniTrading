@@ -14,6 +14,7 @@ enum class TradovateEnvironment(val wire: String, val host: String, val marketHo
     val marketUrl get() = "wss://$marketHost/v1/websocket"
 }
 
+@kotlinx.serialization.Serializable
 class TradovateSession(
     val environment: TradovateEnvironment,
     val accessToken: String,

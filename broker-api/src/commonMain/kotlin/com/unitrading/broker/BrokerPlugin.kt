@@ -49,4 +49,10 @@ class BrokerRegistry(plugins: List<BrokerPlugin>) {
         mutablePlugins.value = plugins.filterNot { it.descriptor.id == plugin.descriptor.id } + plugin
     }
     fun get(id: String): BrokerPlugin = plugins.first { it.descriptor.id == id }
+    fun unregister(id: String) {
+        val removed = plugins.firstOrNull { it.descriptor.id == id } ?: return
+        require(plugins.size > 1)
+        removed.disconnect()
+        mutablePlugins.value = plugins.filterNot { it.descriptor.id == id }
+    }
 }

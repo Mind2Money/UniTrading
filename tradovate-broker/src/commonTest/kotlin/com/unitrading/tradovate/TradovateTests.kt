@@ -26,6 +26,7 @@ internal class MockTradovateWire : TradovateWire {
     var chartEventHasRequestId = false
     var fractionalChartId = false
     var reducedPrecisionChartTime = false
+    var renewal = obj("""{"accessToken":"renewed-test-token-1234567890","expirationTime":"2100-01-01T00:00:00Z"}""")
     var snapshot = obj("""{
       "accounts":[{"id":100,"name":"Demo account","userId":42},{"id":101,"name":"Second account","userId":42},{"id":999,"name":"Foreign account","userId":9}],
       "contracts":[{"id":200,"name":"MESZ6","contractMaturityId":300}],
@@ -37,6 +38,7 @@ internal class MockTradovateWire : TradovateWire {
     }""")
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         requests.add(Request(method, path, body))
+        if (path == "auth/renewaccesstoken") return renewal
         if (path == "account/list") return JsonArray(snapshot.array("accounts").filter { it.long("id") != 999L })
         if (path.startsWith("cashBalance/")) return obj("""{"totalCashValue":25000,"netLiq":25000,"initialMargin":0}""")
         if (path.startsWith("contract/suggest")) return snapshot["contracts"]!!
@@ -97,6 +99,44 @@ internal class MockTradovateWire : TradovateWire {
 }
 
 class TradovateTests {
+    @Test fun nearExpiryRestorationRenewsBeforeDiscoveryAndNotifiesPersistence() = runTest {
+        val wire = MockTradovateWire()
+        var saved: TradovateSession? = null
+        val initial = TradovateSession(TradovateEnvironment.DEMO, fakeToken(), null, 42, "test", TEST_TIME + 60_000)
+        val broker = TradovateBroker(initial, wire, backgroundScope, { TEST_TIME }, { saved = it })
+        broker.connect()
+        assertEquals("auth/renewaccesstoken", wire.requests.first().path)
+        assertEquals("renewed-test-token-1234567890", saved?.accessToken)
+        assertEquals(TradovateEnvironment.DEMO, saved?.environment)
+        assertEquals(saved?.accessToken, wire.account.bodies["authorize"])
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun invalidRenewalNeverPersistsAnUnusableSession() = runTest {
+        val wire = MockTradovateWire().apply { renewal = obj("""{"accessToken":"renewed-test-token-1234567890"}""") }
+        var persisted = false
+        val initial = TradovateSession(TradovateEnvironment.DEMO, fakeToken(), null, 42, "test", TEST_TIME + 60_000)
+        val broker = TradovateBroker(initial, wire, backgroundScope, { TEST_TIME }, { persisted = true })
+        assertFails { broker.connect() }
+        assertFalse(persisted)
+        assertTrue(wire.socketUrls.isEmpty())
+    }
+
+    @Test fun runningSessionRenewalNotifiesPersistence() = runTest {
+        val wire = MockTradovateWire()
+        var saved: TradovateSession? = null
+        var clock = TEST_TIME
+        val initial = TradovateSession(TradovateEnvironment.DEMO, fakeToken(), null, 42, "test", TEST_TIME + 180_000)
+        val broker = TradovateBroker(initial, wire, backgroundScope, { clock }, { saved = it })
+        broker.connect()
+        assertNull(saved)
+        clock += 70_000
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals("renewed-test-token-1234567890", saved?.accessToken)
+        assertTrue(broker.market.value.connected)
+    }
+
     private fun session() = TradovateSession(TradovateEnvironment.DEMO, fakeToken(), fakeToken(), 42, "test", 4_102_444_800_000)
     private suspend fun TestScope.ready(wire: MockTradovateWire = MockTradovateWire()): Pair<TradovateBroker, MockTradovateWire> {
         val broker = TradovateBroker(session(), wire, backgroundScope, now = { TEST_TIME })

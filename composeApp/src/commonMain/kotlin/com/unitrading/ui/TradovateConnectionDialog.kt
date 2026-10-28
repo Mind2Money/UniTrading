@@ -19,6 +19,7 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
+    val restoring by runtime.savedLogins.restoring.collectAsState()
     fun dismiss() { attempt?.cancel(); onDismiss() }
     AlertDialog(
         onDismissRequest = ::dismiss,
@@ -31,6 +32,7 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
             }
             Text("在官方网页中登录，成功后自动返回。首次最多保留 60 秒供浏览器保存密码；已记住的登录会更快交接。", fontSize = 12.sp)
             Text("认证统一使用 Tradovate 认证服务，账户与行情连接保持你选择的 Demo/Live 环境；不会自动下单。", fontSize = 12.sp, color = TradingColors.Muted)
+            if (runtime.savedLogins.available) Text("登录成功后在本机加密保存，下次启动自动恢复有效会话；可在账户页清除。", fontSize = 12.sp)
             if (environment == TradovateEnvironment.LIVE) Text("Live：后续确认的订单会发送到真实账户。", color = TradingColors.Loss, fontSize = 12.sp)
             if (login == null) Text("此平台尚未配置官方网页登录组件。", color = TradingColors.Loss)
             if (busy) {
@@ -42,26 +44,21 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
         confirmButton = { Button({
             busy = true; error = null; progress = "正在打开官方登录窗口…"
             attempt = scope.launch {
-                var broker: TradovateBroker? = null
                 val report: (String) -> Unit = { message -> scope.launch { progress = message } }
                 try {
                     val session = withTimeout(600_000) { login!!.signIn(environment, report) }
                     progress = "网页登录已完成，正在连接服务器账户…"
-                    broker = TradovateBroker(session)
-                    withTimeout(90_000) { broker.connect(report) }
-                    runtime.registry.register(broker)
-                    onConnected(broker.descriptor.id)
+                    val id = runtime.savedLogins.signIn(session, report)
+                    onConnected(id)
                     onDismiss()
                 } catch (_: TimeoutCancellationException) {
-                    broker?.disconnect()
                     error = "阶段超时：$progress。没有发送交易指令。"
-                } catch (cancel: CancellationException) { broker?.disconnect(); throw cancel }
+                } catch (cancel: CancellationException) { throw cancel }
                 catch (e: Exception) {
-                    broker?.disconnect()
                     error = if (e is TradovateRemoteException) "$progress\n${e.message}" else "$progress\n登录交接未完成，请关闭旧登录窗口后重试。"
                 } finally { busy = false }
             }
-        }, enabled = !busy && login != null) { Text("打开官方登录页") } },
+        }, enabled = !busy && !restoring && login != null) { Text("打开官方登录页") } },
         dismissButton = { TextButton(::dismiss, Modifier.testTag("cancel-login")) { Text(if (busy) "取消连接" else "取消") } },
     )
 }

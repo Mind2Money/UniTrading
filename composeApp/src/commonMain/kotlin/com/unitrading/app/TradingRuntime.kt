@@ -23,7 +23,7 @@ class MemorySnapshotStore : SnapshotStore {
     override fun write(key: String, value: String) { values[key] = value }
 }
 
-class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<com.unitrading.broker.BrokerPlugin> = emptyList()) {
+class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<com.unitrading.broker.BrokerPlugin> = emptyList(), credentialStore: CredentialStore? = null) {
     val startupError = MutableStateFlow<String?>(null)
     val storageError = MutableStateFlow<String?>(null)
     val paused = MutableStateFlow(false)
@@ -37,6 +37,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
         }
     }
     val registry = BrokerRegistry(brokers + additionalPlugins)
+    val savedLogins = SavedTradovateAccounts(registry, credentialStore)
 
     suspend fun run() {
         var ticks = 0
