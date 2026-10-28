@@ -1,0 +1,15 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+*.log
+.claude/
+artifacts/
+iosApp/Pods/
+iosApp/**/xcuserdata/
+iosApp/DerivedData/
+*.keystore
+*.jks
