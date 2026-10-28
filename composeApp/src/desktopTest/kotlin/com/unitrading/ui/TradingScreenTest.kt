@@ -190,4 +190,20 @@ class TradingScreenTest {
         target.parentFile.mkdirs()
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)
     }
+    @Test fun legendFloatsOverChartAndTradeButtonsPickSide() {
+        render()
+        val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot
+        val legend = compose.onNodeWithTag("chart-legend").fetchSemanticsNode().boundsInRoot
+        assertTrue(legend.left >= chart.left && legend.top >= chart.top && legend.right <= chart.right && legend.bottom <= chart.bottom, "Legend must float inside the chart, not in a separate banner")
+        assertTrue(legend.top - chart.top < 80f, "Legend sits at the top-left corner of the plot")
+        compose.onNodeWithTag("chart-readout").assertExists()
+        compose.onNodeWithTag("legend-sell").performClick()
+        compose.onNode(hasText(Side.SELL.label()) and isSelectable()).assertIsSelected()
+        compose.onNodeWithTag("legend-buy").performClick()
+        compose.onNode(hasText(Side.BUY.label()) and isSelectable()).assertIsSelected()
+        compose.onNodeWithTag("legend-toggle").performClick()
+        compose.onNodeWithTag("chart-readout").assertDoesNotExist()
+        compose.onNodeWithTag("legend-toggle").performClick()
+        compose.onNodeWithTag("chart-readout").assertExists()
+    }
 }

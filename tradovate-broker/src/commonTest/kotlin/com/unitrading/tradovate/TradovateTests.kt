@@ -86,7 +86,7 @@ internal class MockTradovateWire : TradovateWire {
                 }
                 val correlation = if (chartEventHasRequestId) "\"i\":$id," else ""
                 val chartId = if (fractionalChartId) "1.25e1" else "12"
-                queue.send("""a[{$correlation"e":"chart","d":{"charts":[{"id":$chartId,"bars":[{"timestamp":$stamp,"open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+                queue.send("""a[{$correlation"e":"chart","d":{"charts":[{"id":$chartId,"bars":[{"timestamp":$stamp,"open":5500,"high":5501,"low":5499.75,"close":5500.25,"upVolume":3,"downVolume":2}]}]}}]""")
             }
         }
         suspend fun quote(bid: String = "5500", ask: String = "5500.25", time: Long = TEST_TIME) {
@@ -163,6 +163,7 @@ class TradovateTests {
         val (broker, _) = ready(wire)
         assertEquals(1, broker.history("MESZ6", Timeframe.M5).size)
         assertEquals(TEST_TIME, broker.history("MESZ6", Timeframe.M5).single().timeMs)
+        assertEquals(5L, broker.history("MESZ6", Timeframe.M5).single().volume)
     }
     @Test fun fractionalChartChannelsAreNotDiscardedAsInvalidEntityIds() = runTest {
         val (broker, _) = ready(MockTradovateWire().apply { fractionalChartId = true })

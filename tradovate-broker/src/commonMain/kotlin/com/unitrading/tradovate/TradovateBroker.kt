@@ -387,7 +387,8 @@ class TradovateBroker(
             val l = bar.priceValue("low") ?: return@mapNotNull null
             val c = bar.priceValue("close") ?: return@mapNotNull null
             if (l <= 0 || h < maxOf(o, c) || l > minOf(o, c)) return@mapNotNull null
-            Candle(time, o, h, l, c)
+            val volume = listOfNotNull(bar.long("upVolume"), bar.long("downVolume")).takeIf { it.isNotEmpty() }?.sum()?.takeIf { it >= 0 }
+            Candle(time, o, h, l, c, volume)
         }
         history = history + (key to ((history[key] ?: emptyList()) + incoming).associateBy { it.timeMs }.values.sortedBy { it.timeMs }.takeLast(500))
     }

@@ -47,7 +47,7 @@ data class Instrument(
 @Serializable
 data class Quote(val bid: Long, val ask: Long, val timeMs: Long)
 @Serializable
-data class Candle(val timeMs: Long, val open: Long, val high: Long, val low: Long, val close: Long)
+data class Candle(val timeMs: Long, val open: Long, val high: Long, val low: Long, val close: Long, val volume: Long? = null)
 @Serializable
 enum class BrokerEnvironment(val label: String) { LOCAL_DEMO("本地模拟"), REMOTE_DEMO("Tradovate Demo"), LIVE("Tradovate Live · 真实账户") }
 @Serializable

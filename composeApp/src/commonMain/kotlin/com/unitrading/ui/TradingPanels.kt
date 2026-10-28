@@ -1,6 +1,5 @@
 package com.unitrading.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -110,25 +109,6 @@ internal fun MarketWatch(plugin: BrokerPlugin, market: MarketSnapshot, selected:
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Text("${plugin.descriptor.name} 提供", fontSize = 10.sp, color = TradingColors.Muted)
             Text(if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) "全部为本地生成的模拟行情" else "行情与标的由 Tradovate 提供", fontSize = 10.sp, color = TradingColors.Muted)
-        }
-    }
-}
-
-@Composable
-internal fun InstrumentHeader(instrument: Instrument, quote: Quote?, compact: Boolean, onSide: (Side) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(instrument.symbol, fontSize = if (compact) 20.sp else 25.sp, fontWeight = FontWeight.SemiBold)
-            Text("${instrument.name}  /  ${instrument.category}", fontSize = 11.sp, color = TradingColors.Muted)
-        }
-        listOf(Side.SELL, Side.BUY).forEach { side ->
-            val color = if (side == Side.BUY) TradingColors.Up else TradingColors.Down
-            Surface(onClick = { onSide(side) }, shape = RoundedCornerShape(8.dp), color = color.copy(alpha = .09f), border = BorderStroke(1.dp, color.copy(alpha = .3f))) {
-                Column(Modifier.padding(horizontal = if (compact) 10.dp else 16.dp, vertical = 8.dp)) {
-                    Text(if (side == Side.BUY) "买入 Ask" else "卖出 Bid", fontSize = 10.sp, color = TradingColors.Muted)
-                    Text(quote?.let { instrument.formatPrice(if (side == Side.BUY) it.ask else it.bid) } ?: "—", fontSize = if (compact) 12.sp else 16.sp, fontWeight = FontWeight.Medium)
-                }
-            }
         }
     }
 }

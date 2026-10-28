@@ -264,12 +264,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             Column(Modifier.weight(1f).fillMaxHeight()) {
                                 Row(Modifier.weight(1f).fillMaxWidth()) {
                                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                                        InstrumentHeader(instrument, quote, false) { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true }
                                         TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                                             selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
+                                            connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true })
                                     }
                                     if (wide) {
                                         VerticalDivider(color = colors.Border)
@@ -288,12 +288,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))
                             1 -> Column(Modifier.weight(1f)) {
-                                if (!compactShort) InstrumentHeader(instrument, quote, true) { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true }
                                 TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                                     selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
                                             visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol },
+                                            connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true },
+                                            onSymbolSearch = { mobileTab = 0 }, legendCollapsed = compactShort)
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
                                     Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("新建订单") }
