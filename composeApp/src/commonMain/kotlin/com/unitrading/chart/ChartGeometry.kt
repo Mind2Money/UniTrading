@@ -73,3 +73,23 @@ fun spreadLabelCenters(desired: List<Float>, top: Float, bottom: Float, minimumG
     for (i in result.lastIndex - 1 downTo 0) result[i] = minOf(result[i], result[i + 1] - gap)
     return result
 }
+
+/**
+ * Like [spreadLabelCenters], but label `i` may reserve [extraAbove]/[extraBelow] pixels around its centre for
+ * stacked lines (the live price tag carries the contract name above and the bar countdown below). When the
+ * reservations cannot fit between [top] and [bottom], they are dropped and the uniform spacing is used instead.
+ */
+fun spreadLabelCenters(desired: List<Float>, top: Float, bottom: Float, minimumGap: Float, extraAbove: List<Float>, extraBelow: List<Float>): List<Float> {
+    require(extraAbove.size == desired.size && extraBelow.size == desired.size)
+    require(extraAbove.all { it >= 0 } && extraBelow.all { it >= 0 })
+    if (desired.isEmpty()) return emptyList()
+    require(desired.zipWithNext().all { (a, b) -> a <= b })
+    fun gap(i: Int) = minimumGap + extraBelow[i - 1] + extraAbove[i]
+    val needed = extraAbove.first() + extraBelow.last() + (1..desired.lastIndex).fold(0f) { sum, i -> sum + gap(i) }
+    if (needed > bottom - top) return spreadLabelCenters(desired, top, bottom, minimumGap)
+    val result = desired.mapIndexed { i, y -> y.coerceIn(top + extraAbove[i], bottom - extraBelow[i]) }.toMutableList()
+    for (i in 1..result.lastIndex) result[i] = maxOf(result[i], result[i - 1] + gap(i))
+    result[result.lastIndex] = minOf(result.last(), bottom - extraBelow.last())
+    for (i in result.lastIndex - 1 downTo 0) result[i] = minOf(result[i], result[i + 1] - gap(i + 1))
+    return result
+}

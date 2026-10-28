@@ -145,7 +145,7 @@ internal fun ChartLegend(
 ) {
     val colors = TradingColors
     Column(
-        modifier.background(colors.Surface.copy(alpha = .8f), RoundedCornerShape(8.dp))
+        modifier.background(colors.Surface.copy(alpha = .92f), RoundedCornerShape(8.dp))
             .padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 6.dp).testTag("chart-legend"),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {

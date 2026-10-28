@@ -43,6 +43,16 @@ class ChartGeometryTest {
         assertEquals(emptyList(), spreadLabelCenters(emptyList(), 20f, 200f, 25f))
         assertEquals(listOf(20f, 25f, 30f), spreadLabelCenters(listOf(20f, 20f, 20f), 20f, 30f, 25f))
     }
+    @Test fun reservedRoomKeepsStackedLinesClearOfNeighboursAndBounds() {
+        // Middle label reserves 10px above and below: neighbours move away by the gap plus the reservation.
+        assertEquals(listOf(100f, 135f, 170f), spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 400f, 25f, listOf(0f, 10f, 0f), listOf(0f, 10f, 0f)))
+        // Reservations also keep the stacked lines inside the axis.
+        assertEquals(listOf(35f), spreadLabelCenters(listOf(10f), 20f, 400f, 25f, listOf(15f), listOf(0f)))
+        assertEquals(listOf(385f), spreadLabelCenters(listOf(399f), 20f, 400f, 25f, listOf(0f), listOf(15f)))
+        // Without room for the reservation the layout falls back to uniform spacing instead of overlapping.
+        assertEquals(spreadLabelCenters(listOf(50f, 60f), 0f, 30f, 25f), spreadLabelCenters(listOf(50f, 60f), 0f, 30f, 25f, listOf(0f, 100f), listOf(0f, 0f)))
+        assertEquals(spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 200f, 25f), spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 200f, 25f, listOf(0f, 0f, 0f), listOf(0f, 0f, 0f)))
+    }
     @Test fun viewportCannotEscapeHistory() {
         assertEquals(IntRange.EMPTY, visibleRange(0, 100, 0))
         assertEquals(0..9, visibleRange(10, 100, 10000))

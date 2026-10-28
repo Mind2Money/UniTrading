@@ -467,10 +467,13 @@ fun TradingChart(
                     val tags = priceTags.filter { scale.y(it.price) in top..bottom }.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
                     val firstCenter = top + labelHeight / 2 + labelPadding
                     val lastCenter = maxOf(firstCenter, bottom - labelHeight / 2 - labelPadding)
-                    val centers = spreadLabelCenters(tags.map { scale.y(it.price) }, firstCenter, lastCenter, tagGap)
+                    val lineHeight = labelHeight + labelPadding * 2
+                    // Reserve a line above the live price for the contract name and one below for the countdown, so a
+                    // position or order tag right next to the price moves aside instead of hiding them.
+                    val centers = spreadLabelCenters(tags.map { scale.y(it.price) }, firstCenter, lastCenter, tagGap,
+                        tags.map { if (it.priority == 2) lineHeight else 0f }, tags.map { if (it.priority == 2 && countdown != null) lineHeight else 0f })
                     val tagLeft = right + 4.dp.toPx()
                     val tagWidth = (size.width - tagLeft).coerceAtLeast(1f)
-                    val lineHeight = labelHeight + labelPadding * 2
                     tags.zip(centers).forEachIndexed { index, (tag, center) ->
                         drawLine(colors.Muted, Offset(right, scale.y(tag.price)), Offset(tagLeft, center), 1f)
                         drawRect(tag.background, Offset(tagLeft, center - lineHeight / 2), Size(tagWidth, lineHeight))
