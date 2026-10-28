@@ -68,12 +68,25 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager --install "platforms;android-37.0" "emulator" "system-images;android-36;google_apis;x86_64"
-          echo no | avdmanager create avd --force --name unitrading-ci --package "system-images;android-36;google_apis;x86_64"
+          export ANDROID_USER_HOME="$RUNNER_TEMP/unitrading-android"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf '%s\n' "ANDROID_USER_HOME=$ANDROID_USER_HOME" "ANDROID_EMULATOR_HOME=$ANDROID_EMULATOR_HOME" "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | avdmanager create avd --force --name unitrading-ci --path "$ANDROID_AVD_HOME/unitrading-ci.avd" --package "system-images;android-36;google_apis;x86_64" --device pixel_6
+          test -f "$ANDROID_AVD_HOME/unitrading-ci.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -x unitrading-ci
           sudo chmod 666 /dev/kvm
           mkdir -p artifacts
           "$ANDROID_HOME/emulator/emulator" -avd unitrading-ci -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect > artifacts/emulator.log 2>&1 &
-          timeout 120 adb wait-for-device
-          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = "1" ]; do sleep 2; done'
+          emulator_pid=$!
+          booted=false
+          for attempt in $(seq 1 150); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then cat artifacts/emulator.log; exit 1; fi
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ]; then booted=true; break; fi
+            sleep 2
+          done
+          if [ "$booted" != true ]; then cat artifacts/emulator.log; adb devices; exit 1; fi
           adb shell input keyevent 82
       - name: Test debug and minified release on device
         run: |
@@ -114,7 +127,7 @@ jobs:
           device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
           xcrun simctl boot "$device" || true
           xcrun simctl bootstatus "$device" -b
-          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug -destination "id=$device" -derivedDataPath artifacts/ios-build CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug -destination "id=$device" -derivedDataPath artifacts/ios-build ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
           xcrun simctl install "$device" artifacts/ios-build/Build/Products/Debug-iphonesimulator/UniTrading.app
           xcrun simctl launch --console "$device" com.unitrading.demo --native-platform-self-test | tee artifacts/ios-platform-test.log
           grep -q 'NATIVE_PLATFORM_SELF_TEST PASS' artifacts/ios-platform-test.log

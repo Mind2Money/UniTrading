@@ -35,7 +35,14 @@ if (!(Test-Path -LiteralPath $archive -PathType Leaf)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -UseBasicParsing -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/$packageName" -OutFile $archive
 }
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+$hashStream = [IO.File]::OpenRead($archive)
+$hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+try {
+    $hash = ([BitConverter]::ToString($hashAlgorithm.ComputeHash($hashStream))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $hashAlgorithm.Dispose()
+    $hashStream.Dispose()
+}
 if ($hash -ne $expectedHash) {
     throw 'WebView2 package checksum mismatch. No package contents were loaded.'
 }
