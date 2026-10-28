@@ -35,8 +35,8 @@ internal class TradovateSocket(
                     else if (text.startsWith("c")) break
                     else for (frame in decodeFrames(text)) {
                         val id = frame.long("i")?.toInt()
-                        if (id != null) lock.withLock { pending.remove(id) }?.complete(frame)
-                        else onEvent(frame)
+                        if (frame.str("e") != null) onEvent(frame)
+                        else if (id != null) lock.withLock { pending.remove(id) }?.complete(frame)
                     }
                 }
             } catch (cancel: CancellationException) { throw cancel }

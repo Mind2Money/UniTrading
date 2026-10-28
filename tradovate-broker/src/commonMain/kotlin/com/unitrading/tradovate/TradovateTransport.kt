@@ -23,6 +23,16 @@ interface TradovateWireSocket {
 }
 class TradovateRemoteException(val status: Int, message: String) : Exception(message)
 
+internal fun tradovateRequestUrl(environment: TradovateEnvironment, path: String): String {
+    require(path.matches(Regex("[a-zA-Z]+/[a-zA-Z]+(?:\\?[^#\\r\\n]*)?")))
+    val endpoint = path.substringBefore('?')
+    val base = if (endpoint in setOf("auth/me", "auth/renewaccesstoken")) environment.authUrl else {
+        require(!endpoint.startsWith("auth/")) { "不支持的认证端点" }
+        environment.restUrl
+    }
+    return "$base/$path"
+}
+
 class KtorTradovateWire : TradovateWire {
     private val client = HttpClient {
         followRedirects = false
@@ -32,7 +42,7 @@ class KtorTradovateWire : TradovateWire {
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         require(path.matches(Regex("[a-zA-Z]+/[a-zA-Z]+(?:\\?[^#\\r\\n]*)?")))
         try {
-            val response = client.request("${environment.restUrl}/$path") {
+            val response = client.request(tradovateRequestUrl(environment, path)) {
                 this.method = HttpMethod.parse(method)
                 bearerAuth(token)
                 contentType(ContentType.Application.Json)

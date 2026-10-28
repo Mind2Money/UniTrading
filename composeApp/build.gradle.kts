@@ -50,15 +50,35 @@ val isWindows = System.getProperty("os.name").startsWith("Windows")
 val buildTradovateLoginHost = tasks.register<Exec>("buildTradovateLoginHost") {
     onlyIf { isWindows }
     inputs.files(rootProject.file("native-auth/TradovateLogin.cs"), rootProject.file("native-auth/build.ps1"))
-    outputs.file(rootProject.file("native-auth/build/UniTrading.TradovateLogin.exe"))
-    commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rootProject.file("native-auth/build.ps1").absolutePath)
+    outputs.file(rootProject.file("native-auth/build/1.1.1/UniTrading.TradovateLogin.exe"))
+    commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rootProject.file("native-auth/build.ps1").absolutePath,
+        "-OutputDir", rootProject.file("native-auth/build/1.1.1").absolutePath)
 }
 val stageTradovateLoginHost = tasks.register<Copy>("stageTradovateLoginHost") {
     dependsOn(buildTradovateLoginHost)
     onlyIf { isWindows }
-    from(rootProject.file("native-auth/build")) { include("*.exe", "*.dll", "*.txt") }
-    into(layout.buildDirectory.dir("appResources/tradovate-login"))
+    from(rootProject.file("native-auth/build/1.1.1")) { include("*.exe", "*.dll", "*.txt") }
+    into(layout.buildDirectory.dir("appResources/tradovate-login/1.1.1"))
 }
+val desktopTestCompilation = kotlin.targets.getByName("desktop").compilations.getByName("test")
+tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
+    group = "verification"
+    description = "Explicit Demo-only browser login diagnostic; all order routes are blocked."
+    dependsOn("desktopTestClasses", stageTradovateLoginHost)
+    classpath = files(desktopTestCompilation.output.allOutputs, desktopTestCompilation.runtimeDependencyFiles)
+    mainClass.set("com.unitrading.TradovateReadOnlyProbeKt")
+    args("--demo-read-only")
+    systemProperty("file.encoding", "UTF-8")
+    systemProperty("sun.stdout.encoding", "UTF-8")
+    systemProperty("sun.stderr.encoding", "UTF-8")
+    systemProperty("compose.application.resources.dir", layout.buildDirectory.dir("appResources").get().asFile.absolutePath)
+    doFirst {
+        check(isWindows && providers.gradleProperty("confirmTradovateReadOnly").orNull == "true") {
+            "This Windows-only diagnostic requires -PconfirmTradovateReadOnly=true and never permits orders."
+        }
+    }
+}
+
 tasks.matching { it.name in setOf("run", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
 compose.desktop {
     application {
@@ -67,7 +87,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.1.0"
+            packageVersion = "1.1.1"
         }
     }
 }

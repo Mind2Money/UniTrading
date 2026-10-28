@@ -9,6 +9,7 @@ enum class TradovateEnvironment(val wire: String, val host: String, val marketHo
     DEMO("demo", "demo.tradovateapi.com", "md-demo.tradovateapi.com"),
     LIVE("live", "live.tradovateapi.com", "md.tradovateapi.com");
     val restUrl get() = "https://$host/v1"
+    val authUrl get() = "https://live.tradovateapi.com/v1"
     val socketUrl get() = "wss://$host/v1/websocket"
     val marketUrl get() = "wss://$marketHost/v1/websocket"
 }
@@ -32,7 +33,7 @@ class TradovateSession(
 }
 
 interface TradovateLogin {
-    suspend fun signIn(environment: TradovateEnvironment): TradovateSession
+    suspend fun signIn(environment: TradovateEnvironment, onProgress: (String) -> Unit = {}): TradovateSession
 }
 
 /** Receives only messages from the current official login window, never a browser's files. */
@@ -43,7 +44,7 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
     private var name = ""
     private var expires: Long? = null
     private var mdUrl = environment.marketUrl
-    val ready get() = access != null && id != null
+    val ready get() = access != null && id != null && expires?.let { it > Clock.System.now().toEpochMilliseconds() } == true
 
     fun accept(message: String, origin: String, mainFrame: Boolean): Boolean {
         if (!mainFrame || origin.trimEnd('/') != "https://trader.tradovate.com" || message.length > 131_072) return false
@@ -59,7 +60,9 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
                 access = value
                 id = candidate
                 name = data.str("userName") ?: data.str("name") ?: claims?.str("name") ?: ""
-                expires = data.str("expirationTime")?.let(::timestamp) ?: claims?.long("exp")?.times(1_000)
+                expires = data.str("expirationTime")?.let(::timestamp)
+                    ?: data.long("expires_in")?.takeIf { it in 1..604_800 }?.let { Clock.System.now().toEpochMilliseconds() + it * 1_000 }
+                    ?: claims?.long("exp")?.takeIf { it in 1..253_402_300_799L }?.times(1_000)
             }
         }
         token("mdAccessToken")?.let { md = it }
@@ -68,7 +71,7 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
     }
     fun result(): TradovateSession {
         check(ready) { "尚未收到有效登录会话，请完成官方网页登录" }
-        check(expires == null || expires!! > Clock.System.now().toEpochMilliseconds()) { "登录令牌已过期，请重新登录" }
+        check(expires != null && expires!! > Clock.System.now().toEpochMilliseconds()) { "登录令牌已过期或缺少有效期，请重新登录" }
         return TradovateSession(environment, access!!, md, id!!, name, expires, mdUrl)
     }
 }
@@ -82,7 +85,17 @@ internal fun JsonObject.str(key: String) = (this[key] as? JsonPrimitive)?.conten
 internal fun JsonObject.long(key: String) = (this[key] as? JsonPrimitive)?.longOrNull
 internal fun JsonObject.bool(key: String) = (this[key] as? JsonPrimitive)?.booleanOrNull
 internal fun JsonObject.array(key: String) = (this[key] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
-internal fun timestamp(value: String): Long? = runCatching { kotlin.time.Instant.parse(value).toEpochMilliseconds() }.getOrNull()
+internal fun timestamp(value: String): Long? {
+    val text = value.trim()
+    text.toLongOrNull()?.takeIf { it in 0..253_402_300_799_999L }?.let { return it }
+    // Tradovate minute bars may omit seconds (for example 2026-10-28T12:35Z).
+    val reduced = Regex("^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2})(Z|[+-][0-9]{2}:?[0-9]{2})$").matchEntire(text)
+    val normalized = if (reduced != null) {
+        val zone = reduced.groupValues[2].let { if (it.length == 5 && ':' !in it) it.take(3) + ":" + it.takeLast(2) else it }
+        reduced.groupValues[1] + ":00" + zone
+    } else text
+    return runCatching { kotlin.time.Instant.parse(normalized).toEpochMilliseconds() }.getOrNull()
+}
 internal fun safeMessage(value: String): String = value
     .replace(Regex("eyJ[A-Za-z0-9_.-]{12,}"), "[redacted]")
     .replace(Regex("(?i)Bearer\\s+[^\\s]+"), "Bearer [redacted]")

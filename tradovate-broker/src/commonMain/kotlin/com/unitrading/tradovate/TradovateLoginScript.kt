@@ -9,14 +9,24 @@ object TradovateLoginScript {
           const env = '${environment.wire}';
           const apiHost = '${environment.host}';
           const mdHost = '${environment.marketHost}';
+          const authHosts = new Set(['live.tradovateapi.com', 'demo.tradovateapi.com', 'tv.tradovateapi.com', 'tv-demo.tradovateapi.com']);
           let last = '';
-          const emit = data => {
+          const emit = (response, authSource = 'socket') => {
+            const data = response && response.d && typeof response.d === 'object' ? response.d : response;
             if (!data || typeof data !== 'object' || data.error || data.errorText || data['p-ticket'] || data['p-captcha']) return;
-            const msg = {kind:'auth', environment:env};
-            for (const key of ['accessToken','mdAccessToken','userName','name','expirationTime','marketUrl']) {
-              if (typeof data[key] === 'string' && data[key].length <= 65536) msg[key] = data[key];
+            if (['demo','live'].includes(data.environment) && data.environment !== env) return;
+            const msg = {kind:'auth', environment:env, authSource};
+            const access = data.accessToken ?? data.access_token ?? data.token;
+            if (typeof access === 'string' && access.length <= 32768) msg.accessToken = access;
+            for (const key of ['mdAccessToken','expirationTime','marketUrl']) {
+              if (typeof data[key] === 'string' && data[key].length <= 32768) msg[key] = data[key];
             }
-            if (typeof data.userId === 'number' || typeof data.userId === 'string') msg.userId = data.userId;
+            const name = data.userName ?? data.name;
+            if (typeof name === 'string') msg.userName = name.slice(0,256);
+            const userId = data.userId ?? data.user_id;
+            if (typeof userId === 'number' || typeof userId === 'string') msg.userId = userId;
+            const duration = Number(data.expires_in);
+            if (Number.isInteger(duration) && duration > 0 && duration <= 604800) msg.expires_in = duration;
             if (!msg.accessToken && !msg.mdAccessToken) return;
             const payload = JSON.stringify(msg);
             if (payload === last) return;
@@ -27,8 +37,8 @@ object TradovateLoginScript {
           const authResponse = value => {
             try {
               const u = new URL(value, location.href);
-              return u.protocol === 'https:' && u.hostname === apiHost && u.port === '' &&
-                ['/v1/auth/accesstokenrequest','/v1/auth/renewaccesstoken'].includes(u.pathname.toLowerCase());
+              return u.protocol === 'https:' && authHosts.has(u.hostname) && u.port === '' && !u.username && !u.password &&
+                /^\/(v1\/)?auth\/[a-z][a-z0-9_-]*$/i.test(u.pathname);
             } catch (_) { return false; }
           };
           const originalFetch = window.fetch;
@@ -36,7 +46,7 @@ object TradovateLoginScript {
             const response = await originalFetch.apply(this, arguments);
             const url = typeof input === 'string' ? input : input && input.url;
             if (response.ok && authResponse(url)) response.clone().text().then(text => {
-              if (text.length <= 131072) { try { emit(JSON.parse(text)); } catch (_) {} }
+              if (text.length <= 131072) { try { emit(JSON.parse(text), /renewaccesstoken/i.test(url) ? 'renewal' : 'response'); } catch (_) {} }
             }).catch(() => {});
             return response;
           };
@@ -48,8 +58,9 @@ object TradovateLoginScript {
             if (authResponse(urls.get(this))) this.addEventListener('load', () => {
               try {
                 if (this.status >= 200 && this.status < 300) {
-                  if (this.responseType === 'json') emit(this.response);
-                  else if ((!this.responseType || this.responseType === 'text') && this.responseText.length <= 131072) emit(JSON.parse(this.responseText));
+                  const source = /renewaccesstoken/i.test(urls.get(this)) ? 'renewal' : 'response';
+                  if (this.responseType === 'json') emit(this.response, source);
+                  else if ((!this.responseType || this.responseType === 'text') && this.responseText.length <= 131072) emit(JSON.parse(this.responseText), source);
                 }
               } catch (_) {}
             }, {once:true});
@@ -62,7 +73,8 @@ object TradovateLoginScript {
               let target;
               try { target = new URL(String(args[0])); } catch (_) { return socket; }
               if (target.protocol !== 'wss:' || target.port !== '' || target.pathname !== '/v1/websocket') return socket;
-              const kind = target.hostname === apiHost ? 'accessToken' : target.hostname === mdHost || env === 'demo' && target.hostname === 'md.tradovateapi.com' ? 'mdAccessToken' : null;
+              const accountSocket = ['live.tradovateapi.com','demo.tradovateapi.com'].includes(target.hostname);
+              const kind = accountSocket ? 'accessToken' : target.hostname === mdHost || env === 'demo' && target.hostname === 'md.tradovateapi.com' ? 'mdAccessToken' : null;
               if (!kind) return socket;
               const nativeSend = socket.send;
               socket.send = function(value) {

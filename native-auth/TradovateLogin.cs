@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -47,13 +48,18 @@ namespace UniTrading.NativeAuth
             return uri != null && String.Equals(uri.IdnHost, "trader.tradovate.com", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static readonly HashSet<string> AuthenticationHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "live.tradovateapi.com", "demo.tradovateapi.com", "tv.tradovateapi.com", "tv-demo.tradovateapi.com"
+        };
+
         internal static bool IsAuthenticationResponse(string value, string environment)
         {
             if (!IsEnvironment(environment)) return false;
             var uri = SecureUri(value);
-            if (uri == null || !String.Equals(uri.IdnHost, environment + ".tradovateapi.com", StringComparison.OrdinalIgnoreCase)) return false;
-            return String.Equals(uri.AbsolutePath, "/v1/auth/accesstokenrequest", StringComparison.OrdinalIgnoreCase) ||
-                   String.Equals(uri.AbsolutePath, "/v1/auth/renewaccesstoken", StringComparison.OrdinalIgnoreCase);
+            if (uri == null || !AuthenticationHosts.Contains(uri.IdnHost)) return false;
+            return System.Text.RegularExpressions.Regex.IsMatch(uri.AbsolutePath,
+                @"^/(v1/)?auth/[a-z][a-z0-9_-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
 
         internal static string VisibleOrigin(string value)
@@ -120,6 +126,13 @@ namespace UniTrading.NativeAuth
                     DateTimeStyles.RoundtripKind, out expiry)) return null;
                 output["expirationTime"] = expiry.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
             }
+            if (input.TryGetValue("expires_in", out raw) && raw != null)
+            {
+                long seconds;
+                if (!Int64.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), out seconds) || seconds < 1 || seconds > 604800) return null;
+                output["expires_in"] = seconds;
+            }
+            if (input.TryGetValue("authSource", out raw) && (Object.Equals(raw, "renewal") || Object.Equals(raw, "response") || Object.Equals(raw, "socket"))) output["authSource"] = raw;
             if (input.TryGetValue("marketUrl", out raw) && raw != null)
             {
                 var url = raw as string;
@@ -146,15 +159,25 @@ namespace UniTrading.NativeAuth
             if (!IsTraderDocument(currentDocument) || !IsAuthenticationResponse(responseUrl, environment)) return null;
             var input = ParseObject(json);
             if (input == null) return null;
+            object wrapped;
+            if (input.TryGetValue("d", out wrapped) && wrapped is Dictionary<string, object>) input = (Dictionary<string, object>)wrapped;
             foreach (var key in new[] { "error", "errorText", "p-ticket", "p-captcha" })
             {
                 object error;
                 if (input.TryGetValue(key, out error) && error != null && !Object.Equals(error, "") && !Object.Equals(error, false)) return null;
             }
             object responseEnvironment;
-            if (input.TryGetValue("environment", out responseEnvironment) && responseEnvironment != null && !Object.Equals(responseEnvironment, environment)) return null;
+            if (input.TryGetValue("environment", out responseEnvironment) &&
+                (Object.Equals(responseEnvironment, "demo") || Object.Equals(responseEnvironment, "live")) && !Object.Equals(responseEnvironment, environment)) return null;
+            object alias;
+            if (!input.ContainsKey("accessToken"))
+            {
+                if (input.TryGetValue("access_token", out alias) || input.TryGetValue("token", out alias)) input["accessToken"] = alias;
+            }
+            if (!input.ContainsKey("userId") && input.TryGetValue("user_id", out alias)) input["userId"] = alias;
             object name;
             if (!input.ContainsKey("userName") && input.TryGetValue("name", out name)) input["userName"] = name;
+            input["authSource"] = new Uri(responseUrl).AbsolutePath.EndsWith("/renewaccesstoken", StringComparison.OrdinalIgnoreCase) ? "renewal" : "response";
             return Normalize(input, environment);
         }
 
@@ -174,6 +197,22 @@ namespace UniTrading.NativeAuth
         }
     }
 
+    internal sealed class LoginCompletion
+    {
+        private long? capturedAt;
+        private long? settledAt;
+        internal bool Captured { get { return capturedAt.HasValue; } }
+        internal void Capture(long now, bool remembered)
+        {
+            if (!capturedAt.HasValue) capturedAt = now;
+            if (remembered && (!settledAt.HasValue || now + 1500 < settledAt.Value)) settledAt = now + 1500;
+        }
+        internal void PasswordStoreChanged(long now) { if (Captured && !settledAt.HasValue) settledAt = now + 1500; }
+        internal long Deadline { get { return Math.Min((capturedAt ?? Int64.MaxValue - 60000) + 60000, settledAt ?? Int64.MaxValue); } }
+        internal bool ShouldComplete(long now) { return Captured && now >= Deadline; }
+        internal int SecondsRemaining(long now) { return Captured ? (int)Math.Max(0, (Deadline - now + 999) / 1000) : 0; }
+    }
+
     internal sealed class LoginWindow : Form
     {
         private readonly string environment;
@@ -185,9 +224,16 @@ namespace UniTrading.NativeAuth
         private readonly ToolStripButton finishButton;
         private readonly ToolStripButton reloadButton;
         private bool hasAccessToken;
-        private bool hasMarketToken;
         private bool completed;
         private bool closing;
+        private bool cancelled;
+        private readonly LoginCompletion completion = new LoginCompletion();
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private readonly System.Windows.Forms.Timer completionTimer = new System.Windows.Forms.Timer { Interval = 250 };
+        private string[] passwordFiles;
+        private string[] passwordBaseline;
+        private int reportedRemaining = -1;
+        private string CompletionMarker { get { return Path.Combine(profile, ".unitrading-login-completed"); } }
         private long navigationGeneration;
         internal int ExitResult { get; private set; }
 
@@ -208,16 +254,11 @@ namespace UniTrading.NativeAuth
             toolbar.Items.Add(originLabel);
             toolbar.Items.Add(new ToolStripSeparator());
             toolbar.Items.Add(new ToolStripLabel(environment == "live" ? "Live 实盘" : "Demo 模拟"));
-            finishButton = new ToolStripButton("完成登录") { Enabled = false };
-            finishButton.Click += delegate
-            {
-                if (!hasAccessToken || closing) return;
-                completed = PipeOutput.Write("DONE");
-                ExitResult = completed ? 0 : 3;
-                Close();
-            };
-            var cancelButton = new ToolStripButton("取消");
-            cancelButton.Click += delegate { Close(); };
+            finishButton = new ToolStripButton("立即返回") { Enabled = false };
+            finishButton.Click += delegate { FinishLogin(); };
+            var cancelButton = new ToolStripButton("取消登录");
+            cancelButton.Click += delegate { cancelled = true; Close(); };
+            completionTimer.Tick += delegate { AdvanceCompletion(); };
             reloadButton = new ToolStripButton("重新加载") { Enabled = false };
             reloadButton.Click += delegate { if (browser.CoreWebView2 != null) browser.CoreWebView2.Reload(); };
             toolbar.Items.Add(reloadButton);
@@ -234,7 +275,10 @@ namespace UniTrading.NativeAuth
             Shown += async delegate { await InitializeBrowser(); };
             FormClosing += delegate
             {
+                if (!completed && hasAccessToken && !cancelled && ExitResult == 2) CompleteHandoff();
                 closing = true;
+                completionTimer.Stop();
+                completionTimer.Dispose();
                 if (!completed && ExitResult == 2) PipeOutput.Write("ERROR login_cancelled");
                 browser.Dispose();
             };
@@ -300,7 +344,8 @@ namespace UniTrading.NativeAuth
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(script);
                 if (closing) return;
                 reloadButton.Enabled = true;
-                statusLabel.Text = "请登录所选环境。浏览器可提示保存密码；完成后点击“完成登录”。";
+                statusLabel.Text = "请在官方网页登录；成功后自动交接。首次保留最多 60 秒供浏览器保存密码。";
+                PipeOutput.Write("STATUS WAITING_BROWSER");
                 core.Navigate("https://trader.tradovate.com/welcome");
             }
             catch (Exception)
@@ -365,11 +410,63 @@ namespace UniTrading.NativeAuth
                 return;
             }
             hasAccessToken = hasAccessToken || result.ContainsKey("accessToken");
-            hasMarketToken = hasMarketToken || result.ContainsKey("mdAccessToken");
             finishButton.Enabled = hasAccessToken;
-            statusLabel.Text = hasAccessToken
-                ? (hasMarketToken ? "已获取账户及行情会话。可先处理保存密码提示，再点击“完成登录”。" : "已获取账户会话，尚未收到行情会话。可等待或完成登录。")
-                : "已收到行情会话，正在等待账户登录完成。";
+            if (hasAccessToken)
+            {
+                if (!completion.Captured)
+                {
+                    var passwordFolder = Path.Combine(profile, "Default");
+                    try { passwordFolder = browser.CoreWebView2.Profile.ProfilePath; } catch (Exception) { }
+                    passwordFiles = new[] { "Login Data", "Login Data-journal", "Login Data-wal", "Login Data For Account", "Login Data For Account-journal" }
+                        .Select(name => Path.Combine(passwordFolder, name)).ToArray();
+                    passwordBaseline = passwordFiles.Select(FileStamp).ToArray();
+                    PipeOutput.Write("STATUS SESSION_CAPTURED");
+                }
+                object source;
+                var renewing = result.TryGetValue("authSource", out source) && Object.Equals(source, "renewal");
+                completion.Capture(clock.ElapsedMilliseconds, File.Exists(CompletionMarker) || renewing);
+                completionTimer.Start();
+                AdvanceCompletion();
+            }
+            else statusLabel.Text = "正在等待官方认证响应。";
+        }
+
+        private static string FileStamp(string path)
+        {
+            try { var file = new FileInfo(path); return file.Exists ? file.Length + ":" + file.LastWriteTimeUtc.Ticks : "missing"; }
+            catch (IOException) { return "unavailable"; }
+            catch (UnauthorizedAccessException) { return "unavailable"; }
+        }
+
+        private void AdvanceCompletion()
+        {
+            if (closing || cancelled || !hasAccessToken) return;
+            if (passwordFiles != null && passwordFiles.Where((path, index) => FileStamp(path) != passwordBaseline[index]).Any())
+                completion.PasswordStoreChanged(clock.ElapsedMilliseconds);
+            if (completion.ShouldComplete(clock.ElapsedMilliseconds)) { FinishLogin(); return; }
+            var remaining = completion.SecondsRemaining(clock.ElapsedMilliseconds);
+            statusLabel.Text = "网页登录已成功，正在等待浏览器保存密码；" + remaining + " 秒后自动返回，可点击“立即返回”。";
+            if (remaining != reportedRemaining)
+            {
+                reportedRemaining = remaining;
+                if (!PipeOutput.Write("STATUS PASSWORD_SAVE " + remaining)) { ExitResult = 3; Close(); }
+            }
+        }
+
+        private void CompleteHandoff()
+        {
+            if (completed || !hasAccessToken || cancelled) return;
+            PipeOutput.Write("STATUS RETURNING");
+            completed = PipeOutput.Write("DONE");
+            ExitResult = completed ? 0 : 3;
+            if (completed) { try { File.WriteAllText(CompletionMarker, DateTime.UtcNow.ToString("O")); } catch (IOException) {} catch (UnauthorizedAccessException) {} }
+        }
+
+        private void FinishLogin()
+        {
+            if (!hasAccessToken || closing || cancelled) return;
+            CompleteHandoff();
+            Close();
         }
     }
 
@@ -442,7 +539,8 @@ namespace UniTrading.NativeAuth
                 check(!LoginPolicy.IsTraderDocument("https://auth.tradovate.com/login"));
                 check(LoginPolicy.IsAuthenticationResponse(endpoint, "demo"));
                 check(LoginPolicy.IsAuthenticationResponse("https://live.tradovateapi.com/v1/auth/renewaccesstoken", "live"));
-                check(!LoginPolicy.IsAuthenticationResponse(endpoint, "live"));
+                check(LoginPolicy.IsAuthenticationResponse(endpoint, "live"));
+                check(LoginPolicy.IsAuthenticationResponse("https://live.tradovateapi.com/v1/auth/accesstokenrequest", "demo"));
                 check(!LoginPolicy.IsAuthenticationResponse(endpoint + "/extra", "demo"));
                 check(!LoginPolicy.IsAuthenticationResponse("https://demo.tradovateapi.com.evil.test/v1/auth/accesstokenrequest", "demo"));
                 check(LoginPolicy.NormalizeMessage(trader, trader, "demo", message) != null);
@@ -469,13 +567,34 @@ namespace UniTrading.NativeAuth
                 var response = "{\"accessToken\":\"" + token + "\",\"mdAccessToken\":\"" + token + "\",\"userId\":123,\"name\":\"offline\",\"expirationTime\":\"2030-01-01T00:00:00Z\"}";
                 var result = LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response);
                 check(result != null && Object.Equals(result["userName"], "offline") && result.ContainsKey("expirationTime"));
-                check(LoginPolicy.NormalizeResponse(endpoint, trader, "live", response) == null);
+                check(LoginPolicy.NormalizeResponse(endpoint, trader, "live", response.Replace("\"userId\":123", "\"environment\":\"demo\",\"userId\":123")) == null);
                 check(LoginPolicy.NormalizeResponse(endpoint, "https://outside.test/", "demo", response) == null);
                 check(LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response.Replace("\"userId\":123", "\"errorText\":\"denied\"")) == null);
                 check(LoginPolicy.NormalizeResponse(endpoint, trader, "demo", "{\"p-ticket\":\"challenge\"}") == null);
                 check(LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response.Replace("2030-01-01T00:00:00Z", "invalid")) == null);
                 check(LoginPolicy.VisibleOrigin(trader + "?secret=not-logged") == "https://trader.tradovate.com");
                 check(ParseArguments(new[] { "--profile", "profile", "--environment", "demo", "--script", "bridge.js" }).Count == 3);
+                var shared = LoginPolicy.NormalizeResponse("https://live.tradovateapi.com/v1/auth/accesstokenrequest", trader, "demo", response);
+                check(shared != null && Object.Equals(shared["environment"], "demo"));
+                var wrapped = "{\"d\":{\"access_token\":\"" + token + "\",\"user_id\":123,\"expires_in\":3600}}";
+                var aliases = LoginPolicy.NormalizeResponse("https://tv-demo.tradovateapi.com/v1/auth/session", trader, "demo", wrapped);
+                check(aliases != null && aliases.ContainsKey("accessToken") && aliases.ContainsKey("userId") && aliases.ContainsKey("expires_in"));
+                var first = new LoginCompletion();
+                check(!first.ShouldComplete(999999));
+                first.Capture(100, false);
+                check(first.SecondsRemaining(100) == 60);
+                first.Capture(30000, false);
+                check(!first.ShouldComplete(60099));
+                check(first.ShouldComplete(60100));
+                var remembered = new LoginCompletion();
+                remembered.Capture(0, true);
+                check(!remembered.ShouldComplete(1499));
+                check(remembered.ShouldComplete(1500));
+                var saved = new LoginCompletion();
+                saved.Capture(0, false); saved.PasswordStoreChanged(2000);
+                check(!saved.ShouldComplete(3499));
+                check(saved.ShouldComplete(3500));
+                check(saved.SecondsRemaining(4000) == 0);
                 PipeOutput.Write("SELF_TEST PASS " + tests.ToString(CultureInfo.InvariantCulture));
                 return 0;
             }

@@ -10,24 +10,29 @@ import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class DesktopTradovateLogin : TradovateLogin {
-    override suspend fun signIn(environment: TradovateEnvironment): TradovateSession {
+class DesktopTradovateLogin(
+    private val launch: (List<String>) -> Process = { ProcessBuilder(it).redirectError(ProcessBuilder.Redirect.DISCARD).start() },
+    private val executableOverride: Path? = null,
+    private val profileOverride: Path? = null,
+) : TradovateLogin {
+    override suspend fun signIn(environment: TradovateEnvironment, onProgress: (String) -> Unit): TradovateSession {
         require(System.getProperty("os.name").startsWith("Windows")) { "当前桌面网页登录组件仅支持 Windows" }
-        val root = Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "browser")
+        val root = profileOverride ?: Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "browser")
         val executable = listOfNotNull(
-            System.getProperty("compose.application.resources.dir")?.let { Path.of(it, "tradovate-login", "UniTrading.TradovateLogin.exe") },
-            Path.of("native-auth", "build", "UniTrading.TradovateLogin.exe"),
-            Path.of("..", "native-auth", "build", "UniTrading.TradovateLogin.exe"),
+            executableOverride,
+            System.getProperty("compose.application.resources.dir")?.let { Path.of(it, "tradovate-login", "1.1.1", "UniTrading.TradovateLogin.exe") },
+            Path.of("native-auth", "build", "1.1.1", "UniTrading.TradovateLogin.exe"),
+            Path.of("..", "native-auth", "build", "1.1.1", "UniTrading.TradovateLogin.exe"),
         ).firstOrNull { Files.isRegularFile(it) } ?: error("登录组件未构建，请运行 buildTradovateLoginHost")
         val script = withContext(Dispatchers.IO) {
             Files.createDirectories(root)
             Files.createTempFile(root, "login-bridge-", ".js").also { Files.writeString(it, TradovateLoginScript.forEnvironment(environment)) }
         }
+        onProgress("正在打开官方登录窗口…")
         return suspendCancellableCoroutine { continuation ->
             val process = try {
-                ProcessBuilder(executable.toAbsolutePath().toString(), "--profile", root.toAbsolutePath().toString(),
-                    "--environment", environment.wire, "--script", script.toAbsolutePath().toString())
-                    .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+                launch(listOf(executable.toAbsolutePath().toString(), "--profile", root.toAbsolutePath().toString(),
+                    "--environment", environment.wire, "--script", script.toAbsolutePath().toString()))
             } catch (_: Exception) {
                 Files.deleteIfExists(script)
                 continuation.resumeWithException(IllegalStateException("无法启动安全登录窗口"))
@@ -42,6 +47,14 @@ class DesktopTradovateLogin : TradovateLogin {
                         while (true) {
                             val line = reader.readLine() ?: break
                             if (line.startsWith("TOKEN ") && line.length <= 131_080) accumulator.accept(line.removePrefix("TOKEN "), "https://trader.tradovate.com", true)
+                            when {
+                                line == "STATUS WAITING_BROWSER" -> onProgress("请在官方网页中登录")
+                                line == "STATUS SESSION_CAPTURED" -> onProgress("网页登录已成功，已收到会话")
+                                line.startsWith("STATUS PASSWORD_SAVE ") -> line.substringAfterLast(' ').toIntOrNull()?.takeIf { it in 0..60 }?.let {
+                                    onProgress("登录成功，正在保留密码保存提示；${it} 秒后自动返回，可在浏览器点击“立即返回”")
+                                }
+                                line == "STATUS RETURNING" -> onProgress("登录成功，正在交接账户会话…")
+                            }
                             if (line == "DONE") done = true
                         }
                     }

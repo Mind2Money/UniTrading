@@ -23,6 +23,22 @@ internal fun JsonObject.moneyValue(key: String): Long? = decimalUnits(str(key), 
 internal fun JsonObject.priceValue(key: String): Long? = decimalUnits(str(key), 6)
 internal fun jsonNumber(value: Long, decimals: Int): JsonElement = Json.parseToJsonElement(formatFixed(value, decimals))
 
+/** Chart channel identifiers are protocol numbers/strings, not database Long IDs. */
+internal fun chartSubscriptionKey(value: JsonElement?): String? {
+    val primitive = value as? JsonPrimitive ?: return null
+    val text = primitive.contentOrNull?.takeIf { it.length in 1..128 } ?: return null
+    val number = Regex("([+-]?)([0-9]+)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?").matchEntire(text)
+        ?: return if (primitive.isString) "string:$text" else null
+    val exponent = number.groupValues[4].ifEmpty { "0" }.toIntOrNull()?.takeIf { it in -1000..1000 } ?: return null
+    val fraction = number.groupValues[3]
+    val digits = (number.groupValues[2] + fraction).trimStart('0')
+    if (digits.isEmpty()) return "number:0"
+    val significant = digits.trimEnd('0')
+    val power = exponent - fraction.length + digits.length - significant.length
+    val sign = if (number.groupValues[1] == "-") "-" else ""
+    return "number:$sign${significant}e$power"
+}
+
 internal class EntityBook {
     private val entities = mutableMapOf<String, MutableMap<Long, JsonObject>>()
     private val versionIds = mutableMapOf<Long, Long>()

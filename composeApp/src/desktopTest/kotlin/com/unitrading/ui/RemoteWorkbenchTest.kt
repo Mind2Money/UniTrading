@@ -8,6 +8,8 @@ import androidx.compose.ui.unit.Density
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
+import com.unitrading.tradovate.*
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +54,23 @@ class RemoteWorkbenchTest {
         compose.onNodeWithText("确认 Tradovate Live · 真实账户 下单").assertExists()
         compose.onNodeWithText("未知 / 服务器校验").assertExists()
         compose.onNodeWithText("取消").performClick()
+    }
+    @Test fun capturedSessionProgressIsVisibleAndLoginCanBeCancelled() {
+        val runtime = TradingRuntime(MemorySnapshotStore()).apply { paused.value = true }
+        var cancelled = false
+        var dismissed = false
+        val login = object : TradovateLogin {
+            override suspend fun signIn(environment: TradovateEnvironment, onProgress: (String) -> Unit): TradovateSession {
+                onProgress("网页登录已成功，正在等待保存密码")
+                try { awaitCancellation() } finally { cancelled = true }
+            }
+        }
+        compose.setContent { TradingTheme { TradovateConnectionDialog(runtime, login, {}, { dismissed = true }) } }
+        compose.onNodeWithText("打开官方登录页").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("网页登录已成功，正在等待保存密码").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("login-progress").assertTextEquals("网页登录已成功，正在等待保存密码")
+        compose.onNodeWithTag("cancel-login").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { cancelled && dismissed }
     }
     @Test fun emptyRemoteCatalogDoesNotCrashOrCreateMockInstruments() {
         render(remote(empty = true))

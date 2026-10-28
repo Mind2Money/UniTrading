@@ -6,7 +6,8 @@
 
 - 页面为 `https://trader.tradovate.com/welcome`，由官方网页执行签名与登录，MFA/验证码保持原流程。
 - 只读取本应用弹出的登录窗口返回的 `accessToken`、`mdAccessToken` 等会话字段；不扫描 Chrome/Edge 的用户资料，不从密码输入框读取账号密码。
-- 完成后点击“完成登录”，再由 Kotlin 插件建立账户及行情连接。需要等到页面产生账户/行情会话；只拿到账户 token 时会明确提示行情权限不足。
+- 认证与续期使用共享 `live.tradovateapi.com`；账户和行情仍连接用户选择的 Demo/Live 环境。认证域名不代表交易环境。
+- 取得有效账户会话后自动交接，无须等待额外的 `mdAccessToken` 或强制点击“完成登录”。行情使用账户访问令牌连接对应 md 网关，是否有权限以服务器响应为准。
 - 仅从固定 Tradovate HTTPS/WSS 端点读取数据和提交用户确认的命令，不经过压缩包内第三方服务。
 - Native API 权限仍由 Tradovate 决定。官方网页登录成功不保证该账户可使用 API、实时行情或某种订单。
 
@@ -16,13 +17,13 @@
 
 使用 WebView2 自有密码管理功能，开启 `IsPasswordAutosaveEnabled` 和 `IsGeneralAutofillEnabled`。是否保存由浏览器提示和用户选择决定；应用不复制密码到自己的数据库。
 
-独立 profile 位于 `%LOCALAPPDATA%/UniTrading/browser/demo` 与 `.../live`。该目录不是用户已有的 Edge/Chrome profile。可以先处理保存密码提示，再点击完成登录。
+独立 profile 位于 `%LOCALAPPDATA%/UniTrading/browser/demo` 与 `.../live`。该目录不是用户已有的 Edge/Chrome profile。首次登录保留最多 60 秒供浏览器保存密码，并显示倒计时；只观察密码库文件的大小/修改时间，不读取内容。保存完成、已记住的登录或续期会话在短暂等待后自动返回，也可点击“立即返回”。明确点击“取消登录”仍会放弃本次交接。
 
 需要系统 Microsoft Edge WebView2 Runtime 和 Windows .NET Framework 4.x。`:composeApp:run` 会自动构建/准备 native host；无需 .NET SDK。
 
 ### Android
 
-使用 Android WebView 的独立 Demo/Live profile 与系统 Autofill 框架。**自动保存/填充依赖用户启用一个系统密码服务**；WebView 不自带独立密码管理器。未启用时登录窗会显示说明和系统设置入口。
+使用 Android WebView 的独立 Demo/Live profile 与系统 Autofill 框架。收到会话后自动提交保存上下文、等待系统提示处理并返回主界面。**自动保存/填充依赖用户启用一个系统密码服务**；WebView 不自带独立密码管理器。未启用时登录窗会显示说明和系统设置入口。
 
 要求 System WebView 支持文档起始脚本、受限 WebMessage 和多 profile；缺少任一能力时要求更新，不降级成对所有网页暴露 JavaScriptInterface 的方案。
 
@@ -59,24 +60,25 @@
 Native host 的离线策略测试：
 
 ```bash
-native-auth/build/UniTrading.TradovateLogin.exe --self-test
+native-auth/build/1.1.1/UniTrading.TradovateLogin.exe --self-test
 ```
 
 浏览器桥还运行 Node.js 隔离测试，因此全套测试需要 Node.js。测试不访问登录账户或发送真实订单。
 
 ### 当前验证边界
 
-最终结果：**73 项 JVM/KMP/Compose 自动测试通过，0 失败、0 跳过**；Windows native 策略 self-test 另有 **40 项断言通过**。Android debug APK 构建成功（1.1.0 / versionCode 2）。
+最终结果：**86 项 JVM/KMP/Compose 自动测试通过，0 失败、0 跳过**；Windows native 策略 self-test 另有 **52 项断言通过**。Android debug APK 构建成功（1.1.1 / versionCode 3）。
 
-APK SHA-256：`4c11d972cb71c79e2f2c64132effea38f294fbfca8c1f4957d7faba1b6d77f1c`。
+APK SHA-256：`a11173e4cac3042b7595ee84c8ce6aa7b02d5f3211be8da74cae73785bba750c`。
 
 - 已有本地 Demo 交易/拖动/恢复测试继续运行。
 - 新增协议测试覆盖 origin 与环境隔离、JWT 字段提取、帧解析、合约精度、净额状态、原始成交、OSO、改价、保护关系、超时不重发、行情授权缺失、服务器 liquidation。
 - UI 测试覆盖空远程目录、Live 明示、整数张数和未知保证金显示。
 - Node.js 运行实际登录桥脚本，验证只捕获目标会话、不读取密码/本地存储、不向跨域/子框架开放交接。
-- Windows native host 已编译，策略 self-test 40 项断言通过；使用隔离测试 profile 实际打开官方账号/密码表单并取消，退出码为 2，未收到任何凭据消息。
-- Android APK 已实际打开官方登录页，用户名/密码表单可见，最终 APK 无本应用崩溃记录；模拟器没有已启用的密码服务，不能把密码自动填充记为实测通过。
-- **未提供真实账户进行登录；真实 token 获取、密码保存提示、实时行情授权和远端交易回执未联调。** 无任何真实凭据或真实交易被用于自动测试。
+- Windows native host 已编译，52 项断言覆盖共享认证域、令牌清理及自动完成状态机；不再强制等待手动 DONE。
+- Windows 真实 Demo 只读实测：会话自动交接成功，2 个授权账户、2 个合约、实时报价与 155 根历史 K 线进入插件；订单请求为 0。浏览器记住的账号密码已出现自动填充，诊断仅点击官网 Login，未读取密码字段。
+- Android 1.1.1 已构建；此前官方登录页可打开，模拟器未启用密码服务，因此不把 Android 密码自动填充记为实测通过。
+- **真实下单、改价和成交回执未联调；未发送真实交易。** 自动测试仍使用合成令牌与模拟协议，真实账户只用于单独、明确禁止订单端点的只读诊断。
 - iOS、Android 真机及 Windows 安装包发布未验证。
 
 ## 参考来源

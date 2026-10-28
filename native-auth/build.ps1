@@ -1,5 +1,5 @@
 param(
-    [string]$OutputDir = (Join-Path $PSScriptRoot 'build'),
+    [string]$OutputDir = (Join-Path $PSScriptRoot 'build/1.1.1'),
     [switch]$SkipSelfTest
 )
 

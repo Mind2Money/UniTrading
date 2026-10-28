@@ -30,6 +30,7 @@ class TradovateBroker(
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private var incompleteAccounts = emptySet<String>()
     private val book = EntityBook()
+    private var authorizedAccounts = emptySet<Long>()
     private val lock = Mutex()
     private val metadataLock = Mutex()
     private val commandLock = Mutex()
@@ -39,8 +40,11 @@ class TradovateBroker(
     private val contractSpecs = mutableMapOf<Long, Instrument>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
+    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
+    private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
-    private val charts = mutableMapOf<Long, Pair<String, Timeframe>>()
+    private data class ChartChannel(val wireId: JsonPrimitive, val series: Pair<String, Timeframe>)
+    private val charts = mutableMapOf<String, ChartChannel>()
     private val earlyCharts = mutableListOf<JsonObject>()
     private val subscribedQuotes = mutableSetOf<String>()
     private var accountSocket: TradovateSocket? = null
@@ -63,12 +67,21 @@ class TradovateBroker(
     private data class Awaiting(val account: String, val kind: String, val entity: Long?, val tag: String, val started: Long,
         val baselineVersion: Long = 0, val priceKey: String? = null, val expectedPrice: Long? = null)
 
-    suspend fun connect() {
+    suspend fun connect(onProgress: (String) -> Unit = {}) {
         check(!stopped)
         connected = false
         marketReady = false
-        problem = "正在连接 Tradovate 账户流"
+        problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
+        onProgress(problem)
         publish()
+        val discovery = rest("GET", "account/list") as? JsonArray
+            ?: throw TradovateRemoteException(0, "服务器账户列表格式无效")
+        val discoveredIds = discovery.map { row ->
+            (row as? JsonObject)?.long("id")?.takeIf { it > 0 }
+                ?: throw TradovateRemoteException(0, "服务器账户标识无效")
+        }.toSet()
+        authorizedAccounts = discoveredIds
+        onProgress("服务器已返回 ${discoveredIds.size} 个授权账户，正在连接账户流…")
         val account = TradovateSocket(wire.socket(credentials.environment.socketUrl), scope, ::accountEvent) { message ->
             connected = false
             problem = message
@@ -76,9 +89,22 @@ class TradovateBroker(
             scheduleReconnect()
         }
         accountSocket = account
+        onProgress("正在验证账户访问令牌…")
         account.authorize(credentials.accessToken)
+        onProgress("账户授权成功，正在读取完整账户快照…")
         lock.withLock { synchronizing = true; queuedEvents.clear() }
-        val snapshot = account.request("user/syncrequest", buildJsonObject { putJsonArray("users") { add(credentials.userId) } })
+        val snapshot = account.request("user/syncrequest", buildJsonObject {
+            put("splitResponses", false)
+            putJsonArray("entityTypes") {
+                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract").forEach { add(it) }
+            }
+        })
+        if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
+            throw TradovateRemoteException(0, "账户快照不完整，未将缺失的订单或仓位当作空账户；请重新同步")
+        }
+        if (discoveredIds.isNotEmpty() && snapshot.array("accounts").none { it.long("id") in discoveredIds }) {
+            throw TradovateRemoteException(0, "已发现授权账户，但账户流未返回对应记录；未将缺失状态当作空仓")
+        }
         lock.withLock {
             book.snapshot(snapshot)
             queuedEvents.forEach(book::event)
@@ -87,11 +113,16 @@ class TradovateBroker(
             connected = true
             rebuild()
         }
-        hydrateContracts()
-        refreshBalances()
+        onProgress("已同步 ${accounts.size} 个账户，正在读取合约规格…")
+        val metadataLoaded = withTimeoutOrNull(30_000) { hydrateContracts(); true } == true
+        onProgress("账户已同步，正在读取资金快照…")
+        withTimeoutOrNull(20_000) { refreshBalances() }
         problem = if (accounts.isEmpty()) "当前会话没有可访问的交易账户" else "账户已连接，正在连接行情"
+        onProgress(problem)
         connectMarket()
-        if (instruments.isEmpty()) searchInstruments("MES")
+        if (instruments.isEmpty()) withTimeoutOrNull(15_000) { searchInstruments("MES") }
+        if (!metadataLoaded) problem = "账户已连接，部分合约规格加载超时；缺失规格的品种不可交易"
+        onProgress(problem)
         watching?.let { watch(it.first, it.second) }
         maintenance?.cancel()
         maintenance = scope.launch {
@@ -115,19 +146,20 @@ class TradovateBroker(
     }
 
     private suspend fun connectMarket() {
-        val token = credentials.mdAccessToken
-        if (token == null) { marketReady = false; problem = "账户已连接；缺少行情令牌，请在登录窗口完成行情连接"; publish(); return }
+        // Web sessions use their account token on the selected market-data gateway too.
+        val token = credentials.accessToken
+        lock.withLock { quoteSides.clear(); quotes = emptyMap() }
         try {
-            val socket = TradovateSocket(wire.socket(credentials.marketUrl), scope, ::marketEvent) {
+            val socket = TradovateSocket(wire.socket(credentials.environment.marketUrl), scope, ::marketEvent) {
                 marketReady = false; problem = "行情已断开，交易已暂停"; publish(); scheduleReconnect()
             }
             marketSocket = socket
             socket.authorize(token)
-            socket.request("md/clientcapabilities", buildJsonObject { put("deltaUpdatesDOM", false); put("deltaUpdatesQuote", false) })
             marketReady = true
             problem = "已连接 · 服务器行情 · 净额持仓"
-        } catch (cancel: CancellationException) { throw cancel }
-        catch (e: Exception) { marketReady = false; problem = "账户已连接；行情授权/连接失败，请检查行情订阅" }
+        } catch (_: TimeoutCancellationException) { marketReady = false; problem = "账户已连接；行情授权超时，账户登录状态仍保留" }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (e: Exception) { marketReady = false; problem = "账户已连接；行情授权/连接失败：${safeMessage(e.message ?: "请检查行情订阅")}" }
         publish()
     }
 
@@ -159,14 +191,16 @@ class TradovateBroker(
     override suspend fun searchInstruments(query: String) {
         if (!connected || query.trim().length !in 1..32) return
         val data = rest("GET", "contract/suggest?t=${query.trim().encodeURLParameter()}&l=15") as? JsonArray ?: return
-        lock.withLock { data.mapNotNull { it as? JsonObject }.forEach { book.apply("contract", it) } }
-        hydrateContracts()
+        val contracts = data.mapNotNull { it as? JsonObject }
+        lock.withLock { contracts.forEach { book.apply("contract", it) } }
+        hydrateContracts(contracts.mapNotNull { it.long("id") })
     }
 
-    private suspend fun hydrateContracts() = metadataLock.withLock {
+    private suspend fun hydrateContracts(priority: List<Long> = emptyList()) = metadataLock.withLock {
         val ids = lock.withLock {
-            (book.list("contract").mapNotNull { it.long("id") } + book.list("position").mapNotNull { it.long("contractId") } +
-                book.list("order").mapNotNull { it.long("contractId") }).distinct().filter { it !in contractSpecs }.take(100)
+            (priority + book.list("position").filter { (it.long("netPos") ?: 0) != 0L }.mapNotNull { it.long("contractId") } +
+                book.list("order").filter(::activeOrder).mapNotNull { it.long("contractId") } +
+                book.list("contract").mapNotNull { it.long("id") }).distinct().filter { it !in contractSpecs }.take(100)
         }
         for (id in ids) {
             try {
@@ -238,7 +272,7 @@ class TradovateBroker(
                     if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
                     subscribedQuotes.add(name)
                 }
-                val oldCharts = lock.withLock { charts.keys.toList().also { charts.clear() } }
+                val oldCharts = lock.withLock { charts.values.map { it.wireId }.also { charts.clear() } }
                 for (id in oldCharts) socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
                 val response = socket.request("md/getChart", buildJsonObject {
                     put("symbol", symbol)
@@ -246,10 +280,17 @@ class TradovateBroker(
                     putJsonObject("timeRange") { put("asMuchAsElements", 500) }
                 })
                 lock.withLock {
-                    listOfNotNull(response.long("historicalId"), response.long("realtimeId")).forEach { charts[it] = symbol to timeframe }
+                    for (field in listOf("historicalId", "realtimeId")) {
+                        val id = response[field] as? JsonPrimitive ?: continue
+                        val key = chartSubscriptionKey(id) ?: continue
+                        charts[key] = ChartChannel(id, symbol to timeframe)
+                    }
                     earlyCharts.toList().forEach(::chartEvent); earlyCharts.clear()
                     publish()
                 }
+            } catch (_: TimeoutCancellationException) {
+                problem = "账户已连接；行情/历史订阅请求超时，可重新选择品种或周期重试"
+                publish()
             } catch (cancel: CancellationException) { throw cancel }
             catch (error: Exception) { problem = safeMessage(error.message ?: "行情/历史订阅失败"); publish() }
         }
@@ -261,11 +302,18 @@ class TradovateBroker(
             for (q in data.array("quotes")) {
                 val spec = contractSpecs[q.long("contractId")] ?: continue
                 val entries = q["entries"] as? JsonObject ?: continue
-                val bid = (entries["Bid"] as? JsonObject)?.priceValue("price") ?: continue
-                val ask = (entries["Offer"] as? JsonObject)?.priceValue("price") ?: continue
+                val incomingBid = (entries["Bid"] as? JsonObject)?.priceValue("price")
+                val incomingAsk = (entries["Offer"] as? JsonObject)?.priceValue("price")
+                if (incomingBid == null && incomingAsk == null) continue
                 val time = q.str("timestamp")?.let(::timestamp) ?: continue
-                if (bid <= 0 || ask < bid || bid % spec.tickSize != 0L || ask % spec.tickSize != 0L) continue
-                if (quotes[spec.symbol]?.timeMs?.let { it > time } == true) continue
+                val previous = quoteSides[spec.symbol]
+                if (previous != null && previous.time > time) continue
+                if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
+                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time)
+                quoteSides[spec.symbol] = next
+                val bid = next.bid ?: continue
+                val ask = next.ask ?: continue
+                if (ask < bid) continue
                 quotes = quotes + (spec.symbol to Quote(bid, ask, time))
             }
         }
@@ -274,7 +322,7 @@ class TradovateBroker(
     }
 
     private fun chartEvent(chart: JsonObject) {
-        val key = charts[chart.long("id")]
+        val key = chartSubscriptionKey(chart["id"])?.let { charts[it]?.series }
         if (key == null) { if (earlyCharts.size < 256) earlyCharts.add(chart); return }
         val incoming = chart.array("bars").mapNotNull { bar ->
             val time = bar.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null
@@ -291,7 +339,7 @@ class TradovateBroker(
     private fun rebuild() {
         val mappedAccounts = book.list("account").mapNotNull { a ->
             val id = a.long("id") ?: return@mapNotNull null
-            if (a.long("userId") != credentials.userId || a.bool("closed") == true) return@mapNotNull null
+            if (id !in authorizedAccounts || a.bool("closed") == true) return@mapNotNull null
             AccountInfo(id.toString(), a.str("name") ?: id.toString(), readOnly = a.bool("readonly") == true || a.bool("restricted") == true || a.bool("futuresDisabled") == true)
         }
         val nextFlows = accountFlows.toMutableMap()
@@ -390,7 +438,7 @@ class TradovateBroker(
         requestPace.withLock {
             lastRequestMs?.let { previous ->
                 val elapsed = Clock.System.now().toEpochMilliseconds() - previous
-                if (elapsed < 125) delay(125 - elapsed.coerceAtLeast(0))
+                if (elapsed < 750) delay(750 - elapsed.coerceAtLeast(0))
             }
             lastRequestMs = Clock.System.now().toEpochMilliseconds()
         }

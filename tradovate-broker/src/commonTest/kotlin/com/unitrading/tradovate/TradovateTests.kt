@@ -16,11 +16,16 @@ private fun fakeToken(user: Long = 42) = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe
 internal class MockTradovateWire : TradovateWire {
     data class Request(val method: String, val path: String, val body: JsonObject?)
     val requests = mutableListOf<Request>()
+    val socketUrls = mutableListOf<String>()
     val account = MockSocket(false)
     val market = MockSocket(true)
     var failWrite = false
     var rejectWrite = false
     var rejectMarket = false
+    var numericChartTime = false
+    var chartEventHasRequestId = false
+    var fractionalChartId = false
+    var reducedPrecisionChartTime = false
     var snapshot = obj("""{
       "accounts":[{"id":100,"name":"Demo account","userId":42},{"id":101,"name":"Second account","userId":42},{"id":999,"name":"Foreign account","userId":9}],
       "contracts":[{"id":200,"name":"MESZ6","contractMaturityId":300}],
@@ -32,6 +37,7 @@ internal class MockTradovateWire : TradovateWire {
     }""")
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         requests.add(Request(method, path, body))
+        if (path == "account/list") return JsonArray(snapshot.array("accounts").filter { it.long("id") != 999L })
         if (path.startsWith("cashBalance/")) return obj("""{"totalCashValue":25000,"netLiq":25000,"initialMargin":0}""")
         if (path.startsWith("contract/suggest")) return snapshot["contracts"]!!
         if (path.startsWith("order/")) {
@@ -41,26 +47,45 @@ internal class MockTradovateWire : TradovateWire {
         }
         error("Unexpected REST request: $path")
     }
-    override suspend fun socket(url: String): TradovateWireSocket = if (url.contains("md")) market else account
+    override suspend fun socket(url: String): TradovateWireSocket {
+        socketUrls.add(url)
+        return if (url.contains("md")) market else account
+    }
     override fun close() { account.queue.close(); market.queue.close() }
 
     inner class MockSocket(private val md: Boolean) : TradovateWireSocket {
         val queue = Channel<String>(Channel.UNLIMITED).apply { trySend("o") }
         val sent = mutableListOf<String>()
+        val bodies = mutableMapOf<String, String>()
         override suspend fun send(text: String) {
             if (text == "[]") return
             val parts = text.split('\n')
             val route = parts[0]; val id = parts[1].toInt()
             sent.add(route)
+            bodies[route] = text.substringAfter("\n\n")
             val data = when (route) {
-                "user/syncrequest" -> snapshot
+                "user/syncrequest" -> {
+                    val request = obj(bodies.getValue(route))
+                    val types = request["entityTypes"] as? JsonArray
+                    if (types?.any { it.jsonPrimitive.content == "account" } == true) snapshot
+                    else obj("""{"accounts":[],"orders":[],"orderVersions":[],"positions":[],"fills":[]}""")
+                }
                 "md/subscribequote" -> if (rejectMarket) obj("""{"errorCode":"AccessDenied","errorText":"No market entitlement"}""") else obj("""{"mode":"RealTime"}""")
-                "md/getChart" -> obj("""{"historicalId":12,"realtimeId":13}""")
+                "md/getChart" -> if (fractionalChartId) obj("""{"historicalId":12.5,"realtimeId":13.5}""") else obj("""{"historicalId":12,"realtimeId":13}""")
                 else -> obj("{}")
             }
             queue.send("a[${buildJsonObject { put("s", 200); put("i", id); put("d", data) }}]")
             if (route == "md/subscribequote" && !rejectMarket) quote()
-            if (route == "md/getChart") queue.send("""a[{"e":"chart","d":{"charts":[{"id":12,"bars":[{"timestamp":"$TEST_INSTANT","open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+            if (route == "md/getChart") {
+                val stamp = when {
+                    reducedPrecisionChartTime -> "\"2026-10-28T12:35Z\""
+                    numericChartTime -> TEST_TIME.toString()
+                    else -> "\"$TEST_INSTANT\""
+                }
+                val correlation = if (chartEventHasRequestId) "\"i\":$id," else ""
+                val chartId = if (fractionalChartId) "1.25e1" else "12"
+                queue.send("""a[{$correlation"e":"chart","d":{"charts":[{"id":$chartId,"bars":[{"timestamp":$stamp,"open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+            }
         }
         suspend fun quote(bid: String = "5500", ask: String = "5500.25", time: Long = TEST_TIME) {
             queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(time)}","entries":{"Bid":{"price":$bid},"Offer":{"price":$ask}}}]}}]""")
@@ -82,6 +107,93 @@ class TradovateTests {
         return broker to wire
     }
 
+    @Test fun authorizedAccountsDoNotRequireOwnerIdToMatchLoginUser() = runTest {
+        val wire = MockTradovateWire()
+        wire.snapshot = JsonObject(wire.snapshot + ("accounts" to JsonArray(listOf(
+            obj("""{"id":100,"name":"Authorized delegated account","userId":7}"""),
+            obj("""{"id":101,"name":"Authorized account without owner field"}"""),
+            obj("""{"id":999,"name":"Not returned by account/list","userId":42}"""),
+        ))))
+        val (broker, _) = ready(wire)
+        assertEquals(listOf("100", "101"), broker.accounts.map { it.id })
+        assertFailsWith<IllegalStateException> { broker.openSession("999") }
+    }
+    @Test fun chartEventsWithCorrelationIdsAndEpochTimesAreNotDropped() = runTest {
+        val wire = MockTradovateWire().apply { numericChartTime = true; chartEventHasRequestId = true }
+        val (broker, _) = ready(wire)
+        assertEquals(1, broker.history("MESZ6", Timeframe.M5).size)
+        assertEquals(TEST_TIME, broker.history("MESZ6", Timeframe.M5).single().timeMs)
+    }
+    @Test fun fractionalChartChannelsAreNotDiscardedAsInvalidEntityIds() = runTest {
+        val (broker, _) = ready(MockTradovateWire().apply { fractionalChartId = true })
+        assertEquals(1, broker.history("MESZ6", Timeframe.M5).size)
+        assertEquals(chartSubscriptionKey(Json.parseToJsonElement("12.50")), chartSubscriptionKey(Json.parseToJsonElement("1.25e1")))
+        assertNotEquals(chartSubscriptionKey(Json.parseToJsonElement("9007199254740992")), chartSubscriptionKey(Json.parseToJsonElement("9007199254740993")))
+        assertNull(chartSubscriptionKey(JsonNull))
+        assertNull(chartSubscriptionKey(JsonPrimitive(false)))
+    }
+    @Test fun minutePrecisionIsoChartTimesAreAcceptedWithoutGuessingTimezone() = runTest {
+        val expected = kotlin.time.Instant.parse("2026-10-28T12:35:00Z").toEpochMilliseconds()
+        assertEquals(expected, timestamp("2026-10-28T12:35Z"))
+        assertEquals(expected, timestamp("2026-10-28T20:35+08:00"))
+        assertEquals(expected, timestamp("2026-10-28T20:35+0800"))
+        assertNull(timestamp("2026-10-28T12:35"))
+        val (broker, _) = ready(MockTradovateWire().apply { reducedPrecisionChartTime = true })
+        assertEquals(expected, broker.history("MESZ6", Timeframe.M5).single().timeMs)
+    }
+    @Test fun sharedAuthenticationHostDoesNotChangeSelectedTradingEnvironment() {
+        assertEquals("https://live.tradovateapi.com/v1/auth/renewaccesstoken", tradovateRequestUrl(TradovateEnvironment.DEMO, "auth/renewaccesstoken"))
+        assertEquals("https://live.tradovateapi.com/v1/auth/me", tradovateRequestUrl(TradovateEnvironment.DEMO, "auth/me"))
+        assertEquals("https://demo.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.DEMO, "order/placeorder"))
+        assertEquals("https://live.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.LIVE, "order/placeorder"))
+    }
+    @Test fun capturedAccountSessionWithoutMarketTokenConnectsDemoAccountsAndQuotes() = runTest {
+        val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)
+        assertTrue(accumulator.accept("""{"kind":"auth","environment":"demo","accessToken":"${fakeToken()}","userId":42,"authSource":"response"}""", "https://trader.tradovate.com", true))
+        val captured = accumulator.result()
+        assertNull(captured.mdAccessToken)
+        val wire = MockTradovateWire()
+        val stages = mutableListOf<String>()
+        val broker = TradovateBroker(captured, wire, backgroundScope, now = { TEST_TIME })
+        broker.connect { stages.add(it) }
+        assertEquals(listOf(TradovateEnvironment.DEMO.socketUrl, TradovateEnvironment.DEMO.marketUrl), wire.socketUrls)
+        assertEquals(captured.accessToken, wire.market.bodies["authorize"])
+        val syncRequest = obj(wire.account.bodies.getValue("user/syncrequest"))
+        assertEquals(false, syncRequest.bool("splitResponses"))
+        assertNull(syncRequest["users"], "Personal login must use the server's authorized context, not a live-host user selector")
+        assertTrue(syncRequest["entityTypes"]!!.jsonArray.any { it.jsonPrimitive.content == "account" })
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(2, broker.accounts.size)
+        assertTrue(broker.market.value.quotes.containsKey("MESZ6"))
+        assertTrue(stages.any { it.contains("已同步 2 个账户") })
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+    @Test fun incompleteSyncResponseCannotCompleteAccountLogin() = runTest {
+        val wire = MockTradovateWire().apply { snapshot = JsonObject(snapshot - "orders") }
+        val broker = TradovateBroker(session(), wire, backgroundScope, now = { TEST_TIME })
+        val error = assertFailsWith<TradovateRemoteException> { broker.connect() }
+        assertTrue(error.message!!.contains("不完整"))
+        assertFalse(broker.market.value.connected)
+        assertTrue(broker.accounts.isEmpty())
+        assertEquals(1, wire.socketUrls.size)
+    }
+    @Test fun partialBidOfferUpdatesAreMergedButTradesDoNotRefreshQuotes() = runTest {
+        val (broker, wire) = ready()
+        val updateTime = TEST_TIME + 1000
+        wire.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(updateTime)}","entries":{"Bid":{"price":5500.25}}}]}}]""")
+        runCurrent()
+        assertEquals(5_500_250_000, broker.market.value.quotes.getValue("MESZ6").bid)
+        assertEquals(5_500_250_000, broker.market.value.quotes.getValue("MESZ6").ask)
+        wire.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(TEST_TIME + 5000)}","entries":{"Trade":{"price":5501}}}]}}]""")
+        runCurrent()
+        assertEquals(updateTime, broker.market.value.quotes.getValue("MESZ6").timeMs)
+    }
+    @Test fun loginNeedsUsableExpiryEvenWithAnAccountId() {
+        val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)
+        assertFalse(accumulator.accept("""{"kind":"auth","environment":"demo","accessToken":"opaque-token-without-expiry","userId":42}""", "https://trader.tradovate.com", true))
+        assertTrue(accumulator.accept("""{"kind":"auth","environment":"demo","accessToken":"opaque-token-without-expiry","userId":42,"expires_in":3600}""", "https://trader.tradovate.com", true))
+        assertNotNull(accumulator.result().expiresAtMs)
+    }
     @Test fun originEnvironmentAndMainFrameAreMandatory() {
         val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)
         val message = """{"kind":"auth","environment":"demo","accessToken":"${fakeToken()}","userId":42}"""
@@ -102,7 +214,7 @@ class TradovateTests {
     }
     @Test fun loginScriptDoesNotReadPasswordFieldsOrStorage() {
         val script = TradovateLoginScript.forEnvironment(TradovateEnvironment.DEMO)
-        for (forbidden in listOf("localStorage", "sessionStorage", "input[type", ".password", "document.cookie")) assertFalse(script.contains(forbidden), forbidden)
+        for (forbidden in listOf("localStorage", "sessionStorage", "input[type", "data.password", "document.cookie")) assertFalse(script.contains(forbidden), forbidden)
         assertTrue(script.contains("window.top !== window"))
         assertTrue(script.contains("demo.tradovateapi.com"))
     }

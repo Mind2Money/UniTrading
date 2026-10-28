@@ -12,12 +12,12 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File native-auth/build.ps1
 ```
 
-可以传入 `-OutputDir <directory>`。默认输出为 `native-auth/build/UniTrading.TradovateLogin.exe`；同目录的 Core/WinForms/Loader DLL 和许可证文件应一同分发。`build/` 已由仓库通用规则忽略。
+可以传入 `-OutputDir <directory>`。默认输出为 `native-auth/build/1.1.1/UniTrading.TradovateLogin.exe`；同目录的 Core/WinForms/Loader DLL 和许可证文件应一同分发。`build/` 已由仓库通用规则忽略。
 
 脚本先尝试用户 NuGet 缓存；不存在时从固定的官方 NuGet URL 下载。包和所需 SDK 文件分别进入新建隔离目录，不执行包中的脚本。编译及默认离线 self-test 成功后才将完整产物复制到输出根目录。
 
 ```bash
-native-auth/build/UniTrading.TradovateLogin.exe --self-test
+native-auth/build/1.1.1/UniTrading.TradovateLogin.exe --self-test
 ```
 
 ## 调用协议
@@ -41,11 +41,13 @@ DONE
 
 - `TOKEN` 可以多次发送，每次可能只有部分令牌字段；同环境会话信息由调用者合并。
 - JS 通过顶层页面的 `window.chrome.webview.postMessage(JSON.stringify(...))` 发送上述 `kind: auth` 对象。
-- host 也监听所选环境原生 API `/v1/auth/accesstokenrequest` 和 `/v1/auth/renewaccesstoken` 的成功响应，提取同一组允许字段。不会读取请求密码。
-- 只接受来源与当前顶层文档均为 **HTTPS `trader.tradovate.com`、443 端口** 的消息，响应来源还必须匹配 `demo.tradovateapi.com` 或 `live.tradovateapi.com`。
+- host 监听固定官方域名的 `/v1/auth/*` 与 `/auth/*` 单层认证响应，兼容响应包装及标准 token 别名。认证使用共享 live 域名，不据此改变用户选择的 Demo/Live 交易环境；不读取请求密码。
+- 只接受来源与当前顶层文档均为 **HTTPS `trader.tradovate.com`、443 端口** 的消息；认证响应来源限定 live/demo/tv/tv-demo 的 `tradovateapi.com` 主机，不接受任意域名。
 - 输入最多 128 KiB，token 长度 20–32768 且不允许空白/控制字符；未知字段不转发。环境不符、失败/挑战响应和非法消息被忽略。
-- 收到账户 token 后启用“完成登录”。用户可先处理浏览器保存密码提示，再完成交接；只获取了账户 token 而没有行情 token 时界面会说明，调用者不能因此假定行情已授权。
-- `DONE` 且退出码 0 表示用户完成。取消退出码 2；配置/初始化/管道失败退出码 3。错误行只有固定错误码，不包含异常文本、认证响应或敏感 URL。
+- 收到账户 token 后自动进入交接，不等待独立行情 token。首次保留最多 60 秒供浏览器保存密码；发现密码库文件的大小/修改时间变化（不读取内容）后等待 1.5 秒，已有完成标记或续期会话也只等待 1.5 秒。
+- “立即返回”可跳过等待；登录后直接关闭窗口也完成交接。明确点击“取消登录”仍丢弃会话。
+- 管道 `STATUS WAITING_BROWSER/SESSION_CAPTURED/PASSWORD_SAVE <秒数>/RETURNING` 只含阶段，不含凭据；主程序显示这些阶段，不再笼统写成等待登录。
+- `DONE` 且退出码 0 表示交接成功。取消退出码 2；配置/初始化/管道失败退出码 3。错误行只有固定错误码，不包含异常文本、认证响应或敏感 URL。
 
 ## 浏览器与密码
 
