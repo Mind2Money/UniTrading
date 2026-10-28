@@ -1,0 +1,257 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Read-only: signing and the Telegram upload need secrets, not repository writes.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a pull request run is made pointless by a newer push; a run on main
+  # or a tag is left to finish so every published build reaches Telegram.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The daemon buys nothing on a runner that is thrown away afterwards.
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  # ─── Android ────────────────────────────────────────────────────────────────
+  # Every branch and pull request builds the R8-minified release APK; only
+  # main/master and v* tag pushes go on to signing and Telegram.
+  build-android:
+    name: Android APK (R8)
+    runs-on: ubuntu-latest
+    outputs:
+      apk_name: ${{ steps.apk.outputs.name }}
+      version_name: ${{ steps.apk.outputs.version_name }}
+      version_code: ${{ steps.apk.outputs.version_code }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      commit_msg: ${{ steps.meta.outputs.commit_msg }}
+      commit_count: ${{ steps.meta.outputs.commit_count }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      # composeApp and the broker modules use a Java 21 toolchain.
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # The legacy "tools" package the action installs by default no longer
+      # exists in the SDK repository; platform-tools is all this build needs.
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+
+      # compileSdk 37 is published as android-37.0; the bare name does not exist.
+      - name: 安装 compile SDK
+        run: sdkmanager --install "platforms;android-37.0"
+
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+
+      - name: 解析提交信息
+        id: meta
+        run: |
+          git fetch --force --tags >/dev/null 2>&1 || true
+          latest_tag="$(git tag --list 'v*' --sort=-creatordate | head -n1)"
+          if [ -z "$latest_tag" ]; then
+            count="$(git rev-list --count HEAD)"
+          else
+            count="$(git rev-list --count "${latest_tag}..HEAD")"
+          fi
+          {
+            echo "short_sha=$(git rev-parse --short HEAD)"
+            echo "commit_msg=$(git log -1 --pretty=%s)"
+            echo "commit_count=$count"
+          } >> "$GITHUB_OUTPUT"
+
+      # The release build type shrinks code and resources with R8
+      # (androidApp/build.gradle.kts).
+      - name: 编译 release APK
+        run: ./gradlew :androidApp:assembleRelease
+
+      - name: 检查并重命名 APK
+        id: apk
+        env:
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          out=androidApp/build/outputs
+          # A fresh checkout has no stale outputs, so these files prove that this
+          # build ran R8 and resource shrinking.
+          test -s "$out/mapping/release/mapping.txt"
+          test -s "$out/mapping/release/resources.txt"
+          apk="$out/apk/release/androidApp-release-unsigned.apk"
+          test -f "$apk"
+
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          badging="$("$build_tools/aapt2" dump badging "$apk")"
+          version_name="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
+          version_code="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")"
+          test -n "$version_name"
+          test -n "$version_code"
+
+          name="UniTrading-${version_name}-${SHORT_SHA}"
+          mkdir -p dist
+          cp "$apk" "dist/${name}-unsigned.apk"
+          ls -l dist
+          {
+            echo "name=$name"
+            echo "version_name=$version_name"
+            echo "version_code=$version_code"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniTrading-apk-unsigned
+          path: dist/*-unsigned.apk
+          if-no-files-found: error
+
+      # R8 renames the app's symbols; a stack trace from this APK needs this map.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniTrading-mapping-android
+          path: androidApp/build/outputs/mapping/release/mapping.txt
+          retention-days: 90
+          if-no-files-found: error
+
+  # Uses the same four signing secrets as DAView and RedefineNCM_KMP. The SDK's
+  # own apksigner is called directly: the passwords reach it through the
+  # environment and the keystore file is deleted before the step ends.
+  sign-android:
+    name: 签名 Android Release
+    needs: build-android
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/master' ||
+       startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    env:
+      APK_NAME: ${{ needs.build-android.outputs.apk_name }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-apk-unsigned
+          path: unsigned
+
+      - name: 签名 APK
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIGNING_KEY_BASE64" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_STORE_PASSWORD" ]; then
+            echo "::error::缺少签名 secret：SIGNING_KEY_BASE64、ALIAS、KEY_STORE_PASSWORD（KEY_PASSWORD 可选）"
+            exit 1
+          fi
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          echo "using $build_tools"
+          unsigned="unsigned/${APK_NAME}-unsigned.apk"
+          test -f "$unsigned"
+
+          keystore="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
+
+          "$build_tools/zipalign" -c 4 "$unsigned"
+
+          mkdir -p signed
+          signed="signed/${APK_NAME}.apk"
+          # No v4 signature: it is a separate .idsig file nothing here ships.
+          args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
+          # A PKCS12 store has one password for both; pass a key password only
+          # when one is configured.
+          if [ -n "${KEY_PASSWORD:-}" ]; then
+            args+=(--key-pass env:KEY_PASSWORD)
+          fi
+          "$build_tools/apksigner" "${args[@]}" --out "$signed" "$unsigned"
+          "$build_tools/apksigner" verify --print-certs "$signed" | grep -i 'SHA-256'
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniTrading-apk-signed
+          path: signed/${{ needs.build-android.outputs.apk_name }}.apk
+          if-no-files-found: error
+
+  # ─── Telegram（main/master 与 v* tag 的 push）────────────────────────────────
+  notify-telegram:
+    name: Telegram 通知
+    needs: [build-android, sign-android]
+    if: >-
+      always() && github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/master' ||
+       startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      # A pattern, unlike a name, downloads nothing instead of failing when
+      # signing did not run, so the failure still reaches Telegram.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: UniTrading-apk-signed
+          path: dist
+          merge-multiple: true
+
+      - name: 推送到 Telegram
+        # Everything from the commit or the ref reaches the script through the
+        # environment; written into the script with ${{ }}, a commit subject
+        # holding a quote or $( ) would run in the shell next to the bot token.
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMIT_MSG: ${{ needs.build-android.outputs.commit_msg }}
+          SHORT_SHA: ${{ needs.build-android.outputs.short_sha }}
+          COMMIT_COUNT: ${{ needs.build-android.outputs.commit_count }}
+          VERSION_NAME: ${{ needs.build-android.outputs.version_name }}
+          VERSION_CODE: ${{ needs.build-android.outputs.version_code }}
+          REF: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets not set — skipping."
+            exit 0
+          fi
+
+          # Only the signed APK is sent; an unsigned one cannot be installed.
+          APK=$(find dist -name 'UniTrading-*.apk' ! -name '*unsigned*' -print -quit 2>/dev/null || true)
+
+          # ✅ when the file exists, ❌ otherwise.
+          status() { [ -n "$1" ] && [ -f "$1" ] && printf '✅' || printf '❌'; }
+          escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+
+          CAPTION=$(printf '<b>UniTrading</b>  ·  <code>%s</code>\n\n📝 %s\n🔖 <code>%s (%s)</code>  ·  <code>%s</code>  ·  +%s commits\n\n──────────────────\n🤖 Android  %s  APK (signed, R8-minified)\n\n<a href="%s">CI run</a>' \
+            "$(escape "$REF")" "$(escape "${COMMIT_MSG:-?}")" "${VERSION_NAME:-?}" "${VERSION_CODE:-?}" \
+            "${SHORT_SHA:-?}" "${COMMIT_COUNT:-?}" "$(status "$APK")" "$RUN_URL")
+
+          API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+
+          if [ -n "$APK" ] && [ -f "$APK" ]; then
+            CAPTION_FILE=$(mktemp)
+            printf '%s' "$CAPTION" > "$CAPTION_FILE"
+            curl -sS --fail-with-body -X POST "${API}/sendDocument" \
+              -F chat_id="${TELEGRAM_CHAT_ID}" \
+              -F "document=@${APK}" \
+              -F "caption=<${CAPTION_FILE}" \
+              -F parse_mode=HTML
+            rm -f "$CAPTION_FILE"
+          else
+            curl -sS --fail-with-body -X POST "${API}/sendMessage" \
+              -H 'Content-Type: application/json' \
+              --data "$(jq -n --arg c "$TELEGRAM_CHAT_ID" --arg t "$CAPTION" \
+                '{"chat_id":$c,"text":$t,"parse_mode":"HTML"}')"
+          fi

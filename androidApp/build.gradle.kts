@@ -17,6 +17,14 @@ android {
         // Separate application ID for credential tests; never replace the normal installation.
         if (providers.gradleProperty("credentialStoreTest").orNull == "true") applicationIdSuffix = ".credentialtest"
     }
+    buildTypes {
+        // CI publishes this variant: R8 code shrinking plus resource shrinking.
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
