@@ -5,6 +5,23 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class ChartGeometryTest {
+    @Test fun axesZoomIndependentlyAndContinuousPanAllowsFutureSpace() {
+        val original = ChartViewport()
+        val zoomed = original.zoom(100f, 500f, 200)
+        assertTrue(zoomed.count < original.count)
+        assertEquals(original.start(200) + original.count / 2, zoomed.start(200) + zoomed.count / 2, .00001)
+        val panned = original.pan(-.5f, 500f, 200)
+        assertTrue(panned.offset < 0 && panned.offset > -1)
+        assertEquals(120..199, original.range(200))
+        val scale = PriceScale(100.0, 500.0, 0f, 400f)
+        val expanded = scale.zoom(-100f, 4.0)
+        assertTrue(expanded.high - expanded.low < scale.high - scale.low)
+        assertEquals(300.0, (expanded.low + expanded.high) / 2)
+        assertEquals(scale.y(300) + 50, scale.pan(50f).y(300), .001f)
+        assertTrue(original.zoom(100000f, 500f, 200).count >= 12)
+        assertTrue(original.zoom(-100000f, 500f, 200).count <= 600)
+        assertTrue(original.pan(100000f, 500f, 200).range(200).first >= 0)
+    }
     @Test fun coordinateRoundTripAndTickSnapping() {
         val scale = PriceScale(100.0, 500.0, 20f, 420f)
         for (price in 105L..495L step 5) assertTrue(abs(scale.price(scale.y(price), 5) - price) <= 5)

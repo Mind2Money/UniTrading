@@ -10,7 +10,7 @@ class TradingRuntimeTest {
             override fun read(key: String) = "not a snapshot"
             override fun write(key: String, value: String) { writes++ }
         }
-        val runtime = TradingRuntime(storage)
+        val runtime = TradingRuntime(storage, includeDemoBrokers = true)
         assertNotNull(runtime.startupError.value)
         assertFalse(runtime.save())
         assertEquals(0, storage.writes)
@@ -23,7 +23,7 @@ class TradingRuntimeTest {
             override fun read(key: String): String? = null
             override fun write(key: String, value: String) { error("disk full") }
         }
-        val runtime = TradingRuntime(storage)
+        val runtime = TradingRuntime(storage, includeDemoBrokers = true)
         val before = runtime.brokers.first().exportState()
         assertFalse(runtime.save())
         assertTrue(runtime.paused.value)
@@ -32,10 +32,10 @@ class TradingRuntimeTest {
     }
     @Test fun allBrokersRoundTripThroughStorage() = runTest {
         val storage = MemorySnapshotStore()
-        val runtime = TradingRuntime(storage)
+        val runtime = TradingRuntime(storage, includeDemoBrokers = true)
         runtime.brokers.forEach { it.advance(15) }
         assertTrue(runtime.save())
-        val restored = TradingRuntime(storage)
+        val restored = TradingRuntime(storage, includeDemoBrokers = true)
         assertNull(restored.startupError.value)
         runtime.brokers.zip(restored.brokers).forEach { (a, b) -> assertEquals(a.exportState(), b.exportState()) }
     }

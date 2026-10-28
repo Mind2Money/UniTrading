@@ -32,10 +32,12 @@ fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
 
 @Composable
 fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
-    TradingTheme {
+    val theme by runtime.theme.settings.collectAsState()
+    TradingTheme(theme) {
+        val colors = TradingColors
         val registry = runtime.registry
         val plugins by registry.state.collectAsState()
-        var brokerId by rememberSaveable { mutableStateOf(plugins.first().descriptor.id) }
+        var brokerId by rememberSaveable { mutableStateOf(plugins.firstOrNull()?.descriptor?.id ?: "") }
         val loginScope = rememberCoroutineScope()
         val restoredBrokerId by runtime.savedLogins.restoredBrokerId.collectAsState()
         val loginMessage by runtime.savedLogins.message.collectAsState()
@@ -47,27 +49,38 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
             brokerId = id
             loginScope.launch { runtime.savedLogins.select(id) }
         }
-        val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.first()
-        val catalog by key(plugin) { plugin.catalog.collectAsState() }
+        var showTheme by remember { mutableStateOf(false) }
+        if (showTheme) ThemeSettingsDialog(runtime.theme) { showTheme = false }
         var showConnection by remember { mutableStateOf(false) }
         if (showConnection) TradovateConnectionDialog(runtime, login, ::selectBroker, { showConnection = false })
+        val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+        if (plugin == null) {
+            LoginWelcome(runtime, { showConnection = true }, { showTheme = true })
+            return@TradingTheme
+        }
+        fun disconnectCurrent() {
+            registry.unregister(plugin.descriptor.id)
+            selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "")
+        }
+        val catalog by key(plugin) { plugin.catalog.collectAsState() }
         if (catalog.accounts.isEmpty() || catalog.instruments.isEmpty()) {
             val feed by key(plugin) { plugin.market.collectAsState() }
             val emptyScope = rememberCoroutineScope()
             var query by remember(plugin) { mutableStateOf("MES") }
             var searchError by remember(plugin) { mutableStateOf<String?>(null) }
-            Surface(Modifier.fillMaxSize(), color = TradingColors.Shell) {
+            Surface(Modifier.fillMaxSize(), color = colors.Shell) {
                 Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("UniTrading · ${plugin.descriptor.name}", fontSize = 20.sp)
-                    Text(feed.statusMessage, color = TradingColors.Muted)
+                    Text(feed.statusMessage, color = colors.Muted)
                     Text("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。", fontSize = 12.sp)
                     BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
                     OutlinedTextField(query, { query = it }, label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
                     Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
-                    searchError?.let { Text(it, color = TradingColors.Loss) }
+                    searchError?.let { Text(it, color = colors.Loss) }
                     TextButton({ showConnection = true }) { Text("连接 / 重新登录 Tradovate") }
-                    TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id) }) { Text("返回本地 Demo") }
-                    SavedLoginControls(runtime.savedLogins) { selectBroker(plugins.first().descriptor.id) }
+                    TextButton({ disconnectCurrent() }) { Text("断开连接") }
+                    TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
+                    SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
                 }
             }
             return@TradingTheme
@@ -122,6 +135,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         fun chooseBroker(value: String) { if (!busy) selectBroker(value) }
         fun chooseAccount(value: String) {
             if (!busy) {
+                manuallySelected = true
                 chosenAccountId = value
                 loginScope.launch { runtime.savedLogins.select(plugin.descriptor.id, value) }
             }
@@ -176,7 +190,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
             pendingEdit = PendingEntryEdit(current, spec.formatPrice(price))
         }
 
-        Surface(Modifier.fillMaxSize(), color = TradingColors.Shell) {
+        Surface(Modifier.fillMaxSize(), color = colors.Shell) {
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                 val desktop = maxWidth >= 900.dp && maxHeight >= 600.dp
                 val wide = desktop && maxWidth >= 1240.dp
@@ -187,47 +201,48 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                 Column(Modifier.fillMaxSize()) {
                     Row(Modifier.fillMaxWidth().height(if (compactShort) 44.dp else 60.dp).padding(horizontal = if (compact) 14.dp else 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Canvas(Modifier.size(28.dp)) {
-                            drawLine(TradingColors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
-                            drawLine(TradingColors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
-                            drawLine(TradingColors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
+                            drawLine(colors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
+                            drawLine(colors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
+                            drawLine(colors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
                         }
                         Column {
                             Text(if (compactShort) instrument.symbol else "UniTrading", fontSize = if (compact) 18.sp else 21.sp, fontWeight = FontWeight.SemiBold)
-                            if (compact) Text(session.account.name, fontSize = 10.sp, color = TradingColors.Muted, maxLines = 1)
+                            if (compact) Text(session.account.name, fontSize = 10.sp, color = colors.Muted, maxLines = 1)
                         }
                         Badge(if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo")
                         Spacer(Modifier.weight(1f))
                         if (desktop) {
-                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = TradingColors.Muted)
+                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = colors.Muted)
                             if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
                         }
-                        if (showCompactQuotes) Text("Bid ${quote?.bid?.let(instrument::formatPrice) ?: "—"} / Ask ${quote?.ask?.let(instrument::formatPrice) ?: "—"}", fontSize = 11.sp, color = TradingColors.Muted)
+                        if (showCompactQuotes) Text("Bid ${quote?.bid?.let(instrument::formatPrice) ?: "—"} / Ask ${quote?.ask?.let(instrument::formatPrice) ?: "—"}", fontSize = 11.sp, color = colors.Muted)
+                        if (desktop) TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
                         TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text(if (compact) "账户" else "切换账户", fontSize = 12.sp) }
                         if (desktop && !wide || compactShort) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                     }
                     DividerLine()
-                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = TradingColors.Muted) }
-                    if (!localDemo) Text(market.statusMessage, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), color = TradingColors.Muted, fontSize = 11.sp)
+                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = colors.Muted) }
+                    if (!localDemo) Text(market.statusMessage, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), color = colors.Muted, fontSize = 11.sp)
                     if (storageError != null) {
-                        Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = TradingColors.Loss)
+                        Row(Modifier.fillMaxWidth().background(colors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = colors.Loss)
                             TextButton({ scope.launch { runtime.save() } }) { Text("重试保存") }
                         }
                     }
                     notice?.let { message ->
-                        Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(start = 18.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().background(colors.Raised).padding(start = 18.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(message, Modifier.weight(1f).testTag("trade-notice"), fontSize = 11.sp)
                             TextButton({ notice = null }) { Text("关闭", fontSize = 10.sp) }
                         }
                     }
                     if (desktop) {
                         Row(Modifier.weight(1f).fillMaxWidth()) {
-                            Column(Modifier.width(216.dp).fillMaxHeight().background(TradingColors.Shell)) {
+                            Column(Modifier.width(216.dp).fillMaxHeight().background(colors.Shell)) {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                                 DividerLine()
                                 MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))
                             }
-                            VerticalDivider(color = TradingColors.Border)
+                            VerticalDivider(color = colors.Border)
                             Column(Modifier.weight(1f).fillMaxHeight()) {
                                 Row(Modifier.weight(1f).fillMaxWidth()) {
                                     Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -239,8 +254,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                     }
                                     if (wide) {
-                                        VerticalDivider(color = TradingColors.Border)
-                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.width(296.dp).fillMaxHeight().background(TradingColors.Shell), environment = plugin.descriptor.environment)
+                                        VerticalDivider(color = colors.Border)
+                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.width(296.dp).fillMaxHeight().background(colors.Shell), environment = plugin.descriptor.environment)
                                     }
                                 }
                                 DividerLine()
@@ -262,7 +277,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                             { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
                                             Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol })
                                 if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = TradingColors.Muted, fontSize = 11.sp)
+                                    Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
                                     Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("新建订单") }
                                 }
                             }
@@ -275,12 +290,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                                 if (compactShort) AccountStrip(account)
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(plugin.descriptor.description, fontSize = 12.sp, color = TradingColors.Muted)
-                                    if (localDemo) Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = TradingColors.Muted)
+                                    Text(plugin.descriptor.description, fontSize = 12.sp, color = colors.Muted)
+                                    if (localDemo) Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = colors.Muted)
                                     if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
                                     if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
+                                    TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
+                                    SavedLoginControls(runtime.savedLogins) { selectBroker("") }
                                     TextButton({ showConnection = true }) { Text("连接 Tradovate") }
-                                    if (!localDemo) TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id) }) { Text("断开 Tradovate") }
+                                    if (!localDemo) TextButton({ disconnectCurrent() }) { Text("断开 Tradovate") }
                                 }
                             }
                         }
@@ -288,24 +305,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     DividerLine()
                     if (!compactShort) AccountStrip(account)
                     if (compact) {
-                        Row(Modifier.fillMaxWidth().background(TradingColors.Shell)) {
-                            listOf("行情", "图表", "交易", "账户").forEachIndexed { index, title ->
-                                TextButton({ mobileTab = index }, Modifier.weight(1f).height(48.dp).testTag("nav-$index")) {
-                                    Text(title, color = if (mobileTab == index) TradingColors.Accent else TradingColors.Muted, fontWeight = if (mobileTab == index) FontWeight.SemiBold else FontWeight.Normal)
-                                }
-                            }
-                        }
+                        MobileNavigation(mobileTab) { mobileTab = it }
                     } else {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
-                            Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = TradingColors.Muted, fontSize = 10.sp)
+                            Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = colors.Muted, fontSize = 10.sp)
                             Spacer(Modifier.weight(1f))
-                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   服务器权威状态   |   ${plugin.descriptor.environment.label}", color = TradingColors.Muted, fontSize = 10.sp)
+                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   服务器权威状态   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
                         }
                     }
                 }
                 if (showOrder) {
                     Dialog(onDismissRequest = { if (!busy) showOrder = false }) {
-                        Surface(shape = MaterialTheme.shapes.large, color = TradingColors.Surface) {
+                        Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
                             Column(Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding()) {
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) { TextButton({ showOrder = false }) { Text("返回图表") } }
                                 OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
@@ -320,10 +331,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     title = { Text("交易商与账户") },
                     text = { Column(Modifier.verticalScroll(rememberScrollState())) {
                         BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
-                        Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = TradingColors.Muted)
+                        Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = colors.Muted)
                         TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }
-                        if (!localDemo) TextButton({ plugin.disconnect(); selectBroker(plugins.first().descriptor.id); showAccounts = false }) { Text("断开 Tradovate") }
-                        SavedLoginControls(runtime.savedLogins) { selectBroker(plugins.first().descriptor.id); showAccounts = false }
+                        if (!localDemo) TextButton({ disconnectCurrent(); showAccounts = false }) { Text("断开 Tradovate") }
+                        TextButton({ showTheme = true; showAccounts = false }) { Text("外观与主题") }
+                        SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: ""); showAccounts = false }
                     } },
                     confirmButton = { TextButton({ showAccounts = false }) { Text("完成") } },
                     dismissButton = { if (localDemo) TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
@@ -336,15 +348,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
                         text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", color = TradingColors.Muted, fontSize = 12.sp)
+                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 12.sp)
                             when (action) {
                                 is Confirmation.Place -> {
                                     val r = action.request
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}")
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
-                                    Text("提交时按最新报价与账户状态再次校验，预估不是锁定成交价。", fontSize = 12.sp, color = TradingColors.Muted)
-                                    livePreview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 12.sp) }
+                                    Text("提交时按最新报价与账户状态再次校验，预估不是锁定成交价。", fontSize = 12.sp, color = colors.Muted)
+                                    livePreview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 12.sp) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${plugin.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${plugin.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${action.order.id}。" +
@@ -378,15 +390,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         title = { Text("修改挂单入场价") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("${order.request.symbol} · ${order.request.side.label()} ${order.request.kind.name} · ${spec.formatQuantity(order.request.lotsHundredths)} ${spec.quantityUnit}", fontSize = 12.sp)
-                            Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = TradingColors.Muted, fontSize = 11.sp)
+                            Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = colors.Muted, fontSize = 11.sp)
                             PriceInput("新入场价", edit.entry, { pendingEdit = edit.copy(entry = it) }, "pending-entry")
                             EstimateRow("预计保证金", estimate?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-                            Text("仅修改入场价；原订单类型、数量、SL/TP 保持不变。确认后按最新报价重新校验。", color = TradingColors.Muted, fontSize = 11.sp)
-                            if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = TradingColors.Loss, fontSize = 11.sp)
-                            if (price == null) Text("请输入符合品种精度的有效价格。", color = TradingColors.Loss, fontSize = 11.sp)
-                            estimate?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 11.sp) }
+                            Text("仅修改入场价；原订单类型、数量、SL/TP 保持不变。确认后按最新报价重新校验。", color = colors.Muted, fontSize = 11.sp)
+                            if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
+                            if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, fontSize = 11.sp)
+                            estimate?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
                         } },
                         confirmButton = { Button({
                             val newPrice = price ?: return@Button
@@ -413,14 +425,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         title = { Text("修改止损 / 止盈") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${p.id}", fontSize = 12.sp)
-                            Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = TradingColors.Muted, fontSize = 11.sp)
+                            Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
                             PriceInput("新止损 SL（留空移除）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
                             PriceInput("新止盈 TP（留空移除）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate(sl))
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate(tp))
-                            Text("当前为预览，确认后交易商才会校验并更新。跳空时实际结果可能不同。", color = TradingColors.Muted, fontSize = 11.sp)
-                            if (!validVersion) Text("仓位已关闭或保护价版本已更新，请取消后重新选择。", color = TradingColors.Loss, fontSize = 11.sp)
-                            if (!validInput) Text("价格必须为正数并符合品种最小变动单位。", color = TradingColors.Loss, fontSize = 11.sp)
+                            Text("当前为预览，确认后交易商才会校验并更新。跳空时实际结果可能不同。", color = colors.Muted, fontSize = 11.sp)
+                            if (!validVersion) Text("仓位已关闭或保护价版本已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
+                            if (!validInput) Text("价格必须为正数并符合品种最小变动单位。", color = colors.Loss, fontSize = 11.sp)
                         } },
                         confirmButton = { Button({
                             protection = null

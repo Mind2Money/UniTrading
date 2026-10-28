@@ -39,7 +39,6 @@ class BrokerRegistry(plugins: List<BrokerPlugin>) {
     val state: StateFlow<List<BrokerPlugin>> = mutablePlugins
     val plugins: List<BrokerPlugin> get() = state.value
     init {
-        require(plugins.isNotEmpty()) { "至少注册一个交易商" }
         require(plugins.map { it.descriptor.id }.distinct().size == plugins.size) { "交易商 ID 重复" }
     }
     fun register(plugin: BrokerPlugin) {
@@ -51,7 +50,6 @@ class BrokerRegistry(plugins: List<BrokerPlugin>) {
     fun get(id: String): BrokerPlugin = plugins.first { it.descriptor.id == id }
     fun unregister(id: String) {
         val removed = plugins.firstOrNull { it.descriptor.id == id } ?: return
-        require(plugins.size > 1)
         removed.disconnect()
         mutablePlugins.value = plugins.filterNot { it.descriptor.id == id }
     }

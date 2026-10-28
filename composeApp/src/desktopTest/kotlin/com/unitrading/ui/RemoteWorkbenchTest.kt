@@ -25,7 +25,7 @@ class RemoteWorkbenchTest {
             override suspend fun write(value: String) { payload = value }
             override suspend fun clear() { payload = null }
         }
-        val runtime = TradingRuntime(MemorySnapshotStore(), credentialStore = store).apply { paused.value = true }
+        val runtime = TradingRuntime(MemorySnapshotStore(), credentialStore = store, includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.waitUntil(5_000) { runtime.savedLogins.message.value?.contains("已过期") == true }
         compose.onNodeWithTag("saved-login-status").assertTextContains("已过期", substring = true)
@@ -61,7 +61,7 @@ class RemoteWorkbenchTest {
         }
     }
     private fun render(plugin: BrokerPlugin) {
-        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin), includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.onNodeWithTag("broker-picker").performClick()
         compose.onNodeWithText("Remote test").performClick()
@@ -78,7 +78,7 @@ class RemoteWorkbenchTest {
         compose.onNodeWithText("取消").performClick()
     }
     @Test fun capturedSessionProgressIsVisibleAndLoginCanBeCancelled() {
-        val runtime = TradingRuntime(MemorySnapshotStore()).apply { paused.value = true }
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
         var cancelled = false
         var dismissed = false
         val login = object : TradovateLogin {

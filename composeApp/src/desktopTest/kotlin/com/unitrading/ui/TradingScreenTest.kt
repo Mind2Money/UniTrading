@@ -23,7 +23,7 @@ import kotlin.test.*
 
 class TradingScreenTest {
     @get:Rule val compose = createComposeRule()
-    private val runtime = TradingRuntime(MemorySnapshotStore()).apply { paused.value = true }
+    private val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
     private val instrument = plugin.instruments.first()

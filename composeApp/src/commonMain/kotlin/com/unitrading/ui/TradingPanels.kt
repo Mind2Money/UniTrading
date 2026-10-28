@@ -210,7 +210,8 @@ internal fun PriceInput(label: String, value: String, onValue: (String) -> Unit,
 internal fun EstimateRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, Modifier.weight(1f), color = TradingColors.Muted, fontSize = 11.sp)
-        Text(value, fontSize = 11.sp, textAlign = TextAlign.End)
+        Text(value, fontSize = 11.sp, textAlign = TextAlign.End,
+            color = when { value.startsWith("+") -> TradingColors.Profit; value.startsWith("-") -> TradingColors.Loss; else -> TradingColors.Ink })
     }
 }
 
@@ -222,7 +223,8 @@ internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifie
             "已用保证金" to if (account.marginKnown) money(account.marginMicros) else "—", "可用保证金" to if (account.equityKnown && account.marginKnown) money(account.freeMarginMicros) else "—", "保证金比例" to level).forEach { (label, value) ->
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(label, color = TradingColors.Muted, fontSize = 10.sp)
-                Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    color = if (label == "浮动盈亏" && account.equityKnown && account.balanceKnown) TradingColors.pnl(account.floatingPnlMicros) else TradingColors.Ink)
             }
         }
     }
@@ -270,7 +272,7 @@ internal fun TradeTerminal(
                                     Text("${p.symbol}   ${p.side.label()}   ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                     Text("入场 ${instrument.formatPrice(p.entryPrice)}    #${p.id.takeLast(7)}", color = TradingColors.Muted, fontSize = 10.sp)
                                 }
-                                Text(pnl?.let { money(it, true) } ?: "—", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                Text(pnl?.let { money(it, true) } ?: "—", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TradingColors.pnl(pnl))
                                 if (!compact) {
                                     Text("SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"}\nTP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}", fontSize = 10.sp, color = TradingColors.Muted)
                                     TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("保护价", fontSize = 11.sp) }
@@ -330,7 +332,7 @@ internal fun TradeTerminal(
                                 if (compact) Text("${dateTime(t.closedAtMs)} · ${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
                             }
                             if (!compact) Text("${dateTime(t.closedAtMs)}\n${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
-                            Text("${money(t.netPnlMicros, true)} USD", fontSize = 12.sp)
+                            Text("${money(t.netPnlMicros, true)} USD", fontSize = 12.sp, color = TradingColors.pnl(t.netPnlMicros))
                         }
                         DividerLine()
                     }

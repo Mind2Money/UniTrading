@@ -9,6 +9,16 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class SavedTradovateAccountsTest {
+    @Test fun lastRemoteLoginCanBeForgottenWithoutADefaultBroker() = runTest {
+        val store = Store()
+        val brokers = BrokerRegistry(emptyList())
+        val accounts = manager(brokers, store)
+        accounts.signIn(session()) {}
+        assertEquals(1, brokers.plugins.size)
+        assertTrue(accounts.forgetAll())
+        assertTrue(brokers.plugins.isEmpty())
+        assertNull(store.value)
+    }
     private class Store : CredentialStore {
         var value: String? = null
         var failWrite = false

@@ -19,12 +19,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -44,6 +46,7 @@ private sealed interface EditableLine {
     data class Pending(val order: PendingOrder) : EditableLine { override val price get() = order.request.entryPrice!! }
     data class Draft(val request: OrderRequest) : EditableLine { override val price get() = request.entryPrice!! }
 }
+private enum class ChartDragMode { PRICE, TIME, PLOT, NONE }
 private data class LineDrag(val line: EditableLine, val scale: PriceScale, val price: Long)
 private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
 
@@ -73,8 +76,10 @@ fun TradingChart(
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
     executions: List<Execution> = emptyList(),
 ) {
-    var count by remember(accountKey, instrument.symbol) { mutableStateOf(80) }
-    var offset by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(0) }
+    val colors = TradingColors
+    var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
+    var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<PriceScale?>(null) }
+    var previousTotal by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles.size) }
     var showHistory by remember { mutableStateOf(true) }
     var showPositions by remember { mutableStateOf(true) }
     var showOrders by remember { mutableStateOf(true) }
@@ -90,7 +95,7 @@ fun TradingChart(
     val top = with(density) { 18.dp.toPx() }
     val bottom = (size.height - with(density) { 30.dp.toPx() }).coerceAtLeast(top + 1)
     val plotWidth = right - left
-    val range = visibleRange(candles.size, count, offset)
+    val range = viewport.range(candles.size)
     val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
     val extras = buildList {
@@ -100,7 +105,7 @@ fun TradingChart(
         draft?.entryPrice?.let(::add)
         if (preview?.valid == true) { preview.entryPrice?.let(::add); draft?.stopLoss?.let(::add); draft?.takeProfit?.let(::add) }
     }
-    val scale = drag?.scale ?: PriceScale.from(visible, extras, top, bottom)
+    val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = bottom) ?: PriceScale.from(visible, extras, top, bottom)
     val currentScale by rememberUpdatedState(scale)
     val currentPosition by rememberUpdatedState(selectedPosition)
     val currentVisible by rememberUpdatedState(visible)
@@ -125,20 +130,27 @@ fun TradingChart(
         }
     }
     val activePreview = if (drag?.line is EditableLine.Draft) dragEstimate else preview
-    val labelStyle = TextStyle(color = TradingColors.Muted, fontSize = 10.sp)
+    val labelStyle = TextStyle(color = colors.Muted, fontSize = 10.sp)
     val periodMs = timeframe.minutes * 60_000L
-    val step = plotWidth / visible.size.coerceAtLeast(1)
+    val step = plotWidth / viewport.count.toFloat()
+    val currentViewport by rememberUpdatedState(viewport)
+    val currentRange by rememberUpdatedState(range)
+    fun visibleIndex(x: Float): Int = ((x - left) / (plotWidth / currentViewport.count) + currentViewport.start(currentTotal) - currentRange.first).toInt().coerceIn(0, (currentVisible.size - 1).coerceAtLeast(0))
 
     LaunchedEffect(focusedTrade?.id, instrument.symbol, timeframe) {
         if (focusedTrade != null && focusedTrade.symbol == instrument.symbol) {
             selectedTrade = focusedTrade
             val index = candles.indexOfLast { it.timeMs <= focusedTrade.closedAtMs }
-            if (index >= 0) offset = (candles.size - index - count / 2).coerceIn(0, (candles.size - count).coerceAtLeast(0))
+            if (index >= 0) viewport = viewport.copy(offset = candles.size - index - viewport.count / 2).bounded(candles.size)
         }
     }
     LaunchedEffect(selectedPosition?.id, selectedPosition?.version, positions.map { it.id }, orderVersions) { drag = null }
+    LaunchedEffect(candles.size) {
+        if (viewport.offset != 0.0) viewport = viewport.copy(offset = viewport.offset + candles.size - previousTotal).bounded(candles.size)
+        previousTotal = candles.size
+    }
 
-    Column(modifier.background(TradingColors.Surface)) {
+    Column(modifier.background(colors.Surface)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Timeframe.entries.forEach { frame ->
                 FilterChip(timeframe == frame, { onTimeframe(frame) }, label = { Text(frame.label, fontSize = 11.sp) })
@@ -148,32 +160,35 @@ fun TradingChart(
             FilterChip(showOrders, { showOrders = !showOrders }, label = { Text("挂单", fontSize = 11.sp) })
             FilterChip(showHistory, { showHistory = !showHistory }, label = { Text("历史", fontSize = 11.sp) })
             FilterChip(showData, { showData = !showData }, label = { Text("数据表", fontSize = 11.sp) })
-            TextButton({ count = (count - 20).coerceAtLeast(20) }, Modifier.semantics { contentDescription = "放大图表" }) { Text("＋") }
-            TextButton({ count = (count + 20).coerceAtMost(240) }, Modifier.semantics { contentDescription = "缩小图表" }) { Text("－") }
-            TextButton({ offset = (offset + count / 2).coerceAtMost((candles.size - count).coerceAtLeast(0)) }) { Text("较早", fontSize = 11.sp) }
-            TextButton({ offset = (offset - count / 2).coerceAtLeast(0) }) { Text("较新", fontSize = 11.sp) }
-            TextButton({ offset = 0; selectedTrade = null }) { Text("最新", fontSize = 11.sp) }
+            TextButton({ viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) }, Modifier.semantics { contentDescription = "放大图表" }) { Text("＋") }
+            TextButton({ viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) }, Modifier.semantics { contentDescription = "缩小图表" }) { Text("－") }
+            TextButton({ viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) }) { Text("较早", fontSize = 11.sp) }
+            TextButton({ viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) }) { Text("较新", fontSize = 11.sp) }
+            TextButton({ viewport = ChartViewport(); manualScale = null; selectedTrade = null }) { Text("重置视图", fontSize = 11.sp) }
         }
         DividerLine()
         if (showData) {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = TradingColors.Muted)
+                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(dateTime(c.timeMs), fontSize = 11.sp, color = TradingColors.Muted)
+                        Text(dateTime(c.timeMs), fontSize = 11.sp, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}", fontSize = 12.sp)
                     }
                     DividerLine()
                 }
             }
-        } else if (visible.isEmpty()) {
+        } else if (candles.isEmpty()) {
             EmptyState("暂无行情", "等待交易商提供历史 K 线。", Modifier.weight(1f))
         } else {
             Canvas(
-                Modifier.weight(1f).fillMaxWidth().onSizeChanged { size = it }.testTag("trading-chart")
-                    .semantics { contentDescription = "${instrument.name}K线，蓝色空心为上涨，铜色实心为下跌。可拖动止损止盈、Limit/Stop 草稿和挂单入场线，也可使用价格输入框。" }
+                Modifier.weight(1f).fillMaxWidth().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                    .semantics {
+                        contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。订单线可拖动预览。"
+                        stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null}"
+                    }
                     .pointerInput(accountKey, instrument.symbol, timeframe, size) {
                         awaitPointerEventScope {
                             while (true) {
@@ -181,7 +196,7 @@ fun TradingChart(
                                 if (event.type == PointerEventType.Exit) crosshair = null
                                 else if (event.type == PointerEventType.Move && event.changes.none { it.pressed }) {
                                     val pointer = event.changes.firstOrNull()?.position
-                                    if (pointer != null && drag == null) crosshair = candleIndex(pointer.x, left, plotWidth, currentVisible.size)
+                                    if (pointer != null && drag == null) crosshair = visibleIndex(pointer.x)
                                 }
                             }
                         }
@@ -189,22 +204,28 @@ fun TradingChart(
                     .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory) {
                         detectTapGestures(onTap = { point ->
                             val bars = currentVisible
-                            if (bars.isNotEmpty()) {
-                                val index = candleIndex(point.x, left, plotWidth, bars.size)
+                            if (bars.isNotEmpty() && point.x < right && point.y < bottom) {
+                                val index = visibleIndex(point.x)
                                 crosshair = index
                                 if (showHistory) selectedTrade = currentTrades.firstOrNull { trade ->
                                     trade.closedAtMs in bars[index].timeMs until (bars[index].timeMs + periodMs)
                                 }
                             }
-                        }, onLongPress = { point -> crosshair = candleIndex(point.x, left, plotWidth, currentVisible.size) })
+                        }, onLongPress = { point -> crosshair = visibleIndex(point.x) })
                     }
                     .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft) {
-                        var pan = 0f
+                        var mode = ChartDragMode.NONE
                         detectDragGestures(
                             orientationLock = null,
                             onDragStart = { down, _, _ ->
                                 val point = down.position
-                                pan = 0f
+                                crosshair = null
+                                mode = when {
+                                    point.x >= right && point.y < bottom -> ChartDragMode.PRICE
+                                    point.y >= bottom && point.x < right -> ChartDragMode.TIME
+                                    point.x in left..right && point.y in top..bottom -> ChartDragMode.PLOT
+                                    else -> ChartDragMode.NONE
+                                }
                                 val p = currentPosition
                                 val s = currentScale
                                 val candidates = buildList<EditableLine> {
@@ -222,23 +243,24 @@ fun TradingChart(
                                     }
                                 }
                                 val hit = candidates.minByOrNull { abs(s.y(it.price) - point.y) }
-                                if (hit != null && abs(s.y(hit.price) - point.y) < 22 * density.density) {
+                                if (mode == ChartDragMode.PLOT && hit != null && abs(s.y(hit.price) - point.y) < 22 * density.density) {
                                     drag = LineDrag(hit, s, hit.price)
                                 }
+                                if (mode == ChartDragMode.PRICE || mode == ChartDragMode.PLOT && drag == null) manualScale = s
                             },
                             onDrag = { change, amount ->
                                 change.consume()
                                 val active = drag
                                 if (active != null) {
                                     drag = active.copy(price = active.scale.price(change.position.y, instrument.tickSize))
-                                } else {
-                                    pan += amount.x
-                                    val barWidth = plotWidth / currentVisible.size.coerceAtLeast(1)
-                                    if (abs(pan) >= barWidth) {
-                                        val bars = (pan / barWidth).roundToInt()
-                                        offset = (offset + bars).coerceIn(0, (currentTotal - count).coerceAtLeast(0))
-                                        pan = 0f
+                                } else when (mode) {
+                                    ChartDragMode.PRICE -> manualScale = (manualScale ?: currentScale).zoom(amount.y, instrument.tickSize * 4.0)
+                                    ChartDragMode.TIME -> viewport = viewport.zoom(amount.x, plotWidth, currentTotal)
+                                    ChartDragMode.PLOT -> {
+                                        viewport = viewport.pan(amount.x, plotWidth, currentTotal)
+                                        manualScale = (manualScale ?: currentScale).pan(amount.y)
                                     }
+                                    ChartDragMode.NONE -> Unit
                                 }
                             },
                             onDragEnd = { _ ->
@@ -264,14 +286,14 @@ fun TradingChart(
                         }
                     }.focusable()
             ) {
-                fun text(value: String, x: Float, y: Float, color: Color = TradingColors.Muted) {
+                fun text(value: String, x: Float, y: Float, color: Color = colors.Muted) {
                     val layout = textMeasurer.measure(value, labelStyle.copy(color = color))
                     drawText(layout, topLeft = Offset(x, y.coerceIn(0f, (size.height - layout.size.height).toFloat().coerceAtLeast(0f))))
                 }
                 fun x(time: Long): Float? {
-                    if (time < visible.first().timeMs || time >= visible.last().timeMs + periodMs) return null
+                    if (visible.isEmpty() || time < visible.first().timeMs || time >= visible.last().timeMs + periodMs) return null
                     val index = visible.indexOfLast { it.timeMs <= time }
-                    return left + (index + 0.5f) * step
+                    return left + (range.first + index - viewport.start(candles.size) + 0.5).toFloat() * step
                 }
                 val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                 val labelPadding = 3.dp.toPx()
@@ -283,26 +305,28 @@ fun TradingChart(
                         pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
                     val measured = textMeasurer.measure(label, labelStyle)
                     val labelTop = y - measured.size.height - labelPadding
-                    drawRect(TradingColors.Surface.copy(alpha = 0.94f), Offset(left + labelPadding, labelTop - labelPadding),
+                    drawRect(colors.Surface.copy(alpha = 0.94f), Offset(left + labelPadding, labelTop - labelPadding),
                         Size(measured.size.width + labelPadding * 2, measured.size.height + labelPadding * 2))
-                    text(label, left + labelPadding * 2, labelTop, TradingColors.Ink)
-                    priceTags.add(PriceTag(price, TradingColors.Ink, TradingColors.Surface))
+                    text(label, left + labelPadding * 2, labelTop, colors.Ink)
+                    priceTags.add(PriceTag(price, colors.Ink, colors.Surface))
                 }
                 for (i in 0..5) {
                     val y = top + (bottom - top) * i / 5
-                    drawLine(TradingColors.Grid, Offset(left, y), Offset(right, y), 1f)
+                    drawLine(colors.Grid, Offset(left, y), Offset(right, y), 1f)
                     text(instrument.formatPrice(scale.price(y, instrument.tickSize)), right + 8f, y - labelHeight / 2)
                 }
                 for (i in 0..4) {
+                    if (visible.isEmpty()) break
                     val index = ((visible.size - 1) * i / 4)
-                    val x = left + (index + .5f) * step
-                    drawLine(TradingColors.Grid, Offset(x, top), Offset(x, bottom), 1f)
+                    val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
+                    drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
                     text(clockLabel(visible[index].timeMs), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                 }
+                clipRect(left, top, right, bottom) {
                 val draftEntry = activeDraft?.entryPrice ?: activePreview?.entryPrice
                 if (activePreview?.valid == true && activeDraft != null && draftEntry != null) {
                     val entryY = scale.y(draftEntry)
-                    listOf(activeDraft.stopLoss to TradingColors.Down, activeDraft.takeProfit to TradingColors.Up).forEach { (price, color) ->
+                    listOf(activeDraft.stopLoss to colors.Down, activeDraft.takeProfit to colors.Up).forEach { (price, color) ->
                         if (price != null) {
                             val y = scale.y(price)
                             drawRect(color.copy(alpha = 0.07f), Offset(left + plotWidth * .62f, minOf(y, entryY)), Size(plotWidth * .38f, abs(y - entryY)))
@@ -310,8 +334,8 @@ fun TradingChart(
                     }
                 }
                 visible.forEachIndexed { index, candle ->
-                    val center = left + (index + .5f) * step
-                    val color = if (candle.close >= candle.open) TradingColors.Up else TradingColors.Down
+                    val center = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
+                    val color = if (candle.close >= candle.open) colors.Up else colors.Down
                     val width = (step * .62f).coerceIn(2f, 12f * density.density)
                     drawLine(color, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), 1.3f)
                     val y = minOf(scale.y(candle.open), scale.y(candle.close))
@@ -321,10 +345,10 @@ fun TradingChart(
                 }
                 quote?.let {
                     val y = scale.y(it.bid)
-                    drawLine(TradingColors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
-                    drawLine(TradingColors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
+                    drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
+                    drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 4f)))
-                    priceTags.add(PriceTag(it.bid, TradingColors.Shell, TradingColors.Accent, priority = 2))
+                    priceTags.add(PriceTag(it.bid, colors.Shell, colors.Accent, priority = 2))
                 }
                 if (showHistory) executions.forEach { execution ->
                     val x = x(execution.timeMs)
@@ -337,8 +361,8 @@ fun TradingChart(
                             lineTo(x + 5f, y + if (up) 5f else -5f)
                             close()
                         }
-                        drawPath(marker, TradingColors.Surface, style = Stroke(4f))
-                        drawPath(marker, if (up) TradingColors.Up else TradingColors.Down)
+                        drawPath(marker, colors.Surface, style = Stroke(4f))
+                        drawPath(marker, if (up) colors.Up else colors.Down)
                     }
                 }
                 if (showHistory) trades.forEach { trade ->
@@ -346,14 +370,14 @@ fun TradingChart(
                         val x = x(time) ?: return
                         val y = scale.y(price)
                         val upward = if (opening) trade.side == Side.BUY else trade.side == Side.SELL
-                        val color = if (upward) TradingColors.Up else TradingColors.Down
+                        val color = if (upward) colors.Up else colors.Down
                         val path = Path().apply {
                             moveTo(x, y + if (upward) -6 else 6)
                             lineTo(x - 5, y + if (upward) 5 else -5)
                             lineTo(x + 5, y + if (upward) 5 else -5)
                             close()
                         }
-                        drawPath(path, TradingColors.Surface, style = Stroke(4f))
+                        drawPath(path, colors.Surface, style = Stroke(4f))
                         drawPath(path, color)
                     }
                     marker(trade.openedAtMs, trade.entryPrice, true)
@@ -361,13 +385,13 @@ fun TradingChart(
                     if (trade.id == selectedTrade?.id) {
                         val x1 = x(trade.openedAtMs)
                         val x2 = x(trade.closedAtMs)
-                        if (x1 != null && x2 != null) drawLine(TradingColors.Muted, Offset(x1, scale.y(trade.entryPrice)), Offset(x2, scale.y(trade.exitPrice)), 1.5f)
+                        if (x1 != null && x2 != null) drawLine(colors.Muted, Offset(x1, scale.y(trade.entryPrice)), Offset(x2, scale.y(trade.exitPrice)), 1.5f)
                     }
                 }
                 if (showPositions) {
                     positions.forEach { p ->
                         val selected = p.id == selectedPosition?.id
-                        priceLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)}  #${p.id.takeLast(5)}", TradingColors.Accent, false, if (selected) .85f else .3f)
+                        priceLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)}  #${p.id.takeLast(5)}", colors.Accent, false, if (selected) .85f else .3f)
                     }
                     selectedPosition?.let { p ->
                         val protectionDrag = drag?.takeIf { (it.line as? EditableLine.Protection)?.position?.id == p.id }
@@ -377,8 +401,8 @@ fun TradingChart(
                             val pnl = grossPnl(instrument, p.side, p.lotsHundredths, p.entryPrice, price) - p.entryFeeMicros - commission(instrument, p.lotsHundredths)
                             return "${if (stop) "SL 止损" else "TP 止盈"} ${if (!p.feesKnown) "毛" else ""} ${money(pnl, true)} USD${if (protectionDrag != null) " · 预览" else if (p.protectionEditable) " · 拖动" else " · 仅显示"}"
                         }
-                        sl?.let { priceLine(it, label(it, true), TradingColors.Stop) }
-                        tp?.let { priceLine(it, label(it, false), TradingColors.Target) }
+                        sl?.let { priceLine(it, label(it, true), colors.Stop) }
+                        tp?.let { priceLine(it, label(it, false), colors.Target) }
                     }
                 }
                 if (showOrders) orders.filterNot { it.isProtection && it.id in representedProtectionIds }.forEach { order ->
@@ -397,36 +421,39 @@ fun TradingChart(
                         OrderRole.UNRESOLVED -> " · 仅显示"
                     }
                     val color = when (order.role) {
-                        OrderRole.STOP_LOSS -> TradingColors.Stop
-                        OrderRole.TAKE_PROFIT -> TradingColors.Target
-                        else -> TradingColors.Muted
+                        OrderRole.STOP_LOSS -> colors.Stop
+                        OrderRole.TAKE_PROFIT -> colors.Target
+                        else -> colors.Muted
                     }
                     priceLine(price, "${order.role.label()} ${order.request.side.label()} ${order.request.kind.name}  #${order.id.substringAfterLast(':')}$suffix", color)
                 }
                 if (activeDraft != null && draftEntry != null && draftEntry > 0) {
-                    priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${instrument.formatQuantity(activeDraft.lotsHundredths)} ${instrument.quantityUnit}${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", TradingColors.Muted)
+                    priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${instrument.formatQuantity(activeDraft.lotsHundredths)} ${instrument.quantityUnit}${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", colors.Muted)
                     if (activePreview?.valid == true) {
-                        activeDraft.stopLoss?.let { priceLine(it, "预览 SL · ${activePreview.stopLossPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", TradingColors.Stop, alpha = .65f) }
-                        activeDraft.takeProfit?.let { priceLine(it, "预览 TP · ${activePreview.takeProfitPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", TradingColors.Target, alpha = .65f) }
+                        activeDraft.stopLoss?.let { priceLine(it, "预览 SL · ${activePreview.stopLossPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", colors.Stop, alpha = .65f) }
+                        activeDraft.takeProfit?.let { priceLine(it, "预览 TP · ${activePreview.takeProfitPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", colors.Target, alpha = .65f) }
                     }
                 }
                 crosshair?.let { index ->
                     visible.getOrNull(index)?.let { candle ->
-                        val x = left + (index + .5f) * step
-                        drawLine(TradingColors.Muted.copy(alpha = .6f), Offset(x, top), Offset(x, bottom), 1f)
-                        drawCircle(TradingColors.Surface, 5f, Offset(x, scale.y(candle.close)))
-                        drawCircle(TradingColors.Ink, 3f, Offset(x, scale.y(candle.close)))
+                        val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
+                        drawLine(colors.Muted.copy(alpha = .6f), Offset(x, top), Offset(x, bottom), 1f)
+                        drawCircle(colors.Surface, 5f, Offset(x, scale.y(candle.close)))
+                        drawCircle(colors.Ink, 3f, Offset(x, scale.y(candle.close)))
                     }
                 }
+                }
+                drawLine(colors.Border, Offset(right, top), Offset(right, bottom))
+                drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
                 val tagGap = labelHeight + labelPadding * 2 + 2.dp.toPx()
                 val capacity = ((bottom - top) / tagGap).toInt().coerceAtLeast(1)
-                val tags = priceTags.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
+                val tags = priceTags.filter { scale.y(it.price) in top..bottom }.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
                 val firstCenter = top + labelHeight / 2 + labelPadding
                 val lastCenter = maxOf(firstCenter, bottom - labelHeight / 2 - labelPadding)
                 val centers = spreadLabelCenters(tags.map { scale.y(it.price) }, firstCenter, lastCenter, tagGap)
                 tags.zip(centers).forEach { (tag, center) ->
                     val leader = 4.dp.toPx()
-                    drawLine(TradingColors.Muted, Offset(right, scale.y(tag.price)), Offset(right + leader, center), 1f)
+                    drawLine(colors.Muted, Offset(right, scale.y(tag.price)), Offset(right + leader, center), 1f)
                     drawRect(tag.background, Offset(right + leader, center - labelHeight / 2 - labelPadding),
                         Size((size.width - right - leader).coerceAtLeast(1f), labelHeight + labelPadding * 2))
                     text(instrument.formatPrice(tag.price), right + leader + labelPadding, center - labelHeight / 2, tag.ink)
@@ -436,20 +463,20 @@ fun TradingChart(
             if (bar != null) Text(
                 if (dragEstimate != null) "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${dragEstimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${dragEstimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${if (dragEstimate.marginKnown) money(dragEstimate.marginMicros) + " USD" else "未知"}   ${dragEstimate.errors.joinToString("；")}"
                 else "${dateTime(bar.timeMs)} UTC   开 ${instrument.formatPrice(bar.open)}   高 ${instrument.formatPrice(bar.high)}   低 ${instrument.formatPrice(bar.low)}   收 ${instrument.formatPrice(bar.close)}",
-                Modifier.fillMaxWidth().testTag("chart-readout").horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 5.dp), color = TradingColors.Muted, fontSize = 10.sp,
+                Modifier.fillMaxWidth().testTag("chart-readout").horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 5.dp), color = colors.Muted, fontSize = 10.sp,
             )
             selectedPosition?.protectionNote?.let { note ->
-                Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = TradingColors.Muted)
+                Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = colors.Muted)
             }
             selectedTrade?.let { trade ->
                 Text("选中历史  #${trade.id} · ${trade.side.label()} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("△ 买入 / 上涨空心", fontSize = 10.sp, color = TradingColors.Muted)
-            Text("▽ 卖出 / 下跌实心", fontSize = 10.sp, color = TradingColors.Muted)
-            Text("SL 止损   TP 止盈", fontSize = 10.sp, color = TradingColors.Muted)
-            Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟行情 · UTC" else "服务器行情 · UTC", fontSize = 10.sp, color = TradingColors.Muted)
+            Text("△ 买入 / 上涨空心", fontSize = 10.sp, color = colors.Muted)
+            Text("▽ 卖出 / 下跌实心", fontSize = 10.sp, color = colors.Muted)
+            Text("右轴 ↕ 价格缩放 · 底轴 ↔ 时间缩放", fontSize = 10.sp, color = colors.Muted)
+            Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟行情 · UTC" else "服务器行情 · UTC", fontSize = 10.sp, color = colors.Muted)
         }
     }
 }

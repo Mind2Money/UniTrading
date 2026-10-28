@@ -4,6 +4,10 @@ import android.os.Bundle
 import android.util.AtomicFile
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.*
+import android.content.res.Configuration
+import androidx.compose.ui.graphics.luminance
+import com.unitrading.ui.themePalette
 import android.graphics.Color
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -21,7 +25,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
         val model = ViewModelProvider(this)[TradingRuntimeModel::class.java]
         val login = AndroidTradovateLogin(this)
-        setContent { TradingScreen(model.runtime, login) }
+        setContent {
+            val theme by model.runtime.theme.settings.collectAsState()
+            val palette = themePalette(theme, resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES)
+            SideEffect {
+                val barStyle = if (palette.Shell.luminance() > .45f) SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+                    else SystemBarStyle.dark(Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+            }
+            TradingScreen(model.runtime, login)
+        }
     }
 }
 

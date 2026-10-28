@@ -67,7 +67,7 @@ private class OfflineProtectionBroker(unresolved: Boolean = false) : BrokerPlugi
 class ProtectionUiTest {
     @get:Rule val compose = createComposeRule()
     private fun render(broker: OfflineProtectionBroker) {
-        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.onNodeWithTag("broker-picker").performClick()
         compose.onNodeWithText(broker.descriptor.name).performClick()

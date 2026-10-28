@@ -2,6 +2,9 @@ package com.unitrading.chart
 
 import com.unitrading.broker.Candle
 import kotlin.math.roundToLong
+import kotlin.math.exp
+import kotlin.math.floor
+import kotlin.math.ceil
 
 /** Rendering uses floating coordinates; account arithmetic remains integer-only. */
 data class PriceScale(val low: Double, val high: Double, val top: Float, val bottom: Float) {
@@ -12,6 +15,15 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
         val raw = low + (bottom - y.coerceIn(top, bottom)) / (bottom - top) * (high - low)
         return ((raw / tickSize).roundToLong() * tickSize).coerceAtLeast(tickSize)
     }
+    fun pan(pixels: Float): PriceScale {
+        val shift = pixels / (bottom - top) * (high - low)
+        return copy(low = low + shift, high = high + shift)
+    }
+    fun zoom(pixels: Float, minimumSpan: Double): PriceScale {
+        val span = ((high - low) * exp(pixels / (bottom - top) * 3.0)).coerceIn(minimumSpan, 1e16)
+        val center = (low + high) / 2
+        return copy(low = center - span / 2, high = center + span / 2)
+    }
     companion object {
         fun from(candles: List<Candle>, extras: List<Long>, top: Float, bottom: Float): PriceScale {
             val points = candles.flatMap { listOf(it.low, it.high) } + extras.filter { it > 0 }
@@ -21,6 +33,22 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
             return PriceScale(maxOf(0.0, min - padding), max + padding, top, bottom)
         }
     }
+}
+
+/** Continuous bar coordinates preserve fractional movement and allow space after the latest bar. */
+data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
+    fun start(total: Int) = total - offset - count
+    fun range(total: Int): IntRange {
+        if (total == 0) return IntRange.EMPTY
+        return floor(start(total)).toInt().coerceIn(0, total) until ceil(total - offset).toInt().coerceIn(0, total)
+    }
+    fun pan(pixels: Float, width: Float, total: Int): ChartViewport =
+        copy(offset = offset + pixels / width.coerceAtLeast(1f) * count).bounded(total)
+    fun zoom(pixels: Float, width: Float, total: Int): ChartViewport {
+        val next = (count * exp(-pixels / width.coerceAtLeast(1f) * 3.0)).coerceIn(12.0, 600.0)
+        return copy(count = next, offset = offset + (count - next) / 2).bounded(total)
+    }
+    fun bounded(total: Int) = copy(offset = offset.coerceIn(-count * .8, (total - count * .2).coerceAtLeast(0.0)))
 }
 
 fun visibleRange(total: Int, count: Int, offset: Int): IntRange {
