@@ -64,6 +64,11 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build device-test APKs before starting the emulator
+        run: |
+          sdkmanager --install "platforms;android-37.0"
+          ./gradlew :androidApp:assembleDebug :androidApp:assembleDebugAndroidTest -PcredentialStoreTest=true --max-workers=2
+          ./gradlew :androidApp:assembleRelease :androidApp:assembleReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release --max-workers=2
       - name: Boot isolated emulator
         run: |
           set -euo pipefail
@@ -78,20 +83,28 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -list-avds | grep -x unitrading-ci
           sudo chmod 666 /dev/kvm
           mkdir -p artifacts
-          "$ANDROID_HOME/emulator/emulator" -avd unitrading-ci -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect > artifacts/emulator.log 2>&1 &
+          "$ANDROID_HOME/emulator/emulator" -avd unitrading-ci -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > artifacts/emulator.log 2>&1 &
           emulator_pid=$!
           booted=false
           for attempt in $(seq 1 150); do
             if ! kill -0 "$emulator_pid" 2>/dev/null; then cat artifacts/emulator.log; exit 1; fi
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ]; then booted=true; break; fi
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ] && adb shell cmd package list packages >/dev/null 2>&1 && adb shell am get-current-user >/dev/null 2>&1; then booted=true; break; fi
             sleep 2
           done
           if [ "$booted" != true ]; then cat artifacts/emulator.log; adb devices; exit 1; fi
+          adb logcat -v threadtime -b all '*:W' > artifacts/emulator-logcat.log 2>&1 &
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
           adb shell input keyevent 82
       - name: Test debug and minified release on device
         run: |
-          ./gradlew :androidApp:connectedDebugAndroidTest -PcredentialStoreTest=true
-          ./gradlew :androidApp:connectedReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release
+          touch artifacts/android-debug-start
+          ./gradlew :androidApp:connectedDebugAndroidTest -PcredentialStoreTest=true --max-workers=2
+          python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/debug --since-file artifacts/android-debug-start
+          touch artifacts/android-release-start
+          ./gradlew :androidApp:connectedReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release --max-workers=2
+          python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/release --since-file artifacts/android-release-start
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -101,6 +114,7 @@ jobs:
             androidApp/build/outputs/androidTest-results/
             androidApp/build/outputs/mapping/
             artifacts/emulator.log
+            artifacts/emulator-logcat.log
 
   test-ios:
     name: iOS ARM64 framework, app, and platform checks
@@ -153,6 +167,7 @@ jobs:
             **/build/test-results/
             artifacts/ios-platform-test.log
             artifacts/ios-build/Logs/
+            composeApp/build/bin/iosSimulatorArm64/debugFramework/UniTrading.framework/Headers/
 
   # ─── Android ────────────────────────────────────────────────────────────────
   # Every branch and pull request builds the R8-minified release APK; only

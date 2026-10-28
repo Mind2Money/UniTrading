@@ -42,4 +42,6 @@ dependencies {
     implementation("androidx.webkit:webkit:1.18.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    // AndroidX Test references these CLASS-retained annotations when its release APK is shrunk.
+    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
 }
