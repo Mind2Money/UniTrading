@@ -129,7 +129,21 @@ jobs:
           xcrun simctl bootstatus "$device" -b
           xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug -destination "id=$device" -derivedDataPath artifacts/ios-build ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
           xcrun simctl install "$device" artifacts/ios-build/Build/Products/Debug-iphonesimulator/UniTrading.app
-          xcrun simctl launch --console "$device" com.unitrading.demo --native-platform-self-test | tee artifacts/ios-platform-test.log
+          python3 - "$device" <<'PY'
+          import subprocess, sys
+          from pathlib import Path
+          try:
+              result = subprocess.run(['xcrun', 'simctl', 'launch', '--console', sys.argv[1], 'com.unitrading.demo', '--native-platform-self-test'], text=True, capture_output=True, timeout=90)
+              log = result.stdout + result.stderr
+              Path('artifacts/ios-platform-test.log').write_text(log)
+              print(log)
+              if result.returncode != 0 or 'NATIVE_PLATFORM_SELF_TEST PASS' not in log:
+                  raise SystemExit('Native platform self-test did not pass')
+          except subprocess.TimeoutExpired as error:
+              Path('artifacts/ios-platform-test.log').write_text('Native platform self-test timed out; check DEBUG build configuration.')
+              subprocess.run(['xcrun', 'simctl', 'terminate', sys.argv[1], 'com.unitrading.demo'], check=False)
+              raise SystemExit(str(error))
+          PY
           grep -q 'NATIVE_PLATFORM_SELF_TEST PASS' artifacts/ios-platform-test.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
