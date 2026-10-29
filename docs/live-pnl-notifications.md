@@ -11,10 +11,11 @@
 
 ## Android
 
-- `androidApp/.../LivePnlNotifier.kt`：通知渠道 `live-pnl`，`setOngoing(true)`，`setTimeoutAfter(90 s)`；Android 16 起设置 `setShortCriticalText(盈亏)`，Android 16 QPR1（API 36.1，按 `Build.VERSION.SDK_INT_FULL` 判断）起额外 `setRequestPromotedOngoing(true)`——API 36.0 没有该方法，CI 的 API 36 模拟器上只显示普通常驻通知。点击通知回到 `MainActivity`。
-- 清单声明 `POST_NOTIFICATIONS`（Android 13+ 运行时权限）和 `POST_PROMOTED_NOTIFICATIONS`（Live Update）。首次有账户可显示而权限缺失时，`MainActivity` 弹出一次系统权限请求；拒绝后不再提示，通知静默不显示，开关仍可用。
-- `TradingRuntimeModel` 持有通知并在模型销毁时取消；没有前台服务，进程被系统结束后通知在 90 秒内自动过期，不会留下过时数字。
-- 设备测试 `LivePnlNotificationTest` 通过真实 `NotificationManager` 发布合成通知，核对标题、文本、常驻标志和 Android 16 的状态栏文本。
+- `androidApp/.../LivePnlNotifier.kt`：按 RedefineNCM_KMP 的实况通知写法，使用 `NotificationCompat`（androidx.core 1.18）：盈亏数字作标题，`setSilent`、`setOngoing`、`PRIORITY_LOW`、`VISIBILITY_PUBLIC`、低重要性渠道 `live-pnl-status`；Android 16 起设置 `setShortCriticalText(盈亏)`，并在 `NotificationManager.canPostPromotedNotifications()` 为真时 `setRequestPromotedOngoing(true)`——该请求只是 `android.requestPromotedOngoing` extra，Android 16.0 与 HyperOS 超级岛同样识别（此前按 API 36.1 判断导致 16.0 设备从不请求提升）。点击通知回到 `MainActivity`。
+- `LivePnlService`（`foregroundServiceType="dataSync"`）：首次有通知时由 notifier 用 `startForegroundService` 启动并以该通知 `startForeground`，之后的刷新只 `notify` 同一 id；清除通知即 `stopService`。前台服务让进程、交易商连接和通知在后台继续刷新；Android 15+ 对 dataSync 有每日 6 小时上限，超时后服务自行停止并移除通知，再次打开应用才会重新开始。应用在后台且服务已停止时，通知退化为普通常驻通知并在 90 秒无刷新后过期。
+- 清单声明 `POST_NOTIFICATIONS`（Android 13+ 运行时权限）、`POST_PROMOTED_NOTIFICATIONS`（Live Update，用户可在系统通知设置里关闭「实况通知 / 超级岛」）、`FOREGROUND_SERVICE` 与 `FOREGROUND_SERVICE_DATA_SYNC`。首次有账户可显示而权限缺失时，`MainActivity` 弹出一次系统权限请求；拒绝后不再提示，通知静默不显示，开关仍可用。
+- `TradingRuntimeModel` 持有 notifier 并在模型销毁（任务被划掉）时清除通知与前台服务；前台服务通知随进程结束一起消失，不会留下过时数字。
+- 设备测试 `LivePnlNotificationTest` 通过真实 `NotificationManager` 发布合成通知，核对标题（盈亏）、文本、常驻标志、Android 16 的状态栏文本以及提升请求 extra 与系统许可一致；前台服务在测试进程里若不允许启动则走普通通知路径。
 
 ## iOS
 

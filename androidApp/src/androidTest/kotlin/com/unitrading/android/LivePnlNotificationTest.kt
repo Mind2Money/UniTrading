@@ -39,8 +39,9 @@ class LivePnlNotificationTest {
         await("notice was not posted") { posted() != null }
         val active = posted()!!
         assertTrue(active.isOngoing)
-        assertEquals("Synthetic · 测试账户", active.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
-        assertTrue(active.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("+128.50 USD"))
+        assertEquals("+128.50 USD", active.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertTrue(active.notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().startsWith("Synthetic · 测试账户"))
+        assertEquals(notifier.promotionAllowed(), active.notification.extras.getBoolean("android.requestPromotedOngoing"))
         if (Build.VERSION.SDK_INT >= 36) assertEquals("+128.50 USD", active.notification.shortCriticalText)
         notifier.clear()
         await("notice did not clear") { posted() == null }
