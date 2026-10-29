@@ -16,7 +16,7 @@
 - 副图型指标（RSI、MACD、KDJ、ATR）在 K 线图与时间轴之间各占一个副图：每个副图占图表高度 20%，副图总高度不超过 50%，因此 3 个以上副图时每个会变矮。副图右侧显示当前上下界，RSI 画 30/70、KDJ 画 20/80、MACD 画 0 参考线。
 - 图例在 OHLC 下方逐行显示叠加指标名称和当前值；副图标题行显示该指标的值。十字线移动时两者都显示所指 K 线的值，否则显示最新 K 线。
 - 副图区域横向拖动平移时间，不缩放价格；时间轴缩放手势仍在最底部的时间刻度上。
-- 指标按当前已加载的全部 K 线计算（Tradovate 每品种/周期最多 500 根，本地 Demo 为全部模拟历史），预热期内无值不绘制。
+- 指标按当前已加载的全部 K 线计算，预热期内无值不绘制。Tradovate 每品种/周期请求并保留最近 2000 根（`CHART_BARS`），是周期上限的两倍，周期 1000 的指标在历史加载完整时仍有 1000 根有值；本地 Demo 引擎只保留 48 小时模拟 tick，按周期聚合后 1 分钟约 2880 根、5 分钟 576 根，长周期指标在 Demo 上可能没有值。
 
 ## 公式约定
 
@@ -30,7 +30,7 @@
 | KDJ | 9 / 3 / 3 | RSV = (收 − N 日最低) / (N 日最高 − N 日最低) × 100，区间为零时取 50；K、D 以 1/3 权重平滑，起始值 50；J = 3K − 2D |
 | ATR | 周期 14 | 真实波幅从第二根起使用前收盘；首值为前 N 根真实波幅的简单平均，之后 Wilder 平滑 |
 
-周期为 1–500 的整数，布林带带宽为 0.1–10（两位小数）；MACD 要求快线周期小于慢线。不同平台对 EXPMA 起始值、RSI 零变动和 KDJ 起始值的处理不一致，上述约定以本仓库实现为准。
+周期为 1–1000 的整数（`MAX_INDICATOR_PERIOD`），布林带带宽为 0.1–10（两位小数）；MACD 要求快线周期小于慢线。周期大于当前已加载 K 线数时该指标整段处于预热期，不绘制。不同平台对 EXPMA 起始值、RSI 零变动和 KDJ 起始值的处理不一致，上述约定以本仓库实现为准。
 
 ## 未实现
 
@@ -41,10 +41,11 @@
 
 ## 验证
 
-- `IndicatorsTest`：MA/EXPMA 起算、布林带总体标准差、RSI Wilder 平滑与边界值、线性序列 MACD 常量、KDJ 起始值与边界、ATR 起算、参数/颜色校验、标签格式、副图范围与数值格式。
+- `IndicatorsTest`：MA/EXPMA 起算、布林带总体标准差、RSI Wilder 平滑与边界值、线性序列 MACD 常量、KDJ 起始值与边界、ATR 起算、参数/颜色校验（含周期 1000 接受、1001 拒绝）、2000 根 K 线上周期 1000 的全部指标预热与有值区间、标签格式、副图范围与数值格式。
+- `ChartHistoryDepthTest`：Tradovate `md/getChart` 请求 `asMuchAsElements` 为 2000，收到 2500 根后保留最新 2000 根且时间连续。服务器对 2000 根请求的实际返回数量未用真实账户实测。
 - `IndicatorSettingsTest`：重启后恢复、重复 ID / 超量 / 非法参数拒绝、磁盘失败保留旧配置、损坏或未知指标回退且不覆盖原文件。
 - `IndicatorUiTest`：添加 EXPMA/BOLL/RSI，修改周期与颜色，无效参数禁用保存，保存后图例与副图出现并持久化；副图下方时间轴缩放和副图区域平移；取消不改动配置；隐藏指标移除副图；预存 MACD/KDJ/MA 随图表加载并可移除。截图输出到 `artifacts/chart-indicators.png`。
 
 ```powershell
-./gradlew.bat :composeApp:desktopTest --tests "com.unitrading.chart.IndicatorsTest" --tests "com.unitrading.app.IndicatorSettingsTest" --tests "com.unitrading.ui.IndicatorUiTest"
+./gradlew.bat :composeApp:desktopTest --tests "com.unitrading.chart.IndicatorsTest" --tests "com.unitrading.app.IndicatorSettingsTest" --tests "com.unitrading.ui.IndicatorUiTest" :tradovate-broker:desktopTest --tests "com.unitrading.tradovate.ChartHistoryDepthTest"
 ```

@@ -10,6 +10,9 @@ import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.time.Clock
 
+/** Bars requested per symbol and timeframe and kept in memory: twice the largest indicator period (1000), so that period still yields 1000 values. */
+const val CHART_BARS = 2000
+
 /** Server-authoritative adapter. No remote order is executed by the local demo engine. */
 class TradovateBroker(
     private var credentials: TradovateSession,
@@ -333,7 +336,7 @@ class TradovateBroker(
                 val response = socket.request("md/getChart", buildJsonObject {
                     put("symbol", symbol)
                     put("chartDescription", chartDescription(timeframe))
-                    putJsonObject("timeRange") { put("asMuchAsElements", 500) }
+                    putJsonObject("timeRange") { put("asMuchAsElements", CHART_BARS) }
                 })
                 lock.withLock {
                     for (field in listOf("historicalId", "realtimeId")) {
@@ -390,7 +393,7 @@ class TradovateBroker(
             val volume = listOfNotNull(bar.long("upVolume"), bar.long("downVolume")).takeIf { it.isNotEmpty() }?.sum()?.takeIf { it >= 0 }
             Candle(time, o, h, l, c, volume)
         }
-        history = history + (key to ((history[key] ?: emptyList()) + incoming).associateBy { it.timeMs }.values.sortedBy { it.timeMs }.takeLast(500))
+        history = history + (key to ((history[key] ?: emptyList()) + incoming).associateBy { it.timeMs }.values.sortedBy { it.timeMs }.takeLast(CHART_BARS))
     }
 
     private fun rebuild() {

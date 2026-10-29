@@ -78,6 +78,24 @@ class IndicatorsTest {
         assertSeries(emptyList(), atr(emptyList(), 3))
     }
 
+    @Test fun thousandBarPeriodsAreAcceptedAndComputeOverLongHistory() {
+        assertTrue(MAX_INDICATOR_PERIOD >= 1000)
+        for (kind in IndicatorKind.entries) for (spec in kind.params.filter { it.integer }) assertEquals(MAX_INDICATOR_PERIOD.toDouble(), spec.max, "${kind.label} ${spec.key}")
+        val candles = List(2 * MAX_INDICATOR_PERIOD) { i -> val c = 7_700_000_000L + (i % 37) * 250_000L; Candle(i * 300_000L, c, c + 500_000, c - 500_000, c) }
+        val period = MAX_INDICATOR_PERIOD.toDouble()
+        val ready = MAX_INDICATOR_PERIOD until candles.size
+        for (kind in listOf(IndicatorKind.MA, IndicatorKind.EXPMA, IndicatorKind.BOLL, IndicatorKind.RSI, IndicatorKind.ATR)) {
+            for (s in computeIndicator(IndicatorConfig("x", kind, mapOf("period" to period)), candles)) {
+                assertTrue(s.values[MAX_INDICATOR_PERIOD - 2].isNaN(), "${kind.label} ${s.line.name} before warm-up")
+                assertTrue(ready.all { s.values[it].isFinite() }, "${kind.label} ${s.line.name} after warm-up")
+            }
+        }
+        val kdj = computeIndicator(IndicatorConfig("y", IndicatorKind.KDJ, mapOf("period" to period, "k" to period, "d" to period)), candles)
+        assertTrue(kdj.all { s -> s.values[MAX_INDICATOR_PERIOD - 2].isNaN() && ready.all { s.values[it].isFinite() } })
+        val macd = computeIndicator(IndicatorConfig("z", IndicatorKind.MACD, mapOf("fast" to period - 1, "slow" to period, "signal" to period)), candles)
+        assertTrue(macd.all { s -> s.values.last().isFinite() })
+    }
+
     @Test fun configsValidateParametersColoursAndLabels() {
         val boll = IndicatorConfig("a", IndicatorKind.BOLL, mapOf("period" to 20.0, "width" to 2.5))
         boll.validate()
@@ -86,7 +104,8 @@ class IndicatorsTest {
         assertEquals("EXPMA(30)", IndicatorConfig("c", IndicatorKind.EXPMA, mapOf("period" to 30.0)).label)
         assertFailsWith<IllegalArgumentException> { IndicatorConfig("d", IndicatorKind.RSI, mapOf("period" to 0.0)).validate() }
         assertFailsWith<IllegalArgumentException> { IndicatorConfig("e", IndicatorKind.RSI, mapOf("period" to 2.5)).validate() }
-        assertFailsWith<IllegalArgumentException> { IndicatorConfig("f", IndicatorKind.RSI, mapOf("period" to 501.0)).validate() }
+        assertFailsWith<IllegalArgumentException> { IndicatorConfig("f", IndicatorKind.RSI, mapOf("period" to 1001.0)).validate() }
+        IndicatorConfig("l", IndicatorKind.EXPMA, mapOf("period" to 1000.0)).validate()
         assertFailsWith<IllegalArgumentException> { IndicatorConfig("g", IndicatorKind.MACD, mapOf("fast" to 30.0)).validate() }
         assertFailsWith<IllegalArgumentException> { IndicatorConfig("h", IndicatorKind.MA, mapOf("width" to 1.0)).validate() }
         assertFailsWith<IllegalArgumentException> { IndicatorConfig("i", IndicatorKind.MA, colors = mapOf("MA" to "red")).validate() }

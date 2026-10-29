@@ -12,7 +12,7 @@
 | 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统/TradingV 主题，页面、面板、图表、K 线、盈亏等分别配置 |
 | Android Material 3 导航 | 已实现并实测 | `MobileNavigation`：行情、图表、交易、账户；设备 UI 测试注入合成账户 |
 | 图表缩放和平移 | 已实现并测试 | `TradingChart`、`ChartViewport`、`PriceScale`；两轴分别缩放、图内双向平移、复位 |
-| 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期只保留最近 500 根，没有更早历史分页加载 |
+| 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期请求并保留最近 2000 根（`CHART_BARS`），没有更早历史分页加载；服务器对 2000 根请求的实际返回量未实测 |
 | 净额持仓、挂单、原始成交 | 已实现并用协议测试覆盖 | `TradovateBroker.rebuild` 从服务器实体映射，不生成远程替代数据 |
 | 市价、Limit、Stop、撤单、全量净仓平仓 | 已实现，真实交易未联调 | `AccountSession` 命令及 Tradovate REST；受理不等于成交，不支持部分平仓命令 |
 | 新订单附带 SL/TP | 已实现，真实交易未联调 | 新订单通过 `order/placeoso`；不允许在已有同合约净仓上叠加括号保护 |
@@ -21,7 +21,7 @@
 | 费用、保证金、预计净盈亏 | 远程实现有限 | Tradovate 订单预估仅算毛盈亏，费用/预计保证金为未知；账户资金快照与订单预估是不同能力 |
 | 已配对平仓历史/实现净盈亏 | 仅本地 Demo 提供 | 远程输出 `Execution`，没有配对的 `ClosedTrade`；缺少手续费核算与点击远程成交定位图表 |
 | 指令结果恢复 | 部分实现，有确认缺口 | HTTP 不确定结果不重发；受理后等待事件的超时/重连对账不完整，见[审计 A1](implementation-audit.md) |
-| 图表指标 | 已实现并测试 | `Indicators.kt`、`ChartIndicators.kt`、`IndicatorSettingsDialog.kt`；MA/EXPMA/BOLL 叠加，RSI/MACD/KDJ/ATR 副图，多指标、参数与颜色自定义，`indicators-v1` 本机保存；无自定义公式与按品种模板，见[图表指标](indicators.md) |
+| 图表指标 | 已实现并测试 | `Indicators.kt`、`ChartIndicators.kt`、`IndicatorSettingsDialog.kt`；MA/EXPMA/BOLL 叠加，RSI/MACD/KDJ/ATR 副图，多指标、参数与颜色自定义，周期上限 1000，`indicators-v1` 本机保存；无自定义公式与按品种模板，见[图表指标](indicators.md) |
 | 实时盈亏通知 | 已实现；Android 设备测试在 CI 运行，iOS 未构建验证 | `LivePnlController`、`LivePnlNotifier`（Android 16+ Live Update，更早版本常驻通知）、`AppleLivePnl` + `UniTradingWidgets` 扩展（iOS 16.2+ Live Activity / 灵动岛）；仅进程存活时刷新，90 秒无刷新自动过期，见[实时盈亏通知](live-pnl-notifications.md) |
 | 十字线、图层及时间缺口 | 部分实现 | 当前为竖线和收盘点，无完整横向价格十字线；保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
 | iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |

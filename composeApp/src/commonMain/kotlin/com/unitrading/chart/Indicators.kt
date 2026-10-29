@@ -20,7 +20,10 @@ data class IndicatorParam(val key: String, val label: String, val default: Doubl
 /** One drawn series. Histograms colour by sign with the theme's up/down colours instead of a configured colour. */
 data class IndicatorLine(val name: String, val histogram: Boolean = false)
 
-private fun bars(key: String, label: String, default: Double) = IndicatorParam(key, label, default, 1.0, 500.0)
+/** Largest bar count any indicator parameter accepts. The Tradovate plugin keeps twice as many bars, so the longest period still has values. */
+const val MAX_INDICATOR_PERIOD = 1000
+
+private fun bars(key: String, label: String, default: Double) = IndicatorParam(key, label, default, 1.0, MAX_INDICATOR_PERIOD.toDouble())
 
 /**
  * Built-in indicator formulas. Values stay in the candles' fixed-point price units (MA, EXPMA, BOLL, MACD, ATR)
