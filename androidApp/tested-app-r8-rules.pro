@@ -15,6 +15,7 @@
 -keep class com.unitrading.android.TradingRuntimeModel { *; }
 -keep class com.unitrading.app.MemorySnapshotStore { *; }
 -keep class com.unitrading.app.ThemeController { *; }
+-keep class com.unitrading.app.ThemePreset { *; }
 -keep class com.unitrading.app.ThemeSettings { *; }
 -keep class com.unitrading.app.TradingRuntime { *; }
 -keep class com.unitrading.ui.TradingScreenKt { *; }

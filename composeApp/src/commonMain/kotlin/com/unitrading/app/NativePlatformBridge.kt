@@ -16,10 +16,14 @@ interface NativeCredentialStorage {
     fun write(value: String): NativeStorageResult
     fun clear(): NativeStorageResult
 }
-/** Live Activity surface; Swift owns ActivityKit. [trend] is 1 profit, -1 loss, 0 flat or unknown. */
+/**
+ * Live Activity surface; Swift owns ActivityKit. [trend] is 1 profit, -1 loss, 0 flat or unknown. Named
+ * dismiss, not clear: a second exported `clear` selector with another return type makes Kotlin/Native
+ * rename NativeCredentialStorage.clear to clear_ in the Objective-C header.
+ */
 interface NativeLivePnlPresenter {
     fun show(title: String, pnl: String, detail: String, trend: Int, timeMs: Long)
-    fun clear()
+    fun dismiss()
 }
 
 class NativePlatformBridge {
@@ -64,7 +68,7 @@ class NativePlatformBridge {
 
     internal val livePnlPresenter: LivePnlPresenter = object : LivePnlPresenter {
         override fun show(update: LivePnlUpdate) { livePnl?.show(update.title, update.pnlText, update.detail, update.trend, update.timeMs) }
-        override fun clear() { livePnl?.clear() }
+        override fun clear() { livePnl?.dismiss() }
     }
 
     internal val credentials: CredentialStore = object : CredentialStore {

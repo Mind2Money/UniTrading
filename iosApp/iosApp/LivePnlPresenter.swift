@@ -18,7 +18,7 @@ final class AppleLivePnl: NSObject, NativeLivePnlPresenter {
         host.show(title: title, pnl: pnl, detail: detail, trend: Int(trend), updatedAt: Self.date(fromMillis: timeMs))
     }
 
-    func clear() {
+    func dismiss() {
         guard #available(iOS 16.2, *), let host = host as? LivePnlActivityHost else { return }
         host.end()
     }
