@@ -96,12 +96,19 @@ jobs:
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
+          # System apps (SystemUI included) keep hitting ANRs for a minute after boot_completed. Their "isn't
+          # responding" dialog takes the active window from the app under test, so have the system kill the stuck
+          # app instead of asking.
+          adb shell settings put global hide_error_dialogs 1
           adb shell input keyevent 82
       - name: Test debug and minified release on device
         run: |
+          # Close any error dialog that came up before error dialogs were hidden.
+          adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
           touch artifacts/android-debug-start
           ./gradlew :androidApp:connectedDebugAndroidTest -PcredentialStoreTest=true --max-workers=2
           python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/debug --since-file artifacts/android-debug-start
+          adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
           touch artifacts/android-release-start
           ./gradlew :androidApp:connectedReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release --max-workers=2
           python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/release --since-file artifacts/android-release-start
