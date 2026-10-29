@@ -19,6 +19,18 @@ class ChartPreferencesTest {
         assertEquals(listOf(7), reopened.chartPreferences.preferences.value.customMinutes)
         assertEquals(listOf(Timeframe(7)), reopened.chartPreferences.preferences.value.custom)
     }
+    @Test fun legendFoldIsRememberedAcrossRestartAndOlderFilesStillLoad() = runTest {
+        val store = MemorySnapshotStore()
+        store.write("chart-v1", """{"favoriteMinutes":[5,15],"customMinutes":[]}""")
+        val first = TradingRuntime(store)
+        assertNull(first.chartPreferences.preferences.value.legendCollapsed, "a file saved before the legend was remembered keeps each layout's default")
+        assertTrue(first.chartPreferences.setLegendCollapsed(true))
+        val reopened = TradingRuntime(store).chartPreferences
+        assertEquals(true, reopened.preferences.value.legendCollapsed)
+        assertEquals(listOf(5, 15), reopened.preferences.value.favoriteMinutes)
+        assertTrue(reopened.setLegendCollapsed(false))
+        assertEquals(false, ChartPreferencesController(store).preferences.value.legendCollapsed)
+    }
     @Test fun invalidOrCorruptPreferencesFallBackToDefaults() = runTest {
         val controller = ChartPreferencesController(object : SnapshotStore {
             override fun read(key: String) = "{bad"

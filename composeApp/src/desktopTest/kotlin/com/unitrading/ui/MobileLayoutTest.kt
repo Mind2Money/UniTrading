@@ -16,13 +16,18 @@ import androidx.navigationevent.DirectNavigationEventInput
 import androidx.navigationevent.NavigationEventDispatcher
 import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
+import com.unitrading.app.ChartPreferencesController
+import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.geometry.Offset
 import com.unitrading.broker.OrderKind
 import com.unitrading.broker.Side
 import com.unitrading.broker.Timeframe
+import com.unitrading.chart.IndicatorConfig
+import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.PriceScale
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -32,7 +37,8 @@ import kotlin.test.*
 /** Phone layouts: the chart takes the screen, trading waits in the collapsible order panel, account figures sit on the trade and account tabs. */
 class MobileLayoutTest {
     @get:Rule val compose = createComposeRule()
-    private val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+    private val store = MemorySnapshotStore()
+    private val runtime = TradingRuntime(store, includeDemoBrokers = true).apply { paused.value = true }
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
 
@@ -101,6 +107,24 @@ class MobileLayoutTest {
         chart.performTouchInput { up() }
         compose.onNodeWithTag("chart-legend").assertDoesNotExist()
         compose.onNodeWithTag("order-entry").assertTextContains(instrument.formatPrice(scale.price(y + 24f, instrument.tickSize)))
+    }
+
+    @Test fun legendFoldWithItsIndicatorListIsRememberedAcrossTabsAndRestarts() {
+        runBlocking { assertTrue(runtime.indicators.apply(IndicatorSettings(listOf(IndicatorConfig("m", IndicatorKind.MA))))) }
+        render()
+        compose.onNodeWithTag("indicator-readout").assertExists()
+        compose.onNodeWithTag("legend-toggle").performClick()
+        compose.onNodeWithTag("chart-readout").assertDoesNotExist()
+        compose.onNodeWithTag("indicator-readout").assertDoesNotExist()
+        compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.legendCollapsed == true }
+        // Leaving the chart tab drops the chart from composition; it comes back folded.
+        compose.onNodeWithTag("nav-2").performClick()
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("indicator-readout").assertDoesNotExist()
+        assertEquals(true, ChartPreferencesController(store).preferences.value.legendCollapsed, "a restart reads the saved fold")
+        compose.onNodeWithTag("legend-toggle").performClick()
+        compose.onNodeWithTag("indicator-readout").assertExists()
+        compose.waitUntil(5_000) { ChartPreferencesController(store).preferences.value.legendCollapsed == false }
     }
 
     @Test fun handleSwipesAndTapsToggleThePanel() {

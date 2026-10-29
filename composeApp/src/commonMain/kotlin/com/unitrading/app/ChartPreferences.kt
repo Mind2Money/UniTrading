@@ -8,11 +8,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Interval menu state saved per device: starred intervals shown inline on the chart toolbar and user-added custom intervals. */
+/**
+ * Chart state saved per device: starred intervals shown inline on the chart toolbar, user-added custom intervals, and
+ * whether the legend (with its indicator list) is folded. [legendCollapsed] stays null until the user first folds or
+ * unfolds it, so each layout keeps its own default until then.
+ */
 @Serializable
 data class ChartPreferences(
     val favoriteMinutes: List<Int> = Timeframe.defaultFavorites.map { it.minutes },
     val customMinutes: List<Int> = emptyList(),
+    val legendCollapsed: Boolean? = null,
 ) {
     fun validate() {
         require((favoriteMinutes + customMinutes).all { it in 1..Timeframe.MAX_MINUTES }) { "周期超出范围" }
@@ -30,7 +35,7 @@ class ChartPreferencesController(private val store: SnapshotStore) {
     val preferences = MutableStateFlow(try {
         store.read("chart-v1")?.let { Json.decodeFromString<ChartPreferences>(it).also(ChartPreferences::validate) } ?: ChartPreferences()
     } catch (_: Exception) {
-        error.value = "图表周期设置无法读取，已使用默认周期。"
+        error.value = "图表设置无法读取，已使用默认周期和图例。"
         ChartPreferences()
     })
 
@@ -42,7 +47,7 @@ class ChartPreferencesController(private val store: SnapshotStore) {
             error.value = null
             true
         } catch (cancel: CancellationException) { throw cancel }
-        catch (_: Exception) { error.value = "图表周期设置保存失败，请检查存储后重试。"; false }
+        catch (_: Exception) { error.value = "图表设置保存失败，请检查存储后重试。"; false }
     }
 
     suspend fun toggleFavorite(timeframe: Timeframe): Boolean {
@@ -57,4 +62,7 @@ class ChartPreferencesController(private val store: SnapshotStore) {
         if (timeframe.minutes in current.customMinutes || timeframe in Timeframe.presets) return true
         return apply(current.copy(customMinutes = current.customMinutes + timeframe.minutes))
     }
+
+    suspend fun setLegendCollapsed(collapsed: Boolean): Boolean =
+        preferences.value.legendCollapsed == collapsed || apply(preferences.value.copy(legendCollapsed = collapsed))
 }

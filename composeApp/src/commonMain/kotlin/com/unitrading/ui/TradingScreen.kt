@@ -23,8 +23,8 @@ import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import com.unitrading.chart.ChartChrome
 import com.unitrading.chart.IntervalOptions
-import com.unitrading.chart.PhoneChrome
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
@@ -238,7 +238,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (compact) orderOpen = true else if (!wide) showOrder = true },
-                        phone = if (compact) PhoneChrome(compactShort, orderOpen) { Badge(environmentLabel) } else null)
+                        // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
+                        chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
+                            { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
+                            ordering = compact && orderOpen, toolbarEnd = { Badge(environmentLabel) }))
                 }
                 val connectionStatus: @Composable () -> Unit = {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

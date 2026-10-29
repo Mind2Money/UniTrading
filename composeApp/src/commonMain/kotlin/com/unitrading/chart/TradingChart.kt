@@ -82,12 +82,12 @@ fun TradingChart(
     instruments: List<Instrument> = emptyList(),
     onSymbol: (String) -> Unit = {},
     intervals: IntervalOptions = IntervalOptions(),
-    phone: PhoneChrome? = null,
+    chrome: ChartChrome = ChartChrome(),
     indicators: List<IndicatorConfig> = emptyList(),
     onIndicators: (() -> Unit)? = null,
 ) {
     val colors = TradingColors
-    val compact = phone != null
+    val compact = chrome.compact
     var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
     var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<PriceScale?>(null) }
     var previousTotal by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles.size) }
@@ -170,7 +170,8 @@ fun TradingChart(
         previousTotal = candles.size
     }
 
-    var collapsed by remember(phone?.legendCollapsed) { mutableStateOf(phone?.legendCollapsed == true) }
+    // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
+    var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
     val remote = environment != BrokerEnvironment.LOCAL_DEMO
     var wallClockMs by remember { mutableStateOf(0L) }
     LaunchedEffect(remote, candles.isEmpty()) {
@@ -192,7 +193,7 @@ fun TradingChart(
     val pickable = instruments.ifEmpty { listOf(instrument) }
     // Phones pin one toolbar row above the chart in every mode; wider layouts float the full toolbar over the plot.
     val toolbar: @Composable (Modifier) -> Unit = { m ->
-        if (phone != null) CompactChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers, indicatorToggle, phone.toolbarEnd, m)
+        if (compact) CompactChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers, indicatorToggle, chrome.toolbarEnd, m)
         else ChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers + listOfNotNull(indicatorToggle), m)
     }
 
@@ -547,9 +548,9 @@ fun TradingChart(
                     "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${estimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${estimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${if (estimate.marginKnown) money(estimate.marginMicros) + " USD" else "未知"}   ${estimate.errors.joinToString("；")}"
                 }
                 // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
-                if (phone?.ordering != true || readout != null) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!chrome.ordering || readout != null) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (!compact) toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed }, onSide, readout, compact = compact)
+                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (paneHeight * panes.size).toDp() }
@@ -583,12 +584,19 @@ fun TradingChart(
 }
 
 /**
- * Phone arrangement of [TradingChart]: one toolbar row pinned above the plot and closed by [toolbarEnd], no floating
- * toolbar, a legend that starts folded when [legendCollapsed], and no legend while [ordering] (the order panel is open).
- * Grouped in one parameter because the chart already takes 30, and two more made D8 emit a TradingChart that ART's
- * verifier rejected (VerifyError on Android).
+ * How [TradingChart] arranges its controls. [legendCollapsed] folds the legend with its indicator list, and
+ * [onLegendCollapsed] receives each toggle so the screen can remember it. [compact] (phones) pins one toolbar row above
+ * the plot, closed by [toolbarEnd], instead of the floating toolbar, and the legend stays hidden while [ordering] (the
+ * order panel is open). Grouped in one parameter because the chart already takes 30, and two more made D8 emit a
+ * TradingChart that ART's verifier rejected (VerifyError on Android).
  */
-class PhoneChrome(val legendCollapsed: Boolean, val ordering: Boolean, val toolbarEnd: @Composable () -> Unit)
+class ChartChrome(
+    val compact: Boolean = false,
+    val legendCollapsed: Boolean = false,
+    val onLegendCollapsed: (Boolean) -> Unit = {},
+    val ordering: Boolean = false,
+    val toolbarEnd: @Composable () -> Unit = {},
+)
 
 fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toString().take(16).replace('T', ' ')
 
