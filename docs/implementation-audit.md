@@ -46,7 +46,7 @@ iOS 除了缺少 Mac 构建验证，还缺网页认证实现和凭据存储接�
 
 ### A6 部分图表设计要求仅实现了基础形式
 
-- [TradingChart](../composeApp/src/commonMain/kotlin/com/unitrading/chart/TradingChart.kt) 十字线只画竖线和收盘点，未画横向价格线及对应价格读数。
+- [TradingChart](../composeApp/src/commonMain/kotlin/com/unitrading/chart/TradingChart.kt) 十字线原先只画竖线和收盘点；现已补充横向虚线、右轴价格/副图指标值读数和底轴时间读数（`CrosshairUiTest`）。
 - 实际开关为仓位、挂单、历史、数据表，没有独立“保护线”开关；选中仓位保护跟随仓位显示。
 - K 线以序号等距排布，缺失时间段不留连续时间空档；没有合成缺失 K 线，也没有时间缺口可视化。
 - Tradovate 请求和缓存限制为 2000 根，没有向更早历史翻页。支持缓存内浏览，未实现按任意成交时间回补行情。

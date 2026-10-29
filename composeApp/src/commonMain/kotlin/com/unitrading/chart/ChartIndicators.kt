@@ -43,6 +43,22 @@ internal fun computeIndicators(configs: List<IndicatorConfig>, candles: List<Can
 /** Height under the price plot for [panes] separate indicators: a fifth of [height] each, at most half of it. */
 internal fun paneAreaHeight(height: Float, panes: Int): Float = if (panes <= 0) 0f else height * minOf(.2f * panes, .5f)
 
+/** Pixel rows a pane plots values in: below its title row and above its bottom padding. */
+internal fun paneValueArea(paneTop: Float, paneHeight: Float, labelHeight: Float, labelPadding: Float): Pair<Float, Float> =
+    (paneTop + labelHeight + labelPadding * 3) to (paneTop + paneHeight - labelPadding * 2)
+
+/** Formatted value under pixel row [y] of the separate panes stacked from [top], or null outside their value areas. */
+internal fun paneValueLabel(panes: List<ComputedIndicator>, y: Float, top: Float, paneHeight: Float, range: IntRange, instrument: Instrument, labelHeight: Float, labelPadding: Float): String? {
+    if (paneHeight <= 0f || y < top) return null
+    val paneIndex = ((y - top) / paneHeight).toInt()
+    val item = panes.getOrNull(paneIndex) ?: return null
+    val (valueTop, valueBottom) = paneValueArea(top + paneIndex * paneHeight, paneHeight, labelHeight, labelPadding)
+    if (y !in valueTop..valueBottom) return null
+    val bounds = paneRange(item.config.kind, item.series, range)
+    val value = bounds.start + (valueBottom - y) / (valueBottom - valueTop) * (bounds.endInclusive - bounds.start)
+    return formatIndicatorValue(item.config.kind, value, instrument)
+}
+
 /** Overlay values inside [range], rounded to price units, so the automatic price scale keeps bands in view. */
 internal fun overlayScaleValues(overlays: List<ComputedIndicator>, range: IntRange): List<Long> = buildList {
     for (item in overlays) for (s in item.series) for (i in range) {
@@ -103,8 +119,7 @@ internal fun DrawScope.drawIndicatorPanes(
     panes.forEachIndexed { paneIndex, item ->
         val paneTop = top + paneIndex * paneHeight
         val paneBottom = paneTop + paneHeight
-        val valueTop = paneTop + labelHeight + labelPadding * 3
-        val valueBottom = paneBottom - labelPadding * 2
+        val (valueTop, valueBottom) = paneValueArea(paneTop, paneHeight, labelHeight, labelPadding)
         if (valueBottom <= valueTop) return@forEachIndexed
         val kind = item.config.kind
         val bounds = paneRange(kind, item.series, range)

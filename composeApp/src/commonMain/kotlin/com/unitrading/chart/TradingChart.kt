@@ -95,6 +95,8 @@ fun TradingChart(
     var showOrders by remember { mutableStateOf(true) }
     var showData by remember { mutableStateOf(false) }
     var crosshair by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Int?>(null) }
+    /** Pointer row of the crosshair; null after keyboard moves, which keep only the vertical line. */
+    var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
     var drag by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
@@ -210,21 +212,22 @@ fun TradingChart(
             EmptyState("暂无行情", "等待交易商提供历史 K 线。", Modifier.weight(1f))
         } else {
             // The toolbar, legend and navigation float over the plot instead of taking their own banner above it.
+            val crosshairState = crosshair?.let { index -> "$index@" + (crosshairY?.takeIf { it in top..plotBottom }?.let { scale.price(it, instrument.tickSize).toString() } ?: "none") } ?: "none"
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .semantics {
                             contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。订单线可拖动预览。"
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size}"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState"
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     if (event.type == PointerEventType.Exit) crosshair = null
-                                    else if (event.type == PointerEventType.Move && event.changes.none { it.pressed }) {
+                                    else if ((event.type == PointerEventType.Move || event.type == PointerEventType.Enter) && event.changes.none { it.pressed }) {
                                         val pointer = event.changes.firstOrNull()?.position
-                                        if (pointer != null && drag == null) crosshair = visibleIndex(pointer.x)
+                                        if (pointer != null && drag == null) { crosshair = visibleIndex(pointer.x); crosshairY = pointer.y }
                                     }
                                 }
                             }
@@ -235,11 +238,12 @@ fun TradingChart(
                                 if (bars.isNotEmpty() && point.x < right && point.y < bottom) {
                                     val index = visibleIndex(point.x)
                                     crosshair = index
+                                    crosshairY = point.y
                                     if (showHistory) selectedTrade = currentTrades.firstOrNull { trade ->
                                         trade.closedAtMs in bars[index].timeMs until (bars[index].timeMs + periodMs)
                                     }
                                 }
-                            }, onLongPress = { point -> crosshair = visibleIndex(point.x) })
+                            }, onLongPress = { point -> crosshair = visibleIndex(point.x); crosshairY = point.y })
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size) {
                             var mode = ChartDragMode.NONE
@@ -309,8 +313,8 @@ fun TradingChart(
                         }
                         .onKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(0); true }
-                                Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(visible.lastIndex); true }
+                                Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(0); crosshairY = null; true }
+                                Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(visible.lastIndex); crosshairY = null; true }
                                 Key.Escape -> { drag = null; crosshair = null; true }
                                 else -> false
                             }
@@ -464,14 +468,6 @@ fun TradingChart(
                             activeDraft.takeProfit?.let { priceLine(it, "预览 TP · ${activePreview.takeProfitPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", colors.Target, alpha = .65f) }
                         }
                     }
-                    crosshair?.let { index ->
-                        visible.getOrNull(index)?.let { candle ->
-                            val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
-                            drawLine(colors.Muted.copy(alpha = .6f), Offset(x, top), Offset(x, bottom), 1f)
-                            drawCircle(colors.Surface, 5f, Offset(x, scale.y(candle.close)))
-                            drawCircle(colors.Ink, 3f, Offset(x, scale.y(candle.close)))
-                        }
-                    }
                     }
                     if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, plotBottom, paneHeight, step,
                         textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
@@ -506,6 +502,27 @@ fun TradingChart(
                                 text(countdown, tagLeft + labelPadding, center + lineHeight / 2 + labelPadding, tag.ink)
                             }
                         }
+                    }
+                    crosshair?.let { index ->
+                        val candle = visible.getOrNull(index) ?: return@let
+                        val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
+                        val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
+                        val line = colors.Ink.copy(alpha = .55f)
+                        drawLine(line, Offset(x, top), Offset(x, bottom), 1f, pathEffect = dash)
+                        val timeLabel = crosshairTimeLabel(candle.timeMs, timeframe)
+                        val timeWidth = textMeasurer.measure(timeLabel, labelStyle).size.width + labelPadding * 2
+                        val timeLeft = (x - timeWidth / 2).coerceIn(left, maxOf(left, right - timeWidth))
+                        drawRect(colors.Ink, Offset(timeLeft, bottom + 1f), Size(timeWidth, lineHeight))
+                        text(timeLabel, timeLeft + labelPadding, bottom + 1f + labelPadding, colors.Surface)
+                        val y = crosshairY ?: return@let
+                        val value = when {
+                            y in top..plotBottom -> instrument.formatPrice(scale.price(y, instrument.tickSize))
+                            y in plotBottom..bottom -> paneValueLabel(panes, y, plotBottom, paneHeight, range, instrument, labelHeight, labelPadding)
+                            else -> null
+                        } ?: return@let
+                        drawLine(line, Offset(left, y), Offset(right, y), 1f, pathEffect = dash)
+                        drawRect(colors.Ink, Offset(tagLeft, y - lineHeight / 2), Size(tagWidth, lineHeight))
+                        text(value, tagLeft + labelPadding, y - labelHeight / 2, colors.Surface)
                     }
                 }
                 val barIndex = crosshair ?: visible.lastIndex
@@ -545,3 +562,7 @@ fun TradingChart(
 }
 
 fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toString().take(16).replace('T', ' ')
+
+/** Crosshair time tag: date and minute for intraday bars, the date alone for daily and longer bars; UTC like the axis. */
+fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String =
+    if (timeframe.minutes >= 1440) dateTime(timeMs).take(10) else dateTime(timeMs)
