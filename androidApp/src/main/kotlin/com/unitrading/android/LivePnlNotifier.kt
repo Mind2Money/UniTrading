@@ -90,6 +90,8 @@ class LivePnlNotifier(private val context: Context) : LivePnlPresenter {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setColor(color)
             .setShowWhen(false)
+            // Android 12+ otherwise hides a foreground service notification for ~10 s after the service starts.
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(update.pnlText)
         if (promotionAllowed()) builder.setRequestPromotedOngoing(true)
         if (expires) builder.setTimeoutAfter(TIMEOUT_MS)

@@ -20,7 +20,8 @@ class LivePnlNotificationTest {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private fun posted() = manager.activeNotifications.firstOrNull { it.id == LivePnlNotifier.ID }
     private fun await(message: String, condition: () -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + 10_000
+        // The CI emulator starts the foreground service and posts its notification slowly; the notice itself is immediate.
+        val deadline = SystemClock.uptimeMillis() + 30_000
         while (!condition()) {
             check(SystemClock.uptimeMillis() < deadline) { message }
             SystemClock.sleep(50)
