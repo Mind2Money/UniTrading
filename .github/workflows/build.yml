@@ -127,6 +127,8 @@ jobs:
     name: iOS ARM64 framework, app, and platform checks
     runs-on: macos-15
     timeout-minutes: 45
+    # Informational until iOS is a release target: a failure here neither blocks signing nor fails the push.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
@@ -303,7 +305,8 @@ jobs:
   # environment and the keystore file is deleted before the step ends.
   sign-android:
     name: 签名 Android Release
-    needs: [build-android, test-desktop, test-android, test-ios]
+    # iOS is not a release target: its job must not hold back the Android package.
+    needs: [build-android, test-desktop, test-android]
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
