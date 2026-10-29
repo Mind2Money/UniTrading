@@ -370,8 +370,7 @@ fun TradingChart(
                         drawLine(color, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), 1.3f)
                         val y = minOf(scale.y(candle.open), scale.y(candle.close))
                         val height = maxOf(abs(scale.y(candle.open) - scale.y(candle.close)), 1.6f)
-                        if (candle.close >= candle.open) drawRect(color, Offset(center - width / 2, y), Size(width, height), style = Stroke(1.4f))
-                        else drawRect(color, Offset(center - width / 2, y), Size(width, height))
+                        drawRect(color, Offset(center - width / 2, y), Size(width, height))
                     }
                     drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     quote?.let {
@@ -537,8 +536,8 @@ fun TradingChart(
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("△ 买入 / 上涨空心", fontSize = 10.sp, color = colors.Muted)
-            Text("▽ 卖出 / 下跌实心", fontSize = 10.sp, color = colors.Muted)
+            Text("△ 买入 / 上涨", fontSize = 10.sp, color = colors.Muted)
+            Text("▽ 卖出 / 下跌", fontSize = 10.sp, color = colors.Muted)
             Text("右轴 ↕ 价格缩放 · 底轴 ↔ 时间缩放", fontSize = 10.sp, color = colors.Muted)
             Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟行情 · UTC" else "服务器行情 · UTC", fontSize = 10.sp, color = colors.Muted)
         }
