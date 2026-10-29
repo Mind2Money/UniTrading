@@ -16,6 +16,13 @@ class ThemeSettingsTest {
         assertTrue(reopened.registry.plugins.isEmpty())
         assertNull(store.read("atlas-demo"))
     }
+    @Test fun tradingVPresetRoundTripsThroughTheStore() = runTest {
+        val store = MemorySnapshotStore()
+        assertTrue(ThemeController(store).apply(ThemeSettings(ThemePreset.TRADINGV, mapOf("GRID" to "#222222"))))
+        val reopened = ThemeController(store).settings.value
+        assertEquals(ThemePreset.TRADINGV, reopened.preset)
+        assertEquals("#222222", reopened.colors["GRID"])
+    }
     @Test fun invalidColorsAndDiskFailureDoNotReplaceSavedTheme() = runTest {
         val store = object : SnapshotStore {
             override fun read(key: String): String? = null

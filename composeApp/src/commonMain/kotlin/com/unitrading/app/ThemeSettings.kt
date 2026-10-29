@@ -7,7 +7,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
-enum class ThemePreset { DARK, LIGHT, SYSTEM }
+enum class ThemePreset(val label: String) {
+    DARK("深色"), LIGHT("浅色"), SYSTEM("跟随系统"),
+    /** TradingView 黑色主题配色：纯黑页面、#0F0F0F 图表、#2962FF 强调、#089981 / #F23645 K 线。 */
+    TRADINGV("TradingV");
+
+    /** Whether the preset renders dark controls; [systemDark] resolves [SYSTEM]. */
+    fun isDark(systemDark: Boolean): Boolean = when (this) { DARK, TRADINGV -> true; LIGHT -> false; SYSTEM -> systemDark }
+}
 
 enum class ThemeColor(val label: String) {
     PAGE("页面背景"), SURFACE("面板背景"), CHART("图表背景"), GRID("图表网格"),

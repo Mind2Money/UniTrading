@@ -9,7 +9,7 @@
 | 首次启动 | 已实现并测试 | `TradingRuntime` 默认空注册表，`TradingScreen` 转到 `LoginWelcome`；旧模拟账本不加载、不自动删除 |
 | Windows / Android 网页登录 | 已实现 | `DesktopTradovateLogin`、`AndroidTradovateLogin`；Windows Demo 只读账户/行情链路曾实测，Android 完整授权账户链路未记录为通过 |
 | 多用户、Demo/Live 登录恢复 | 已实现并用合成会话测试 | `SavedTradovateAccounts`；Windows DPAPI、Android Keystore AES-GCM；过期或撤销仍需认证，不保存密码字段 |
-| 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统主题，页面、面板、图表、K 线、盈亏等分别配置 |
+| 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统/TradingV 主题，页面、面板、图表、K 线、盈亏等分别配置 |
 | Android Material 3 导航 | 已实现并实测 | `MobileNavigation`：行情、图表、交易、账户；设备 UI 测试注入合成账户 |
 | 图表缩放和平移 | 已实现并测试 | `TradingChart`、`ChartViewport`、`PriceScale`；两轴分别缩放、图内双向平移、复位 |
 | 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期只保留最近 500 根，没有更早历史分页加载 |

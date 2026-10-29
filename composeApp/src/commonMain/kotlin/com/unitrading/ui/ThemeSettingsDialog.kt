@@ -30,6 +30,7 @@ fun TradingPalette.color(role: ThemeColor): Color = when (role) {
 }
 fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> Unit) {
     val saved by controller.settings.collectAsState()
@@ -47,10 +48,9 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
                     Text("外观与主题", style = MaterialTheme.typography.titleLarge)
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("预览配色，保存后应用到所有页面。", style = MaterialTheme.typography.bodySmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ThemePreset.entries.forEach { preset ->
-                                FilterChip(draft.preset == preset, { draft = ThemeSettings(preset) },
-                                    label = { Text(when (preset) { ThemePreset.DARK -> "深色"; ThemePreset.LIGHT -> "浅色"; ThemePreset.SYSTEM -> "跟随系统" }) },
+                                FilterChip(draft.preset == preset, { draft = ThemeSettings(preset) }, label = { Text(preset.label) },
                                     modifier = Modifier.testTag("theme-${preset.name}"))
                             }
                         }

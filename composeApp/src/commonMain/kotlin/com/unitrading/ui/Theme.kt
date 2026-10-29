@@ -21,25 +21,37 @@ data class TradingPalette(
     val Stop: Color, val Target: Color,
 )
 
+/** Built-in colours of a preset. Entries in ThemeSettings.colors override single roles; raised/border are not editable. */
+private class BasePalette(val raised: Long, val border: Long, val roles: Map<com.unitrading.app.ThemeColor, Long>)
+
+private val NightBase = BasePalette(0xFF24364D, 0xFF40536B, mapOf(
+    PAGE to 0xFF0F1B2D, SURFACE to 0xFF16263B, CHART to 0xFF132237, GRID to 0xFF2A3B50,
+    TEXT to 0xFFE9F0F7, MUTED to 0xFFA9B8CD, ACCENT to 0xFF81B7FF, UP to 0xFF3987E5, DOWN to 0xFFD95926,
+    LOSS to 0xFFFF9B86, PROFIT to 0xFF8CD6B2, STOP to 0xFFECA492, TARGET to 0xFF94C9B4,
+))
+private val DayBase = BasePalette(0xFFE4EBF5, 0xFFC5CFDD, mapOf(
+    PAGE to 0xFFF4F7FC, SURFACE to 0xFFFFFFFF, CHART to 0xFFFFFFFF, GRID to 0xFFE4E9F0,
+    TEXT to 0xFF16263B, MUTED to 0xFF526276, ACCENT to 0xFF245EA8, UP to 0xFF2169BE, DOWN to 0xFFBD4421,
+    LOSS to 0xFFB3261E, PROFIT to 0xFF176B45, STOP to 0xFFB83D31, TARGET to 0xFF207553,
+))
+/** TradingView black theme as sampled from its chart page: black shell, #0F0F0F chart, grey text, blue accent, teal/red candles. */
+private val TradingVBase = BasePalette(0xFF1A1A1A, 0xFF2B2B2B, mapOf(
+    PAGE to 0xFF000000, SURFACE to 0xFF000000, CHART to 0xFF0F0F0F, GRID to 0xFF1C1C1C,
+    TEXT to 0xFFB8B8B8, MUTED to 0xFF8C8C8C, ACCENT to 0xFF2962FF, UP to 0xFF089981, DOWN to 0xFFF23645,
+    LOSS to 0xFFF23645, PROFIT to 0xFF22AB94, STOP to 0xFFF23645, TARGET to 0xFF089981,
+))
+
 fun themePalette(settings: com.unitrading.app.ThemeSettings, systemDark: Boolean = true): TradingPalette {
-    val dark = when (settings.preset) {
-        com.unitrading.app.ThemePreset.DARK -> true
-        com.unitrading.app.ThemePreset.LIGHT -> false
-        com.unitrading.app.ThemePreset.SYSTEM -> systemDark
+    val base = when {
+        settings.preset == com.unitrading.app.ThemePreset.TRADINGV -> TradingVBase
+        settings.preset.isDark(systemDark) -> NightBase
+        else -> DayBase
     }
-    fun color(role: com.unitrading.app.ThemeColor, night: Long, day: Long): Color =
-        settings.colors[role.name]?.removePrefix("#")?.toLongOrNull(16)?.let { Color(0xFF000000L or it) }
-            ?: Color(if (dark) night else day)
+    fun color(role: com.unitrading.app.ThemeColor): Color =
+        settings.colors[role.name]?.removePrefix("#")?.toLongOrNull(16)?.let { Color(0xFF000000L or it) } ?: Color(base.roles.getValue(role))
     return TradingPalette(
-        color(PAGE, 0xFF0F1B2D, 0xFFF4F7FC), color(SURFACE, 0xFF16263B, 0xFFFFFFFF),
-        if (dark) Color(0xFF24364D) else Color(0xFFE4EBF5),
-        if (dark) Color(0xFF40536B) else Color(0xFFC5CFDD),
-        color(CHART, 0xFF132237, 0xFFFFFFFF), color(GRID, 0xFF2A3B50, 0xFFE4E9F0),
-        color(TEXT, 0xFFE9F0F7, 0xFF16263B), color(MUTED, 0xFFA9B8CD, 0xFF526276),
-        color(ACCENT, 0xFF81B7FF, 0xFF245EA8), color(UP, 0xFF3987E5, 0xFF2169BE),
-        color(DOWN, 0xFFD95926, 0xFFBD4421), color(LOSS, 0xFFFF9B86, 0xFFB3261E),
-        color(PROFIT, 0xFF8CD6B2, 0xFF176B45), color(STOP, 0xFFECA492, 0xFFB83D31),
-        color(TARGET, 0xFF94C9B4, 0xFF207553),
+        color(PAGE), color(SURFACE), Color(base.raised), Color(base.border), color(CHART), color(GRID), color(TEXT), color(MUTED),
+        color(ACCENT), color(UP), color(DOWN), color(LOSS), color(PROFIT), color(STOP), color(TARGET),
     )
 }
 
@@ -52,7 +64,7 @@ fun TradingPalette.pnl(value: Long?): Color = when { value == null || value == 0
 fun TradingTheme(settings: com.unitrading.app.ThemeSettings = com.unitrading.app.ThemeSettings(), content: @Composable () -> Unit) {
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val palette = themePalette(settings, systemDark)
-    val dark = settings.preset == com.unitrading.app.ThemePreset.DARK || settings.preset == com.unitrading.app.ThemePreset.SYSTEM && systemDark
+    val dark = settings.preset.isDark(systemDark)
     val base = if (dark) darkColorScheme() else lightColorScheme()
     androidx.compose.runtime.CompositionLocalProvider(LocalTradingPalette provides palette) {
         MaterialTheme(

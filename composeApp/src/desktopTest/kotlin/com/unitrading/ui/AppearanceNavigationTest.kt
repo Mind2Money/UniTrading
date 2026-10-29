@@ -52,6 +52,22 @@ class AppearanceNavigationTest {
         compose.onNodeWithText("取消").performClick()
         assertEquals(ThemePreset.LIGHT, runtime.theme.settings.value.preset)
     }
+    @Test fun tradingVPresetAppliesTradingViewBlackPaletteAndPersists() {
+        val store = MemorySnapshotStore()
+        val runtime = TradingRuntime(store, includeDemoBrokers = true)
+        render(runtime)
+        compose.onNodeWithTag("trading-chart").assertExists()
+        compose.onNodeWithTag("open-theme").performClick()
+        compose.onNodeWithTag("theme-TRADINGV").performClick()
+        compose.onNodeWithTag("theme-color-CHART").performScrollTo().assertTextContains("#0F0F0F")
+        compose.onNodeWithTag("theme-color-ACCENT").performScrollTo().assertTextContains("#2962FF")
+        capture("theme-tradingv-preview")
+        compose.onNodeWithTag("theme-save").performClick()
+        compose.waitUntil(5000) { runtime.theme.settings.value.preset == ThemePreset.TRADINGV }
+        assertEquals(ThemePreset.TRADINGV, ThemeController(store).settings.value.preset)
+        compose.onNodeWithTag("trading-chart").assertExists()
+        capture("trading-tradingv")
+    }
     @Test fun materialNavigationKeepsFourDestinationsAndShowsThemeInAccount() {
         render(TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true), mobile = true)
         compose.onNodeWithTag("mobile-navigation").assertExists()
