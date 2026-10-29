@@ -25,6 +25,8 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             if (providers.gradleProperty("credentialStoreTest").orNull == "true") signingConfig = signingConfigs.getByName("debug")
+            // Device tests link against the shrunk app; the published APK is built without this property.
+            if (providers.gradleProperty("instrumentationBuildType").orNull == "release") proguardFiles("tested-app-r8-rules.pro")
         }
     }
     testBuildType = providers.gradleProperty("instrumentationBuildType").getOrElse("debug").also {

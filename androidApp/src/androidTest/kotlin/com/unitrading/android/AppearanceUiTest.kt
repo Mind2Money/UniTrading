@@ -3,6 +3,7 @@ package com.unitrading.android
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
+import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -22,17 +23,20 @@ import java.io.File
 class AppearanceUiTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val automation get() = instrumentation.uiAutomation
+    // CI emulators render with SwiftShader, where the first Compose frame alone can take several seconds.
+    private val uiTimeoutMs = 20_000L
     private fun idle() { instrumentation.waitForIdleSync(); automation.waitForIdle(300, 5000) }
-    private fun awaitText(text: String) {
-        val deadline = SystemClock.uptimeMillis() + 5000
+    private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {
+        val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (node(text) != null) return
+            node(text, description, last)?.let { return it }
             SystemClock.sleep(50)
         }
         error("UI did not render: $text")
     }
+    private fun awaitText(text: String) { awaitNode(text) }
     private fun awaitChartChange(previous: String?): String? {
-        val deadline = SystemClock.uptimeMillis() + 5000
+        val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val current = node("拖动图表平移", true)?.stateDescription?.toString()
             if (current != null && current != previous) return current
@@ -56,7 +60,7 @@ class AppearanceUiTest {
         return match
     }
     private fun tap(text: String, last: Boolean = false) {
-        val item = node(text, last = last) ?: error("Missing UI: $text")
+        val item = awaitNode(text, last = last)
         val bounds = Rect().also(item::getBoundsInScreen)
         val down = SystemClock.uptimeMillis()
         for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
@@ -69,8 +73,11 @@ class AppearanceUiTest {
         idle()
     }
     private fun screenshot(name: String) {
-        val file = File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png")
-        file.outputStream().use { check(automation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        // Diagnostics only: app-specific external storage can be briefly unwritable right after a reinstall.
+        runCatching {
+            val file = File(instrumentation.targetContext.getExternalFilesDir(null), "$name.png")
+            file.outputStream().use { check(automation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        }.onFailure { Log.w("AppearanceUiTest", "Screenshot $name was not saved", it) }
     }
     private fun swipe(x1: Float, y1: Float, x2: Float, y2: Float) {
         val down = SystemClock.uptimeMillis()
@@ -87,16 +94,17 @@ class AppearanceUiTest {
     @Test fun loginThemeAndMaterialNavigationWithChartGestures() {
         check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            idle()
-            assertNotNull(node("登录交易账户"))
+            // The title reads "正在恢复已保存的登录" until saved-login restoration settles.
+            awaitText("登录交易账户"); idle()
             assertNull(node("Atlas Demo"))
             screenshot("android-login-v114")
             tap("外观与主题")
+            awaitText("浅色")
             screenshot("android-theme-v114")
-            assertNotNull(node("浅色"))
             tap("浅色")
             tap("保存主题")
-            assertNotNull(node("登录交易账户"))
+            // node() only searches the active window, so this also waits for the dialog to close.
+            awaitText("登录交易账户")
             screenshot("android-login-light-v114")
             val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
             scenario.onActivity { activity ->
@@ -107,7 +115,7 @@ class AppearanceUiTest {
             idle()
             assertNotNull(node("图表")); assertNotNull(node("行情")); assertNotNull(node("交易")); assertNotNull(node("账户"))
             screenshot("android-navigation-v114")
-            val chart = node("拖动图表平移", description = true) ?: error("Chart missing")
+            val chart = awaitNode("拖动图表平移", description = true)
             val bounds = Rect().also(chart::getBoundsInScreen)
             val density = instrumentation.targetContext.resources.displayMetrics.density
             val previous = chart.stateDescription?.toString()
