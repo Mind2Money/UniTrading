@@ -138,6 +138,14 @@ class AppearanceUiTest {
             swipe(bounds.left + bounds.width() * .25f, bounds.bottom - 15f * density, bounds.left + bounds.width() * .6f, bounds.bottom - 15f * density)
             assertNotEquals(zoomed, awaitChartChange(zoomed))
             screenshot("android-chart-zoom-v114")
+            // The order ticket waits in the collapsed panel under the chart; system Back closes it without leaving the app.
+            tap("下单")
+            awaitText("新建订单")
+            assertNull("The open panel takes the tab bar's place", node("图表"))
+            screenshot("android-order-panel")
+            check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            awaitText("图表")
+            assertNull(node("新建订单"))
             tap("账户", last = true)
             awaitText("交易商与账户")
             if (node("外观与主题") == null) {

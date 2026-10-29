@@ -125,13 +125,18 @@ internal fun OrderTicket(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
+    showTitle: Boolean = true,
 ) {
-    Column(modifier.verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("新建订单", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment == BrokerEnvironment.LIVE) "Live 实盘" else "Demo")
+    // Without the title the host (the phone order panel) names the order, account and environment itself.
+    Column(modifier.verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = if (showTitle) 18.dp else 8.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (showTitle) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("新建订单", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment == BrokerEnvironment.LIVE) "Live 实盘" else "Demo")
+            }
+            Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, fontSize = 11.sp)
         }
-        Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Side.entries.forEach { side ->
                 FilterChip(draft.side == side, { onDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")) }, label = { Text(side.label()) }, modifier = Modifier.weight(1f))

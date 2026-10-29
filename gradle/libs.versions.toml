@@ -13,6 +13,8 @@ coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", 
 coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+# Already resolved through Compose UI; declared so shared code can close the phone order panel with system Back.
+navigationevent-compose = { module = "org.jetbrains.androidx.navigationevent:navigationevent-compose", version = "1.1.0" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

@@ -5,7 +5,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -18,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -35,8 +38,11 @@ import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.ui.TradingColors
 import com.unitrading.ui.label
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.roundToLong
+import kotlin.math.sin
 
 internal data class ChartToggle(val label: String, val active: Boolean, val onToggle: () -> Unit)
 
@@ -109,6 +115,67 @@ internal fun ChartToolbar(
     }
 }
 
+/**
+ * Phone toolbar: one row pinned above the plot instead of the floating toolbar. Symbol, current interval, indicators
+ * and the layer menu scroll sideways when the row is too narrow; [trailing] (the account environment) stays at the end.
+ */
+@Composable
+internal fun CompactChartToolbar(
+    instrument: Instrument,
+    instruments: List<Instrument>,
+    onSymbol: (String) -> Unit,
+    timeframe: Timeframe,
+    onTimeframe: (Timeframe) -> Unit,
+    intervals: IntervalOptions,
+    layers: List<ChartToggle>,
+    indicators: ChartToggle?,
+    trailing: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = TradingColors
+    Row(modifier.height(48.dp).padding(start = 8.dp, end = 10.dp).testTag("chart-toolbar"),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SymbolPill(instrument, instruments, onSymbol)
+            IntervalPill(timeframe, onTimeframe, intervals, inline = false)
+            indicators?.let { toggle ->
+                ToolbarPill { PillSegment(toggle.label, toggle.active, colors.Accent, Modifier.testTag("chart-indicators"), onClick = toggle.onToggle) }
+            }
+            LayerMenu(layers)
+        }
+        trailing()
+    }
+}
+
+/** Chart layers and the OHLC table behind one menu; it stays open so several layers can be switched in a row. */
+@Composable
+private fun LayerMenu(layers: List<ChartToggle>) {
+    val colors = TradingColors
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        ToolbarPill {
+            Row(
+                Modifier.clickable(role = Role.Button) { expanded = true }.testTag("chart-layers").padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("图层", fontSize = 11.sp, color = colors.Ink)
+                Chevron(down = true, colors.Muted)
+            }
+        }
+        DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 150.dp)) {
+            layers.forEachIndexed { index, layer ->
+                DropdownMenuItem(
+                    text = { Text(layer.label, fontSize = 12.sp, color = if (layer.active) colors.Ink else colors.Muted) },
+                    onClick = layer.onToggle,
+                    trailingIcon = { Text(if (layer.active) "✓" else "", color = colors.Accent, fontSize = 12.sp) },
+                    modifier = Modifier.testTag("layer-$index"),
+                )
+            }
+        }
+    }
+}
+
 /** Current symbol with a TradingView-style search menu over the broker's instruments. */
 @Composable
 private fun SymbolPill(instrument: Instrument, instruments: List<Instrument>, onSymbol: (String) -> Unit) {
@@ -147,16 +214,21 @@ private fun SymbolPill(instrument: Instrument, instruments: List<Instrument>, on
     }
 }
 
-/** Starred intervals inline plus a dropdown with minute / hour / day presets, favourites and custom intervals. */
+/**
+ * Starred intervals inline plus a dropdown with minute / hour / day presets, favourites and custom intervals.
+ * Without [inline] only the current interval shows, and tapping it opens the dropdown.
+ */
 @Composable
-private fun IntervalPill(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
+private fun IntervalPill(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions, inline: Boolean = true) {
     val colors = TradingColors
     var expanded by remember { mutableStateOf(false) }
     Box {
         ToolbarPill {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val inline = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
-                inline.forEach { frame -> PillSegment(frame.label, frame == timeframe, colors.Ink, Modifier.testTag("interval-inline-${frame.minutes}")) { onTimeframe(frame) } }
+                if (inline) {
+                    val shown = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
+                    shown.forEach { frame -> PillSegment(frame.label, frame == timeframe, colors.Ink, Modifier.testTag("interval-inline-${frame.minutes}")) { onTimeframe(frame) } }
+                } else PillSegment(timeframe.label, true, colors.Ink, Modifier.testTag("interval-current")) { expanded = true }
                 Box(
                     Modifier.padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(role = Role.Button) { expanded = true }
                         .semantics { contentDescription = "选择时间周期" }.testTag("interval-menu").padding(horizontal = 7.dp, vertical = 8.dp),
@@ -211,7 +283,7 @@ private fun CustomIntervalRow(onAdd: (Timeframe) -> Unit) {
     }
 }
 
-/** Zoom and scroll controls floating above the time axis. */
+/** Zoom and scroll controls floating above the time axis; [compact] keeps zoom and an icon-only reset, since phones pan by dragging. */
 @Composable
 internal fun ChartNavigation(
     onZoomIn: () -> Unit,
@@ -220,15 +292,45 @@ internal fun ChartNavigation(
     onLater: () -> Unit,
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val colors = TradingColors
     ToolbarPill(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             GlyphSegment("＋", "放大图表", onZoomIn)
             GlyphSegment("－", "缩小图表", onZoomOut)
-            PillSegment("较早", false, colors.Ink, onClick = onEarlier)
-            PillSegment("较新", false, colors.Ink, onClick = onLater)
-            PillSegment("重置视图", false, colors.Ink, onClick = onReset)
+            if (compact) ResetSegment(onReset) else {
+                PillSegment("较早", false, colors.Ink, onClick = onEarlier)
+                PillSegment("较新", false, colors.Ink, onClick = onLater)
+                PillSegment("重置视图", false, colors.Ink, onClick = onReset)
+            }
+        }
+    }
+}
+
+/** Circular arrow for "reset view", drawn rather than taken from a font so it renders the same on every device. */
+@Composable
+private fun ResetSegment(onClick: () -> Unit) {
+    val colors = TradingColors
+    Box(Modifier.padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = "重置视图" }.testTag("chart-reset").padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Canvas(Modifier.size(13.dp)) {
+            val stroke = 1.5.dp.toPx()
+            val radius = size.minDimension / 2 - stroke
+            // A clockwise arc from the top that stops short of it, with the arrow head at the open end.
+            drawArc(colors.Ink, -90f, 300f, false, Offset(center.x - radius, center.y - radius), Size(radius * 2, radius * 2),
+                style = Stroke(stroke, cap = StrokeCap.Round))
+            val end = 210.0 * PI / 180
+            val tip = Offset(center.x + radius * cos(end).toFloat(), center.y + radius * sin(end).toFloat())
+            val along = Offset(-sin(end).toFloat(), cos(end).toFloat())
+            val across = Offset(-along.y, along.x)
+            val head = 3.dp.toPx()
+            drawPath(Path().apply {
+                moveTo(tip.x + along.x * head, tip.y + along.y * head)
+                lineTo(tip.x - along.x * head * .5f + across.x * head, tip.y - along.y * head * .5f + across.y * head)
+                lineTo(tip.x - along.x * head * .5f - across.x * head, tip.y - along.y * head * .5f - across.y * head)
+                close()
+            }, colors.Ink)
         }
     }
 }
@@ -237,6 +339,8 @@ internal fun ChartNavigation(
  * TradingView-style legend in the top-left corner of the plot: instrument title, hovered-bar OHLC and change,
  * Bid/Ask trade buttons with the spread, volume, and a collapse toggle. The card itself does not take pointer
  * input, so panning that starts over its text still reaches the chart; only the buttons consume clicks.
+ * [compact] (phones) leaves the trade buttons to the order bar below the chart, folds the volume into the OHLC
+ * line and puts the collapse toggle next to the title.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -252,22 +356,27 @@ internal fun ChartLegend(
     onSide: (Side) -> Unit,
     readout: String? = null,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val colors = TradingColors
     Column(
         modifier.background(colors.Surface.copy(alpha = .92f), RoundedCornerShape(8.dp))
-            .padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 6.dp).testTag("chart-legend"),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
+            .padding(start = 10.dp, end = 10.dp, top = if (compact) 5.dp else 7.dp, bottom = if (compact) 5.dp else 6.dp).testTag("chart-legend"),
+        verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 5.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text("${instrument.name} · ${timeframe.label} · ${instrument.category}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = colors.Ink)
+            Text("${instrument.name} · ${timeframe.label} · ${instrument.category}", Modifier.weight(1f, fill = false),
+                fontSize = 12.sp, fontWeight = FontWeight.Medium, color = colors.Ink)
             Box(Modifier.size(7.dp).background(if (connected) colors.Profit else colors.Loss, CircleShape)
                 .semantics { contentDescription = if (connected) "行情已连接" else "行情未连接" })
+            if (compact) CollapseToggle(collapsed, onToggleCollapsed)
+        }
+        // A line drag's estimate shows even when the legend is folded: it is the only live feedback until the drag ends.
+        if (readout != null) {
+            Text(readout, Modifier.testTag("chart-readout"), fontSize = 11.sp, color = colors.Ink)
         }
         if (!collapsed) {
-            if (readout != null) {
-                Text(readout, Modifier.testTag("chart-readout"), fontSize = 11.sp, color = colors.Ink)
-            } else if (bar != null) {
+            if (readout == null && bar != null) {
                 val tone = if (bar.close >= bar.open) colors.Up else colors.Down
                 val change = barChange(bar, previous)
                 FlowRow(Modifier.testTag("chart-readout"), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -279,20 +388,27 @@ internal fun ChartLegend(
                         }
                     }
                     Text(change.label(instrument), fontSize = 11.sp, fontWeight = FontWeight.Medium, color = if (change.diff >= 0) colors.Up else colors.Down)
+                    if (compact) Row {
+                        Text("量", fontSize = 11.sp, color = colors.Muted)
+                        Spacer(Modifier.width(3.dp))
+                        Text(formatVolume(bar.volume), fontSize = 11.sp, fontWeight = FontWeight.Medium, color = colors.Ink)
+                    }
                     Text("${dateTime(bar.timeMs)} UTC", fontSize = 10.sp, color = colors.Muted)
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.Down) { onSide(Side.SELL) }
-                Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", fontSize = 11.sp, color = colors.Muted)
-                TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.Up) { onSide(Side.BUY) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("成交量", fontSize = 11.sp, color = colors.Muted)
-                Text(formatVolume(bar?.volume), fontSize = 11.sp, fontWeight = FontWeight.Medium, color = colors.Ink)
+            if (!compact) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.Down, Modifier.testTag("legend-sell")) { onSide(Side.SELL) }
+                    Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", fontSize = 11.sp, color = colors.Muted)
+                    TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.Up, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("成交量", fontSize = 11.sp, color = colors.Muted)
+                    Text(formatVolume(bar?.volume), fontSize = 11.sp, fontWeight = FontWeight.Medium, color = colors.Ink)
+                }
             }
         }
-        CollapseToggle(collapsed, onToggleCollapsed)
+        if (!compact) CollapseToggle(collapsed, onToggleCollapsed)
     }
 }
 
@@ -338,11 +454,12 @@ private fun MenuTextField(value: String, onValue: (String) -> Unit, placeholder:
     )
 }
 
+/** Bid or Ask price over its side; picks the order side and never submits an order by itself. */
 @Composable
-private fun TradeButton(side: Side, price: String, color: Color, onClick: () -> Unit) {
+internal fun TradeButton(side: Side, price: String, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(
-        Modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = .12f)).border(1.dp, color.copy(alpha = .8f), RoundedCornerShape(6.dp))
-            .clickable(role = Role.Button, onClick = onClick).testTag(if (side == Side.BUY) "legend-buy" else "legend-sell")
+        modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = .12f)).border(1.dp, color.copy(alpha = .8f), RoundedCornerShape(6.dp))
+            .clickable(role = Role.Button, onClick = onClick)
             .widthIn(min = 78.dp).padding(horizontal = 10.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -363,7 +480,7 @@ private fun CollapseToggle(collapsed: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Chevron(down: Boolean, color: Color) {
+internal fun Chevron(down: Boolean, color: Color) {
     Canvas(Modifier.size(8.dp, 5.dp)) {
         val path = Path().apply {
             if (down) { moveTo(0f, 0f); lineTo(size.width / 2, size.height); lineTo(size.width, 0f) }

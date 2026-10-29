@@ -14,12 +14,17 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
 import com.unitrading.chart.IntervalOptions
+import com.unitrading.chart.PhoneChrome
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
@@ -117,6 +122,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         var mobileTab by remember { mutableStateOf(1) }
         var showAccounts by remember { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
+        var orderOpen by remember { mutableStateOf(false) }
         var busy by remember { mutableStateOf(false) }
         var notice by remember { mutableStateOf<String?>(null) }
         val scope = rememberCoroutineScope()
@@ -134,7 +140,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
 
         LaunchedEffect(runtime) { runtime.run() }
         LaunchedEffect(plugin, symbol, timeframe) { plugin.watch(symbol, timeframe) }
-        LaunchedEffect(accountKey) { showOrder = false; notice = null }
+        LaunchedEffect(accountKey) { showOrder = false; orderOpen = false; notice = null }
         LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
             if (chosenSymbol != symbol) {
                 chosenSymbol = symbol
@@ -160,7 +166,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
             }
         }
         fun changeDraft(value: OrderDraft) { draft = value; showDraft = true }
-        fun perform(action: suspend () -> TradeResult) {
+        fun perform(onAccepted: () -> Unit = {}, action: suspend () -> TradeResult) {
             if (busy) return
             busy = true
             val origin = session.account.name
@@ -169,7 +175,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     val result = action()
                     runtime.save()
                     notice = "$origin：${result.message}"
-                    if (result.accepted) showDraft = false
+                    if (result.accepted) { showDraft = false; onAccepted() }
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (error: Exception) {
@@ -215,33 +221,27 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
-                val showCompactQuotes = compactShort && maxWidth > 650.dp
                 val terminalHeight = if (maxHeight > 830.dp) 235.dp else 190.dp
-                Column(Modifier.fillMaxSize()) {
-                    Row(Modifier.fillMaxWidth().height(if (compactShort) 44.dp else 60.dp).padding(horizontal = if (compact) 14.dp else 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Canvas(Modifier.size(28.dp)) {
-                            drawLine(colors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
-                            drawLine(colors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
-                            drawLine(colors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
-                        }
-                        Column {
-                            Text(if (compactShort) instrument.symbol else "UniTrading", fontSize = if (compact) 18.sp else 21.sp, fontWeight = FontWeight.SemiBold)
-                            if (compact) Text(session.account.name, fontSize = 10.sp, color = colors.Muted, maxLines = 1)
-                        }
-                        Badge(if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo")
-                        Spacer(Modifier.weight(1f))
-                        if (desktop) {
-                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = colors.Muted)
-                            if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
-                        }
-                        if (showCompactQuotes) Text("Bid ${quote?.bid?.let(instrument::formatPrice) ?: "—"} / Ask ${quote?.ask?.let(instrument::formatPrice) ?: "—"}", fontSize = 11.sp, color = colors.Muted)
-                        if (desktop) TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
-                        TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text(if (compact) "账户" else "切换账户", fontSize = 12.sp) }
-                        if (desktop && !wide || compactShort) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
-                    }
-                    DividerLine()
-                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = colors.Muted) }
-                    if (!localDemo) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
+                // Phones are chart-first: on the chart tab the chart's own toolbar row replaces the app header, and the open
+                // order panel takes the tab bar's place until it is closed by its button, its handle or Back.
+                val chartFirst = compact && mobileTab == 1
+                val panelOpen = chartFirst && orderOpen
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = panelOpen, onBackCompleted = { orderOpen = false })
+                val chart: @Composable (Modifier) -> Unit = { m ->
+                    // On phones the draft lines follow the order panel; wider layouts show them once the ticket is edited.
+                    val draftShown = if (compact) orderOpen else showDraft
+                    TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
+                        selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, { p, sl, tp -> editProtection(p, sl, tp) },
+                        visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
+                        { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
+                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
+                        instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
+                        onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (compact) orderOpen = true else if (!wide) showOrder = true },
+                        phone = if (compact) PhoneChrome(compactShort, orderOpen) { Badge(environmentLabel) } else null)
+                }
+                val connectionStatus: @Composable () -> Unit = {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(market.statusMessage, Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
                         if (plugin.capabilities.resynchronize) TextButton({
                             busy = true
@@ -253,6 +253,35 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             }
                         }, enabled = !busy && market.connected, modifier = Modifier.testTag("resynchronize-account")) { Text("同步账户") }
                     }
+                }
+                Column(Modifier.fillMaxSize()) {
+                    if (!chartFirst) {
+                        Row(Modifier.fillMaxWidth().height(if (compact) 48.dp else 60.dp).padding(horizontal = if (compact) 14.dp else 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Canvas(Modifier.size(if (compact) 24.dp else 28.dp)) {
+                                drawLine(colors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
+                                drawLine(colors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
+                                drawLine(colors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
+                            }
+                            Column(if (compact) Modifier.weight(1f) else Modifier) {
+                                Text("UniTrading", fontSize = if (compact) 17.sp else 21.sp, fontWeight = FontWeight.SemiBold)
+                                if (compact) Text(session.account.name, fontSize = 10.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Badge(environmentLabel)
+                            // Phones reach accounts, theme and the order ticket through the tab bar and the chart's order panel.
+                            if (desktop) {
+                                Spacer(Modifier.weight(1f))
+                                Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = colors.Muted)
+                                if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
+                                TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
+                                TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text("切换账户", fontSize = 12.sp) }
+                                if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
+                            }
+                        }
+                        DividerLine()
+                    }
+                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = colors.Muted) }
+                    // Phones show the connection line only while trading is not ready; their account tab always carries it.
+                    if (!localDemo && (desktop || mobileTab != 3 && !market.tradingReady)) connectionStatus()
                     if (storageError != null) {
                         Row(Modifier.fillMaxWidth().background(colors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = colors.Loss)
@@ -276,13 +305,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             Column(Modifier.weight(1f).fillMaxHeight()) {
                                 Row(Modifier.weight(1f).fillMaxWidth()) {
                                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                                        TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
-                                            selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
-                                            visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
-                                            { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
-                                            instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals,
-                                            connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (!wide) showOrder = true })
+                                        chart(Modifier.weight(1f))
                                     }
                                     if (wide) {
                                         VerticalDivider(color = colors.Border)
@@ -300,27 +323,49 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))
-                            1 -> Column(Modifier.weight(1f)) {
-                                TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
-                                    selectedPositionId, focusedTrade, request.takeIf { showDraft }, preview.takeIf { showDraft }, { p, sl, tp -> editProtection(p, sl, tp) },
-                                            visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
-                                            { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
-                                            connected = market.connected, onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); showOrder = true },
-                                            instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, legendCollapsed = compactShort)
-                                if (!compactShort) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("本品种 ${visiblePositions.size} 笔持仓", Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
-                                    Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("新建订单") }
+                            1 -> BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                                // Landscape phones dock the open ticket beside the chart; portrait phones stack it under the chart.
+                                val dock = maxWidth >= 600.dp && maxWidth > maxHeight
+                                val panelHeight = maxHeight * .6f
+                                val bar: @Composable () -> Unit = {
+                                    MobileTradeBar(instrument, quote, account, onOpen = { orderOpen = true },
+                                        onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); orderOpen = true },
+                                        onPositions = { mobileTab = 2 })
+                                }
+                                val panel: @Composable (Modifier) -> Unit = { m ->
+                                    MobileOrderPanel(instrument, session.account.name, environmentLabel, handle = !dock, onClose = { orderOpen = false }, modifier = m) {
+                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } },
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, showTitle = false)
+                                    }
+                                }
+                                if (dock) Row(Modifier.fillMaxSize()) {
+                                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                                        chart(Modifier.weight(1f))
+                                        if (!orderOpen) bar()
+                                    }
+                                    if (orderOpen) {
+                                        VerticalDivider(color = colors.Border)
+                                        panel(Modifier.width(340.dp).fillMaxHeight())
+                                    }
+                                } else Column(Modifier.fillMaxSize()) {
+                                    chart(Modifier.weight(1f))
+                                    if (orderOpen) panel(Modifier.fillMaxWidth().height(panelHeight)) else bar()
                                 }
                             }
-                            2 -> TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
-                                onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
-                                modifier = Modifier.weight(1f).fillMaxWidth())
+                            2 -> Column(Modifier.weight(1f)) {
+                                AccountStrip(account)
+                                DividerLine()
+                                TradeTerminal(plugin, account, market, selectedPositionId, true,
+                                    onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                    onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
+                                    onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
+                                    modifier = Modifier.weight(1f).fillMaxWidth())
+                            }
                             else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                                AccountStrip(account)
+                                DividerLine()
+                                if (!localDemo) connectionStatus()
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
-                                if (compactShort) AccountStrip(account)
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(plugin.descriptor.description, fontSize = 12.sp, color = colors.Muted)
                                     if (localDemo) Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = colors.Muted)
@@ -335,11 +380,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             }
                         }
                     }
-                    DividerLine()
-                    if (!compactShort) AccountStrip(account)
                     if (compact) {
-                        MobileNavigation(mobileTab) { mobileTab = it }
+                        if (!panelOpen) {
+                            DividerLine()
+                            MobileNavigation(mobileTab) { mobileTab = it }
+                        }
                     } else {
+                        DividerLine()
+                        AccountStrip(account)
                         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
                             Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = colors.Muted, fontSize = 10.sp)
                             Spacer(Modifier.weight(1f))
@@ -409,7 +457,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                             confirmation = null
                             val id = requestId()
                             when (action) {
-                                is Confirmation.Place -> perform { session.placeOrder(id, action.request) }
+                                is Confirmation.Place -> perform({ orderOpen = false }) { session.placeOrder(id, action.request) }
                                 is Confirmation.Close -> perform { session.closePosition(id, action.position.id) }
                                 is Confirmation.Cancel -> perform { session.cancelOrder(id, action.order.id) }
                                 Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }

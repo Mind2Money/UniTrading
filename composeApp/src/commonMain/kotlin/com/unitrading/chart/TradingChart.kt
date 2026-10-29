@@ -82,11 +82,12 @@ fun TradingChart(
     instruments: List<Instrument> = emptyList(),
     onSymbol: (String) -> Unit = {},
     intervals: IntervalOptions = IntervalOptions(),
-    legendCollapsed: Boolean = false,
+    phone: PhoneChrome? = null,
     indicators: List<IndicatorConfig> = emptyList(),
     onIndicators: (() -> Unit)? = null,
 ) {
     val colors = TradingColors
+    val compact = phone != null
     var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
     var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<PriceScale?>(null) }
     var previousTotal by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles.size) }
@@ -169,7 +170,7 @@ fun TradingChart(
         previousTotal = candles.size
     }
 
-    var collapsed by remember(legendCollapsed) { mutableStateOf(legendCollapsed) }
+    var collapsed by remember(phone?.legendCollapsed) { mutableStateOf(phone?.legendCollapsed == true) }
     val remote = environment != BrokerEnvironment.LOCAL_DEMO
     var wallClockMs by remember { mutableStateOf(0L) }
     LaunchedEffect(remote, candles.isEmpty()) {
@@ -181,18 +182,30 @@ fun TradingChart(
     // Local demo bars advance on the simulated clock carried by their quotes; server bars count down on the wall clock.
     val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
     val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
-    val toggles = listOf(
+    val layers = listOf(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
         ChartToggle("挂单", showOrders) { showOrders = !showOrders },
         ChartToggle("历史", showHistory) { showHistory = !showHistory },
         ChartToggle("数据表", showData) { showData = !showData },
-    ) + listOfNotNull(onIndicators?.let { open -> ChartToggle(if (indicators.isEmpty()) "指标" else "指标 ${indicators.size}", indicators.any { it.visible }, open) })
-    val toolbar: @Composable (Modifier) -> Unit = { m -> ChartToolbar(instrument, instruments.ifEmpty { listOf(instrument) }, onSymbol, timeframe, onTimeframe, intervals, toggles, m) }
+    )
+    val indicatorToggle = onIndicators?.let { open -> ChartToggle(if (indicators.isEmpty()) "指标" else "指标 ${indicators.size}", indicators.any { it.visible }, open) }
+    val pickable = instruments.ifEmpty { listOf(instrument) }
+    // Phones pin one toolbar row above the chart in every mode; wider layouts float the full toolbar over the plot.
+    val toolbar: @Composable (Modifier) -> Unit = { m ->
+        if (phone != null) CompactChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers, indicatorToggle, phone.toolbarEnd, m)
+        else ChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers + listOfNotNull(indicatorToggle), m)
+    }
 
     Column(modifier.background(colors.Surface)) {
-        if (showData) {
-            toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+        if (compact) {
+            toolbar(Modifier.fillMaxWidth())
             DividerLine()
+        }
+        if (showData) {
+            if (!compact) {
+                toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+                DividerLine()
+            }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = colors.Muted)
             }
@@ -207,8 +220,10 @@ fun TradingChart(
                 }
             }
         } else if (candles.isEmpty()) {
-            toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
-            DividerLine()
+            if (!compact) {
+                toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+                DividerLine()
+            }
             EmptyState("暂无行情", "等待交易商提供历史 K 线。", Modifier.weight(1f))
         } else {
             // The toolbar, legend and navigation float over the plot instead of taking their own banner above it.
@@ -531,18 +546,23 @@ fun TradingChart(
                 val readout = dragEstimate?.let { estimate ->
                     "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${estimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${estimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${if (estimate.marginKnown) money(estimate.marginMicros) + " USD" else "未知"}   ${estimate.errors.joinToString("；")}"
                 }
-                Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed }, onSide, readout)
+                // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
+                if (phone?.ordering != true || readout != null) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (!compact) toolbar(Modifier)
+                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed }, onSide, readout, compact = compact)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
                 }
+                val navigationBottom = 38.dp + with(density) { (paneHeight * panes.size).toDp() }
                 ChartNavigation(
                     onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
                     onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null },
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 38.dp + with(density) { (paneHeight * panes.size).toDp() }),
+                    // On phones the small control sits bottom-left, away from the newest bars at the right edge.
+                    modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = navigationBottom)
+                        else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
+                    compact = compact,
                 )
             }
             selectedPosition?.protectionNote?.let { note ->
@@ -552,7 +572,8 @@ fun TradingChart(
                 Text("选中历史  #${trade.id} · ${trade.side.label()} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Gesture and marker hints; phones drop the row to give the height to the chart (the plot's description keeps the gestures).
+        if (!compact) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("△ 买入 / 上涨", fontSize = 10.sp, color = colors.Muted)
             Text("▽ 卖出 / 下跌", fontSize = 10.sp, color = colors.Muted)
             Text("右轴 ↕ 价格缩放 · 底轴 ↔ 时间缩放", fontSize = 10.sp, color = colors.Muted)
@@ -560,6 +581,14 @@ fun TradingChart(
         }
     }
 }
+
+/**
+ * Phone arrangement of [TradingChart]: one toolbar row pinned above the plot and closed by [toolbarEnd], no floating
+ * toolbar, a legend that starts folded when [legendCollapsed], and no legend while [ordering] (the order panel is open).
+ * Grouped in one parameter because the chart already takes 30, and two more made D8 emit a TradingChart that ART's
+ * verifier rejected (VerifyError on Android).
+ */
+class PhoneChrome(val legendCollapsed: Boolean, val ordering: Boolean, val toolbarEnd: @Composable () -> Unit)
 
 fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toString().take(16).replace('T', ' ')
 

@@ -34,6 +34,7 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.ui)
             implementation(compose.components.resources)
+            implementation(libs.navigationevent.compose)
             implementation(libs.serialization.json)
         }
         getByName("desktopMain").dependencies {
