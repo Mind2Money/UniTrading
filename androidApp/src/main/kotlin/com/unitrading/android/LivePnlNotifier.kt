@@ -58,8 +58,10 @@ class LivePnlNotifier(private val context: Context) : LivePnlPresenter {
             .setWhen(update.timeMs)
             .setTimeoutAfter(TIMEOUT_MS)
         if (Build.VERSION.SDK_INT >= 36) {
-            // Android 16 Live Update: promoted ongoing notification with the P&L as the status-bar chip text.
-            builder.setRequestPromotedOngoing(true).setShortCriticalText(update.pnlText)
+            // Android 16: the P&L becomes the status-bar chip text once the notification is promoted to a Live Update.
+            builder.setShortCriticalText(update.pnlText)
+            // The explicit promotion request arrived with Android 16 QPR1 (API 36.1); API 36.0 has no such method.
+            if (Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) builder.setRequestPromotedOngoing(true)
         }
         manager.notify(ID, builder.build())
     }

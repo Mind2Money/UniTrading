@@ -23,8 +23,9 @@ import java.io.File
 class AppearanceUiTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val automation get() = instrumentation.uiAutomation
-    // CI emulators render with SwiftShader, where the first Compose frame alone can take several seconds.
-    private val uiTimeoutMs = 20_000L
+    // CI emulators render with SwiftShader, where the first Compose frame alone can take several seconds, and the
+    // system accessibility service stays contended for ~15 s after the test APKs are installed.
+    private val uiTimeoutMs = 60_000L
     private fun idle() { instrumentation.waitForIdleSync(); automation.waitForIdle(300, 5000) }
     private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
@@ -32,9 +33,21 @@ class AppearanceUiTest {
             node(text, description, last)?.let { return it }
             SystemClock.sleep(50)
         }
-        error("UI did not render: $text")
+        error("UI did not render: $text; on screen: ${visibleTexts()}")
     }
     private fun awaitText(text: String) { awaitNode(text) }
+    /** Diagnostics for a failed wait: which window answers and what it shows. */
+    private fun visibleTexts(): String {
+        val root = automation.rootInActiveWindow ?: return "<no active window>"
+        val texts = mutableListOf<String>()
+        val queue = java.util.ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+        while (queue.isNotEmpty() && texts.size < 40) {
+            val item = queue.removeFirst()
+            (item.text ?: item.contentDescription)?.toString()?.takeIf { it.isNotBlank() }?.let(texts::add)
+            for (i in 0 until item.childCount) item.getChild(i)?.let(queue::add)
+        }
+        return "${root.packageName}: $texts"
+    }
     private fun awaitChartChange(previous: String?): String? {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         while (SystemClock.uptimeMillis() < deadline) {

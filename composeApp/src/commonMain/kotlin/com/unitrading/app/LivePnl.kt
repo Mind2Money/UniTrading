@@ -57,7 +57,7 @@ interface LivePnlPresenter {
  * platform runs [run] once with its presenter. A refresh is posted when the rendered text changes, at most once
  * per [MIN_INTERVAL_MS], and repeated every [HEARTBEAT_MS] so platform expiry timers keep a quiet account alive.
  */
-class LivePnlController(private val store: SnapshotStore) {
+class LivePnlController(private val store: SnapshotStore, private val writer: CoroutineDispatcher = Dispatchers.Default) {
     private class Tracked(val plugin: BrokerPlugin, val session: AccountSession)
 
     val error = MutableStateFlow<String?>(null)
@@ -78,7 +78,7 @@ class LivePnlController(private val store: SnapshotStore) {
     suspend fun setEnabled(enabled: Boolean): Boolean {
         val value = LivePnlSettings(enabled)
         return try {
-            withContext(Dispatchers.Default) { store.write(KEY, Json.encodeToString(value)) }
+            withContext(writer) { store.write(KEY, Json.encodeToString(value)) }
             settings.value = value
             error.value = null
             true

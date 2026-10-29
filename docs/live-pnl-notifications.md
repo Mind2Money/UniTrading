@@ -1,6 +1,6 @@
 # 实时盈亏通知（Android Live Update / iOS 灵动岛）
 
-当前显示的账户的浮动盈亏会镜像到系统界面：Android 常驻通知（Android 16 起申请提升为 Live Update，状态栏芯片显示盈亏），iOS 16.2 起为 Live Activity（灵动岛与锁屏）。显示内容为「交易商 · 账户」、带符号的浮动盈亏与币种、净值、持仓数以及断开状态；盈利、亏损分别使用 `#089981` / `#F23645`。
+当前显示的账户的浮动盈亏会镜像到系统界面：Android 常驻通知（Android 16 QPR1 / API 36.1 起申请提升为 Live Update，状态栏芯片显示盈亏），iOS 16.2 起为 Live Activity（灵动岛与锁屏）。显示内容为「交易商 · 账户」、带符号的浮动盈亏与币种、净值、持仓数以及断开状态；盈利、亏损分别使用 `#089981` / `#F23645`。
 
 ## 共享逻辑
 
@@ -11,7 +11,7 @@
 
 ## Android
 
-- `androidApp/.../LivePnlNotifier.kt`：通知渠道 `live-pnl`，`setOngoing(true)`，`setTimeoutAfter(90 s)`；Android 16+ 额外 `setRequestPromotedOngoing(true)` 与 `setShortCriticalText(盈亏)`。点击通知回到 `MainActivity`。
+- `androidApp/.../LivePnlNotifier.kt`：通知渠道 `live-pnl`，`setOngoing(true)`，`setTimeoutAfter(90 s)`；Android 16 起设置 `setShortCriticalText(盈亏)`，Android 16 QPR1（API 36.1，按 `Build.VERSION.SDK_INT_FULL` 判断）起额外 `setRequestPromotedOngoing(true)`——API 36.0 没有该方法，CI 的 API 36 模拟器上只显示普通常驻通知。点击通知回到 `MainActivity`。
 - 清单声明 `POST_NOTIFICATIONS`（Android 13+ 运行时权限）和 `POST_PROMOTED_NOTIFICATIONS`（Live Update）。首次有账户可显示而权限缺失时，`MainActivity` 弹出一次系统权限请求；拒绝后不再提示，通知静默不显示，开关仍可用。
 - `TradingRuntimeModel` 持有通知并在模型销毁时取消；没有前台服务，进程被系统结束后通知在 90 秒内自动过期，不会留下过时数字。
 - 设备测试 `LivePnlNotificationTest` 通过真实 `NotificationManager` 发布合成通知，核对标题、文本、常驻标志和 Android 16 的状态栏文本。

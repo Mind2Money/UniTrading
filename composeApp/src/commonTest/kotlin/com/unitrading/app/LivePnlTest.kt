@@ -2,6 +2,7 @@ package com.unitrading.app
 
 import com.unitrading.broker.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.*
 import kotlin.test.*
 
@@ -10,6 +11,30 @@ internal class RecordingLivePnlPresenter : LivePnlPresenter {
     var cleared = 0
     override fun show(update: LivePnlUpdate) { shown += update }
     override fun clear() { cleared++ }
+}
+
+/** Account whose snapshot the test sets directly; no engine, clock or randomness involved. */
+private class FakeSession(override val account: AccountInfo, balanceMicros: Long) : AccountSession {
+    override val state = MutableStateFlow(AccountSnapshot(account.id, balanceMicros))
+    override fun preview(request: OrderRequest) = OrderPreview(null)
+    override fun previewOrderModification(orderId: String, entryPrice: Long) = OrderPreview(null)
+    override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = TradeResult(false, "unsupported")
+    override suspend fun placeOrder(requestId: String, request: OrderRequest) = TradeResult(false, "unsupported")
+    override suspend fun closePosition(requestId: String, positionId: String) = TradeResult(false, "unsupported")
+    override suspend fun cancelOrder(requestId: String, orderId: String) = TradeResult(false, "unsupported")
+    override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = TradeResult(false, "unsupported")
+}
+
+private class FakePlugin : BrokerPlugin {
+    override val descriptor = BrokerDescriptor("fake", "Fake", "test double")
+    override val capabilities = BrokerCapabilities()
+    override val instruments = emptyList<Instrument>()
+    override val accounts = listOf(AccountInfo("a1", "主账户"))
+    override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
+    override val market = MutableStateFlow(MarketSnapshot())
+    override fun openSession(accountId: String): AccountSession = FakeSession(accounts.first { it.id == accountId }, BALANCE)
+    override fun history(symbol: String, timeframe: Timeframe) = emptyList<Candle>()
+    companion object { const val BALANCE = 10_000_000_000L }
 }
 
 class LivePnlTest {
@@ -42,52 +67,58 @@ class LivePnlTest {
         assertEquals("净值 2.00（估算） · 持仓 0", estimated.detail)
     }
 
+    /** Everything runs on the test scheduler: the store writer too, so no real thread hop races the virtual clock. */
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test fun controllerMirrorsTheTrackedAccountRateLimitsHeartbeatsAndClears() = runTest {
         val store = MemorySnapshotStore()
-        val runtime = TradingRuntime(store, includeDemoBrokers = true)
-        val demo = runtime.brokers.first()
-        val session = demo.openSession(demo.accounts.first().id)
+        val controller = LivePnlController(store, StandardTestDispatcher(testScheduler))
+        val plugin = FakePlugin()
+        val session = plugin.openSession("a1") as FakeSession
         val presenter = RecordingLivePnlPresenter()
-        val controller = runtime.livePnl
+        fun snapshot(equityMicros: Long) = AccountSnapshot("a1", FakePlugin.BALANCE, equityMicros, positions = listOf(position))
         assertFalse(controller.available.value)
         val job = launch { controller.run(presenter) { currentTime } }
         runCurrent()
         assertTrue(controller.available.value)
         assertTrue(presenter.shown.isEmpty())
-        controller.track(demo, session)
+        controller.track(plugin, session)
         runCurrent()
         assertEquals(1, presenter.shown.size)
-        assertEquals("${demo.descriptor.name} · ${session.account.name}", presenter.shown.single().title)
-        assertEquals(session.state.value.floatingPnlMicros, presenter.shown.single().pnlMicros)
-        // Open a position so quotes move the floating P&L; bursts of changes collapse into one refresh per second.
-        assertTrue(session.placeOrder(requestId(), OrderRequest(demo.instruments.first().symbol, Side.BUY, OrderKind.MARKET, 100)).accepted)
-        var refreshes = presenter.shown.size
-        var moved = false
-        repeat(20) {
-            repeat(3) { demo.advance(15) }
-            runCurrent()
-            assertTrue(presenter.shown.size <= refreshes + 1, "more than one refresh within a second")
-            advanceTimeBy(1_000); runCurrent()
-            if (presenter.shown.size > refreshes) moved = true
-            refreshes = presenter.shown.size
-        }
-        assertTrue(moved)
-        assertEquals(session.state.value.floatingPnlMicros, presenter.shown.last().pnlMicros)
+        assertEquals("Fake · 主账户", presenter.shown.single().title)
+        assertEquals("0.00 USD", presenter.shown.single().pnlText)
+        assertEquals(0, presenter.shown.single().timeMs)
+        // A burst within one second collapses into a single refresh carrying the latest values.
+        session.state.value = snapshot(FakePlugin.BALANCE + 50_000_000)
+        session.state.value = snapshot(FakePlugin.BALANCE + 100_000_000)
+        session.state.value = snapshot(FakePlugin.BALANCE + 128_500_000)
+        runCurrent()
+        assertEquals(1, presenter.shown.size)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(2, presenter.shown.size)
+        assertEquals("+128.50 USD", presenter.shown.last().pnlText)
+        assertEquals("净值 10128.50 · 持仓 1", presenter.shown.last().detail)
+        // Losing the market connection changes the text as well.
+        plugin.market.value = MarketSnapshot(connected = false)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(3, presenter.shown.size)
+        assertFalse(presenter.shown.last().connected)
+        assertTrue(presenter.shown.last().detail.endsWith("已断开"))
         // Nothing changes: one heartbeat re-posts the same notice so platform expiry timers stay alive.
-        val before = presenter.shown.size
-        advanceTimeBy(LivePnlController.HEARTBEAT_MS + 1_500); runCurrent()
-        assertEquals(before + 1, presenter.shown.size)
-        assertEquals(presenter.shown[before - 1].key, presenter.shown.last().key)
+        advanceTimeBy(1_000); runCurrent()
+        advanceTimeBy(LivePnlController.HEARTBEAT_MS); runCurrent()
+        assertEquals(4, presenter.shown.size)
+        assertEquals(presenter.shown[2].key, presenter.shown[3].key)
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals(4, presenter.shown.size)
         // Turning the notice off clears it and persists; turning it on shows it again.
         assertTrue(controller.setEnabled(false)); runCurrent()
         assertEquals(1, presenter.cleared)
         assertFalse(LivePnlController(store).settings.value.enabled)
         assertTrue(controller.setEnabled(true)); runCurrent()
-        assertEquals(before + 2, presenter.shown.size)
+        assertEquals(5, presenter.shown.size)
         advanceTimeBy(1_000); runCurrent()
         // Untracking another session is ignored; untracking the displayed one clears.
-        controller.untrack(demo.openSession(demo.accounts.first().id)); runCurrent()
+        controller.untrack(plugin.openSession("a1")); runCurrent()
         assertEquals(1, presenter.cleared)
         controller.untrack(session); runCurrent()
         assertEquals(2, presenter.cleared)
@@ -96,19 +127,34 @@ class LivePnlTest {
         assertEquals(3, presenter.cleared)
     }
 
+    @Test fun runtimeControllerMirrorsADemoSessionWithTheDefaultWriter() = runTest {
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
+        val demo = runtime.brokers.first()
+        val session = demo.openSession(demo.accounts.first().id)
+        val presenter = RecordingLivePnlPresenter()
+        val job = launch { runtime.livePnl.run(presenter) { currentTime } }
+        runCurrent()
+        runtime.livePnl.track(demo, session)
+        runCurrent()
+        assertEquals("${demo.descriptor.name} · ${session.account.name}", presenter.shown.single().title)
+        assertEquals(session.state.value.floatingPnlMicros, presenter.shown.single().pnlMicros)
+        job.cancelAndJoin()
+        assertEquals(1, presenter.cleared)
+    }
+
     @Test fun corruptOrFailingStoreKeepsTheDefaultAndReportsErrors() = runTest {
         val store = object : SnapshotStore {
             override fun read(key: String) = "broken"
             override fun write(key: String, value: String) = error("disk full")
         }
-        val controller = LivePnlController(store)
+        val controller = LivePnlController(store, StandardTestDispatcher(testScheduler))
         assertTrue(controller.settings.value.enabled)
         assertNotNull(controller.error.value)
         assertFalse(controller.setEnabled(false))
         assertTrue(controller.settings.value.enabled)
         assertNotNull(controller.error.value)
         val memory = MemorySnapshotStore()
-        assertTrue(LivePnlController(memory).setEnabled(false))
+        assertTrue(LivePnlController(memory, StandardTestDispatcher(testScheduler)).setEnabled(false))
         assertEquals("""{"enabled":false}""", memory.read(LivePnlController.KEY))
     }
 }
