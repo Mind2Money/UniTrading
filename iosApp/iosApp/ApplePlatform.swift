@@ -7,6 +7,7 @@ import UniTrading
 
 final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStorage {
     let bridge = NativePlatformBridge()
+    let livePnl = AppleLivePnl()
     weak var presentingController: UIViewController?
     private var loginWindow: UINavigationController?
     private let keychain = SessionKeychain(service: "com.unitrading.credentials.v1")
@@ -15,6 +16,7 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
         super.init()
         bridge.presenter = self
         bridge.storage = self
+        bridge.livePnl = livePnl
     }
 
     func open(environment: String, script: String) {
@@ -226,6 +228,13 @@ enum NativePlatformSelfTest {
         precondition(!OfficialLoginPolicy.messageAllowed(protocolName: "https", host: "evil.example", port: 443, mainFrame: true, currentURL: official))
         precondition(!OfficialLoginPolicy.messageAllowed(protocolName: "https", host: "trader.tradovate.com", port: 8443, mainFrame: true, currentURL: official))
         precondition(!OfficialLoginPolicy.messageAllowed(protocolName: "https", host: "trader.tradovate.com", port: 443, mainFrame: true, currentURL: URL(string: "https://auth.tradovate.com")))
+        precondition(AppleLivePnl.date(fromMillis: 1_700_000_000_500).timeIntervalSince1970 == 1_700_000_000.5)
+        if #available(iOS 16.1, *) {
+            // The widget extension decodes exactly what the app encodes.
+            let state = LivePnlAttributes.ContentState(pnl: "+1.00 USD", detail: "净值 1.00 · 持仓 0", trend: 1, updatedAt: Date(timeIntervalSince1970: 1_700_000_000))
+            let encoded = try! JSONEncoder().encode(state)
+            precondition(try! JSONDecoder().decode(LivePnlAttributes.ContentState.self, from: encoded) == state)
+        }
     }
 }
 #endif

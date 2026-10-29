@@ -12,4 +12,6 @@
     <key>CADisableMinimumFrameDurationOnPhone</key><true/>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
     <key>UIApplicationSupportsIndirectInputEvents</key><true/>
+    <key>NSSupportsLiveActivities</key><true/>
+    <key>NSSupportsLiveActivitiesFrequentUpdates</key><true/>
 </dict></plist>

@@ -8,6 +8,7 @@ Kotlin Multiplatform 交易终端，通过 Tradovate 登录连接服务器账户
 
 - 默认无交易商和账户，首次启动直接提示登录；支持 Tradovate Demo/Live 登录及加密会话恢复。
 - Android 使用 Material 3 图标底部导航；桌面保留多栏工作台。
+- 实时盈亏通知：当前账户的浮动盈亏、净值和持仓数显示在 Android 常驻通知（Android 16 起为 Live Update，状态栏显示盈亏）和 iOS 灵动岛 / 锁屏 Live Activity，可在账户页关闭，见 [实时盈亏通知](docs/live-pnl-notifications.md)。
 - 深色、浅色、跟随系统和 TradingV（TradingView 黑色配色）预设主题；可单独配置页面/面板/图表背景、网格、K 线、盈亏数字和保护线颜色，RGB 选色与十六进制输入，保存后重启恢复。
 - 由插件提供品种、合约规格、Bid/Ask、历史 K 线、账户、订单及成交。
 - 市价、限价、突破挂单；撤单、全量净仓平仓；新订单附带 SL/TP，或修改满足关联条件的已有保护单。
@@ -115,6 +116,12 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 - 在右侧价格标尺上下滑动缩放价格范围；在底部时间标尺左右滑动改变 K 线密度。拖动图表空白区域可以横向浏览历史、纵向移动价格，并留出最新 K 线右侧空间；“重置视图”回到最新 80 根并恢复自动价格范围。
 - 拖动现有 SL/TP、挂单或草稿线仍走价格编辑流程，需确认的交易不会由平移/缩放手势提交。
 
+## 实时盈亏通知
+
+- 账户页「实时盈亏通知」默认开启，关闭后立即移除通知；设置保存在本机 `live-pnl-v1`。文本变化才刷新，最快每秒一次，无变化时每 20 秒重发心跳。
+- Android：Android 13+ 首次有账户可显示时请求通知权限，拒绝后静默；Android 16+ 申请提升为 Live Update，更早版本为普通常驻通知。没有前台服务，进程结束后通知在 90 秒内自动过期。
+- iOS：需要 iOS 16.2 及用户允许实时活动；只在应用前台时刷新，锁屏与灵动岛在 90 秒无刷新后标记为过时。iOS 工程仍未在 Mac/Xcode 构建验证。
+
 ## 数据与验证边界
 
 - 默认运行不注册本地模拟券商，不加载、生成或覆盖旧模拟账本；未登录不会显示假账户或假行情。`demo-broker` 保留为编译依赖和离线测试引擎，测试须显式启用。
@@ -133,5 +140,6 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 - [交易商插件接入](docs/plugin-guide.md)
 - [构建与验证记录](docs/verification.md)
 - [主题、导航与图表交互更新](docs/theme-navigation-chart.md)
+- [实时盈亏通知](docs/live-pnl-notifications.md)
 - [Tradovate 接入计划](docs/tradovate-integration-plan.md)
 - [Tradovate 使用与验证](docs/tradovate.md)

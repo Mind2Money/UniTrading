@@ -92,6 +92,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         val accountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
         val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
         val session = remember(plugin, accountId) { plugin.openSession(accountId) }
+        DisposableEffect(plugin, session) {
+            runtime.livePnl.track(plugin, session)
+            onDispose { runtime.livePnl.untrack(session) }
+        }
         val account by key(session) { session.state.collectAsState() }
         val market by key(plugin) { plugin.market.collectAsState() }
         val paused by runtime.paused.collectAsState()
@@ -323,6 +327,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                     if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
                                     if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
                                     TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
+                                    LivePnlSwitch(runtime.livePnl)
                                     SavedLoginControls(runtime.savedLogins) { selectBroker("") }
                                     TextButton({ showConnection = true }) { Text("连接 Tradovate") }
                                     if (!localDemo) TextButton({ disconnectCurrent() }) { Text("断开 Tradovate") }

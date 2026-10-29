@@ -16,10 +16,16 @@ interface NativeCredentialStorage {
     fun write(value: String): NativeStorageResult
     fun clear(): NativeStorageResult
 }
+/** Live Activity surface; Swift owns ActivityKit. [trend] is 1 profit, -1 loss, 0 flat or unknown. */
+interface NativeLivePnlPresenter {
+    fun show(title: String, pnl: String, detail: String, trend: Int, timeMs: Long)
+    fun clear()
+}
 
 class NativePlatformBridge {
     var presenter: NativeLoginPresenter? = null
     var storage: NativeCredentialStorage? = null
+    var livePnl: NativeLivePnlPresenter? = null
     private var pending: CancellableContinuation<TradovateSession>? = null
     private var accumulator: LoginAccumulator? = null
 
@@ -54,6 +60,11 @@ class NativePlatformBridge {
             val result = runCatching { accumulator?.result() ?: error("missing session") }
             result.fold(continuation::resume) { continuation.resumeWithException(IllegalStateException("官方登录尚未完成或会话无效")) }
         }
+    }
+
+    internal val livePnlPresenter: LivePnlPresenter = object : LivePnlPresenter {
+        override fun show(update: LivePnlUpdate) { livePnl?.show(update.title, update.pnlText, update.detail, update.trend, update.timeMs) }
+        override fun clear() { livePnl?.clear() }
     }
 
     internal val credentials: CredentialStore = object : CredentialStore {

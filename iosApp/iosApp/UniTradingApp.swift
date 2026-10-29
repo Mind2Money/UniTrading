@@ -36,7 +36,9 @@ struct TradingView: UIViewControllerRepresentable {
     static func dismantleUIViewController(_ uiViewController: UIViewController, coordinator: ApplePlatform) {
         coordinator.bridge.finish(cancelled: true)
         coordinator.close()
+        coordinator.livePnl.clear()
         coordinator.bridge.presenter = nil
         coordinator.bridge.storage = nil
+        coordinator.bridge.livePnl = nil
     }
 }

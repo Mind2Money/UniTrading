@@ -18,6 +18,12 @@
 -keep class com.unitrading.app.ThemeSettings { *; }
 -keep class com.unitrading.app.TradingRuntime { *; }
 -keep class com.unitrading.ui.TradingScreenKt { *; }
+-keep class com.unitrading.android.LivePnlNotifier { *; }
+-keep class com.unitrading.app.LivePnlUpdate { *; }
+-keep class com.unitrading.app.LivePnlUpdate$Companion { *; }
+-keep class com.unitrading.broker.AccountInfo { *; }
+-keep class com.unitrading.broker.AccountSnapshot { *; }
+-keep class com.unitrading.broker.BrokerDescriptor { *; }
 -keep class androidx.activity.SystemBarStyle** { *; }
 -keep class androidx.activity.compose.ComponentActivityKt { *; }
 -keep class androidx.lifecycle.ViewModelProvider { *; }

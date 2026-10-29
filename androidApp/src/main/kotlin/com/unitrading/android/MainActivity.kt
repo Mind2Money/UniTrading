@@ -1,9 +1,11 @@
 package com.unitrading.android
 
+import android.Manifest
 import android.os.Bundle
 import android.util.AtomicFile
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import android.content.res.Configuration
 import androidx.compose.ui.graphics.luminance
@@ -17,13 +19,24 @@ import androidx.lifecycle.ViewModelProvider
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
 import com.unitrading.ui.TradingScreen
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    /** Asked the first time the live P&L notice has an account to show but POST_NOTIFICATIONS is missing (Android 13+). */
+    private val permissionPrompt: () -> Unit = { notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    private var model: TradingRuntimeModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
-        val model = ViewModelProvider(this)[TradingRuntimeModel::class.java]
+        val model = ViewModelProvider(this)[TradingRuntimeModel::class.java].also { this.model = it }
+        model.notifier.requestPermission = permissionPrompt
         val login = AndroidTradovateLogin(this)
         setContent {
             val theme by model.runtime.theme.settings.collectAsState()
@@ -36,11 +49,21 @@ class MainActivity : ComponentActivity() {
             TradingScreen(model.runtime, login)
         }
     }
+
+    override fun onDestroy() {
+        model?.notifier?.let { if (it.requestPermission === permissionPrompt) it.requestPermission = null }
+        super.onDestroy()
+    }
 }
 
 class TradingRuntimeModel(application: Application) : AndroidViewModel(application) {
     val runtime = TradingRuntime(AndroidSnapshotStore(File(application.filesDir, "demo-v1")), credentialStore = AndroidCredentialStore(application))
+    /** Live P&L notice; runs for the lifetime of the task and is cleared when the model is dropped. */
+    val notifier = LivePnlNotifier(application)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    init { scope.launch { runtime.livePnl.run(notifier) } }
     override fun onCleared() {
+        scope.cancel()
         runtime.registry.plugins.forEach { it.disconnect() }
         super.onCleared()
     }
