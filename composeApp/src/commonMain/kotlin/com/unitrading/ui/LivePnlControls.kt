@@ -23,9 +23,11 @@ internal fun LivePnlSwitch(controller: LivePnlController, modifier: Modifier = M
     Column(modifier.fillMaxWidth().testTag("live-pnl-setting"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("实时盈亏通知", fontSize = 13.sp)
-                Text("在系统通知栏 / 灵动岛显示当前账户的浮动盈亏", fontSize = 11.sp, color = TradingColors.Muted)
+                Text("实时盈亏通知", fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("在系统通知栏 / 灵动岛显示当前账户的浮动盈亏", fontSize = 12.sp, lineHeight = 17.sp, color = TradingColors.Muted)
             }
+            Spacer(Modifier.width(12.dp))
             Switch(settings.enabled, { enabled -> scope.launch { controller.setEnabled(enabled) } }, Modifier.testTag("live-pnl-switch"))
         }
         error?.let { Text(it, fontSize = 11.sp, color = TradingColors.Loss) }

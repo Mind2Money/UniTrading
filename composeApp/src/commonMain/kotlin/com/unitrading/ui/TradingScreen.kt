@@ -343,13 +343,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                             }))
                 }
-                val connectionStatus: @Composable () -> Unit = {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(market.statusMessage, Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
-                        if (plugin.capabilities.resynchronize) TextButton({ syncAccount() }, enabled = !busy && market.connected,
-                            modifier = Modifier.testTag("resynchronize-account-page")) { Text("同步账户") }
-                    }
-                }
                 Column(Modifier.fillMaxSize()) {
                     if (!chartFirst) {
                         Row(Modifier.fillMaxWidth().height(if (compact) 48.dp else 44.dp).testTag("app-toolbar")
@@ -459,24 +452,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             else -> if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
-                            } else Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("settings-page")) {
-                                AccountStrip(account)
-                                DividerLine()
-                                if (!localDemo) connectionStatus()
-                                BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
-                                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text(plugin.descriptor.description, fontSize = 12.sp, color = colors.Muted)
-                                    if (localDemo) Text("模拟时间每秒推进 15 秒。暂停或退出期间不生成成交。", fontSize = 12.sp, color = colors.Muted)
-                                    if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
-                                    if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
-                                    TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
-                                    TextButton({ showActivity = true }, Modifier.testTag("open-activity")) { Text("活动记录") }
-                                    LivePnlSwitch(runtime.livePnl)
-                                    SavedLoginControls(runtime.savedLogins) { selectBroker("") }
-                                    TextButton({ showConnection = true }) { Text("连接 Tradovate") }
-                                    if (!localDemo) TextButton({ disconnectCurrent() }) { Text("断开 Tradovate") }
-                                }
-                            }
+                            } else SettingsPage(runtime, plugin, accountId, market, busy,
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                modifier = Modifier.weight(1f).fillMaxWidth())
                         }
                     }
                     if (compact) {
@@ -513,21 +493,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 if (desktop && showSettings) {
                     Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.large, color = colors.Surface) {
+                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.large, color = colors.Shell) {
                             if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
-                            } else Column(Modifier.fillMaxSize().padding(18.dp).testTag("settings-page")) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("设置", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                                    TextButton({ showSettings = false }, Modifier.testTag("close-settings")) { Text("完成") }
-                                }
-                                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    TextButton({ showTheme = true }) { Text("外观与主题") }
-                                    TextButton({ showActivity = true }, Modifier.testTag("open-activity")) { Text("活动记录") }
-                                    LivePnlSwitch(runtime.livePnl)
-                                }
-                            }
+                            } else SettingsPage(runtime, plugin, accountId, market, busy,
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false })
                         }
                     }
                 }

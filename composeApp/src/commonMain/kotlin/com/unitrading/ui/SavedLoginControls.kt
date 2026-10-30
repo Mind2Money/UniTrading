@@ -11,7 +11,7 @@ import com.unitrading.app.SavedTradovateAccounts
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun SavedLoginControls(saved: SavedTradovateAccounts, onForgotten: () -> Unit) {
+internal fun SavedLoginControls(saved: SavedTradovateAccounts, grouped: Boolean = false, onForgotten: () -> Unit) {
     if (!saved.available) return
     val message by saved.message.collectAsState()
     val restoring by saved.restoring.collectAsState()
@@ -19,10 +19,18 @@ internal fun SavedLoginControls(saved: SavedTradovateAccounts, onForgotten: () -
     val scope = rememberCoroutineScope()
     var confirm by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val retry: () -> Unit = { scope.launch { busy = true; try { saved.retry() } finally { busy = false } }; Unit }
+    if (grouped) {
+        SettingsActionRow("恢复已保存登录", if (restoring || busy) "正在处理…" else "本机已保存 $count 个 Tradovate 登录",
+            SettingsGlyph.Sync, "settings-restore-logins", retry, enabled = !restoring && !busy)
+        message?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 12.sp, color = TradingColors.Muted) }
+        SettingsDivider()
+        SettingsActionRow("清除已保存登录", "删除本机登录状态并断开连接", SettingsGlyph.Disconnect, "forget-saved-logins",
+            { confirm = true }, enabled = !restoring && !busy, destructive = true)
+    } else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("本机已保存 $count 个 Tradovate 登录", fontSize = 12.sp)
         message?.let { Text(it, fontSize = 12.sp) }
-        TextButton({ scope.launch { busy = true; try { saved.retry() } finally { busy = false } } }, enabled = !restoring && !busy) { Text("重试恢复登录") }
+        TextButton(retry, enabled = !restoring && !busy) { Text("重试恢复登录") }
         TextButton({ confirm = true }, enabled = !restoring && !busy, modifier = Modifier.testTag("forget-saved-logins")) { Text("清除已保存登录") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("清除已保存登录？") },

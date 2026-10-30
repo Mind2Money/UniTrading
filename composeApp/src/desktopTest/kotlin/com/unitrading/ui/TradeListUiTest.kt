@@ -97,13 +97,14 @@ class TradeListUiTest {
             Box(Modifier.requiredSize(400.dp, 740.dp)) { TradingScreen(runtime) }
         } }
         compose.onNodeWithTag("nav-3").assertTextContains("设置").performClick()
-        compose.onNodeWithTag("broker-picker").assertExists()
+        compose.onNodeWithTag("settings-account").assertIsDisplayed()
         compose.onNodeWithTag("open-activity").performScrollTo().performClick()
         compose.onNodeWithTag("activity-page").assertIsDisplayed()
         compose.onNodeWithTag("trade-terminal").assertDoesNotExist()
         capture("activity-mobile")
         compose.onNodeWithTag("activity-back").performClick()
         compose.onNodeWithTag("settings-page").assertIsDisplayed()
+        compose.onNodeWithTag("settings-account").performScrollTo().performClick()
         compose.onNodeWithTag("broker-picker").assertExists()
         compose.onNodeWithText(plugin.accounts[1].name).performScrollTo().performClick()
         compose.onNodeWithTag("open-activity").performScrollTo().performClick()
@@ -117,7 +118,7 @@ class TradeListUiTest {
     @Test fun desktopSettingsOpensActivityAndReturnsWithoutChangingTradingAccount() {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.onNodeWithTag("open-settings").performClick()
-        compose.onNodeWithTag("open-activity").performClick()
+        compose.onNodeWithTag("open-activity").performScrollTo().performClick()
         compose.onNodeWithTag("activity-page").assertIsDisplayed()
         compose.onNodeWithText("${plugin.descriptor.name} · ${plugin.accounts.first().name}").assertIsDisplayed()
         compose.onNodeWithTag("activity-back").performClick()
