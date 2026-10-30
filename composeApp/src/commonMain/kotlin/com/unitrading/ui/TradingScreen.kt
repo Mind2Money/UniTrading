@@ -278,7 +278,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         estimateDraft = session::preview,
                         onDraftEntry = { changeDraft(draft.copy(entry = instrument.formatPrice(it))) },
                         onDraftProtection = { stop, price ->
-                            changeDraft(if (stop) draft.copy(stopLoss = instrument.formatPrice(price)) else draft.copy(takeProfit = instrument.formatPrice(price)))
+                            changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price)))
                         },
                         editPending = plugin.capabilities.modifyPendingOrders,
                         estimatePending = session::previewOrderModification,
@@ -292,7 +292,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
                         m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
-                        onSide = { side -> changeDraft(draft.withSide(side)); if (compact) orderOpen = true else if (!wide) showOrder = true },
+                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderOpen = true else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
@@ -390,7 +390,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     (maxHeight * if (orderExpanded) .86f else .70f).coerceAtMost(if (orderExpanded) maxHeight else 600.dp)
                                 val bar: @Composable () -> Unit = {
                                     MobileTradeBar(instrument, quote, account, onOpen = { orderOpen = true },
-                                        onSide = { side -> changeDraft(draft.withSide(side)); orderOpen = true },
+                                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); orderOpen = true },
                                         onPositions = { mobileTab = 2 }, short = compactShort)
                                 }
                                 val panel: @Composable (Modifier) -> Unit = { m ->

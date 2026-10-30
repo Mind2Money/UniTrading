@@ -67,7 +67,7 @@ internal fun MobileOrderTicket(
                 listOf(Side.SELL, Side.BUY).forEach { side ->
                     MobileQuoteButton(side, quote?.let { instrument.formatPrice(if (side == Side.SELL) it.bid else it.ask) } ?: "—",
                         selected = draft.side == side, enabled = !busy,
-                        modifier = Modifier.weight(1f).testTag("order-side-${side.name}")) { onDraft(draft.withSide(side)) }
+                        modifier = Modifier.weight(1f).testTag("order-side-${side.name}")) { onDraft(draft.withSide(side, instrument, quote)) }
                 }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -78,11 +78,12 @@ internal fun MobileOrderTicket(
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)
                 QuantityStep("+", "增加数量", "quantity-increase", !busy && more != null) { more?.let { onDraft(draft.copy(quantity = it)) } }
             }
+            OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy)
             if (draft.kind != OrderKind.MARKET) MobilePriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价",
                 draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry", enabled = !busy)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MobilePriceInput("止损 SL", draft.stopLoss, { onDraft(draft.copy(stopLoss = it)) }, "order-sl", Modifier.weight(1f), !busy)
-                MobilePriceInput("止盈 TP", draft.takeProfit, { onDraft(draft.copy(takeProfit = it)) }, "order-tp", Modifier.weight(1f), !busy)
+                OrderProtectionControl(true, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
+                OrderProtectionControl(false, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton({ quote?.let { onDraft(draft.withReferenceProtection(instrument, it)) } },
@@ -90,8 +91,8 @@ internal fun MobileOrderTicket(
                     Text("设置参考 SL / TP", fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton({ onDraft(draft.copy(stopLoss = "", takeProfit = "")) },
-                    enabled = !busy && (draft.stopLoss.isNotBlank() || draft.takeProfit.isNotBlank()), modifier = Modifier.testTag("clear-protection")) {
+                TextButton({ onDraft(draft.clearProtection()) },
+                    enabled = !busy && (draft.stopLossEnabled || draft.takeProfitEnabled || draft.stopLoss.isNotBlank() || draft.takeProfit.isNotBlank()), modifier = Modifier.testTag("clear-protection")) {
                     Text("清除", fontSize = 12.sp)
                 }
             }

@@ -9,6 +9,8 @@ internal data class OrderDraft(
     val entry: String = "",
     val stopLoss: String = "",
     val takeProfit: String = "",
+    val stopLossEnabled: Boolean = stopLoss.isNotBlank(),
+    val takeProfitEnabled: Boolean = takeProfit.isNotBlank(),
 ) {
     /** Use the contract's integer quantity grid; never round a malformed manual entry into an order. */
     fun steppedQuantity(instrument: Instrument, increase: Boolean): String? {
@@ -27,25 +29,48 @@ internal data class OrderDraft(
             val current = if (side == Side.BUY) it.ask else it.bid
             val above = (side == Side.BUY) == (value == OrderKind.STOP)
             instrument.formatPrice(if (above) current + distance else maxOf(instrument.tickSize, current - distance))
-        } ?: "", stopLoss = "", takeProfit = "")
+        } ?: "", stopLoss = "", takeProfit = "").fillEnabledProtection(instrument, quote)
     }
 
-    fun withSide(value: Side): OrderDraft = if (value == side) this else copy(side = value, stopLoss = "", takeProfit = "")
+    fun withSide(value: Side, instrument: Instrument, quote: Quote?): OrderDraft = if (value == side) this else
+        copy(side = value, stopLoss = "", takeProfit = "").fillEnabledProtection(instrument, quote)
+
+    fun withProtectionEnabled(instrument: Instrument, quote: Quote?, stop: Boolean, enabled: Boolean): OrderDraft {
+        val changed = if (stop) copy(stopLossEnabled = enabled) else copy(takeProfitEnabled = enabled)
+        if (!enabled || (if (stop) stopLoss else takeProfit).isNotBlank()) return changed
+        val reference = withReferenceProtection(instrument, quote)
+        return if (stop) changed.copy(stopLoss = reference.stopLoss) else changed.copy(takeProfit = reference.takeProfit)
+    }
+
+    fun withProtectionPrice(stop: Boolean, value: String): OrderDraft =
+        if (stop) copy(stopLoss = value, stopLossEnabled = true) else copy(takeProfit = value, takeProfitEnabled = true)
+
+    fun clearProtection() = copy(stopLoss = "", takeProfit = "", stopLossEnabled = false, takeProfitEnabled = false)
+
+    private fun fillEnabledProtection(instrument: Instrument, quote: Quote?): OrderDraft {
+        val reference = withReferenceProtection(instrument, quote)
+        return copy(
+            stopLoss = if (stopLossEnabled && stopLoss.isBlank()) reference.stopLoss else stopLoss,
+            takeProfit = if (takeProfitEnabled && takeProfit.isBlank()) reference.takeProfit else takeProfit,
+        )
+    }
 
     fun request(instrument: Instrument): OrderRequest? {
         val lots = instrument.parseQuantity(quantity) ?: return null
         val price = if (kind == OrderKind.MARKET) null else instrument.parsePrice(entry) ?: return null
-        val sl = if (stopLoss.isBlank()) null else instrument.parsePrice(stopLoss) ?: return null
-        val tp = if (takeProfit.isBlank()) null else instrument.parsePrice(takeProfit) ?: return null
+        val sl = if (!stopLossEnabled) null else instrument.parsePrice(stopLoss) ?: return null
+        val tp = if (!takeProfitEnabled) null else instrument.parsePrice(takeProfit) ?: return null
         return OrderRequest(instrument.symbol, side, kind, lots, price, sl, tp)
     }
 
-    fun withReferenceProtection(instrument: Instrument, quote: Quote): OrderDraft {
+    fun withReferenceProtection(instrument: Instrument, quote: Quote?): OrderDraft {
         val base = if (kind == OrderKind.MARKET) {
+            quote ?: return this
             if (side == Side.BUY) quote.bid else quote.ask
         } else instrument.parsePrice(entry) ?: return this
         val distance = maxOf(instrument.minStopTicks * 8, 80L) * instrument.tickSize
         return copy(
+            stopLossEnabled = true, takeProfitEnabled = true,
             stopLoss = instrument.formatPrice(if (side == Side.BUY) maxOf(instrument.tickSize, base - distance) else base + distance),
             takeProfit = instrument.formatPrice(if (side == Side.BUY) base + distance * 2 else maxOf(instrument.tickSize, base - distance * 2)),
         )

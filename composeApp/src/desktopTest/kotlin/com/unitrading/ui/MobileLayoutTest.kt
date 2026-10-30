@@ -75,8 +75,9 @@ class MobileLayoutTest {
         assertTrue(height("trading-chart") > host * .2f, "The chart stays visible above the open ticket")
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         compose.onNodeWithTag("order-quantity").assertIsDisplayed()
-        compose.onNodeWithTag("order-sl").assertIsDisplayed()
-        compose.onNodeWithTag("order-tp").assertIsDisplayed()
+        compose.onNodeWithTag("order-sl-enabled").assertIsDisplayed().assertIsOff()
+        compose.onNodeWithTag("order-tp-enabled").assertIsDisplayed().assertIsOff()
+        compose.onNodeWithTag("order-quantity-slider").assertIsDisplayed()
         capture("mobile-order-panel")
 
         compose.onNodeWithTag("collapse-order").performClick()
@@ -219,7 +220,9 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-kind-MARKET").performClick()
         compose.onNodeWithTag("order-sl").assertTextContains(sl)
         compose.onNodeWithTag("order-side-SELL").performClick()
-        compose.onNodeWithTag("order-sl").assertTextContains("")
+        compose.onNodeWithTag("order-sl-enabled").assertIsOn()
+        val sellStop = compose.onNodeWithTag("order-sl").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        assertNotEquals(sl, sellStop)
         compose.onNodeWithTag("order-side-SELL").assertIsSelected()
         compose.onNodeWithTag("order-quantity").performTextReplacement("0.01")
         compose.onNodeWithTag("quantity-decrease").assertIsNotEnabled()
@@ -248,5 +251,49 @@ class MobileLayoutTest {
         compose.onNodeWithTag("expand-order").performClick()
         assertEquals(normalHeight, height("order-panel"))
         compose.onNodeWithTag("review-order").assertIsDisplayed()
+    }
+
+    @Test fun protectionTogglesKeepOnlyEnabledProtectionInTheConfirmedOrder() {
+        render()
+        val instrument = plugin.instruments.first()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-sl-enabled").assertIsOn()
+        val rememberedStop = compose.onNodeWithTag("order-sl").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        compose.onNodeWithTag("order-sl-enabled").performClick()
+        compose.onNodeWithTag("order-sl").assertDoesNotExist()
+        compose.onNodeWithTag("order-sl-enabled").performClick()
+        compose.onNodeWithTag("order-sl").assertTextContains(rememberedStop)
+        capture("mobile-protection-controls")
+        compose.onNodeWithTag("order-sl-enabled").performClick()
+        val target = compose.onNodeWithTag("order-tp").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        val before = session.state.value.orders.size
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(5_000) { session.state.value.orders.size == before + 1 }
+        val sent = session.state.value.orders.last().request
+        assertNull(sent.stopLoss)
+        assertEquals(instrument.parsePrice(target), sent.takeProfit)
+    }
+
+    @Test fun quantitySliderDragsOnContractStepsAndTracksManualQuantity() {
+        render()
+        val instrument = plugin.instruments.first()
+        val before = session.state.value
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity-slider").performTouchInput {
+            swipe(Offset(width * .1f, centerY), Offset(width * .65f, centerY))
+        }
+        val text = compose.onNodeWithTag("order-quantity").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        val quantity = instrument.parseQuantity(text)!!
+        assertNotEquals(10L, quantity)
+        assertTrue(quantity in instrument.minLotsHundredths..instrument.maxLotsHundredths)
+        assertEquals(0L, quantity % instrument.lotStepHundredths)
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.10")
+        val progress = compose.onNodeWithTag("order-quantity-slider").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ProgressBarRangeInfo].current
+        assertEquals(QuantitySliderScale.from(instrument)!!.fraction(10), progress, .00001f)
+        assertEquals(before, session.state.value)
     }
 }

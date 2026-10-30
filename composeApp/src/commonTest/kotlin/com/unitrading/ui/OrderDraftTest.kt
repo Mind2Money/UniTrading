@@ -46,10 +46,43 @@ class OrderDraftTest {
         val quote = Quote(110_000, 110_020, 0)
         val draft = OrderDraft(kind = OrderKind.LIMIT, entry = "1.09000", stopLoss = "1.08000", takeProfit = "1.12000")
         assertEquals(draft, draft.withKind(fx, quote, OrderKind.LIMIT))
-        assertEquals(draft, draft.withSide(Side.BUY))
-        assertEquals("", draft.withSide(Side.SELL).stopLoss)
+        assertEquals(draft, draft.withSide(Side.BUY, fx, quote))
+        assertTrue(fx.parsePrice(draft.withSide(Side.SELL, fx, quote).stopLoss)!! > fx.parsePrice(draft.entry)!!)
         assertEquals("", draft.withKind(fx, quote, OrderKind.MARKET).entry)
         assertTrue(OrderDraft().withKind(fx, quote, OrderKind.LIMIT).request(fx)!!.entryPrice!! < quote.ask)
         assertTrue(OrderDraft().withKind(fx, quote, OrderKind.STOP).request(fx)!!.entryPrice!! > quote.ask)
+    }
+
+    @Test fun protectionCheckboxesSeedOnlyTheSelectedLineAndOmitUncheckedPrices() {
+        val quote = Quote(110_000, 110_020, 0)
+        val stop = OrderDraft().withProtectionEnabled(fx, quote, stop = true, enabled = true)
+        assertTrue(stop.stopLossEnabled)
+        assertFalse(stop.takeProfitEnabled)
+        assertNotNull(stop.request(fx)!!.stopLoss)
+        assertNull(stop.request(fx)!!.takeProfit)
+        val edited = stop.withProtectionPrice(true, "1.08000")
+        val disabled = edited.withProtectionEnabled(fx, quote, true, false)
+        assertEquals("1.08000", disabled.stopLoss)
+        assertNull(disabled.request(fx)!!.stopLoss)
+        assertEquals(edited, disabled.withProtectionEnabled(fx, quote, true, true))
+        val target = disabled.withProtectionEnabled(fx, quote, false, true)
+        assertNull(target.request(fx)!!.stopLoss)
+        assertNotNull(target.request(fx)!!.takeProfit)
+        assertNull(target.clearProtection().request(fx)!!.takeProfit)
+        assertNotNull(OrderDraft(stopLoss = "invalid", stopLossEnabled = false).request(fx))
+        assertNull(OrderDraft(stopLossEnabled = true).request(fx), "An enabled empty protection must never silently become an unprotected order")
+    }
+
+    @Test fun protectionDefaultsFollowDirectionAndEntryChangesWithoutEnablingOtherLines() {
+        val quote = Quote(110_000, 110_020, 0)
+        val buy = OrderDraft().withProtectionEnabled(fx, quote, true, true)
+        val sell = buy.withSide(Side.SELL, fx, quote)
+        assertTrue(sell.stopLossEnabled)
+        assertFalse(sell.takeProfitEnabled)
+        assertTrue(sell.request(fx)!!.stopLoss!! > quote.ask)
+        val limit = sell.withKind(fx, quote, OrderKind.LIMIT)
+        assertTrue(limit.request(fx)!!.stopLoss!! > limit.request(fx)!!.entryPrice!!)
+        val pendingWithoutQuote = OrderDraft(kind = OrderKind.LIMIT, entry = "1.09000").withProtectionEnabled(fx, null, false, true)
+        assertNotNull(pendingWithoutQuote.request(fx)!!.takeProfit)
     }
 }

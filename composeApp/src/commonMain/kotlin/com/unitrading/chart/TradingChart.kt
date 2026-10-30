@@ -124,8 +124,22 @@ fun TradingChart(
             if (order.role == OrderRole.ENTRY) { order.request.stopLoss?.let(::add); order.request.takeProfit?.let(::add) }
         }
         draft?.entryPrice?.let(::add)
-        if (preview?.valid == true) { preview.entryPrice?.let(::add); draft?.stopLoss?.let(::add); draft?.takeProfit?.let(::add) }
+        if (preview?.valid == true) preview.entryPrice?.let(::add)
+        draft?.stopLoss?.let(::add)
+        draft?.takeProfit?.let(::add)
         addAll(overlayScaleValues(overlays, range))
+    }
+    // A newly enabled protection must be reachable even after the user manually zoomed the price axis.
+    // Only activation/direction/type changes fit the range; moving a line keeps its frozen drag scale.
+    LaunchedEffect(accountKey, instrument.symbol, draft?.side, draft?.kind, draft?.stopLoss != null, draft?.takeProfit != null) {
+        val manual = manualScale
+        val prices = listOfNotNull(draft?.stopLoss, draft?.takeProfit).filter { it > 0 }
+        if (manual != null && drag == null && prices.any { it < manual.low || it > manual.high }) {
+            val low = minOf(manual.low, prices.min().toDouble())
+            val high = maxOf(manual.high, prices.max().toDouble())
+            val padding = (high - low) * .08
+            manualScale = manual.copy(low = maxOf(0.0, low - padding), high = high + padding)
+        }
     }
     val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)

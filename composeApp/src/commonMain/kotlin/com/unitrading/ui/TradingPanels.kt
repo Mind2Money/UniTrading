@@ -139,7 +139,7 @@ internal fun OrderTicket(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Side.entries.forEach { side ->
-                FilterChip(draft.side == side, { onDraft(draft.withSide(side)) }, label = { Text(side.label()) }, modifier = Modifier.weight(1f))
+                FilterChip(draft.side == side, { onDraft(draft.withSide(side, instrument, quote)) }, label = { Text(side.label()) }, modifier = Modifier.weight(1f))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -150,10 +150,10 @@ internal fun OrderTicket(
             }
         }
         PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity")
-        Text("范围 ${instrument.formatQuantity(instrument.minLotsHundredths)}–${instrument.formatQuantity(instrument.maxLotsHundredths)} · 步长 ${instrument.formatQuantity(instrument.lotStepHundredths)}", color = TradingColors.Muted, fontSize = 10.sp)
+        OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy)
         if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价", draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry")
-        PriceInput("止损 SL（可选）", draft.stopLoss, { onDraft(draft.copy(stopLoss = it)) }, "order-sl")
-        PriceInput("止盈 TP（可选）", draft.takeProfit, { onDraft(draft.copy(takeProfit = it)) }, "order-tp")
+        OrderProtectionControl(true, instrument, quote, draft, onDraft, !busy)
+        OrderProtectionControl(false, instrument, quote, draft, onDraft, !busy)
         TextButton({ quote?.let { onDraft(draft.withReferenceProtection(instrument, it)) } }, enabled = quote != null, contentPadding = PaddingValues(0.dp)) {
             Text("设置参考 SL / TP", fontSize = 11.sp)
         }
@@ -181,8 +181,8 @@ internal fun OrderTicket(
 }
 
 @Composable
-internal fun PriceInput(label: String, value: String, onValue: (String) -> Unit, tag: String, modifier: Modifier = Modifier) {
-    OutlinedTextField(value, onValue, modifier.fillMaxWidth().testTag(tag), label = { Text(label, fontSize = 11.sp) }, singleLine = true,
+internal fun PriceInput(label: String, value: String, onValue: (String) -> Unit, tag: String, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    OutlinedTextField(value, onValue, modifier.fillMaxWidth().testTag(tag), enabled = enabled, label = { Text(label, fontSize = 11.sp) }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(8.dp))
 }
 

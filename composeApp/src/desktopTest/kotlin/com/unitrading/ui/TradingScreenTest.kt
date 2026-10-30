@@ -165,6 +165,7 @@ class TradingScreenTest {
         val stop = entry - 400
         compose.onNodeWithText(OrderKind.LIMIT.label()).performClick()
         compose.onNodeWithTag("order-entry").performTextReplacement(instrument.formatPrice(entry))
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("order-sl").performTextReplacement(instrument.formatPrice(stop))
         val updated = dragLine(stop, 1, listOf(entry, entry, stop), release = false)
         compose.onNodeWithTag("chart-readout").assertTextContains("止损预览 ${instrument.formatPrice(updated)}", substring = true)
