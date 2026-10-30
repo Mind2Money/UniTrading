@@ -44,6 +44,8 @@ class TradovateBroker(
     private val lock = Mutex()
     private val metadataLock = Mutex()
     private val commandLock = Mutex()
+    private val capacityLock = Mutex()
+    private val capacityChecks = mutableListOf<Long>()
     private val synchronizationLock = Mutex()
     private val requestPace = Mutex()
     private var lastRequestMs: Long? = null
@@ -624,6 +626,28 @@ class TradovateBroker(
             override val account = info
             override val state: StateFlow<AccountSnapshot> = flow.asStateFlow()
             override fun preview(request: OrderRequest) = estimate(accountId, request)
+            override suspend fun orderCapacity(request: OrderRequest): OrderCapacity = capacityLock.withLock {
+                if (!market.value.tradingReady || account.readOnly || accountId in incompleteAccounts)
+                    return@withLock OrderCapacity(message = "账户或行情尚未就绪，无法确认可下单数量")
+                val contractId = lock.withLock { contractSpecs.entries.firstOrNull { it.value.symbol == request.symbol }?.key }
+                    ?: return@withLock OrderCapacity(message = "合约规格尚未加载")
+                if (request.kind != OrderKind.MARKET && request.entryPrice?.let { it > 0 && it % contractSpecs.getValue(contractId).tickSize == 0L } != true)
+                    return@withLock OrderCapacity(message = "请先输入有效的订单价格")
+                val revision = lock.withLock { book.revision }
+                val result = discoverOrderCapacity { quantity ->
+                    // Keep this endpoint below its documented 500/hour budget, with >=1s between calls.
+                    val time = now()
+                    capacityChecks.removeAll { time - it >= 3_600_000 }
+                    check(capacityChecks.size < 450) { "数量校验频率受限" }
+                    capacityChecks.lastOrNull()?.let { delay((1_000 - (time - it)).coerceIn(0, 1_000)) }
+                    check(!stopped && market.value.tradingReady && fresh(quotes[request.symbol]) && lock.withLock { book.revision == revision }) { "账户状态已变化" }
+                    capacityChecks.add(now())
+                    rest("POST", "order/dryrun", capacityBody(accountId.toLong(), contractId, request, quantity)).jsonObject
+                }
+                if (!market.value.tradingReady || lock.withLock { book.revision != revision })
+                    OrderCapacity(message = "账户状态已变化，请刷新数量上限")
+                else result
+            }
             override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {
                 val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
                 if (order.role != OrderRole.ENTRY || !order.editable) return OrderPreview(null, errors = listOf("该单不是可编辑入场单；保护单请使用仓位保护价入口，关联待确认的订单不可改价"))

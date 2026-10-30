@@ -44,6 +44,8 @@ internal fun MobileOrderTicket(
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
+    capacity: QuantityCapacityState = QuantityCapacityState(instrument.maxLotsHundredths),
+    onRefreshCapacity: (() -> Unit)? = null,
 ) {
     val colors = TradingColors
     val focus = LocalFocusManager.current
@@ -72,13 +74,13 @@ internal fun MobileOrderTicket(
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val less = draft.steppedQuantity(instrument, false)
-                val more = draft.steppedQuantity(instrument, true)
+                val more = draft.steppedQuantity(instrument, true, capacity.maximum)
                 QuantityStep("−", "减少数量", "quantity-decrease", !busy && less != null) { less?.let { onDraft(draft.copy(quantity = it)) } }
                 MobilePriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)
                 QuantityStep("+", "增加数量", "quantity-increase", !busy && more != null) { more?.let { onDraft(draft.copy(quantity = it)) } }
             }
-            OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy)
+            OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
             if (draft.kind != OrderKind.MARKET) MobilePriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价",
                 draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry", enabled = !busy)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -104,7 +106,7 @@ internal fun MobileOrderTicket(
                 Chevron(down = !details, colors.Muted)
             }
             if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                EstimateRow("数量范围 / 步长", "${instrument.formatQuantity(instrument.minLotsHundredths)}–${instrument.formatQuantity(instrument.maxLotsHundredths)} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
+                EstimateRow("可下单上限 / 步长", "${capacity.maximum?.let(instrument::formatQuantity) ?: "未知"} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
                 EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
                 EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")
                 EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")

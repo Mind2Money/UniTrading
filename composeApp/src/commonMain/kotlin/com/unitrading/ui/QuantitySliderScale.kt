@@ -16,9 +16,9 @@ internal data class QuantitySliderScale(val minimum: Long, val maximum: Long, va
     }
 
     companion object {
-        fun from(instrument: Instrument): QuantitySliderScale? {
+        fun from(instrument: Instrument, maximumLotsHundredths: Long? = instrument.maxLotsHundredths): QuantitySliderScale? {
             val min = instrument.minLotsHundredths
-            val max = instrument.maxLotsHundredths
+            val max = maximumLotsHundredths?.coerceAtMost(instrument.maxLotsHundredths) ?: return null
             val step = instrument.lotStepHundredths
             if (min <= 0 || max < min || step <= 0 || min % step != 0L) return null
             return QuantitySliderScale(min, min + (max - min) / step * step, step)

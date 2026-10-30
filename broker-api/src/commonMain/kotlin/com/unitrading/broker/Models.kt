@@ -67,6 +67,8 @@ data class Instrument(
 
 @Serializable
 data class Quote(val bid: Long, val ask: Long, val timeMs: Long)
+
+data class OrderCapacity(val maximumLotsHundredths: Long? = null, val message: String? = null)
 @Serializable
 data class Candle(val timeMs: Long, val open: Long, val high: Long, val low: Long, val close: Long, val volume: Long? = null)
 @Serializable

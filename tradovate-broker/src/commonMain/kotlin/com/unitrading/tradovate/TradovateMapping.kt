@@ -92,7 +92,8 @@ internal fun mapInstrument(contract: JsonObject, maturity: JsonObject, product: 
     val digits = tickText.substringAfter('.', "").length
     Instrument(requireNotNull(contract.str("name")), product.str("description") ?: product.str("name") ?: "期货合约",
         "期货 · ${maturity.str("expirationMonth") ?: ""}", 6, tick, tickValue,
-        minLotsHundredths = 100, maxLotsHundredths = 100_000, lotStepHundredths = 100,
+        // Protocol bound only; the ticket's usable maximum comes from the account's dry-run risk checks.
+        minLotsHundredths = 100, maxLotsHundredths = Int.MAX_VALUE.toLong() * 100, lotStepHundredths = 100,
         minStopTicks = 1, currency = currency, quantityUnit = "张", quantityDecimals = 0,
         displayPriceDecimals = digits, estimatesIncludeFees = false)
 }.getOrNull()

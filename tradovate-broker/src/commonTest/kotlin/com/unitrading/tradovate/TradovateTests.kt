@@ -22,6 +22,7 @@ internal class MockTradovateWire : TradovateWire {
     var failWrite = false
     var rejectWrite = false
     var rejectMarket = false
+    var capacityCheck: (JsonObject) -> JsonObject = { obj("""{"rejectReason":"Success"}""") }
     var numericChartTime = false
     var chartEventHasRequestId = false
     var fractionalChartId = false
@@ -42,6 +43,7 @@ internal class MockTradovateWire : TradovateWire {
     }""")
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         requests.add(Request(method, path, body))
+        if (path == "order/dryrun") return capacityCheck(requireNotNull(body))
         if (path == "fillPair/list") return snapshot["fillPairs"] ?: JsonArray(emptyList())
         if (path.startsWith("fillFee/deps")) return feeResponses[path.substringAfter("masterid=").toLong()] ?: JsonArray(emptyList())
         if (path.startsWith("fill/items") || path.startsWith("order/items")) return historyItems[path.substringBefore('/')] ?: JsonArray(emptyList())

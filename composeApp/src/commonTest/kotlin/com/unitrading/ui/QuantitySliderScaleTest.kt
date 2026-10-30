@@ -31,4 +31,21 @@ class QuantitySliderScaleTest {
         assertNull(QuantitySliderScale.from(spec.copy(lotStepHundredths = 0)))
         assertNull(QuantitySliderScale.from(spec.copy(minLotsHundredths = 100, maxLotsHundredths = 50)))
     }
+
+    @Test fun accountCapacityBoundsTheSliderAndUnknownOrZeroDoesNotInventARange() {
+        val futures = spec.copy(minLotsHundredths = 100, maxLotsHundredths = Int.MAX_VALUE.toLong() * 100, lotStepHundredths = 100)
+        val scale = QuantitySliderScale.from(futures, 550)!!
+        assertEquals(500, scale.maximum)
+        assertEquals(500, scale.quantity(1f))
+        assertEquals(100, scale.quantity(0f))
+        assertNull(QuantitySliderScale.from(futures, null))
+        assertNull(QuantitySliderScale.from(futures, 0))
+        assertEquals(100, QuantitySliderScale.from(futures, 100)!!.quantity(1f))
+        assertEquals(250_000, QuantitySliderScale.from(futures, 250_000)!!.quantity(1f))
+        assertNull(OrderDraft(quantity = "5").steppedQuantity(futures, true, 500))
+        assertEquals("4", OrderDraft(quantity = "5").steppedQuantity(futures, false, 0))
+        val request = com.unitrading.broker.OrderRequest("TEST", com.unitrading.broker.Side.BUY, com.unitrading.broker.OrderKind.MARKET, 600)
+        assertFalse(com.unitrading.broker.OrderPreview(100).withCapacity(request, QuantityCapacityState(500)).valid)
+        assertTrue(com.unitrading.broker.OrderPreview(100).withCapacity(request, QuantityCapacityState()).valid)
+    }
 }

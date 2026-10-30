@@ -128,6 +128,8 @@ internal fun OrderTicket(
     modifier: Modifier = Modifier,
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
     showTitle: Boolean = true,
+    capacity: QuantityCapacityState = QuantityCapacityState(instrument.maxLotsHundredths),
+    onRefreshCapacity: (() -> Unit)? = null,
 ) {
     // Without the title the host (the phone order panel) names the order, account and environment itself.
     Column(modifier.verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = if (showTitle) 18.dp else 8.dp, bottom = 18.dp),
@@ -152,7 +154,7 @@ internal fun OrderTicket(
             }
         }
         PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity")
-        OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy)
+        OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
         if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价", draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry")
         OrderProtectionControl(true, instrument, quote, draft, onDraft, !busy)
         OrderProtectionControl(false, instrument, quote, draft, onDraft, !busy)

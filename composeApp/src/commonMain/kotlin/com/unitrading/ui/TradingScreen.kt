@@ -165,7 +165,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
         val request = draft.request(instrument)
-        val preview = remember(session, instrument, request, market.revision, account) { request?.let(session::preview) }
+        val (capacity, refreshCapacity) = rememberQuantityCapacity(session, instrument, draft, account,
+            market.tradingReady && quote?.let { market.simulatedTimeMs - it.timeMs in -5_000..15_000 } == true, localDemo)
+        val preview = remember(session, instrument, request, market.revision, account, capacity) {
+            request?.let(session::preview)?.withCapacity(request, capacity)
+        }
         val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
         val indicatorSettings by runtime.indicators.settings.collectAsState()
         val visiblePositions = account.positions.filter { it.symbol == symbol }
@@ -381,7 +385,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             market = { m -> MarketWatch(plugin, market, symbol, ::chooseSymbol, m) },
                             chart = chart,
                             order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { confirmation = Confirmation.Place(it) } }, m.background(colors.Shell), environment = plugin.descriptor.environment) },
+                                { request?.let { confirmation = Confirmation.Place(it) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
+                                capacity = capacity, onRefreshCapacity = refreshCapacity) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
@@ -409,7 +414,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         onMinimize = { minimizeOrder() }, onClose = { closeOrder() }, modifier = m, busy = busy, expanded = orderExpanded,
                                         onExpand = if (dock || keyboardOpen) null else ({ orderExpanded = !orderExpanded })) {
                                         MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } },
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment)
+                                            Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
                                     }
                                 }
                                 if (dock) Row(Modifier.fillMaxSize()) {
@@ -504,7 +509,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) { TextButton({ showOrder = false }) { Text("返回图表") } }
                                 OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
                                     request?.let { confirmation = Confirmation.Place(it); showOrder = false }
-                                }, Modifier.weight(1f), environment = plugin.descriptor.environment)
+                                }, Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
                             }
                         }
                     }
@@ -534,7 +539,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     target == null || catalog.instruments.any { it.symbol == target }
                 }?.let { action ->
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
-                    val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request) }
+                    val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacity) }
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },

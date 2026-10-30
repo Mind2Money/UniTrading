@@ -18,10 +18,19 @@ import com.unitrading.broker.Instrument
 import com.unitrading.broker.Quote
 
 @Composable
-internal fun OrderQuantitySlider(instrument: Instrument, draft: OrderDraft, onDraft: (OrderDraft) -> Unit, enabled: Boolean) {
-    val scale = QuantitySliderScale.from(instrument) ?: return
+internal fun OrderQuantitySlider(instrument: Instrument, draft: OrderDraft, onDraft: (OrderDraft) -> Unit, enabled: Boolean,
+    capacity: QuantityCapacityState = QuantityCapacityState(instrument.maxLotsHundredths), onRefresh: (() -> Unit)? = null) {
+    val scale = QuantitySliderScale.from(instrument, capacity.maximum)
     val focus = LocalFocusManager.current
     Column {
+        if (onRefresh != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(capacity.message ?: capacity.maximum?.let { "当前最多 ${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "可下单数量未知",
+                Modifier.weight(1f).testTag("order-quantity-capacity"), fontSize = 10.sp, color = TradingColors.Muted)
+            TextButton(onRefresh, enabled = enabled && !capacity.loading, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Text(if (capacity.loading) "计算中…" else "刷新", fontSize = 11.sp)
+            }
+        }
+        if (scale == null) return@Column
         Slider(value = scale.fraction(instrument.parseQuantity(draft.quantity) ?: scale.minimum),
             onValueChange = { fraction -> scale.quantity(fraction)?.let {
                 focus.clearFocus()

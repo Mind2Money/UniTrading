@@ -13,11 +13,11 @@ internal data class OrderDraft(
     val takeProfitEnabled: Boolean = takeProfit.isNotBlank(),
 ) {
     /** Use the contract's integer quantity grid; never round a malformed manual entry into an order. */
-    fun steppedQuantity(instrument: Instrument, increase: Boolean): String? {
+    fun steppedQuantity(instrument: Instrument, increase: Boolean, maximum: Long? = instrument.maxLotsHundredths): String? {
         val current = instrument.parseQuantity(quantity) ?: return null
         val step = instrument.lotStepHundredths
         if (step <= 0 || current !in instrument.minLotsHundredths..instrument.maxLotsHundredths || current % step != 0L) return null
-        if (increase && instrument.maxLotsHundredths - current < step) return null
+        if (increase && (maximum == null || maximum.coerceAtMost(instrument.maxLotsHundredths) - current < step)) return null
         if (!increase && current - instrument.minLotsHundredths < step) return null
         return instrument.formatQuantity(if (increase) current + step else current - step)
     }
