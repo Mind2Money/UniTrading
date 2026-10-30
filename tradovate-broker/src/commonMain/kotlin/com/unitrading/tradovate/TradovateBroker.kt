@@ -13,7 +13,7 @@ import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.time.Clock
 
-/** Bars requested per symbol and timeframe and kept in memory: twice the largest indicator period (1000), so that period still yields 1000 values. */
+/** Initial history depth and cache window: twice the largest indicator period (1000). */
 const val CHART_BARS = 2000
 private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
 
@@ -24,6 +24,7 @@ class TradovateBroker(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val onSessionRenewed: suspend (TradovateSession) -> Unit = {},
+    candleCacheStore: CandleCacheStore? = null,
 ) : BrokerPlugin {
     override val descriptor = BrokerDescriptor("tradovate-${credentials.environment.wire}-${credentials.userId}",
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
@@ -70,7 +71,18 @@ class TradovateBroker(
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
-    private data class ChartChannel(val wireId: JsonPrimitive, val series: Pair<String, Timeframe>)
+    private val candleCache = CandleCache(candleCacheStore, "${credentials.environment.wire}-${credentials.userId}")
+    private val cachedHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
+    private val dirtyHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
+    private var cacheSaveJob: Job? = null
+    private var cacheRevision = 0L
+    private val chartWatchLock = Mutex()
+    private val cancelledChartIds = mutableSetOf<String>()
+    private val pendingChartCancellations = mutableMapOf<String, JsonPrimitive>()
+    private var chartBackfillJob: Job? = null
+    private class ChartPage(val series: Pair<String, Timeframe>, val load: ChartLoad, val startedAt: Long,
+        val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false)
+    private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
     private val earlyCharts = mutableListOf<JsonObject>()
     private val subscribedQuotes = mutableSetOf<String>()
@@ -281,6 +293,11 @@ class TradovateBroker(
                 delay(attempt * 3_000L)
                 if (stopped) return@launch
                 try {
+                    marketReady = false
+                    watchJob?.cancelAndJoin()
+                    chartBackfillJob?.cancelAndJoin()
+                    cancelledChartIds.clear()
+                    pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
                     charts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
                     volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
@@ -297,7 +314,14 @@ class TradovateBroker(
         connected = false; marketReady = false; problem = "已断开"
         publish()
         maintenance?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
-        scope.launch { runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }; wire.close(); scope.cancel() }
+        scope.launch {
+            watchJob?.join()
+            chartBackfillJob?.cancelAndJoin()
+            runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }
+            cacheSaveJob?.cancelAndJoin()
+            saveCandleCache()
+            wire.close(); scope.cancel()
+        }
     }
 
     override suspend fun searchInstruments(query: String) {
@@ -540,52 +564,155 @@ class TradovateBroker(
 
     override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
     override fun watch(symbol: String, timeframe: Timeframe) {
+        if (stopped) return
         if (watching?.first != symbol) { continuousJob?.cancel(); continuousJob = null }
         watching = symbol to timeframe
         watchJob?.cancel()
         watchJob = scope.launch {
-            val socket = marketSocket ?: return@launch
-            if (!marketReady) return@launch
-            try {
-                if (symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
-                    val before = continuousRoutes[symbol]?.spec?.tradeSymbol
-                    refreshContinuous(symbol)
-                    if (watching == (symbol to timeframe) && before != continuousRoutes[symbol]?.spec?.tradeSymbol) watch(symbol, timeframe)
-                }
-                val executionSymbol = continuousRoutes[symbol]?.spec?.tradeSymbol ?: symbol.takeUnless { it.startsWith("@") }
-                val wanted = (accountFlows.values.flatMap { flow -> flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol } } + listOfNotNull(executionSymbol)).toSet()
-                for (old in subscribedQuotes.toList() - wanted) {
-                    socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
-                    subscribedQuotes.remove(old)
-                }
-                for (name in wanted - subscribedQuotes) {
-                    val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
-                    val mode = response.str("mode")
-                    if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
-                    subscribedQuotes.add(name)
-                }
-                val oldCharts = lock.withLock { charts.values.map { it.wireId }.also { charts.clear() } }
-                for (id in oldCharts) socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
-                val response = socket.request("md/getChart", buildJsonObject {
-                    put("symbol", symbol)
-                    put("chartDescription", chartDescription(timeframe))
-                    putJsonObject("timeRange") { put("asMuchAsElements", CHART_BARS) }
-                })
-                lock.withLock {
-                    for (field in listOf("historicalId", "realtimeId")) {
-                        val id = response[field] as? JsonPrimitive ?: continue
-                        val key = chartSubscriptionKey(id) ?: continue
-                        charts[key] = ChartChannel(id, symbol to timeframe)
-                        discardedCharts.remove(key)
+            chartWatchLock.withLock {
+                val series = symbol to timeframe
+                val cached = lock.withLock { cachedHistory[series] } ?: candleCache.read(series, now()).also { bars ->
+                    lock.withLock {
+                        cachedHistory[series] = bars
+                        history = history + (series to bars)
+                        publish()
                     }
-                    drainEarlyCharts()
-                    publish()
                 }
-            } catch (_: TimeoutCancellationException) {
-                problem = "账户已连接；行情/历史订阅请求超时，可重新选择品种或周期重试"
-                publish()
+                val socket = marketSocket ?: return@launch
+                if (!marketReady) return@launch
+                try {
+                    if (symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
+                        val before = continuousRoutes[symbol]?.spec?.tradeSymbol
+                        refreshContinuous(symbol)
+                        if (watching == (symbol to timeframe) && before != continuousRoutes[symbol]?.spec?.tradeSymbol) watch(symbol, timeframe)
+                    }
+                    val executionSymbol = continuousRoutes[symbol]?.spec?.tradeSymbol ?: symbol.takeUnless { it.startsWith("@") }
+                    val wanted = (accountFlows.values.flatMap { flow -> flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol } } + listOfNotNull(executionSymbol)).toSet()
+                    for (old in subscribedQuotes.toList() - wanted) {
+                        socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
+                        subscribedQuotes.remove(old)
+                    }
+                    for (name in wanted - subscribedQuotes) {
+                        val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
+                        val mode = response.str("mode")
+                        if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
+                        subscribedQuotes.add(name)
+                    }
+                    if (lock.withLock { charts.values.any { it.page.let { page -> page.series == series &&
+                            !page.load.failed && (page.load.complete || now() - page.startedAt < 30_000) } } }) return@launch
+                    // Serialize both cancellation and binding so rapid switches cannot orphan IDs.
+                    withContext(NonCancellable) {
+                        cancelCharts(socket)
+                        if (watching != series || stopped) return@withContext
+                        val load = ChartLoad(cached)
+                        requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false), chartTimeRange(cached))
+                        if (cached.isNotEmpty() && watching == series && !stopped) {
+                            lock.withLock { load.beginPage() }
+                            requestChart(socket, ChartPage(series, load, now(), liveOnly = false, historyOnly = true),
+                                chartBackfillRange(cached.last().timeMs, now()))
+                        }
+                    }
+                } catch (_: TimeoutCancellationException) {
+                    problem = "账户已连接；行情/历史订阅请求超时，可重新选择品种或周期重试"
+                    publish()
+                } catch (cancel: CancellationException) { throw cancel }
+                catch (error: Exception) { problem = safeMessage(error.message ?: "行情/历史订阅失败"); publish() }
+            }
+        }
+    }
+
+    /** Called under chartWatchLock and NonCancellable, including response-to-ID registration. */
+    private suspend fun requestChart(socket: TradovateSocket, page: ChartPage, range: JsonObject) {
+        val response = try {
+            socket.request("md/getChart", buildJsonObject {
+                put("symbol", page.series.first)
+                put("chartDescription", chartDescription(page.series.second))
+                put("timeRange", range)
+            })
+        } catch (error: Exception) {
+            lock.withLock { page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false) }
+            throw error
+        }
+        lock.withLock {
+            for (field in listOf("historicalId", "realtimeId")) {
+                val id = response[field] as? JsonPrimitive ?: continue
+                val key = chartSubscriptionKey(id) ?: continue
+                charts[key] = ChartChannel(id, page, field == "historicalId",
+                    chartSubscriptionKey(response["historicalId"]) == chartSubscriptionKey(response["realtimeId"]))
+                cancelledChartIds.remove(key)
+                pendingChartCancellations.remove(key)
+            }
+            val pending = earlyCharts.toList()
+            earlyCharts.clear()
+            pending.forEach(::chartEvent)
+            publish()
+        }
+    }
+
+    private suspend fun cancelCharts(socket: TradovateSocket, page: ChartPage? = null) {
+        val pending = lock.withLock {
+            val retired = charts.filterValues { page == null || it.page === page }
+            cancelledChartIds.addAll(retired.keys)
+            retired.forEach { (key, channel) -> pendingChartCancellations[key] = channel.wireId; charts.remove(key) }
+            earlyCharts.removeAll { chartSubscriptionKey(it["id"]) in cancelledChartIds }
+            pendingChartCancellations.toMap()
+        }
+        for ((key, id) in pending) {
+            try {
+                socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
+                lock.withLock { pendingChartCancellations.remove(key) }
+            } catch (_: Exception) { /* Keep failed IDs for the next cleanup; attempt the other IDs too. */ }
+        }
+    }
+
+    private fun continueChartHistory(page: ChartPage) {
+        chartBackfillJob = scope.launch {
+            chartWatchLock.withLock {
+                val socket = marketSocket ?: return@launch
+                if (stopped || !marketReady || watching != page.series || lock.withLock { charts.values.none { it.page === page } }) return@launch
+                withContext(NonCancellable) {
+                    cancelCharts(socket, page)
+                    val before = lock.withLock { page.load.nextPageBefore }
+                    if (before != null && !page.load.failed && watching == page.series && !stopped) {
+                        lock.withLock { page.load.beginPage() }
+                        try {
+                            requestChart(socket, ChartPage(page.series, page.load, page.startedAt, liveOnly = false, historyOnly = true),
+                                chartBackfillRange(requireNotNull(page.load.anchor), before))
+                        } catch (_: Exception) {
+                            lock.withLock {
+                                page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
+                                problem = "历史补取失败，已保留原缓存；可重新选择品种或周期重试"
+                                publish()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Coalesce streaming updates; failed writes stay dirty for the next update or disconnect. */
+    private fun scheduleCandleCacheSave() {
+        if (cacheSaveJob?.isActive == true) return
+        cacheSaveJob = scope.launch {
+            delay(1_000)
+            val revision = lock.withLock { cacheRevision }
+            saveCandleCache()
+            lock.withLock {
+                cacheSaveJob = null
+                if (revision != cacheRevision && dirtyHistory.isNotEmpty()) scheduleCandleCacheSave()
+            }
+        }
+    }
+
+    private suspend fun saveCandleCache() {
+        val pending = lock.withLock { dirtyHistory.toMap() }
+        for ((series, bars) in pending) {
+            try {
+                candleCache.write(series, bars)
+                lock.withLock { if (dirtyHistory[series] === bars) dirtyHistory.remove(series) }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (error: Exception) { problem = safeMessage(error.message ?: "行情/历史订阅失败"); publish() }
+            catch (_: Exception) { /* Disposable cache failure must not interrupt market data. */ }
         }
     }
 
@@ -616,10 +743,14 @@ class TradovateBroker(
 
     private fun chartEvent(chart: JsonObject) {
         val subscription = chartSubscriptionKey(chart["id"])
+        if (subscription in cancelledChartIds) return
         volumeCharts[subscription]?.let { it.accept(chart); return }
         if (subscription in discardedCharts) return
-        val key = subscription?.let { charts[it]?.series }
-        if (key == null) { if (earlyCharts.size < 256) earlyCharts.add(chart); return }
+        val channel = subscription?.let { charts[it] }
+        if (channel == null) { if (earlyCharts.size < 256) earlyCharts.add(chart); return }
+        val page = channel.page
+        if (page.historyOnly && page.ended) return
+        val key = page.series
         val incoming = chart.array("bars").mapNotNull { bar ->
             val time = bar.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null
             val o = bar.priceValue("open") ?: return@mapNotNull null
@@ -630,7 +761,23 @@ class TradovateBroker(
             val volume = listOfNotNull(bar.long("upVolume"), bar.long("downVolume")).takeIf { it.isNotEmpty() }?.sum()?.takeIf { it >= 0 }
             Candle(time, o, h, l, c, volume)
         }
-        history = history + (key to ((history[key] ?: emptyList()) + incoming).associateBy { it.timeMs }.values.sortedBy { it.timeMs }.takeLast(CHART_BARS))
+        val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true
+        val historical = page.historyOnly || endOfHistory ||
+            if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
+        page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
+        val bars = page.load.candles
+        history = history + (key to bars)
+        if (page.load.complete && bars.isNotEmpty()) {
+            cachedHistory[key] = bars
+            dirtyHistory[key] = bars
+            cacheRevision++
+            scheduleCandleCacheSave()
+        }
+        if (!page.ended && chart.bool("eoh") == true) {
+            page.ended = true
+            if (page.load.failed) problem = "历史补取未接上缓存，已保留原缓存；可重新选择品种或周期重试"
+            if (page.historyOnly) continueChartHistory(page)
+        }
     }
 
     private fun drainEarlyCharts() {

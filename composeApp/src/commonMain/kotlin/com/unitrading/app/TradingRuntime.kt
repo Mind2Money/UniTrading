@@ -46,7 +46,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
         }
     }
     val registry = BrokerRegistry(brokers + additionalPlugins)
-    val savedLogins = SavedTradovateAccounts(registry, credentialStore)
+    val savedLogins = SavedTradovateAccounts(registry, credentialStore, candleCacheStore = SnapshotCandleCacheStore(store))
 
     suspend fun run() {
         if (brokers.isEmpty()) return
