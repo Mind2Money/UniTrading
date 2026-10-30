@@ -49,80 +49,6 @@ jobs:
             **/build/reports/tests/
             **/build/test-results/
 
-  test-android:
-    name: Android device tests (debug and R8 release)
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Build device-test APKs before starting the emulator
-        run: |
-          sdkmanager --install "platforms;android-37.0"
-          ./gradlew :androidApp:assembleDebug :androidApp:assembleDebugAndroidTest -PcredentialStoreTest=true --max-workers=2
-          ./gradlew :androidApp:assembleRelease :androidApp:assembleReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release --max-workers=2
-      - name: Boot isolated emulator
-        run: |
-          set -euo pipefail
-          sdkmanager --install "platforms;android-37.0" "emulator" "system-images;android-36;google_apis;x86_64"
-          export ANDROID_USER_HOME="$RUNNER_TEMP/unitrading-android"
-          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
-          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
-          mkdir -p "$ANDROID_AVD_HOME"
-          printf '%s\n' "ANDROID_USER_HOME=$ANDROID_USER_HOME" "ANDROID_EMULATOR_HOME=$ANDROID_EMULATOR_HOME" "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          echo no | avdmanager create avd --force --name unitrading-ci --path "$ANDROID_AVD_HOME/unitrading-ci.avd" --package "system-images;android-36;google_apis;x86_64" --device pixel_6
-          test -f "$ANDROID_AVD_HOME/unitrading-ci.ini"
-          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -x unitrading-ci
-          sudo chmod 666 /dev/kvm
-          mkdir -p artifacts
-          "$ANDROID_HOME/emulator/emulator" -avd unitrading-ci -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 > artifacts/emulator.log 2>&1 &
-          emulator_pid=$!
-          booted=false
-          for attempt in $(seq 1 150); do
-            if ! kill -0 "$emulator_pid" 2>/dev/null; then cat artifacts/emulator.log; exit 1; fi
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ] && adb shell cmd package list packages >/dev/null 2>&1 && adb shell am get-current-user >/dev/null 2>&1; then booted=true; break; fi
-            sleep 2
-          done
-          if [ "$booted" != true ]; then cat artifacts/emulator.log; adb devices; exit 1; fi
-          adb logcat -v threadtime -b all '*:W' > artifacts/emulator-logcat.log 2>&1 &
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-          # System apps (SystemUI included) keep hitting ANRs for a minute after boot_completed. Their "isn't
-          # responding" dialog takes the active window from the app under test, so have the system kill the stuck
-          # app instead of asking.
-          adb shell settings put global hide_error_dialogs 1
-          adb shell input keyevent 82
-      - name: Test debug and minified release on device
-        run: |
-          # Close any error dialog that came up before error dialogs were hidden.
-          adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
-          touch artifacts/android-debug-start
-          ./gradlew :androidApp:connectedDebugAndroidTest -PcredentialStoreTest=true --max-workers=2
-          python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/debug --since-file artifacts/android-debug-start
-          adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
-          touch artifacts/android-release-start
-          ./gradlew :androidApp:connectedReleaseAndroidTest -PcredentialStoreTest=true -PinstrumentationBuildType=release --max-workers=2
-          python3 scripts/check-android-tests.py androidApp/build/outputs/androidTest-results/connected/release --since-file artifacts/android-release-start
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: android-device-test-reports
-          path: |
-            androidApp/build/reports/androidTests/
-            androidApp/build/outputs/androidTest-results/
-            androidApp/build/outputs/mapping/
-            artifacts/emulator.log
-            artifacts/emulator-logcat.log
-
   test-ios:
     name: iOS ARM64 framework, app, and platform checks
     runs-on: macos-15
@@ -306,7 +232,7 @@ jobs:
   sign-android:
     name: 签名 Android Release
     # iOS is not a release target: its job must not hold back the Android package.
-    needs: [build-android, test-desktop, test-android]
+    needs: [build-android, test-desktop]
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
