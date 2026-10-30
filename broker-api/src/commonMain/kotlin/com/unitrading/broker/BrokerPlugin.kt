@@ -1,6 +1,8 @@
 package com.unitrading.broker
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 
 interface BrokerPlugin {
     val descriptor: BrokerDescriptor
@@ -9,6 +11,8 @@ interface BrokerPlugin {
     val accounts: List<AccountInfo>
     val catalog: StateFlow<BrokerCatalog>
     val market: StateFlow<MarketSnapshot>
+    /** Best-effort live entry/protection notifications; never replays historical executions. */
+    val tradeFills: Flow<TradeFill> get() = emptyFlow()
     suspend fun searchInstruments(query: String) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     suspend fun resynchronize() {}

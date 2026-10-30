@@ -21,9 +21,10 @@ internal data class PositionProtection(
 )
 
 /** Pure projection of server evidence. It never writes orders or changes raw protocol rows. */
-internal class ProtectionClassifier(private val book: EntityBook, private val accountId: Long) {
+internal class ProtectionClassifier(private val book: EntityBook, private val accountId: Long, private val includeInactive: Boolean = false) {
     private val all = book.list("order").associateBy { it.long("id") }
-    private val active = all.values.filter { it.long("accountId") == accountId && activeOrder(it) }
+    private val active = all.values.filter { it.long("accountId") == accountId &&
+        (activeOrder(it) || includeInactive && it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled")) }
     private val links = book.list("orderStrategyLink")
     private val memberships = links.groupBy { it.long("orderId") }
     private val filled = book.list("fill").filter { it.bool("active") != false }
@@ -192,9 +193,9 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
             }
             if (entryId in relations) relations[entryId] = OrderRelation(OrderRole.ENTRY)
             val exitCompleted = exits.any { it.str("ordStatus") in setOf("Filled", "Completed") }
-            val activated = !exitCompleted && (entry.str("ordStatus") in setOf("Filled", "Completed") || filledQuantity(entryId) > 0)
+            val activated = (includeInactive || !exitCompleted) && (entry.str("ordStatus") in setOf("Filled", "Completed") || filledQuantity(entryId) > 0)
             val group = "atm:$strategyId"
-            exits.filter(::activeOrder).forEach { exit ->
+            exits.filter { includeInactive || activeOrder(it) }.forEach { exit ->
                 val id = exit.long("id")!!
                 relations[id] = OrderRelation(exitRole(id)!!, group, entryId, activated,
                     when { exitCompleted -> "已有保护腿成交，等待净仓和关联订单同步"; !activated -> "ATM 入场尚未成交，保护单等待激活"; else -> null })

@@ -37,7 +37,9 @@ fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
 }
 
 @Composable
-fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
+fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundPlayer: TradeSoundPlayer? = null) {
+    val player = remember(soundPlayer) { soundPlayer ?: platformTradeSoundPlayer() }
+    LaunchedEffect(runtime, player) { TradeSoundController(player).run(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
     TradingTheme(theme) {
         val colors = TradingColors

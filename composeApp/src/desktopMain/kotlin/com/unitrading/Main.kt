@@ -8,6 +8,7 @@ import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
+import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.ui.TradingScreen
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -39,8 +40,12 @@ class DesktopSnapshotStore(private val directory: Path = defaultDataDirectory())
 private fun defaultDataDirectory(): Path = (System.getProperty("unitrading.dataDir") ?: System.getenv("UNITRADING_DATA_DIR"))?.let(Path::of)
     ?: Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "demo-v1")
 
-fun main() = application {
-    val runtime = remember { TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore()) }
+fun main(args: Array<String>) = application {
+    val localDemo = "--local-demo" in args
+    val runtime = remember {
+        if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
+        else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
+    }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
     Window(onCloseRequest = {
@@ -54,7 +59,8 @@ fun main() = application {
                 else closing = false
             }
         }
-    }, title = "UniTrading · 交易终端", state = rememberWindowState(width = 1440.dp, height = 940.dp)) {
-        TradingScreen(runtime, remember { DesktopTradovateLogin() })
+    }, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
+        state = rememberWindowState(width = 1440.dp, height = 940.dp)) {
+        TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() })
     }
 }

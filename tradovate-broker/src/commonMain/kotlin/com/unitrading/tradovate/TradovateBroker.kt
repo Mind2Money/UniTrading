@@ -3,6 +3,7 @@ package com.unitrading.tradovate
 import com.unitrading.broker.*
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +33,9 @@ class TradovateBroker(
     override val accounts get() = catalog.value.accounts
     private val mutableMarket = MutableStateFlow(MarketSnapshot(connected = false, tradingReady = false, statusMessage = "尚未连接"))
     override val market: StateFlow<MarketSnapshot> = mutableMarket.asStateFlow()
+    private val tradeEvents = MutableSharedFlow<TradeFill>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val tradeFills = tradeEvents.asSharedFlow()
+    private val tradeFillTracker = TradeFillTracker()
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private var incompleteAccounts = emptySet<String>()
     private val book = EntityBook()
@@ -184,6 +188,7 @@ class TradovateBroker(
             book.snapshot(snapshot)
             queuedEvents.forEach(book::event)
             queuedEvents.clear()
+            tradeFillTracker.baseline(book, authorizedAccounts, now())
             synchronizing = false
             connected = true
             reconcile(fullSnapshot = true)
@@ -195,6 +200,7 @@ class TradovateBroker(
                 if (synchronizing) {
                     queuedEvents.forEach(book::event)
                     queuedEvents.clear()
+                    tradeFillTracker.baseline(book, authorizedAccounts, now())
                     synchronizing = false
                     reconcile()
                     rebuild()
@@ -385,6 +391,7 @@ class TradovateBroker(
                 reconcile(deletedPositionId = deletedId.takeIf { data.str("entityType") == "position" },
                     deletedOrderId = deletedId.takeIf { data.str("entityType") == "order" })
                 rebuild()
+                if (!stopped) tradeFillTracker.event(book, authorizedAccounts, data).forEach { tradeEvents.tryEmit(it) }
             }
         }
         if (metadataJob?.isActive != true) metadataJob = scope.launch { hydrateContracts() }
@@ -733,17 +740,32 @@ class TradovateBroker(
             if (body["stopPrice"] != null) "stopPrice" else if (body["price"] != null) "price" else null,
             body.priceValue("stopPrice") ?: body.priceValue("price"),
             if (kind == "close") book.list("position").firstOrNull { it.long("accountId")?.toString() == account && it.long("contractId") == entity }?.long("id") else null) }
-        lock.withLock { awaiting[key] = wait; publish() }
+        lock.withLock {
+            awaiting[key] = wait
+            if (kind == "place") {
+                val contract = contractSpecs.entries.firstOrNull { it.value.symbol == body.str("symbol") }?.key
+                if (contract != null) tradeFillTracker.prepareEntry(book, account.toLong(), contract,
+                    body.str("action") ?: "", body.long("orderQty") ?: 0, wait.tag)
+            }
+            publish()
+        }
         return try {
             val response = rest("POST", route, body).jsonObject
             val failure = response.str("failureReason")
             if (failure != null && failure != "Success") {
-                lock.withLock { awaiting.remove(key) }
+                lock.withLock {
+                    awaiting.remove(key)
+                    if (kind == "place") tradeFillTracker.rejectEntry(account.toLong(), wait.tag)
+                }
                 TradeResult(false, "Tradovate 拒绝：${safeMessage(response.str("failureText") ?: failure)}")
             } else {
                 if (kind == "place" && response.long("orderId") == null) throw TradovateRemoteException(0, "缺少订单回执 ID，无法确认结果")
                 lock.withLock {
-                    if (kind == "place") awaiting[key] = wait.copy(entity = response.long("orderId"))
+                    if (kind == "place") {
+                        awaiting[key] = wait.copy(entity = response.long("orderId"))
+                        tradeFillTracker.acceptEntry(account.toLong(), wait.tag, response.long("orderId")!!)
+                        tradeFillTracker.drain(book, authorizedAccounts).forEach { tradeEvents.tryEmit(it) }
+                    }
                     reconcile(); publish()
                 }
                 TradeResult(true, "Tradovate 已受理，最终结果以服务器订单/成交更新为准", response.long("orderId")?.toString() ?: entity?.toString())
@@ -753,7 +775,13 @@ class TradovateBroker(
             throw cancel
         } catch (error: Exception) {
             val certainRejection = error is TradovateRemoteException && error.status in 400..499
-            lock.withLock { if (certainRejection) awaiting.remove(key) else unknownCommands.add(key); publish() }
+            lock.withLock {
+                if (certainRejection) {
+                    awaiting.remove(key)
+                    if (kind == "place") tradeFillTracker.rejectEntry(account.toLong(), wait.tag)
+                } else unknownCommands.add(key)
+                publish()
+            }
             if (certainRejection) TradeResult(false, safeMessage(error.message ?: "请求被拒绝"))
             else TradeResult(false, "交易结果未知，未自动重试。请在 Tradovate 官网核对，当前会话禁止继续写入。", outcome = CommandOutcome.UNKNOWN)
         }

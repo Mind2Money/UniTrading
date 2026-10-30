@@ -1,7 +1,10 @@
 package com.unitrading.demo
 
 import com.unitrading.broker.*
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -35,6 +38,10 @@ class DemoBroker(
     override val instruments: List<Instrument> = settings.instruments.toList()
     override val accounts: List<AccountInfo> = settings.accounts.toList()
     override val catalog: StateFlow<BrokerCatalog> = MutableStateFlow(BrokerCatalog(instruments, accounts))
+    private val tradeEvents = MutableSharedFlow<TradeFill>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    override val tradeFills = tradeEvents.asSharedFlow()
+    private val pendingTradeFills = mutableListOf<TradeFill>()
+    private var soundEpoch = 0L
     private val bySymbol = instruments.associateBy { it.symbol }
 
     // One lock also serializes ticks with every account's requests. A committed, detached
@@ -63,6 +70,7 @@ class DemoBroker(
             }
             load(saved)
         }
+        pendingTradeFills.clear()
         publish()
     }
 
@@ -142,7 +150,11 @@ class DemoBroker(
     /** Export the last complete transaction; this does not block a coroutine or mutate state. */
     fun exportState(): String = SNAPSHOT_JSON.encodeToString(committed.value!!)
 
-    suspend fun reset(seedTrades: Boolean = true) = transaction { initialize(seedTrades) }
+    suspend fun reset(seedTrades: Boolean = true) = transaction {
+        initialize(seedTrades)
+        pendingTradeFills.clear()
+        soundEpoch++
+    }
 
     /** Deterministic feed injection. Equal timestamps are allowed; time cannot move backwards. */
     suspend fun setQuote(symbol: String, bid: Long, ask: Long, timeMs: Long) = transaction {
@@ -170,6 +182,7 @@ class DemoBroker(
             action()
             publish()
         } catch (e: Exception) {
+            pendingTradeFills.clear()
             load(before)
             throw e
         }
@@ -191,6 +204,7 @@ class DemoBroker(
         }
         var working = original.copy()
         val previousId = nextId
+        val previousFills = pendingTradeFills.size
         val result = try {
             require(requestId.isNotBlank() && requestId.length <= 128) { "requestId 须为 1..128 个非空字符" }
             val outcome = when (command.kind) {
@@ -241,6 +255,7 @@ class DemoBroker(
         } catch (e: IllegalArgumentException) {
             working = original.copy()
             nextId = previousId
+            while (pendingTradeFills.size > previousFills) pendingTradeFills.removeAt(pendingTradeFills.lastIndex)
             TradeResult(false, e.message ?: "无效交易请求")
         }
         if (!result.accepted) event(working, "拒绝：${result.message}")
@@ -334,6 +349,7 @@ class DemoBroker(
         ledger.balance = balance
         ledger.positions.add(position)
         event(ledger, "成交 ${position.id} ${request.symbol} ${request.side}")
+        pendingTradeFills.add(TradeFill(ledger.accountId, "entry:$soundEpoch:${position.id}", position.id, OrderRole.ENTRY))
         return position
     }
 
@@ -353,6 +369,8 @@ class DemoBroker(
         ledger.archivedNetPnl = archived
         ledger.trades.add(trade)
         event(ledger, "$reason ${position.id}")
+        val role = when (reason) { "止损" -> OrderRole.STOP_LOSS; "止盈" -> OrderRole.TAKE_PROFIT; else -> null }
+        if (role != null) pendingTradeFills.add(TradeFill(ledger.accountId, "$soundEpoch:${position.id}", trade.id, role))
         return trade
     }
 
@@ -532,6 +550,15 @@ class DemoBroker(
         committed.value = saved
         marketFlow.value = saved.market
         for (account in saved.accounts) accountFlows.getValue(account.state.accountId).value = account.state
+        // Notify only after the transaction commits, never during a rollback or snapshot restore.
+        for (fill in pendingTradeFills) {
+            val state = saved.accounts.first { it.state.accountId == fill.accountId }.state
+            val committedFill = if (fill.role == OrderRole.ENTRY) {
+                state.positions.any { it.id == fill.executionId } || state.trades.any { it.positionId == fill.executionId }
+            } else state.trades.any { it.id == fill.executionId }
+            if (committedFill) tradeEvents.tryEmit(fill)
+        }
+        pendingTradeFills.clear()
     }
 
     private fun load(saved: StoredBroker) {
