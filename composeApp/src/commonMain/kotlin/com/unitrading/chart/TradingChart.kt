@@ -34,8 +34,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,6 +97,7 @@ fun TradingChart(
     var size by remember { mutableStateOf(IntSize(900, 400)) }
     /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
     var legendArea by remember { mutableStateOf<Rect?>(null) }
+    val orderLabelHits = remember { mutableListOf<Pair<Rect, EditableLine>>() }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
     var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
     val textMeasurer = rememberTextMeasurer()
@@ -152,7 +155,7 @@ fun TradingChart(
     // A market draft enters at the side of the quote it trades against, so its lines show even while the estimate is invalid.
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
-        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection))
+        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection), quote)
     val currentLines by rememberUpdatedState(lines)
     val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
     // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
@@ -284,6 +287,7 @@ fun TradingChart(
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size) {
                             var mode = ChartDragMode.NONE
+                            var labelDragOffset = 0f
                             detectDragGestures(
                                 orientationLock = null,
                                 onDragStart = { down, _, _ ->
@@ -298,8 +302,10 @@ fun TradingChart(
                                     }
                                     val s = currentScale
                                     // The line drawn last (the draft, then pending brackets) wins a tie, as it is drawn on top.
-                                    val hit = currentLines.asReversed().mapNotNull { it.edit }.minByOrNull { abs(s.y(it.price) - point.y) }
-                                    if (mode == ChartDragMode.PLOT && hit != null && abs(s.y(hit.price) - point.y) < 22 * density.density) {
+                                    val labelHit = orderLabelHits.lastOrNull { it.first.contains(point) }?.second
+                                    val hit = labelHit ?: currentLines.asReversed().mapNotNull { it.edit }.minByOrNull { abs(s.y(it.price) - point.y) }
+                                    if (mode == ChartDragMode.PLOT && hit != null && (labelHit != null || abs(s.y(hit.price) - point.y) < 22 * density.density)) {
+                                        labelDragOffset = if (labelHit != null) point.y - s.y(hit.price) else 0f
                                         drag = LineDrag(hit, s, hit.price)
                                     }
                                     if (mode == ChartDragMode.PRICE || mode == ChartDragMode.PLOT && drag == null) manualScale = s
@@ -308,7 +314,7 @@ fun TradingChart(
                                     change.consume()
                                     val active = drag
                                     if (active != null) {
-                                        drag = active.copy(price = active.scale.price(change.position.y, instrument.tickSize))
+                                        drag = active.copy(price = active.scale.price(change.position.y - labelDragOffset, instrument.tickSize))
                                     } else when (mode) {
                                         ChartDragMode.PRICE -> manualScale = (manualScale ?: currentScale).zoom(amount.y, instrument.tickSize * 4.0)
                                         ChartDragMode.TIME -> viewport = viewport.zoom(amount.x, plotWidth, currentTotal)
@@ -360,21 +366,23 @@ fun TradingChart(
                     val labelPadding = 3.dp.toPx()
                     val priceTags = mutableListOf<PriceTag>()
                     val placedLabels = listOfNotNull(legendArea?.takeIf { legendShown }).toMutableList()
-                    fun priceLine(price: Long, label: String, color: Color, dashed: Boolean = true, alpha: Float = 1f) {
-                        val y = scale.y(price)
+                    orderLabelHits.clear()
+                    fun priceLine(line: OrderLine, color: Color) {
+                        val y = scale.y(line.price)
                         if (y !in top..plotBottom) return
-                        drawLine(color.copy(alpha = alpha), Offset(left, y), Offset(right, y), strokeWidth = 1.3f,
-                            pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
-                        val measured = textMeasurer.measure(label, labelStyle)
-                        val labelTop = y - measured.size.height - labelPadding
+                        drawLine(color.copy(alpha = line.alpha), Offset(left, y), Offset(right, y), strokeWidth = 1.3f,
+                            pathEffect = if (line.dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
+                        priceTags.add(PriceTag(line.price, colors.Ink, colors.Surface))
+                        val ink = if (line.tone == LineTone.POSITION) colors.pnl(line.pnl) else colors.Ink
+                        val measured = textMeasurer.measure(line.label, labelStyle.copy(color = ink), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            constraints = Constraints(maxWidth = (right - left - labelPadding * 4).toInt().coerceAtLeast(1)))
                         val box = Size(measured.size.width + labelPadding * 2, measured.size.height + labelPadding * 2)
-                        // Labels of nearby lines would print over each other, so a label moves right of any it would cover.
-                        var x = left + labelPadding
-                        while (true) x = placedLabels.firstOrNull { it.overlaps(Rect(Offset(x, labelTop - labelPadding), box)) }?.right?.plus(labelPadding) ?: break
-                        placedLabels.add(Rect(Offset(x, labelTop - labelPadding), box))
-                        drawRect(colors.Surface.copy(alpha = 0.94f), Offset(x, labelTop - labelPadding), box)
-                        text(label, x + labelPadding, labelTop, colors.Ink)
-                        priceTags.add(PriceTag(price, colors.Ink, colors.Surface))
+                        val bounds = placeOrderLabel(box, y, Rect(left + labelPadding, top, right - labelPadding, plotBottom), placedLabels, labelPadding) ?: return
+                        placedLabels.add(bounds)
+                        line.edit?.let { orderLabelHits.add(bounds to it) }
+                        drawLine(color.copy(alpha = .65f), Offset(bounds.right, bounds.center.y), Offset(right, y), 1f)
+                        drawRect(colors.Surface.copy(alpha = 0.94f), bounds.topLeft, bounds.size)
+                        drawText(measured, topLeft = bounds.topLeft + Offset(labelPadding, labelPadding))
                     }
                     for (i in 0..5) {
                         val y = top + (plotBottom - top) * i / 5
@@ -461,7 +469,7 @@ fun TradingChart(
                             LineTone.TARGET -> colors.Target
                             LineTone.ORDER -> colors.Muted
                         }
-                        priceLine(line.price, line.label, color, line.dashed, line.alpha)
+                        priceLine(line, color)
                     }
                     }
                     if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, plotBottom, paneHeight, step,

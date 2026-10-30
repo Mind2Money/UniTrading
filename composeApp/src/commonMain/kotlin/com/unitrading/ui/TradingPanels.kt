@@ -139,18 +139,13 @@ internal fun OrderTicket(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Side.entries.forEach { side ->
-                FilterChip(draft.side == side, { onDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")) }, label = { Text(side.label()) }, modifier = Modifier.weight(1f))
+                FilterChip(draft.side == side, { onDraft(draft.withSide(side)) }, label = { Text(side.label()) }, modifier = Modifier.weight(1f))
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             OrderKind.entries.filter { it in capabilities.orderKinds }.forEach { kind ->
                 FilterChip(draft.kind == kind, {
-                    onDraft(draft.copy(kind = kind, entry = if (kind == OrderKind.MARKET) "" else quote?.let {
-                        val distance = maxOf(50L, instrument.minStopTicks * 4) * instrument.tickSize
-                        val current = if (draft.side == Side.BUY) it.ask else it.bid
-                        val above = (draft.side == Side.BUY) == (kind == OrderKind.STOP)
-                        instrument.formatPrice(if (above) current + distance else maxOf(instrument.tickSize, current - distance))
-                    } ?: "", stopLoss = "", takeProfit = ""))
+                    onDraft(draft.withKind(instrument, quote, kind))
                 }, label = { Text(kind.label(), fontSize = 11.sp) })
             }
         }

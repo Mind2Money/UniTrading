@@ -21,7 +21,8 @@ internal enum class LineTone { POSITION, STOP, TARGET, ORDER }
 
 /**
  * One horizontal line on the plot. [edit] is set when dragging it does something, [pnl] is the estimated result of a
- * stop loss or take profit at [price] ([gross] when fees are not in it), and [moving] marks the line under the pointer.
+ * stop loss or take profit at [price], or the position's floating result at the current quote ([gross] when fees are
+ * not in it), and [moving] marks the line under the pointer.
  */
 internal data class OrderLine(
     val price: Long,
@@ -79,12 +80,14 @@ internal fun orderLines(
     draftEntry: Long?,
     drag: LineDrag?,
     options: OrderLineOptions,
+    quote: Quote? = null,
 ): List<OrderLine> = buildList {
     val moving = drag?.line
     if (options.showPositions) {
         positions.forEach { p ->
-            add(OrderLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)}  #${p.id.takeLast(5)}", LineTone.POSITION,
-                dashed = false, alpha = if (p.id == selectedPosition?.id) .85f else .3f))
+            val pnl = quote?.let { positionPnl(instrument, p, it) }
+            add(OrderLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit} · 浮盈亏 ${resultLabel(pnl, true)} · #${p.id.takeLast(5)}", LineTone.POSITION,
+                dashed = false, alpha = if (p.id == selectedPosition?.id) .85f else .3f, pnl = pnl, gross = true))
         }
         selectedPosition?.let { p ->
             listOf(true to p.stopLoss, false to p.takeProfit).forEach { (stop, base) ->

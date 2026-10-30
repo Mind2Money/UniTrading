@@ -98,4 +98,18 @@ class OrderLinesTest {
         assertEquals("SL 止损 卖出 STOP  #702 · 毛 -50.00 USD · 拖动止损", stop.label)
         assertEquals(EditableLine.Protection(position, true, 5_490_000_000), stop.edit)
     }
+
+    @Test fun positionLabelsShowLiveGrossPnlUsingTheLiquidationSideOfTheQuote() {
+        val buy = Position("buy", mes.symbol, Side.BUY, 200, 5_500_000_000, 0, marginMicros = 0, feesKnown = false)
+        val sell = buy.copy(id = "sell", side = Side.SELL)
+        fun lines(quote: Quote?) = orderLines(mes, listOf(buy, sell), buy, emptyList(), null, null, null, null, all, quote)
+        val first = lines(Quote(5_501_000_000, 5_501_250_000, 0))
+        assertEquals(10_000_000, first[0].pnl)
+        assertEquals(-12_500_000, first[1].pnl)
+        assertTrue(first[0].label.contains("买入 2 张 · 浮盈亏 毛 +10.00 USD"))
+        assertTrue(first[1].label.contains("卖出 2 张 · 浮盈亏 毛 -12.50 USD"))
+        assertEquals(-10_000_000, lines(Quote(5_499_000_000, 5_499_250_000, 1))[0].pnl)
+        assertNull(lines(null)[0].pnl)
+        assertTrue(lines(null)[0].label.contains("浮盈亏 毛 — USD"))
+    }
 }

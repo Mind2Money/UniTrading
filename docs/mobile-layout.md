@@ -1,6 +1,6 @@
 # 手机布局：图表优先与折叠下单面板
 
-实现日期：2026-10-29。参考 MT5 手机版图表页：图表占据屏幕主体，下单收进图表下方的折叠面板。代码入口：[TradingScreen.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt)（布局切换）、[MobileTradePanel.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/MobileTradePanel.kt)（折叠条与下单面板）、[ChartOverlay.kt](../composeApp/src/commonMain/kotlin/com/unitrading/chart/ChartOverlay.kt)（单行工具条、图层菜单、紧凑图例与缩放按钮）、[TradingChart.kt](../composeApp/src/commonMain/kotlin/com/unitrading/chart/TradingChart.kt)（`ChartChrome`）。
+初版实现日期：2026-10-29；手机票据重做：2026-10-30。图表占据屏幕主体，下单收进图表下方的折叠面板。代码入口：[TradingScreen.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt)（布局切换）、[MobileTradePanel.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/MobileTradePanel.kt)（折叠条与下单面板）、[MobileOrderTicket.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/MobileOrderTicket.kt)（手机专用票据）、[ChartOverlay.kt](../composeApp/src/commonMain/kotlin/com/unitrading/chart/ChartOverlay.kt)（单行工具条、图层菜单、紧凑图例与缩放按钮）、[TradingChart.kt](../composeApp/src/commonMain/kotlin/com/unitrading/chart/TradingChart.kt)（`ChartChrome`）。
 
 宽度小于 900dp 或高度小于 600dp 时使用手机布局（Android、iOS 与窄窗口桌面相同）；桌面多栏工作台不变。
 
@@ -10,29 +10,44 @@
 | --- | --- | --- |
 | 顶部 | 应用标题栏（UniTrading、账户名、环境、“账户”按钮）+ 常驻连接状态行 | 图表工具条一行：品种搜索、当前周期（点开为下拉）、指标、图层菜单，右端固定环境徽标；连接状态行仅在交易未就绪时显示 |
 | 图上悬浮 | 品种 / 收藏周期 / 图层开关三行工具条；图例含买卖按钮与成交量；“＋ － 较早 较新 重置视图” | 只剩图例（标题、OHLC、涨跌、量、时间，收起按钮在标题右侧）和左下角“＋ － 复位”图标；较早/较新改由拖动平移 |
-| 图下 | 手势说明行、“本品种 n 笔持仓 / 新建订单”、资金行 | 折叠下单条：卖出价/买入价按钮、点差、账户持仓数与浮动盈亏、“下单” |
+| 图下 | 手势说明行、“本品种 n 笔持仓 / 新建订单”、资金行 | 折叠下单条：持仓/浮动盈亏与下单入口一行，卖出 BID / 买入 ASK 两个等宽大按钮一行；点差收进票据明细 |
 
 - 仓位、挂单、历史三个图层和 OHLC 数据表收进“图层”下拉；菜单保持打开，可连续切换。收藏周期和自定义周期仍在周期下拉中。
 - 图例（含指标列表）的收起/展开状态本机保存，切到其他页面再回到图表、重启后保持；从未切换时，短屏（横屏）默认收起。
 - 资金行（余额、净值、浮动盈亏、保证金、保证金比例）移到“交易”“账户”两页顶部；连接状态与“同步账户”常驻“账户”页。
+- 高度不足 550dp 时，折叠条压为一行买卖报价与“下单”，省略持仓摘要和把手；从底部“交易”页查看持仓。
 - 手机不再显示顶栏“账户”按钮与账户对话框，由底部“账户”页承担。其他三页保留一行精简标题栏（应用名、账户名、环境徽标）。
 
 ## 下单面板
 
 - 展开：点“下单”，或点按、上滑把手；折叠条的卖出/买入按钮只选择方向并展开面板，不直接下单。
-- 收起：点“收起”，点按、下滑把手，或系统返回键。面板关闭后返回键交给系统，不被图表页拦截。
-- 竖屏：面板占图表页约 60% 高度，图表留在上方，自动价格范围包含草稿入场价/SL/TP，草稿入场线仍可拖动。面板打开时隐藏底部导航和图例，避免图例盖住订单线标签；拖动订单线时图例临时出现并显示预估。
+- 收起：点“收起”，点按、下滑把手，或系统返回键。键盘打开时先由系统关闭键盘，再次返回才收起面板；面板关闭后返回交给系统。
+- 竖屏：面板默认占图表页约 70% 高度（上限 600dp），“展开”增至约 86%，“还原”回到默认高度。图表留在上方，自动价格范围包含草稿入场价/SL/TP，草稿线仍可拖动。面板打开时隐藏底部导航和图例；拖动订单线时图例临时出现并显示预估。
+- 输入键盘打开时，票据使用键盘上方的可用空间，暂时隐藏图表；表单可滚动，底部检查按钮固定。关闭键盘后恢复图表和原面板高度。
 - 横屏（宽 ≥ 600dp 且宽 > 高）：面板以 340dp 宽停靠在图表右侧，不显示把手。
-- 面板头部显示“新建订单”、环境徽标、品种、账户名和结算币种；表单与桌面下单票据相同。提交仍先弹出确认框，确认前不发送指令。
+- 面板头部显示“新建订单”、环境徽标、品种、账户名和结算币种。手机使用独立票据：订单类型分段按钮 → 买卖报价卡片 → 数量加减与输入 → 挂单入场价（仅限价/突破显示）→ 并排 SL/TP → 参考保护价/清除 → 可展开预估与合约信息。
+- 数量加减按品种最小值、最大值和步长校验，期货仍为整数张；非法手动输入不会被自动修正成可提交的数量。再次点击已选方向或类型保留已填价格，切换方向/类型沿用原有清空保护价行为。
+- 检查按钮与方向、类型、数量、预估入场摘要固定在底部；首条校验错误直接显示在按钮上方，预估明细折叠时仍可见。点击报价卡片只选方向；检查后仍弹出原确认框，确认前不发送指令。
 - 草稿线只在面板打开时显示；下单被受理后面板自动收起，草稿数值保留；切换账户时收起。
 - 折叠条上的“持仓 n · 浮动盈亏”跳转“交易”页。
 
 ## 实现说明
 
+- 交易线标签在主图右边、价格轴左边对齐，适用于桌面和手机。近价标签避让图例与其他标签，必要时换行并用连接线指回真实价位；空间耗尽时保留水平价线和价格轴读数。可编辑标签本身也能拖动，偏移后的标签起拖不会让价格跳到标签所在高度。
+- 持仓入场标签包含方向、数量及单位、浮动毛盈亏、仓位编号。浮动盈亏沿用 `positionPnl`：多仓取 Bid，空仓取 Ask，按当前报价刷新；不扣除手续费，无报价显示“—”。止损止盈标签继续显示触发价对应的预估结果。
 - `TradingChart` 原有 30 个参数。直接再加两个参数后，D8 生成的 dex 被 ART 校验拒绝（`VerifyError`，Android debug 包进入图表页即崩溃；桌面 JVM 正常）。手机选项因此合并为一个参数（现为 `ChartChrome`，也承载图例收起状态），参数数量保持 30。以后给该函数增加参数，须在 Android 设备或模拟器上实际运行验证，桌面测试发现不了这类问题。
 - 系统返回键使用 `androidx.navigationevent` 的 `NavigationBackHandler`。该库已经通过 Compose UI 间接引入，这里显式声明 `navigationevent-compose` 1.1.0 以便在共享代码中编译。
 
-## 验证
+## 本次验证（2026-10-30）
+
+- `:composeApp:desktopTest`：127 项全部通过，其中 `MobileLayoutTest` 10 项；覆盖常规竖屏、320×640dp / 1.3 倍字体、860×400dp 横屏、固定提交区、展开/还原、数量步长与边界、重复点击保留草稿、无效输入禁止提交、下单前确认和图表拖线。
+- 新增 `OrderLabelLayoutTest` 验证标签靠右、避让图例与邻近标签、窄图不进入价格轴；`OrderLinesTest` 验证多仓按 Bid、空仓按 Ask 计算浮盈亏、报价更新及无报价占位。
+- Android debug APK 与 instrumentation APK 编译通过；API 36 模拟器的 `AppearanceUiTest` 通过（1 项综合流程）。强制开启软键盘，验证检查按钮可见、返回先关闭键盘、图表视窗不变、数量加减与再次返回收起面板。仅使用隔离的 `.credentialtest` 包与本地模拟数据。
+- 已检查截图：`artifacts/mobile-order-panel.png`、`mobile-chart-first.png`、`mobile-small-order-details.png`、`mobile-landscape-order.png`、`desktop-workstation.png`，以及 `artifacts/android-appearance/files/android-order-keyboard.png`、`android-order-panel.png`。
+- 构建与设备结果：`artifacts/mobile-redesign/result-5.json`、`build-5.log`、`device-5.log`，设备完整输出 `artifacts/android-appearance-instrumentation.txt`。桌面 JUnit 报告位于 `composeApp/build/test-results/desktopTest/`。
+- 本次未验证：R8 release、真机、iOS，以及 Tradovate 真实下单。下面的 release 设备测试记录属于初版，不能作为本次改动的验证结果。
+
+## 初版验证（2026-10-29）
 
 - `MobileLayoutTest`（Compose Desktop，8 项）：400×800dp 竖屏图表高度 ≥ 66%，无应用标题栏与资金行；收起图例（含指标列表）后切页再回来仍收起，并已写入本机设置；快捷卖出展开面板并选中卖出，导航和图例隐藏，收起后恢复，持仓入口跳转交易页；把手上滑、下滑、点按；注入导航返回事件可收起面板，面板关闭后返回交给系统；确认下单后自动收起；面板打开时拖动草稿入场线显示预估并回填；周期下拉、指标、图层菜单与数据表；860×400dp 横屏面板停靠右侧。截图：`artifacts/mobile-chart-first.png`、`mobile-order-panel.png`、`mobile-landscape-order.png`。
 - Android 模拟器（API 36，1080×2400，420dpi）：`AppearanceUiTest` 新增步骤：点“下单”展开面板，底部导航隐藏，系统返回收起面板且应用未退出。debug 包与 release（R8，`-PinstrumentationBuildType=release`）包的 4 项设备测试均通过。

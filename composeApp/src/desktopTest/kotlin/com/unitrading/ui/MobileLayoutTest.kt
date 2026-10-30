@@ -42,8 +42,8 @@ class MobileLayoutTest {
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
 
-    private fun render(width: Dp = 400.dp, height: Dp = 800.dp) {
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+    private fun render(width: Dp = 400.dp, height: Dp = 800.dp, fontScale: Float = 1f) {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
             Box(Modifier.requiredSize(width, height).testTag("test-host")) { TradingScreen(runtime) }
         } }
         compose.waitForIdle()
@@ -73,7 +73,10 @@ class MobileLayoutTest {
         compose.onNodeWithTag("mobile-navigation").assertDoesNotExist()
         compose.onNodeWithTag("chart-legend").assertDoesNotExist()
         assertTrue(height("trading-chart") > host * .2f, "The chart stays visible above the open ticket")
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
+        compose.onNodeWithTag("order-quantity").assertIsDisplayed()
+        compose.onNodeWithTag("order-sl").assertIsDisplayed()
+        compose.onNodeWithTag("order-tp").assertIsDisplayed()
         capture("mobile-order-panel")
 
         compose.onNodeWithTag("collapse-order").performClick()
@@ -90,7 +93,7 @@ class MobileLayoutTest {
         render()
         val instrument = plugin.instruments.first()
         compose.onNodeWithTag("open-order").performClick()
-        compose.onNodeWithText(OrderKind.LIMIT.label()).performClick()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
         val q = plugin.market.value.quotes.getValue(instrument.symbol)
         val entry = q.ask - 500
         compose.onNodeWithTag("order-entry").performTextReplacement(instrument.formatPrice(entry))
@@ -162,7 +165,7 @@ class MobileLayoutTest {
         val before = session.state.value.positions.size
         compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("order-quantity").performTextReplacement("0.10")
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("确认模拟下单").assertExists()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNodeWithTag("confirm-action").performClick()
@@ -195,8 +198,55 @@ class MobileLayoutTest {
         assertTrue(chart.width > panel.width, "The chart keeps the wider side")
         compose.onNodeWithTag("order-panel-handle").assertDoesNotExist()
         compose.onNodeWithTag("order-quantity").assertExists()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
         capture("mobile-landscape-order")
         compose.onNodeWithTag("collapse-order").performClick()
         compose.onNodeWithTag("trade-bar").assertExists()
+    }
+
+    @Test fun quantityButtonsAndSideQuotesOnlyEditTheDraft() {
+        render()
+        val before = session.state.value
+        compose.onNodeWithTag("quick-buy").performClick()
+        compose.onNodeWithTag("quantity-increase").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.11")
+        compose.onNodeWithTag("quantity-decrease").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
+        compose.onNodeWithTag("reference-protection").performScrollTo().performClick()
+        val sl = compose.onNodeWithTag("order-sl").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        compose.onNodeWithTag("order-side-BUY").performScrollTo().performClick()
+        compose.onNodeWithTag("order-sl").assertTextContains(sl)
+        compose.onNodeWithTag("order-kind-MARKET").performClick()
+        compose.onNodeWithTag("order-sl").assertTextContains(sl)
+        compose.onNodeWithTag("order-side-SELL").performClick()
+        compose.onNodeWithTag("order-sl").assertTextContains("")
+        compose.onNodeWithTag("order-side-SELL").assertIsSelected()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.01")
+        compose.onNodeWithTag("quantity-decrease").assertIsNotEnabled()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("wrong")
+        compose.onNodeWithTag("quantity-increase").assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
+        compose.onNodeWithTag("order-error").assertIsDisplayed()
+        assertEquals(before, session.state.value, "Opening, choosing a side and editing quantities must not submit an order")
+    }
+
+    @Test fun smallPhoneKeepsReviewFixedWhileDetailsScrollAndPanelExpands() {
+        render(320.dp, 640.dp, fontScale = 1.3f)
+        compose.onNodeWithTag("open-order").performClick()
+        val normalHeight = height("order-panel")
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
+        compose.onNodeWithTag("expand-order").performClick()
+        assertTrue(height("order-panel") > normalHeight)
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
+        compose.onNodeWithTag("order-entry").performScrollTo().assertIsDisplayed()
+        val footer = compose.onNodeWithTag("review-order").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("order-estimates-toggle").performScrollTo().performClick()
+        compose.onNodeWithText("双边手续费").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
+        assertEquals(footer, compose.onNodeWithTag("review-order").fetchSemanticsNode().boundsInRoot)
+        capture("mobile-small-order-details")
+        compose.onNodeWithTag("expand-order").performClick()
+        assertEquals(normalHeight, height("order-panel"))
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
     }
 }

@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.chart.Chevron
-import com.unitrading.chart.TradeButton
 
 /**
  * Collapsed order panel under the phone chart, after MT5's trade sheet: Bid/Ask buttons pick a side and open the
@@ -39,28 +38,34 @@ internal fun MobileTradeBar(
     onSide: (Side) -> Unit,
     onPositions: () -> Unit,
     modifier: Modifier = Modifier,
+    short: Boolean = false,
 ) {
     val colors = TradingColors
     Column(modifier.fillMaxWidth().background(colors.Surface).testTag("trade-bar")) {
         DividerLine()
-        PanelHandle(open = false) { if (it) onOpen() }
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        if (!short) PanelHandle(open = false) { if (it) onOpen() }
+        if (!short) Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.Down, Modifier.testTag("quick-sell")) { onSide(Side.SELL) }
-            Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", fontSize = 11.sp, color = colors.Muted)
-            TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.Up, Modifier.testTag("quick-buy")) { onSide(Side.BUY) }
             val known = account.equityKnown && account.balanceKnown
-            Column(Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onPositions)
-                .testTag("panel-positions").padding(horizontal = 6.dp, vertical = 4.dp), horizontalAlignment = Alignment.End) {
-                Text("持仓 ${account.positions.size} · 浮动盈亏", fontSize = 10.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.weight(1f).heightIn(min = 44.dp).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onPositions)
+                .testTag("panel-positions"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("持仓 ${account.positions.size}", fontSize = 12.sp, color = colors.Muted, maxLines = 1)
                 Text(if (known) money(account.floatingPnlMicros, true) else "—", fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                    color = if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink, maxLines = 1)
+                    color = if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onOpen).testTag("open-order")
-                .padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("下单", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = colors.Accent)
+                .heightIn(min = 44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("下单", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = colors.Accent)
                 Chevron(down = false, colors.Accent)
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = if (short) 6.dp else 0.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MobileQuoteButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", null,
+                Modifier.weight(1f).testTag("quick-sell")) { onSide(Side.SELL) }
+            MobileQuoteButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", null,
+                Modifier.weight(1f).testTag("quick-buy")) { onSide(Side.BUY) }
+            if (short) TextButton(onOpen, Modifier.testTag("open-order"), contentPadding = PaddingValues(horizontal = 4.dp)) { Text("下单") }
         }
     }
 }
@@ -77,15 +82,17 @@ internal fun MobileOrderPanel(
     handle: Boolean,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    expanded: Boolean = false,
+    onExpand: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
-    Column(modifier.background(colors.Surface).testTag("order-panel")) {
+    Column(modifier.clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)).background(colors.Surface).testTag("order-panel")) {
         if (handle) {
             DividerLine()
             PanelHandle(open = true) { if (!it) onClose() }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = if (handle) 0.dp else 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = if (handle) 0.dp else 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("新建订单", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -94,7 +101,10 @@ internal fun MobileOrderPanel(
                 Text("${instrument.symbol} · $accountName · ${instrument.currency} 结算", fontSize = 11.sp, color = colors.Muted,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            TextButton(onClose, Modifier.testTag("collapse-order")) {
+            if (onExpand != null) TextButton(onExpand, Modifier.testTag("expand-order"), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text(if (expanded) "还原" else "展开", fontSize = 12.sp)
+            }
+            TextButton(onClose, Modifier.testTag("collapse-order"), contentPadding = PaddingValues(horizontal = 8.dp)) {
                 Text("收起", fontSize = 12.sp)
                 Spacer(Modifier.width(4.dp))
                 Chevron(down = true, colors.Accent)
@@ -111,7 +121,7 @@ private fun PanelHandle(open: Boolean, onOpen: (Boolean) -> Unit) {
     val threshold = with(LocalDensity.current) { 24.dp.toPx() }
     var travel by remember { mutableStateOf(0f) }
     Box(
-        Modifier.fillMaxWidth().height(18.dp)
+        Modifier.fillMaxWidth().height(24.dp)
             .draggable(rememberDraggableState { travel += it }, Orientation.Vertical,
                 onDragStarted = { travel = 0f },
                 onDragStopped = { if (travel < -threshold) onOpen(true) else if (travel > threshold) onOpen(false) })

@@ -237,7 +237,7 @@ class TradingScreenTest {
         assertTrue(compose.onNodeWithTag("trading-chart").fetchSemanticsNode().size.height >= 240, "Short layouts must reserve usable chart height")
         compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("order-quantity").assertExists()
-        compose.onNodeWithTag("review-order").performScrollTo().assertExists()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
         val target = File("../artifacts/compact-order.png")
         target.parentFile.mkdirs()
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)

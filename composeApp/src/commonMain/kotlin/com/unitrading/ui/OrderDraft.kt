@@ -10,6 +10,28 @@ internal data class OrderDraft(
     val stopLoss: String = "",
     val takeProfit: String = "",
 ) {
+    /** Use the contract's integer quantity grid; never round a malformed manual entry into an order. */
+    fun steppedQuantity(instrument: Instrument, increase: Boolean): String? {
+        val current = instrument.parseQuantity(quantity) ?: return null
+        val step = instrument.lotStepHundredths
+        if (step <= 0 || current !in instrument.minLotsHundredths..instrument.maxLotsHundredths || current % step != 0L) return null
+        if (increase && instrument.maxLotsHundredths - current < step) return null
+        if (!increase && current - instrument.minLotsHundredths < step) return null
+        return instrument.formatQuantity(if (increase) current + step else current - step)
+    }
+
+    fun withKind(instrument: Instrument, quote: Quote?, value: OrderKind): OrderDraft {
+        if (value == kind) return this
+        return copy(kind = value, entry = if (value == OrderKind.MARKET) "" else quote?.let {
+            val distance = maxOf(50L, instrument.minStopTicks * 4) * instrument.tickSize
+            val current = if (side == Side.BUY) it.ask else it.bid
+            val above = (side == Side.BUY) == (value == OrderKind.STOP)
+            instrument.formatPrice(if (above) current + distance else maxOf(instrument.tickSize, current - distance))
+        } ?: "", stopLoss = "", takeProfit = "")
+    }
+
+    fun withSide(value: Side): OrderDraft = if (value == side) this else copy(side = value, stopLoss = "", takeProfit = "")
+
     fun request(instrument: Instrument): OrderRequest? {
         val lots = instrument.parseQuantity(quantity) ?: return null
         val price = if (kind == OrderKind.MARKET) null else instrument.parsePrice(entry) ?: return null

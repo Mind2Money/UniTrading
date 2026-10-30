@@ -36,6 +36,30 @@ class AppearanceUiTest {
         error("UI did not render: $text; on screen: ${visibleTexts()}")
     }
     private fun awaitText(text: String) { awaitNode(text) }
+    private fun firstEditableNode(): AccessibilityNodeInfo {
+        if (android.os.Build.VERSION.SDK_INT >= 35) automation.clearCache()
+        val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        automation.rootInActiveWindow?.let(queue::add)
+        while (queue.isNotEmpty()) {
+            val item = queue.removeFirst()
+            if (item.isEditable) return item
+            for (i in 0 until item.childCount) item.getChild(i)?.let(queue::add)
+        }
+        error("No editable order quantity on screen")
+    }
+    private fun awaitKeyboard(scenario: ActivityScenario<MainActivity>, visible: Boolean) {
+        val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
+        var stableSince = 0L
+        while (SystemClock.uptimeMillis() < deadline) {
+            var shown = false
+            scenario.onActivity { shown = it.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true }
+            if (shown != visible) stableSince = 0L
+            else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
+            else if (SystemClock.uptimeMillis() - stableSince >= 500) { idle(); return }
+            SystemClock.sleep(50)
+        }
+        error("Keyboard visibility did not become $visible")
+    }
     /** Diagnostics for a failed wait: which window answers and what it shows. */
     private fun visibleTexts(): String {
         val root = automation.rootInActiveWindow ?: return "<no active window>"
@@ -59,6 +83,7 @@ class AppearanceUiTest {
         error("Chart gesture did not change viewport")
     }
     private fun node(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo? {
+        if (android.os.Build.VERSION.SDK_INT >= 35) automation.clearCache()
         val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
         var match: AccessibilityNodeInfo? = null
         automation.rootInActiveWindow?.let(queue::add)
@@ -72,8 +97,11 @@ class AppearanceUiTest {
         }
         return match
     }
-    private fun tap(text: String, last: Boolean = false) {
-        val item = awaitNode(text, last = last)
+    private fun tap(text: String, last: Boolean = false, description: Boolean = false) {
+        val item = awaitNode(text, last = last, description = description)
+        tapNode(item)
+    }
+    private fun tapNode(item: AccessibilityNodeInfo) {
         val bounds = Rect().also(item::getBoundsInScreen)
         val down = SystemClock.uptimeMillis()
         for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
@@ -142,7 +170,21 @@ class AppearanceUiTest {
             tap("下单")
             awaitText("新建订单")
             assertNull("The open panel takes the tab bar's place", node("图表"))
+            awaitText("检查并模拟买入")
+            val beforeImeViewport = awaitNode("拖动图表平移", description = true).stateDescription?.toString()
+            tapNode(firstEditableNode())
+            awaitKeyboard(scenario, true)
+            awaitText("检查并模拟买入")
+            screenshot("android-order-keyboard")
+            check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            awaitKeyboard(scenario, false)
+            idle()
+            assertNotNull("Back dismisses the keyboard before closing the ticket", node("新建订单"))
+            assertEquals(beforeImeViewport, awaitNode("拖动图表平移", description = true).stateDescription?.toString())
+            tap("增加数量", description = true)
             screenshot("android-order-panel")
+            val updatedQuantity = firstEditableNode().text.toString()
+            assertTrue("Quantity after increment: $updatedQuantity; UI: ${visibleTexts()}", updatedQuantity.contains("0.11"))
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitText("图表")
             assertNull(node("新建订单"))
