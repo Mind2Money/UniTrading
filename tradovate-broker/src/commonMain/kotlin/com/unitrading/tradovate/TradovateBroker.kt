@@ -85,6 +85,7 @@ class TradovateBroker(
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
     private val earlyCharts = mutableListOf<JsonObject>()
+    private var earlyChartOverflow = 0L
     private val subscribedQuotes = mutableSetOf<String>()
     private var accountSocket: TradovateSocket? = null
     private var marketSocket: TradovateSocket? = null
@@ -603,7 +604,7 @@ class TradovateBroker(
                     // Serialize both cancellation and binding so rapid switches cannot orphan IDs.
                     withContext(NonCancellable) {
                         cancelCharts(socket)
-                        if (watching != series || stopped) return@withContext
+                        if (watching != series || stopped || !marketReady) return@withContext
                         val load = ChartLoad(cached)
                         requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false), chartTimeRange(cached))
                         if (cached.isNotEmpty() && watching == series && !stopped) {
@@ -623,6 +624,7 @@ class TradovateBroker(
 
     /** Called under chartWatchLock and NonCancellable, including response-to-ID registration. */
     private suspend fun requestChart(socket: TradovateSocket, page: ChartPage, range: JsonObject) {
+        val overflow = lock.withLock { earlyChartOverflow }
         val response = try {
             socket.request("md/getChart", buildJsonObject {
                 put("symbol", page.series.first)
@@ -631,9 +633,13 @@ class TradovateBroker(
             })
         } catch (error: Exception) {
             lock.withLock { page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false) }
+            // An ACK arriving after request timeout cannot be correlated. Closing the socket
+            // releases every server subscription, including IDs that never reached this client.
+            if (error is TimeoutCancellationException || (error is TradovateRemoteException && error.status == 0)) resetChartConnection(socket)
             throw error
         }
         lock.withLock {
+            if (overflow != earlyChartOverflow) page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
             for (field in listOf("historicalId", "realtimeId")) {
                 val id = response[field] as? JsonPrimitive ?: continue
                 val key = chartSubscriptionKey(id) ?: continue
@@ -657,12 +663,27 @@ class TradovateBroker(
             earlyCharts.removeAll { chartSubscriptionKey(it["id"]) in cancelledChartIds }
             pendingChartCancellations.toMap()
         }
-        for ((key, id) in pending) {
-            try {
-                socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
-                lock.withLock { pendingChartCancellations.remove(key) }
-            } catch (_: Exception) { /* Keep failed IDs for the next cleanup; attempt the other IDs too. */ }
+        try {
+            withTimeout(5_000) {
+                for ((key, id) in pending) {
+                    try {
+                        socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
+                        lock.withLock { pendingChartCancellations.remove(key) }
+                    } catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { /* Keep failed IDs for the next cleanup; attempt the other IDs too. */ }
+                }
+            }
+        } catch (_: TimeoutCancellationException) {
+            // Bound the whole cleanup, rather than waiting 15 seconds for each old ID.
+            resetChartConnection(socket)
         }
+    }
+
+    private suspend fun resetChartConnection(socket: TradovateSocket) {
+        if (marketSocket !== socket) return
+        lock.withLock { marketReady = false; problem = "历史订阅超时，正在重建行情连接"; publish() }
+        runCatching { socket.close() }
+        scheduleReconnect()
     }
 
     private fun continueChartHistory(page: ChartPage) {
@@ -672,6 +693,7 @@ class TradovateBroker(
                 if (stopped || !marketReady || watching != page.series || lock.withLock { charts.values.none { it.page === page } }) return@launch
                 withContext(NonCancellable) {
                     cancelCharts(socket, page)
+                    if (!marketReady) return@withContext
                     val before = lock.withLock { page.load.nextPageBefore }
                     if (before != null && !page.load.failed && watching == page.series && !stopped) {
                         lock.withLock { page.load.beginPage() }
@@ -747,7 +769,10 @@ class TradovateBroker(
         volumeCharts[subscription]?.let { it.accept(chart); return }
         if (subscription in discardedCharts) return
         val channel = subscription?.let { charts[it] }
-        if (channel == null) { if (earlyCharts.size < 256) earlyCharts.add(chart); return }
+        if (channel == null) {
+            if (earlyCharts.size < 256) earlyCharts.add(chart) else earlyChartOverflow++
+            return
+        }
         val page = channel.page
         if (page.historyOnly && page.ended) return
         val key = page.series

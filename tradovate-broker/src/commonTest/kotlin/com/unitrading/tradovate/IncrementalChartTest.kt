@@ -28,6 +28,10 @@ class IncrementalChartTest {
         var automatic = true
         var replyGate: CompletableDeferred<Unit>? = null
         var cancelGate: CompletableDeferred<Unit>? = null
+        var dropChartAck = false
+        var dropCancelAck = false
+        var earlyPackets = 0
+        var marketClosed = false
         val rejectedCancellations = mutableSetOf<String>()
         private var nextId = 100
         var historicalId = 0
@@ -43,6 +47,7 @@ class IncrementalChartTest {
             val socket = delegate.socket(url)
             if (!url.contains("md")) return socket
             return object : TradovateWireSocket by socket {
+                override suspend fun close() { marketClosed = true; socket.close() }
                 override suspend fun send(text: String) {
                     val route = text.substringBefore('\n')
                     if (route != "md/getChart" && route != "md/cancelChart") { socket.send(text); return }
@@ -52,12 +57,14 @@ class IncrementalChartTest {
                         val subscription = body.getValue("subscriptionId").jsonPrimitive.content
                         cancelled += subscription
                         cancelGate?.await()
+                        if (dropCancelAck) return
                         val status = if (subscription in rejectedCancellations) 500 else 200
                         delegate.market.queue.send("""a[{"i":$requestId,"s":$status,"d":{}}]""")
                         return
                     }
                     charts += body
                     replyGate?.await()
+                    if (dropChartAck) return
                     val range = body.getValue("timeRange").jsonObject
                     if (range["asFarAsTimestamp"] != null && ++backfillRequests > (failBackfillAfter ?: Int.MAX_VALUE)) {
                         delegate.market.queue.send("""a[{"i":$requestId,"s":500,"d":{}}]""")
@@ -66,6 +73,7 @@ class IncrementalChartTest {
                     historicalId = nextId++
                     realtimeId = if (sameId) historicalId else nextId++
                     if (range["asMuchAsElements"] != null) liveId = realtimeId
+                    repeat(earlyPackets) { bars(historicalId, CACHE_NOW - BAR_STEP) }
                     delegate.market.queue.send("""a[{"i":$requestId,"s":200,"d":{"historicalId":$historicalId,"realtimeId":$realtimeId}}]""")
                     if (automatic) {
                         val start = range.str("asFarAsTimestamp")?.let { Instant.parse(it).toEpochMilliseconds() } ?: 0
@@ -259,5 +267,37 @@ class IncrementalChartTest {
         broker.watch("MESZ6", Timeframe.H1); runCurrent()
         assertTrue(wire.cancelled.count { it == "100" } >= 3)
         assertEquals(60L, wire.charts.last().getValue("chartDescription").jsonObject.long("elementSize"))
+    }
+
+    @Test fun earlyPacketOverflowCannotBecomeAPersistedCheckpoint() = runTest {
+        val store = Store()
+        val wire = Wire().apply { automatic = false; earlyPackets = 257 }
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.eoh(); runCurrent()
+        broker.disconnect(); runCurrent()
+        assertTrue(store.values.isEmpty())
+    }
+
+    @Test fun chartTimeoutClosesTheSocketToReleaseUnacknowledgedSubscriptions() = runTest {
+        val wire = Wire().apply { dropChartAck = true }
+        val broker = ready(wire)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        advanceTimeBy(15_001); runCurrent()
+        assertTrue(wire.marketClosed)
+        assertFalse(broker.market.value.tradingReady)
+        broker.disconnect(); runCurrent()
+    }
+
+    @Test fun unresponsiveCancellationHasOneFiveSecondBudgetForAllIds() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.dropCancelAck = true
+        broker.watch("MESZ6", Timeframe.M1); runCurrent()
+        advanceTimeBy(5_001); runCurrent()
+        assertTrue(wire.marketClosed)
+        assertEquals(1, wire.charts.size)
+        broker.disconnect(); runCurrent()
     }
 }
