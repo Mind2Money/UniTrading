@@ -951,7 +951,10 @@ class TradovateBroker(
                     capacityChecks.removeAll { time - it >= 3_600_000 }
                     check(capacityChecks.size < 450) { "数量校验频率受限" }
                     capacityChecks.lastOrNull()?.let { delay((1_000 - (time - it)).coerceIn(0, 1_000)) }
-                    check(!stopped && market.value.tradingReady && fresh(quotes[request.symbol]) && lock.withLock { book.revision == revision }) { "账户状态已变化" }
+                    // Dryrun evaluates server-side risk without sending an order. A quiet/closed
+                    // market's last local quote must not prevent quantity selection; estimate()
+                    // still enforces fresh quotes before any actual trading command.
+                    check(!stopped && market.value.tradingReady && lock.withLock { book.revision == revision }) { "账户状态已变化" }
                     validateContinuous(request)
                     capacityChecks.add(now())
                     rest("POST", "order/dryrun", capacityBody(accountId.toLong(), contractId, request, quantity)).jsonObject

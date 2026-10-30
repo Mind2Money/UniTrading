@@ -82,6 +82,21 @@ tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
     }
 }
 
+tasks.register<JavaExec>("tradovateReadOnlyCapacityProbe") {
+    group = "verification"
+    description = "Saved Demo session capacity and slider diagnostic; all trading writes are blocked."
+    dependsOn("desktopTestClasses")
+    classpath = files(desktopTestCompilation.output.allOutputs, desktopTestCompilation.runtimeDependencyFiles)
+    mainClass.set("com.unitrading.TradovateCapacityReadOnlyProbeKt")
+    args("--saved-demo-read-only")
+    systemProperty("file.encoding", "UTF-8")
+    doFirst {
+        check(isWindows && providers.gradleProperty("confirmTradovateReadOnly").orNull == "true") {
+            "Requires -PconfirmTradovateReadOnly=true; only saved Demo credentials and read-only routes are allowed."
+        }
+    }
+}
+
 tasks.matching { it.name in setOf("run", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
 compose.desktop {
     application {

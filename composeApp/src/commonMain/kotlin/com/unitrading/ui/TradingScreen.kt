@@ -161,7 +161,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
         val request = draft.request(instrument)
         val (capacity, refreshCapacity) = rememberQuantityCapacity(session, instrument, draft, account,
-            market.tradingReady && quote?.let { market.simulatedTimeMs - it.timeMs in -5_000..15_000 } == true, localDemo)
+            market.tradingReady, localDemo)
         val preview = remember(session, instrument, request, market.revision, account, capacity) {
             request?.let(session::preview)?.withCapacity(request, capacity)
         }

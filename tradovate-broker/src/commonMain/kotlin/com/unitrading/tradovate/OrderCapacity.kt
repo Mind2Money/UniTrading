@@ -8,6 +8,19 @@ private val quantityRejections = setOf("MaxOrderQtyLimitReached", "MaxPosLimitRe
     "LiquidationOnly", "LiquidationOnlyBeforeExpiration")
 private val blockedRejections = setOf("AccountClosed", "TradingLocked", "SessionClosed")
 
+// Tradovate omits the default Success enum in real dryrun responses. Only accept an
+// omitted reason when a complete risk evaluation is present; {} is not an approval.
+private fun JsonObject.hasRiskEvaluation(): Boolean {
+    val details = this["details"] as? JsonObject ?: return false
+    val numbers = listOf("beforeInitialMarginReq", "beforeInitialFullMarginReq", "beforeOpenCollateralReq", "beforeNetPos",
+        "initialMarginReq", "initialFullMarginReq", "openCollateralReq", "totalCash", "futuresOpenPnL", "optionsOpenPnL",
+        "riskCredit", "netLiqValue", "futureCommAndFees", "totalCashRequired", "excess", "hypoLongPos", "hypoShortPos")
+    return (details["isExitOrder"] as? JsonPrimitive)?.booleanOrNull != null && numbers.all { key ->
+        val value = details[key] as? JsonPrimitive
+        value != null && !value.isString && value.doubleOrNull?.isFinite() == true
+    }
+}
+
 /** Find the last accepted integer quantity using only order/dryrun, never a live order endpoint.
  * Other failures cannot establish a quantity bound (e.g. NoQuote/Unauthorized/timeout).
  * Recheck both sides of the boundary to catch risk/margin changes during the search.
@@ -19,6 +32,10 @@ internal suspend fun discoverOrderCapacity(check: suspend (Long) -> JsonObject):
         require(response.str("errorText").isNullOrBlank()) { "服务器数量校验失败" }
         return when (val reason = response.str("rejectReason")) {
             "Success" -> true.also { acceptedAny = true }
+            null -> {
+                require(response.hasRiskEvaluation()) { "响应缺少数量校验结果" }
+                true.also { acceptedAny = true }
+            }
             in quantityRejections -> false
             in blockedRejections -> throw CapacityBlocked()
             else -> throw IllegalArgumentException("可下单数量未知（${reason ?: "响应缺少校验结果"}）")

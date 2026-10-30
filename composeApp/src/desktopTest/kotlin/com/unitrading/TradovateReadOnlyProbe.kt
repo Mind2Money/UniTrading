@@ -5,14 +5,18 @@ import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
-/** Explicitly invoked diagnostic, not a test-suite entry. Its transport refuses every order route. */
-private class ReadOnlyProbeWire : TradovateWire {
+/** Explicit diagnostics only. Trading writes are always refused, including when dryrun is enabled. */
+internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false) : TradovateWire {
     private val delegate = KtorTradovateWire()
     var refusedWrites = 0
         private set
     var chartMessages = 0
         private set
     var rawBarCount = 0
+        private set
+    var capacityChecks = 0
+        private set
+    var implicitSuccessResponses = 0
         private set
     val chartKeys = mutableSetOf<String>()
     val timestampKinds = mutableSetOf<String>()
@@ -51,9 +55,16 @@ private class ReadOnlyProbeWire : TradovateWire {
         check(environment == TradovateEnvironment.DEMO)
         val endpoint = path.substringBefore('?')
         val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contractMaturity/item", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
-            method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot"
+            method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot" ||
+            allowCapacityChecks && (method == "POST" && endpoint == "order/dryrun" || method == "GET" && endpoint == "order/list")
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
-        return delegate.request(environment, token, method, path, body)
+        return delegate.request(environment, token, method, path, body).also { response ->
+            if (endpoint == "order/dryrun") {
+                capacityChecks++
+                val data = response as? JsonObject
+                if (data != null && "rejectReason" !in data && "details" in data) implicitSuccessResponses++
+            }
+        }
     }
     override suspend fun socket(url: String): TradovateWireSocket {
         check(url in setOf(TradovateEnvironment.DEMO.socketUrl, TradovateEnvironment.DEMO.marketUrl))

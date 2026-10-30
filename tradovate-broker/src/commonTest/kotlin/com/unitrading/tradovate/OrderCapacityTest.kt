@@ -10,6 +10,53 @@ import kotlin.test.*
 
 class OrderCapacityTest {
     private fun result(reason: String) = buildJsonObject { put("rejectReason", reason) }
+    // Shape observed using saved Demo credentials: successful checks omit rejectReason.
+    private fun implicitSuccess() = Json.parseToJsonElement("""{"details":{
+        "beforeInitialMarginReq":0,"beforeInitialFullMarginReq":0,"beforeOpenCollateralReq":0,"beforeNetPos":0,
+        "isExitOrder":false,"initialMarginReq":50,"initialFullMarginReq":2000,"openCollateralReq":0,
+        "totalCash":25000,"futuresOpenPnL":0,"optionsOpenPnL":0,"riskCredit":0,"netLiqValue":25000,
+        "futureCommAndFees":1,"totalCashRequired":51,"excess":24949,"hypoLongPos":1,"hypoShortPos":0},"fees":{}}""").jsonObject
+
+    @Test fun realServerSuccessWithoutRejectReasonFindsTheQuantityBoundary() = runTest {
+        assertEquals(500, discoverOrderCapacity { quantity ->
+            if (quantity <= 5) implicitSuccess() else result("MaxPosLimitReached")
+        }.maximumLotsHundredths)
+        // An explicit rejection always overrides the presence of risk details.
+        assertEquals(0, discoverOrderCapacity { JsonObject(implicitSuccess() + result("NotEnoughLiquidity")) }.maximumLotsHundredths)
+    }
+
+    @Test fun missingReasonStillRequiresACompleteNumericRiskEvaluation() = runTest {
+        val success = implicitSuccess()
+        val details = success["details"]!!.jsonObject
+        for (invalid in listOf(JsonObject(emptyMap()), buildJsonObject { putJsonObject("details") {} },
+            JsonObject(success + ("details" to JsonObject(details - "excess"))),
+            JsonObject(success + ("details" to JsonObject(details + ("excess" to JsonPrimitive("24949"))))),
+            JsonObject(success + ("errorText" to JsonPrimitive("denied"))))) {
+            assertNull(discoverOrderCapacity { invalid }.maximumLotsHundredths)
+        }
+    }
+
+    @Test fun staleLocalQuotesDoNotBlockServerCapacityButStillBlockTradingPreview() = runTest {
+        var now = 1_798_589_000_000L
+        val wire = MockTradovateWire().apply {
+            capacityCheck = { body ->
+                if (body.array("orders").single().long("orderQty")!! <= 5) implicitSuccess() else result("MaxPosLimitReached")
+            }
+        }
+        val broker = TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, "test-access-token-1234567890", null, 42, "test", 4102444800000),
+            wire, backgroundScope, { now })
+        broker.connect()
+        broker.watch("MESZ6", Timeframe.M5)
+        runCurrent()
+        now += 60_000
+        val session = broker.openSession("100")
+        val request = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)
+        assertEquals(500, session.orderCapacity(request).maximumLotsHundredths)
+        assertFalse(session.preview(request).valid)
+        assertTrue(wire.requests.filter { it.path.startsWith("order/") }.all { it.path == "order/dryrun" })
+        assertTrue(session.state.value.positions.isEmpty())
+        assertTrue(session.state.value.orders.isEmpty())
+    }
 
     @Test fun findsTheTighterMarginAndRiskBoundIncludingBeyondTheOldThousandContractCap() = runTest {
         for ((funds, perContract, limit) in listOf(Triple(2500L, 500L, 10L), Triple(10000L, 500L, 5L), Triple(50L, 500L, 5L),

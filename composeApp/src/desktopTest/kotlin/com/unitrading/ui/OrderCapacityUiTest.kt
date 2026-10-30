@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -12,6 +13,7 @@ import com.unitrading.broker.Instrument
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class OrderCapacityUiTest {
     @get:Rule val compose = createComposeRule()
@@ -29,6 +31,10 @@ class OrderCapacityUiTest {
                 }
             }
         }
+        compose.onNodeWithTag("order-quantity-slider").assertIsEnabled().performTouchInput {
+            swipe(Offset(width * .1f, centerY), Offset(width * .8f, centerY))
+        }
+        compose.runOnIdle { assertTrue(draft.quantity.toInt() in 2..5) }
         compose.onNodeWithTag("order-quantity-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(1f) }
         compose.runOnIdle { assertEquals("5", draft.quantity); capacity = QuantityCapacityState(200) }
         compose.onNodeWithText("当前最多 2 张").assertExists()
