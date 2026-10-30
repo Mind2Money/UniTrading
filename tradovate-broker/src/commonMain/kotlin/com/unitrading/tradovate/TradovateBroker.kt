@@ -6,7 +6,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.time.Clock
@@ -48,6 +50,7 @@ class TradovateBroker(
     private val capacityChecks = mutableListOf<Long>()
     private val synchronizationLock = Mutex()
     private val requestPace = Mutex()
+    private val requestSlots = Semaphore(4)
     private var lastRequestMs: Long? = null
     private data class FinancialSnapshot(val values: JsonObject, val dailyPnl: DailyPnl?)
     private val financials = mutableMapOf<Long, FinancialSnapshot>()
@@ -70,6 +73,7 @@ class TradovateBroker(
     private var connected = false
     private var marketReady = false
     private var synchronizing = true
+    private var connecting = false
     private var stopped = false
     private var problem = "正在连接 Tradovate"
     private val queuedEvents = mutableListOf<JsonObject>()
@@ -88,8 +92,9 @@ class TradovateBroker(
         val baselineVersion: Long = 0, val priceKey: String? = null, val expectedPrice: Long? = null,
         val baselinePositionId: Long? = null)
 
-    suspend fun connect(onProgress: (String) -> Unit = {}) {
+    suspend fun connect(onProgress: (String) -> Unit = {}) = withContext(scope.coroutineContext.minusKey(Job)) {
         check(!stopped)
+        lock.withLock { connecting = true; publish() }
         if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession()
         connected = false
         marketReady = false
@@ -115,16 +120,25 @@ class TradovateBroker(
         account.authorize(credentials.accessToken)
         onProgress("账户授权成功，正在读取完整账户快照…")
         synchronizeAccount(account)
-        onProgress("已同步 ${accounts.size} 个账户，正在读取合约规格…")
-        val metadataLoaded = withTimeoutOrNull(30_000) { hydrateContracts(); true } == true
-        onProgress("账户已同步，正在读取资金快照…")
-        withTimeoutOrNull(20_000) { refreshBalances() }
-        problem = if (accounts.isEmpty()) "当前会话没有可访问的交易账户" else "账户已连接，正在连接行情"
-        onProgress(problem)
-        connectMarket()
-        if (instruments.isEmpty()) withTimeoutOrNull(15_000) { searchInstruments("MES") }
-        if (!metadataLoaded) problem = "账户已连接，部分合约规格加载超时；缺失规格的品种不可交易"
-        onProgress(problem)
+        onProgress("已同步 ${accounts.size} 个账户，正在并行加载合约规格、资金快照和行情…")
+        val metadataLoaded = coroutineScope {
+            val metadata = async {
+                val loaded = withTimeoutOrNull(30_000) { hydrateContracts(); true } == true
+                if (instruments.isEmpty()) withTimeoutOrNull(15_000) { searchInstruments("MES") }
+                loaded
+            }
+            launch { withTimeoutOrNull(20_000) { refreshBalances() } }
+            launch { connectMarket() }
+            metadata.await()
+        }
+        val status = lock.withLock {
+            if (!metadataLoaded && marketReady) problem = "账户已连接，部分合约规格加载超时；缺失规格的品种不可交易"
+            if (accounts.isEmpty()) problem = "当前会话没有可访问的交易账户"
+            connecting = false
+            publish()
+            problem
+        }
+        onProgress(status)
         watching?.let { watch(it.first, it.second) }
         maintenance?.cancel()
         maintenance = scope.launch {
@@ -237,12 +251,10 @@ class TradovateBroker(
             }
             marketSocket = socket
             socket.authorize(token)
-            marketReady = true
-            problem = "已连接 · 服务器行情 · 净额持仓"
-        } catch (_: TimeoutCancellationException) { marketReady = false; problem = "账户已连接；行情授权超时，账户登录状态仍保留" }
+            lock.withLock { marketReady = true; problem = "已连接 · 服务器行情 · 净额持仓"; publish() }
+        } catch (_: TimeoutCancellationException) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权超时，账户登录状态仍保留"; publish() } }
         catch (cancel: CancellationException) { throw cancel }
-        catch (e: Exception) { marketReady = false; problem = "账户已连接；行情授权/连接失败：${safeMessage(e.message ?: "请检查行情订阅")}" }
-        publish()
+        catch (e: Exception) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权/连接失败：${safeMessage(e.message ?: "请检查行情订阅")}"; publish() } }
     }
 
     private fun scheduleReconnect() {
@@ -284,29 +296,37 @@ class TradovateBroker(
                 book.list("order").filter(::activeOrder).mapNotNull { it.long("contractId") } +
                 book.list("contract").mapNotNull { it.long("id") }).distinct().filter { it !in contractSpecs }.take(100)
         }
-        for (id in ids) {
-            try {
-                suspend fun entity(type: String, entityId: Long): JsonObject {
+        // Different contracts can share maturity/product/currency rows. Serialize only those
+        // cache misses, never the entire network load, so each shared row is fetched once.
+        val entityLocks = mutableMapOf<Pair<String, Long>, Mutex>()
+        suspend fun entity(type: String, entityId: Long): JsonObject {
+            val entityLock = lock.withLock { entityLocks.getOrPut(type to entityId) { Mutex() } }
+            return entityLock.withLock {
                     lock.withLock { book.item(type, entityId) }?.let { return it }
                     val item = rest("GET", "$type/item?id=$entityId").jsonObject
                     lock.withLock { book.apply(type, item) }
-                    return item
-                }
+                    item
+            }
+        }
+        val slots = Semaphore(4)
+        coroutineScope { ids.map { id -> launch { slots.withPermit {
+            try {
                 val contract = entity("contract", id)
-                val maturity = entity("contractMaturity", contract.long("contractMaturityId") ?: continue)
-                val product = entity("product", maturity.long("productId") ?: continue)
-                val currency = entity("currency", product.long("currencyId") ?: continue).str("name") ?: continue
-                val spec = mapInstrument(contract, maturity, product, currency) ?: continue
+                val maturity = entity("contractMaturity", contract.long("contractMaturityId") ?: return@withPermit)
+                val product = entity("product", maturity.long("productId") ?: return@withPermit)
+                val currency = entity("currency", product.long("currencyId") ?: return@withPermit).str("name") ?: return@withPermit
+                val spec = mapInstrument(contract, maturity, product, currency) ?: return@withPermit
                 lock.withLock { contractSpecs[id] = spec; rebuild() }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { problem = "部分合约规格无法加载，缺失规格的品种不可交易" }
-        }
+            catch (_: Exception) { lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
+        } } }.joinAll() }
         lock.withLock { rebuild() }
     }
 
     private suspend fun refreshBalances() {
-        for (account in accounts) {
-            val id = account.id.toLongOrNull() ?: continue
+        val slots = Semaphore(4)
+        coroutineScope { accounts.map { account -> launch { slots.withPermit {
+            val id = account.id.toLongOrNull() ?: return@withPermit
             try {
                 val revision = lock.withLock { financialRevision }
                 val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", id) }).jsonObject
@@ -318,7 +338,7 @@ class TradovateBroker(
                 }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
-        }
+        } } }.joinAll() }
     }
 
     /** Caller holds lock; one worker coalesces entity updates and preserves known fees for unchanged fills. */
@@ -605,10 +625,10 @@ class TradovateBroker(
             else -> problem
         }
         mutableMarket.value = MarketSnapshot(quotes, now(), mutableMarket.value.revision + 1, connected,
-            statusMessage = message, tradingReady = connected && marketReady && !unresolved && !pending)
+            statusMessage = message, tradingReady = connected && marketReady && !connecting && !synchronizing && !unresolved && !pending)
     }
     private fun fresh(quote: Quote?): Boolean = quote != null && now() - quote.timeMs in -5_000..15_000
-    private suspend fun rest(method: String, path: String, body: JsonObject? = null): JsonElement {
+    private suspend fun rest(method: String, path: String, body: JsonObject? = null): JsonElement = requestSlots.withPermit {
         requestPace.withLock {
             lastRequestMs?.let { previous ->
                 val elapsed = Clock.System.now().toEpochMilliseconds() - previous
@@ -616,7 +636,7 @@ class TradovateBroker(
             }
             lastRequestMs = Clock.System.now().toEpochMilliseconds()
         }
-        return wire.request(credentials.environment, credentials.accessToken, method, path, body)
+        wire.request(credentials.environment, credentials.accessToken, method, path, body)
     }
 
     override fun openSession(accountId: String): AccountSession {
@@ -799,7 +819,7 @@ class TradovateBroker(
         results[key]?.let { return@withLock if (it.first == signature) it.second else TradeResult(false, "同一请求 ID 不可用于不同指令") }
         val result = try {
             require(requestId.length in 1..50 && requestId.all { it.isLetterOrDigit() || it == '-' }) { "请求 ID 无效" }
-            require(connected && unknownCommands.isEmpty() && awaiting.isEmpty()) { market.value.statusMessage }
+            require(connected && !connecting && !synchronizing && unknownCommands.isEmpty() && awaiting.isEmpty()) { market.value.statusMessage }
             require(accounts.first { it.id == accountId }.readOnly.not()) { "账户为只读" }
             action()
         } catch (cancel: CancellationException) { throw cancel }

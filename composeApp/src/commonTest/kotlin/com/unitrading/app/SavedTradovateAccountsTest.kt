@@ -5,9 +5,10 @@ import com.unitrading.demo.DemoBroker
 import com.unitrading.demo.DemoConfigs
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.*
 import kotlin.test.*
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SavedTradovateAccountsTest {
     @Test fun lastRemoteLoginCanBeForgottenWithoutADefaultBroker() = runTest {
         val store = Store()
@@ -147,5 +148,86 @@ class SavedTradovateAccountsTest {
         assertEquals(2, brokers.plugins.size)
         assertTrue(accounts.message.value!!.contains("超时"))
         assertFalse(accounts.restoring.value)
+    }
+
+    @Test fun preferredLoginBecomesAvailableWhileAnotherLoginIsStillWaiting() = runTest {
+        val store = Store()
+        val initial = manager(registry(), store)
+        initial.signIn(session()) {}
+        val preferred = session(TradovateEnvironment.LIVE)
+        initial.signIn(preferred) {}
+        initial.select(preferred.brokerId, "account-200")
+        val brokers = registry()
+        val accounts = SavedTradovateAccounts(brokers, store, { now }) { s, _, _ ->
+            if (s.environment == TradovateEnvironment.DEMO) awaitCancellation()
+            delay(100)
+            plugin(s)
+        }
+        val restore = launch { accounts.restore() }
+        advanceTimeBy(101); runCurrent()
+        assertTrue(accounts.restoring.value)
+        assertFalse(restore.isCompleted)
+        assertTrue(brokers.plugins.any { it.descriptor.id == preferred.brokerId })
+        assertEquals(preferred.brokerId, accounts.restoredBrokerId.value)
+        assertEquals("account-200", accounts.selectedAccount(preferred.brokerId))
+        restore.join()
+        assertTrue(accounts.message.value!!.contains("超时"))
+    }
+
+    @Test fun savedConnectionsUseBoundedConcurrencyAndKeepSuccessfulResults() = runTest {
+        val store = Store()
+        val initial = manager(registry(), store)
+        (42L..46L).forEach { initial.signIn(session(user = it)) {} }
+        initial.select(session(user = 46).brokerId)
+        val brokers = registry()
+        val started = mutableListOf<Long>()
+        var active = 0
+        var peak = 0
+        val accounts = SavedTradovateAccounts(brokers, store, { now }) { s, _, _ ->
+            started += s.userId
+            active++
+            peak = maxOf(peak, active)
+            try {
+                delay(1_000)
+                if (s.userId == 43L) throw TradovateRemoteException(403, "synthetic rejection")
+                plugin(s)
+            } finally { active-- }
+        }
+        accounts.restore()
+        assertEquals(46L, started.first())
+        assertEquals(3, peak)
+        assertEquals(0, active)
+        assertEquals(2_000, testScheduler.currentTime)
+        assertEquals(setOf(42L, 44L, 45L, 46L).map { session(user = it).brokerId }.toSet(),
+            brokers.plugins.drop(1).map { it.descriptor.id }.toSet())
+        assertTrue(accounts.message.value!!.contains("授权已失效"))
+        assertEquals(5, accounts.savedCount.value)
+    }
+
+    @Test fun cancellingRestoreCancelsParallelConnectionsAndRetainsCredentialsForRetry() = runTest {
+        val store = Store()
+        val initial = manager(registry(), store)
+        (42L..45L).forEach { initial.signIn(session(user = it)) {} }
+        val saved = store.value
+        var active = 0
+        var suspended = true
+        val brokers = registry()
+        val accounts = SavedTradovateAccounts(brokers, store, { now }) { s, _, _ ->
+            if (suspended) {
+                active++
+                try { awaitCancellation() } finally { active-- }
+            }
+            plugin(s)
+        }
+        val restore = launch { accounts.restore() }
+        runCurrent()
+        assertEquals(3, active)
+        restore.cancelAndJoin()
+        assertEquals(0, active)
+        assertFalse(accounts.restoring.value)
+        assertEquals(saved, store.value)
+        suspended = false
+        accounts.restore()
+        assertEquals(5, brokers.plugins.size)
     }
 }

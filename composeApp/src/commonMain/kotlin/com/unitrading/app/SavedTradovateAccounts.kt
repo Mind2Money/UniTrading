@@ -6,7 +6,9 @@ import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
@@ -88,27 +90,36 @@ class SavedTradovateAccounts(
             }
             storage.withLock { if (saveFailed) persist() }
             savedCount.value = state.sessions.size
-            val failures = mutableListOf<String>()
-            for (session in storage.withLock { state.sessions.toList() }) {
+            val (sessions, preferredBrokerId) = storage.withLock { state.sessions.toList() to state.brokerId }
+            val slots = Semaphore(3)
+            val registration = Mutex()
+            val failures = coroutineScope { sessions.sortedBy { it.brokerId != preferredBrokerId }.map { session -> async { slots.withPermit {
                 val label = "Tradovate ${session.environment.wire}"
                 if (session.expiresAtMs?.let { it > now() } != true) {
-                    failures += "$label 登录已过期，请重新登录"
-                    continue
+                    return@withPermit "$label 登录已过期，请重新登录"
                 }
-                if (registry.plugins.any { it.descriptor.id == session.brokerId && it.market.value.connected }) continue
+                if (registry.plugins.any { it.descriptor.id == session.brokerId && it.market.value.connected }) return@withPermit null
                 if (!saveFailed) message.value = "正在恢复 $label 已保存登录…"
+                var candidate: BrokerPlugin? = null
+                var registered = false
                 try {
                     val broker = establish(session) { if (!saveFailed) message.value = it }
-                    registry.register(broker)
+                    candidate = broker
+                    registration.withLock {
+                        registry.register(broker)
+                        registered = true
+                        if (session.brokerId == preferredBrokerId) restoredBrokerId.value = preferredBrokerId
+                    }
+                    null
                 } catch (_: TimeoutCancellationException) {
-                    failures += "$label 连接超时，已保留登录，可重试恢复"
+                    "$label 连接超时，已保留登录，可重试恢复"
                 } catch (cancel: CancellationException) { throw cancel }
                 catch (error: Exception) {
-                    failures += if (error is TradovateRemoteException && error.status in listOf(401, 403))
+                    if (error is TradovateRemoteException && error.status in listOf(401, 403))
                         "$label 授权已失效，请重新登录"
                     else "$label 暂时无法连接，已保留登录，可重试恢复"
-                }
-            }
+                } finally { if (!registered) candidate?.disconnect() }
+            } } }.awaitAll().filterNotNull() }
             restoredBrokerId.value = state.brokerId?.takeIf { id -> registry.plugins.any { it.descriptor.id == id } }
             if (!saveFailed) message.value = failures.takeIf { it.isNotEmpty() }?.joinToString("；")
             loaded = true
