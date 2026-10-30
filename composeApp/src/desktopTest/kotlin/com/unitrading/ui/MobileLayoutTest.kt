@@ -183,6 +183,7 @@ class MobileLayoutTest {
 
     @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() {
         render()
+        val collapsedChartHeight = height("trading-chart")
         val instrument = plugin.instruments.first()
         val before = session.state.value
         compose.onNodeWithTag("open-order").performClick()
@@ -193,9 +194,10 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(instrument.formatPrice(entry))
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("minimize-order").performClick()
+        compose.mainClock.advanceTimeBy(400)
         compose.onNodeWithTag("minimized-order").assertExists()
         compose.onNodeWithTag("mobile-navigation").assertExists()
-        assertTrue(height("trading-chart") > height("test-host") * .75f)
+        assertEquals(collapsedChartHeight, height("trading-chart"), "Minimizing restores the same chart area as the closed panel")
         capture("mobile-order-minimized")
         // Turning protection off before the drag gives a deterministic price scale.
         compose.onNodeWithTag("restore-order").performClick()

@@ -60,7 +60,8 @@ internal data class OrderDraft(
         val price = if (kind == OrderKind.MARKET) null else instrument.parsePrice(entry) ?: return null
         val sl = if (!stopLossEnabled) null else instrument.parsePrice(stopLoss) ?: return null
         val tp = if (!takeProfitEnabled) null else instrument.parsePrice(takeProfit) ?: return null
-        return OrderRequest(instrument.symbol, side, kind, lots, price, sl, tp)
+        return OrderRequest(instrument.executionSymbol ?: return null, side, kind, lots, price, sl, tp,
+            sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })
     }
 
     fun withReferenceProtection(instrument: Instrument, quote: Quote?): OrderDraft {

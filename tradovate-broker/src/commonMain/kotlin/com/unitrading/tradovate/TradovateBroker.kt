@@ -59,6 +59,12 @@ class TradovateBroker(
     private var historyDetailsJob: Job? = null
     private var historyDetailsRevision = 0L
     private val contractSpecs = mutableMapOf<Long, Instrument>()
+    private data class ContinuousRoute(val productId: Long, val spec: Instrument, val checkedAt: Long? = null, val validUntil: Long = 0)
+    private var continuousRoutes = emptyMap<String, ContinuousRoute>()
+    private val continuousLock = Mutex()
+    private var continuousJob: Job? = null
+    private val volumeCharts = mutableMapOf<String, DailyVolumeHistory>()
+    private val discardedCharts = mutableSetOf<String>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
@@ -98,6 +104,7 @@ class TradovateBroker(
         if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession()
         connected = false
         marketReady = false
+        continuousRoutes = continuousRoutes.mapValues { (_, route) -> route.copy(checkedAt = null, validUntil = 0) }
         problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
         onProgress(problem)
         publish()
@@ -144,6 +151,15 @@ class TradovateBroker(
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
+                val selected = watching
+                val route = selected?.first?.let(continuousRoutes::get)
+                if (selected != null && route != null && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
+                    continuousJob = scope.launch {
+                        val before = continuousRoutes[selected.first]?.spec?.tradeSymbol
+                        refreshContinuous(selected.first)
+                        if (watching == selected && before != continuousRoutes[selected.first]?.spec?.tradeSymbol) watch(selected.first, selected.second)
+                    }
+                }
                 val recover = lock.withLock {
                     val expired = awaiting.filter { (key, wait) -> now() - wait.started >= 30_000 && key !in attemptedRecovery }.keys
                     attemptedRecovery.addAll(expired)
@@ -175,6 +191,7 @@ class TradovateBroker(
         publish()
         synchronizeAccount(socket)
         hydrateContracts()
+        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); watch(it.first, it.second) }
         refreshBalances()
         problem = "账户状态已重新同步"
         publish()
@@ -265,7 +282,8 @@ class TradovateBroker(
                 if (stopped) return@launch
                 try {
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
-                    charts.clear(); subscribedQuotes.clear()
+                    charts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
+                    volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
                     connect()
                     return@launch
                 } catch (cancel: CancellationException) { throw cancel }
@@ -278,16 +296,89 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        maintenance?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch { runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }; wire.close(); scope.cancel() }
     }
 
     override suspend fun searchInstruments(query: String) {
         if (!connected || query.trim().length !in 1..32) return
-        val data = rest("GET", "contract/suggest?t=${query.trim().encodeURLParameter()}&l=15") as? JsonArray ?: return
+        val text = query.trim().uppercase().removePrefix("@")
+        val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=15") as? JsonArray ?: return
         val contracts = data.mapNotNull { it as? JsonObject }
         lock.withLock { contracts.forEach { book.apply("contract", it) } }
         hydrateContracts(contracts.mapNotNull { it.long("id") })
+        if ("@$text" in continuousRoutes) refreshContinuous("@$text", force = true)
+    }
+
+    private suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
+        val route = continuousRoutes[symbol] ?: return@withLock
+        if (!force && now() < route.validUntil && route.checkedAt?.let { now() >= it } == true) return@withLock
+        var target: Instrument? = null
+        var validUntil = 0L
+        var reason = ""
+        try {
+            val leader = withTimeout(180_000) { selectVolumeLeader(route.productId, symbol.removePrefix("@"), now(),
+                read = { path -> rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效") },
+                volume = ::completedDailyVolume) }
+            require(now() < leader.session.validUntil) { "查询期间交易日已切换，请重新查询" }
+            lock.withLock { book.apply("contractMaturity", leader.maturity); book.apply("contract", leader.contract) }
+            val id = requireNotNull(leader.contract.long("id"))
+            hydrateContracts(listOf(id))
+            target = lock.withLock { contractSpecs[id] }
+            require(target != null) { "主力合约规格尚未加载" }
+            validUntil = leader.session.validUntil
+        } catch (_: TimeoutCancellationException) { reason = "日成交量查询超时" }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (e: Exception) { reason = safeMessage(e.message ?: "日成交量不可用") }
+        lock.withLock {
+            val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true, tradeSymbol = target?.symbol)
+            continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = validUntil))
+            if (target == null) problem = "$symbol 主力无法确认：$reason；连续合约下单已暂停"
+            else if (problem.startsWith("$symbol 主力无法确认")) problem = "$symbol 成交量主力已确认：${target?.symbol}"
+            rebuild()
+        }
+    }
+
+    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long {
+        val socket = checkNotNull(marketSocket) { "行情连接不可用" }
+        check(marketReady) { "行情尚未就绪" }
+        val collector = DailyVolumeHistory(session.day)
+        val response = socket.request("md/getChart", buildJsonObject {
+            put("symbol", symbol)
+            put("chartDescription", chartDescription(Timeframe(1440)))
+            putJsonObject("timeRange") {
+                put("asFarAsTimestamp", kotlin.time.Instant.fromEpochMilliseconds(session.start).toString())
+                put("closestTimestamp", kotlin.time.Instant.fromEpochMilliseconds(session.end - 1).toString())
+                put("asMuchAsElements", 1)
+            }
+        })
+        val ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
+        try {
+            val key = requireNotNull(chartSubscriptionKey(response["historicalId"])) { "日成交量历史通道缺失" }
+            lock.withLock {
+                ids.mapNotNull(::chartSubscriptionKey).forEach(discardedCharts::remove)
+                volumeCharts[key] = collector
+                chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let(discardedCharts::add)
+                drainEarlyCharts()
+            }
+            return withTimeout(15_000) { collector.result.await() }
+        } finally {
+            withContext(NonCancellable) {
+                lock.withLock {
+                    ids.mapNotNull(::chartSubscriptionKey).forEach { volumeCharts.remove(it); discardedCharts.add(it) }
+                    if (discardedCharts.size > 1024) discardedCharts.clear()
+                }
+                for (id in ids) withTimeoutOrNull(2_000) { runCatching { socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) }) } }
+            }
+        }
+    }
+
+    private fun validateContinuous(request: OrderRequest) {
+        require(!request.symbol.startsWith("@")) { "连续合约不能直接下单，请等待主力合约解析" }
+        val source = request.sourceSymbol ?: return
+        val route = continuousRoutes[source] ?: errorArgument("连续合约映射尚未加载")
+        require(route.checkedAt?.let { now() >= it && now() < route.validUntil } == true && route.spec.tradeSymbol != null) { "主力成交量依据已过期或无法确认，请重新选择连续合约" }
+        require(route.spec.tradeSymbol == request.symbol) { "主力合约已换月，请检查新合约并重新确认订单" }
     }
 
     private suspend fun hydrateContracts(priority: List<Long> = emptyList()) = metadataLock.withLock {
@@ -316,7 +407,16 @@ class TradovateBroker(
                 val product = entity("product", maturity.long("productId") ?: return@withPermit)
                 val currency = entity("currency", product.long("currencyId") ?: return@withPermit).str("name") ?: return@withPermit
                 val spec = mapInstrument(contract, maturity, product, currency) ?: return@withPermit
-                lock.withLock { contractSpecs[id] = spec; rebuild() }
+                lock.withLock {
+                    contractSpecs[id] = spec
+                    val root = product.str("name")
+                    if (root != null && Regex("[A-Z0-9]{1,16}").matches(root)) {
+                        val symbol = "@$root"
+                        if (symbol !in continuousRoutes) continuousRoutes = continuousRoutes + (symbol to ContinuousRoute(
+                            requireNotNull(product.long("id")), spec.copy(symbol = symbol, category = "连续合约", isContinuous = true)))
+                    }
+                    rebuild()
+                }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
         } } }.joinAll() }
@@ -440,13 +540,20 @@ class TradovateBroker(
 
     override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
     override fun watch(symbol: String, timeframe: Timeframe) {
+        if (watching?.first != symbol) { continuousJob?.cancel(); continuousJob = null }
         watching = symbol to timeframe
         watchJob?.cancel()
         watchJob = scope.launch {
             val socket = marketSocket ?: return@launch
             if (!marketReady) return@launch
             try {
-                val wanted = (accountFlows.values.flatMap { it.value.positions.map(Position::symbol) } + symbol).toSet()
+                if (symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
+                    val before = continuousRoutes[symbol]?.spec?.tradeSymbol
+                    refreshContinuous(symbol)
+                    if (watching == (symbol to timeframe) && before != continuousRoutes[symbol]?.spec?.tradeSymbol) watch(symbol, timeframe)
+                }
+                val executionSymbol = continuousRoutes[symbol]?.spec?.tradeSymbol ?: symbol.takeUnless { it.startsWith("@") }
+                val wanted = (accountFlows.values.flatMap { flow -> flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol } } + listOfNotNull(executionSymbol)).toSet()
                 for (old in subscribedQuotes.toList() - wanted) {
                     socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
                     subscribedQuotes.remove(old)
@@ -469,8 +576,9 @@ class TradovateBroker(
                         val id = response[field] as? JsonPrimitive ?: continue
                         val key = chartSubscriptionKey(id) ?: continue
                         charts[key] = ChartChannel(id, symbol to timeframe)
+                        discardedCharts.remove(key)
                     }
-                    earlyCharts.toList().forEach(::chartEvent); earlyCharts.clear()
+                    drainEarlyCharts()
                     publish()
                 }
             } catch (_: TimeoutCancellationException) {
@@ -507,7 +615,10 @@ class TradovateBroker(
     }
 
     private fun chartEvent(chart: JsonObject) {
-        val key = chartSubscriptionKey(chart["id"])?.let { charts[it]?.series }
+        val subscription = chartSubscriptionKey(chart["id"])
+        volumeCharts[subscription]?.let { it.accept(chart); return }
+        if (subscription in discardedCharts) return
+        val key = subscription?.let { charts[it]?.series }
         if (key == null) { if (earlyCharts.size < 256) earlyCharts.add(chart); return }
         val incoming = chart.array("bars").mapNotNull { bar ->
             val time = bar.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null
@@ -520,6 +631,12 @@ class TradovateBroker(
             Candle(time, o, h, l, c, volume)
         }
         history = history + (key to ((history[key] ?: emptyList()) + incoming).associateBy { it.timeMs }.values.sortedBy { it.timeMs }.takeLast(CHART_BARS))
+    }
+
+    private fun drainEarlyCharts() {
+        val pending = earlyCharts.toList()
+        earlyCharts.clear()
+        pending.forEach(::chartEvent)
     }
 
     private fun rebuild() {
@@ -608,7 +725,7 @@ class TradovateBroker(
         }
         incompleteAccounts = incomplete.toSet()
         accountFlows = nextFlows.toMap()
-        mutableCatalog.value = BrokerCatalog(contractSpecs.values.distinctBy { it.symbol }.sortedBy { it.symbol }, mappedAccounts)
+        mutableCatalog.value = BrokerCatalog((contractSpecs.values + continuousRoutes.values.map { it.spec }).distinctBy { it.symbol }.sortedBy { it.symbol }, mappedAccounts)
         publish()
     }
 
@@ -647,6 +764,8 @@ class TradovateBroker(
             override val state: StateFlow<AccountSnapshot> = flow.asStateFlow()
             override fun preview(request: OrderRequest) = estimate(accountId, request)
             override suspend fun orderCapacity(request: OrderRequest): OrderCapacity = capacityLock.withLock {
+                try { validateContinuous(request) }
+                catch (e: IllegalArgumentException) { return@withLock OrderCapacity(message = e.message) }
                 if (!market.value.tradingReady || account.readOnly || accountId in incompleteAccounts)
                     return@withLock OrderCapacity(message = "账户或行情尚未就绪，无法确认可下单数量")
                 val contractId = lock.withLock { contractSpecs.entries.firstOrNull { it.value.symbol == request.symbol }?.key }
@@ -661,6 +780,7 @@ class TradovateBroker(
                     check(capacityChecks.size < 450) { "数量校验频率受限" }
                     capacityChecks.lastOrNull()?.let { delay((1_000 - (time - it)).coerceIn(0, 1_000)) }
                     check(!stopped && market.value.tradingReady && fresh(quotes[request.symbol]) && lock.withLock { book.revision == revision }) { "账户状态已变化" }
+                    validateContinuous(request)
                     capacityChecks.add(now())
                     rest("POST", "order/dryrun", capacityBody(accountId.toLong(), contractId, request, quantity)).jsonObject
                 }
@@ -679,6 +799,7 @@ class TradovateBroker(
                 return estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
             }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
+                request.sourceSymbol?.let { refreshContinuous(it) }
                 val estimate = estimate(accountId, request)
                 require(estimate.valid) { estimate.errors.joinToString("；") }
                 val spec = instruments.first { it.symbol == request.symbol }
@@ -767,6 +888,7 @@ class TradovateBroker(
     }
 
     private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false): OrderPreview = try {
+        validateContinuous(request)
         require(market.value.tradingReady) { market.value.statusMessage.ifBlank { "交易连接未就绪" } }
         require(accounts.first { it.id == accountId }.readOnly.not()) { "该账户只有读取权限" }
         require(accountId !in incompleteAccounts) { "该账户仍有未加载规格或均价的净仓，暂不允许新订单" }

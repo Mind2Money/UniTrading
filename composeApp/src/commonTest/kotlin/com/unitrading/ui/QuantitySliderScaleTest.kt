@@ -33,7 +33,7 @@ class QuantitySliderScaleTest {
     }
 
     @Test fun accountCapacityBoundsTheSliderAndUnknownOrZeroDoesNotInventARange() {
-        val futures = spec.copy(minLotsHundredths = 100, maxLotsHundredths = Int.MAX_VALUE.toLong() * 100, lotStepHundredths = 100)
+        val futures = spec.copy(minLotsHundredths = 100, maxLotsHundredths = Int.MAX_VALUE.toLong() * 100, lotStepHundredths = 100, quantityDecimals = 0)
         val scale = QuantitySliderScale.from(futures, 550)!!
         assertEquals(500, scale.maximum)
         assertEquals(500, scale.quantity(1f))

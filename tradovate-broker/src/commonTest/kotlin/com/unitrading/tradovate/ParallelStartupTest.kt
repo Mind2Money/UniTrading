@@ -35,7 +35,7 @@ class ParallelStartupTest {
         assertFalse(broker.market.value.tradingReady, "Market authorization alone must not enable trading during startup")
         release.complete(Unit)
         connection.await()
-        assertEquals(1, broker.instruments.size)
+        assertEquals(1, broker.instruments.count { !it.isContinuous })
         assertTrue(broker.market.value.tradingReady)
         assertTrue(delegate.requests.none { it.path.startsWith("order/") })
     }
@@ -69,7 +69,7 @@ class ParallelStartupTest {
         broker.connect()
         assertTrue(peak in 2..4, "Independent contract requests must overlap with bounded concurrency: $peak")
         assertEquals(1, products, "Contracts sharing a product must reuse the same cached response")
-        assertEquals(5, broker.instruments.size)
+        assertEquals(5, broker.instruments.count { !it.isContinuous })
         assertEquals(0, active)
         assertEquals(2, broker.accounts.size)
     }
@@ -109,7 +109,7 @@ class ParallelStartupTest {
         val broker = TradovateBroker(session(), wire, backgroundScope)
         broker.connect()
         assertEquals(2, broker.accounts.size)
-        assertEquals(1, broker.instruments.size)
+        assertEquals(1, broker.instruments.count { !it.isContinuous })
         assertEquals(12_000_000, broker.openSession("100").state.value.dailyPnl?.totalMicros)
         assertTrue(broker.market.value.connected)
         assertFalse(broker.market.value.tradingReady)

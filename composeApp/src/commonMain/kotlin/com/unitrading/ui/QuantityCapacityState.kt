@@ -13,18 +13,19 @@ internal fun rememberQuantityCapacity(session: AccountSession, instrument: Instr
     account: AccountSnapshot, ready: Boolean, localDemo: Boolean): Pair<QuantityCapacityState, (() -> Unit)?> {
     if (localDemo) return QuantityCapacityState(instrument.maxLotsHundredths) to null
     val entry = if (draft.kind == OrderKind.MARKET) null else instrument.parsePrice(draft.entry)
-    val context = listOf(session, instrument.symbol, draft.side, draft.kind, entry, account.positions, account.orders,
+    val context = listOf(session, instrument.symbol, instrument.executionSymbol, draft.side, draft.kind, entry, account.positions, account.orders,
         account.balanceMicros, account.marginMicros, account.balanceKnown, account.marginKnown, ready)
     var refresh by remember { mutableIntStateOf(0) }
     var capacity by remember(context, refresh) { mutableStateOf(QuantityCapacityState(message = "正在确认可下单数量", loading = true)) }
     var checkedEquity by remember(context, refresh) { mutableStateOf<Long?>(null) }
     LaunchedEffect(context, refresh) {
-        if (!ready || (draft.kind != OrderKind.MARKET && entry == null)) {
+        if (!ready || instrument.executionSymbol == null || (draft.kind != OrderKind.MARKET && entry == null)) {
             capacity = QuantityCapacityState(message = if (!ready) "账户或行情尚未就绪" else "请先输入有效的订单价格")
             return@LaunchedEffect
         }
         delay(400) // Coalesce typing and account pushes; never query on each slider movement or quote tick.
-        val result = try { session.orderCapacity(OrderRequest(instrument.symbol, draft.side, draft.kind, instrument.minLotsHundredths, entry)) }
+        val result = try { session.orderCapacity(OrderRequest(instrument.executionSymbol!!, draft.side, draft.kind, instrument.minLotsHundredths, entry,
+            sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })) }
             catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
         checkedEquity = session.state.value.equityMicros.takeIf { session.state.value.equityKnown }

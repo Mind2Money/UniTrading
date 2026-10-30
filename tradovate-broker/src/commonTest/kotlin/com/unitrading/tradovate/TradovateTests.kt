@@ -301,10 +301,11 @@ class TradovateTests {
     @Test fun connectLoadsServerCatalogQuoteAndHistoryWithoutAnyOrder() = runTest {
         val (broker, wire) = ready()
         assertEquals(listOf("100", "101"), broker.accounts.map { it.id })
-        assertEquals("MESZ6", broker.instruments.single().symbol)
-        assertEquals(250_000, broker.instruments.single().tickSize)
-        assertEquals(1_250_000, broker.instruments.single().tickValueMicrosPerLot)
-        assertEquals(100, broker.instruments.single().lotStepHundredths)
+        val dated = broker.instruments.single { !it.isContinuous }
+        assertEquals("MESZ6", dated.symbol)
+        assertEquals(250_000, dated.tickSize)
+        assertEquals(1_250_000, dated.tickValueMicrosPerLot)
+        assertEquals(100, dated.lotStepHundredths)
         assertEquals(5_500_000_000, broker.market.value.quotes.getValue("MESZ6").bid)
         assertEquals(1, broker.history("MESZ6", Timeframe.M5).size)
         assertTrue(wire.requests.none { it.path.startsWith("order/") })

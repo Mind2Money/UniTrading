@@ -93,7 +93,7 @@ fun TradingChart(
     var crosshair by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Int?>(null) }
     /** Pointer row of the crosshair; null after keyboard moves, which keep only the vertical line. */
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
-    var drag by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<LineDrag?>(null) }
+    var drag by remember(accountKey, instrument.symbol, instrument.executionSymbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
     /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
     var legendArea by remember { mutableStateOf<Rect?>(null) }
@@ -182,7 +182,7 @@ fun TradingChart(
     fun visibleIndex(x: Float): Int = ((x - left) / (plotWidth / currentViewport.count) + currentViewport.start(currentTotal) - currentRange.first).toInt().coerceIn(0, (currentVisible.size - 1).coerceAtLeast(0))
 
     LaunchedEffect(focusedTrade?.id, instrument.symbol, timeframe) {
-        if (focusedTrade != null && focusedTrade.symbol == instrument.symbol) {
+        if (focusedTrade != null && focusedTrade.symbol == instrument.executionSymbol) {
             selectedTrade = focusedTrade
             selectedExecution = null
             val index = candles.indexOfLast { it.timeMs <= focusedTrade.closedAtMs }
@@ -190,7 +190,7 @@ fun TradingChart(
         }
     }
     LaunchedEffect(focusedExecution?.id, instrument.symbol, timeframe, candles.firstOrNull()?.timeMs) {
-        if (focusedExecution != null && focusedExecution.symbol == instrument.symbol) {
+        if (focusedExecution != null && focusedExecution.symbol == instrument.executionSymbol) {
             selectedExecution = focusedExecution
             selectedTrade = null
             val index = candles.indexOfLast { it.timeMs <= focusedExecution.timeMs }
@@ -231,6 +231,8 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
+        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionSymbol ?: "主力待确认"}",
+            Modifier.padding(horizontal = 12.dp, vertical = 3.dp).testTag("continuous-route"), fontSize = 11.sp, color = colors.Accent)
         if (compact) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()

@@ -51,7 +51,11 @@ data class Instrument(
     val quantityDecimals: Int = 2,
     val displayPriceDecimals: Int = priceDecimals,
     val estimatesIncludeFees: Boolean = true,
+    /** Continuous series are chart symbols; orders must name their resolved dated contract. */
+    val isContinuous: Boolean = false,
+    val tradeSymbol: String? = null,
 ) {
+    val executionSymbol: String? get() = if (isContinuous) tradeSymbol else symbol
     fun formatPrice(price: Long): String {
         val full = formatFixed(price, priceDecimals)
         if (displayPriceDecimals >= priceDecimals) return full
@@ -110,6 +114,8 @@ data class OrderRequest(
     val entryPrice: Long? = null,
     val stopLoss: Long? = null,
     val takeProfit: Long? = null,
+    /** Pins the reviewed continuous-to-dated mapping; never sent to the broker's order endpoint. */
+    val sourceSymbol: String? = null,
 )
 @Serializable
 data class OrderPreview(

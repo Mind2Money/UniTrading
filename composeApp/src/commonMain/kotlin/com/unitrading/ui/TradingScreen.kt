@@ -123,10 +123,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var chosenSymbol by remember(plugin) { mutableStateOf(catalog.instruments.first().symbol) }
         val instrument = catalog.instruments.firstOrNull { it.symbol == chosenSymbol } ?: catalog.instruments.first()
         val symbol = instrument.symbol
-        val quote = market.quotes[symbol]
+        val executionSymbol = instrument.executionSymbol
+        var previousExecutionSymbol by remember(accountKey, symbol) { mutableStateOf(executionSymbol) }
+        val quote = market.quotes[executionSymbol]
         var timeframe by remember { mutableStateOf(Timeframe.M5) }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
-        val orderSession = remember(accountKey, symbol) { orderSessions.getOrPut(symbol) { MobileOrderSession(instrument) } }
+        val orderSession = remember(accountKey, symbol, executionSymbol) { orderSessions.getOrPut("$symbol/$executionSymbol") { MobileOrderSession(instrument) } }
         var draft by orderSession.draft
         var showDraft by remember(accountKey, symbol) { mutableStateOf(false) }
         var selectedPositionId by remember(accountKey) { mutableStateOf<String?>(null) }
@@ -135,7 +137,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var protection by remember(accountKey) { mutableStateOf<ProtectionEdit?>(null) }
         var pendingEdit by remember(accountKey) { mutableStateOf<PendingEntryEdit?>(null) }
         var pendingProtection by remember(accountKey) { mutableStateOf<PendingProtectionEdit?>(null) }
-        var confirmation by remember(accountKey, symbol) { mutableStateOf<Confirmation?>(null) }
+        var confirmation by remember(accountKey, symbol, executionSymbol) { mutableStateOf<Confirmation?>(null) }
         var mobileTab by remember { mutableStateOf(1) }
         var showAccounts by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
@@ -174,12 +176,19 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
         val indicatorSettings by runtime.indicators.settings.collectAsState()
-        val visiblePositions = account.positions.filter { it.symbol == symbol }
-        val visibleTrades = account.trades.filter { it.symbol == symbol }
-        val visibleOrders = account.orders.filter { it.request.symbol == symbol }
+        val visiblePositions = account.positions.filter { it.symbol == executionSymbol }
+        val visibleTrades = account.trades.filter { it.symbol == executionSymbol }
+        val visibleOrders = account.orders.filter { it.request.symbol == executionSymbol }
 
         LaunchedEffect(runtime) { runtime.run() }
-        LaunchedEffect(plugin, symbol, timeframe) { plugin.watch(symbol, timeframe) }
+        LaunchedEffect(plugin, symbol, executionSymbol, timeframe) { plugin.watch(symbol, timeframe) }
+        LaunchedEffect(symbol, executionSymbol) {
+            if (previousExecutionSymbol != executionSymbol) {
+                selectedPositionId = null; focusedTrade = null; focusedExecution = null
+                protection = null; pendingEdit = null; pendingProtection = null
+                previousExecutionSymbol = executionSymbol
+            }
+        }
         LaunchedEffect(accountKey) { showOrder = false; notice = null }
         LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
             if (chosenSymbol != symbol) {
@@ -229,7 +238,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
             val spec = plugin.instruments.firstOrNull { it.symbol == position.symbol }
                 ?: run { showNotice("品种或账户已切换，请重新选择仓位", attention = true); return }
-            chosenSymbol = position.symbol
+            if (position.symbol != executionSymbol) chosenSymbol = position.symbol
             selectedPositionId = position.id
             pendingProtection = null
             protection = ProtectionEdit(position, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
@@ -245,7 +254,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 return
             }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
-            chosenSymbol = current.request.symbol
+            if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
             protection = null
             pendingEdit = null
             showDraft = false
@@ -277,7 +286,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
             if (current.role != OrderRole.ENTRY || !plugin.capabilities.modifyPendingOrders) return
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
-            chosenSymbol = current.request.symbol
+            if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
             protection = null
             pendingProtection = null
             showDraft = false
@@ -329,7 +338,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     )
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
-                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
+                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
@@ -551,6 +560,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             when (action) {
                                 is Confirmation.Place -> {
                                     val r = action.request
+                                    r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, fontSize = 12.sp) }
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}")
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")

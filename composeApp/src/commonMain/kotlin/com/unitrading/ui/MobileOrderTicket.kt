@@ -50,10 +50,12 @@ internal fun MobileOrderTicket(
     val colors = TradingColors
     val focus = LocalFocusManager.current
     var details by remember(instrument.symbol) { mutableStateOf(false) }
-    val error = if (preview == null) "请输入有效数量与价格" else preview.errors.firstOrNull()
+    val error = if (instrument.isContinuous && instrument.executionSymbol == null) "主力成交量待确认，暂不可下单"
+        else if (preview == null) "请输入有效数量与价格" else preview.errors.firstOrNull()
     Column(modifier) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("order-fields")
             .padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionSymbol ?: "主力待确认"}", color = colors.Accent, fontSize = 11.sp)
             Row(Modifier.fillMaxWidth().selectableGroup().background(colors.Raised, RoundedCornerShape(8.dp)).padding(3.dp)) {
                 OrderKind.entries.filter { it in capabilities.orderKinds }.forEach { kind ->
                     val selected = kind == draft.kind
