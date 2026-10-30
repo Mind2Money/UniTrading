@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -23,7 +24,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
@@ -42,14 +46,7 @@ import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-private sealed interface EditableLine {
-    val price: Long
-    data class Protection(val position: Position, val stop: Boolean, override val price: Long) : EditableLine
-    data class Pending(val order: PendingOrder) : EditableLine { override val price get() = order.request.entryPrice!! }
-    data class Draft(val request: OrderRequest) : EditableLine { override val price get() = request.entryPrice!! }
-}
 private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
-private data class LineDrag(val line: EditableLine, val scale: PriceScale, val price: Long)
 private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -67,13 +64,8 @@ fun TradingChart(
     focusedTrade: ClosedTrade?,
     draft: OrderRequest?,
     preview: OrderPreview?,
-    onProtection: (Position, Long?, Long?) -> Unit,
     orders: List<PendingOrder>,
-    allowOrderEdit: Boolean,
-    onPendingEntry: (PendingOrder, Long) -> Unit,
-    onDraftEntry: (Long) -> Unit,
-    estimateDraft: (OrderRequest) -> OrderPreview,
-    estimatePending: (String, Long) -> OrderPreview,
+    actions: ChartOrderActions,
     modifier: Modifier = Modifier,
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
     executions: List<Execution> = emptyList(),
@@ -101,6 +93,8 @@ fun TradingChart(
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
     var drag by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
+    /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
+    var legendArea by remember { mutableStateOf<Rect?>(null) }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
     var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
     val textMeasurer = rememberTextMeasurer()
@@ -122,37 +116,47 @@ fun TradingChart(
     val extras = buildList {
         quote?.let { add(it.bid); add(it.ask) }
         if (showPositions) selectedPosition?.let { p -> add(p.entryPrice); p.stopLoss?.let(::add); p.takeProfit?.let(::add) }
-        if (showOrders) orders.forEach { it.request.entryPrice?.let(::add) }
+        if (showOrders) orders.forEach { order ->
+            order.request.entryPrice?.let(::add)
+            if (order.role == OrderRole.ENTRY) { order.request.stopLoss?.let(::add); order.request.takeProfit?.let(::add) }
+        }
         draft?.entryPrice?.let(::add)
         if (preview?.valid == true) { preview.entryPrice?.let(::add); draft?.stopLoss?.let(::add); draft?.takeProfit?.let(::add) }
         addAll(overlayScaleValues(overlays, range))
     }
     val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)
-    val currentPosition by rememberUpdatedState(selectedPosition)
     val currentVisible by rememberUpdatedState(visible)
-    val currentProtectionCallback by rememberUpdatedState(onProtection)
-    val currentShowPositions by rememberUpdatedState(showPositions)
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
-    val representedProtectionIds = if (showPositions) setOfNotNull(selectedPosition?.stopLossOrderId, selectedPosition?.takeProfitOrderId) else emptySet()
-    val currentOrders by rememberUpdatedState(if (showOrders && allowOrderEdit) orders.filter { it.editable } else emptyList())
-    val currentPositions by rememberUpdatedState(positions)
-    val currentRepresentedProtectionIds by rememberUpdatedState(representedProtectionIds)
-    val currentDraft by rememberUpdatedState(draft)
-    val currentPendingCallback by rememberUpdatedState(onPendingEntry)
-    val currentDraftCallback by rememberUpdatedState(onDraftEntry)
+    val currentActions by rememberUpdatedState(actions)
     val currentTotal by rememberUpdatedState(candles.size)
-    val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths) }
-    val activeDraft = drag?.let { edit -> (edit.line as? EditableLine.Draft)?.request?.copy(entryPrice = edit.price) } ?: draft
+    val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths, it.request, it.protectionEditable) }
+    val activeDraft = drag?.let { edit ->
+        when (val line = edit.line) {
+            is EditableLine.Draft -> line.request.copy(entryPrice = edit.price)
+            is EditableLine.DraftProtection -> line.request.withProtection(line.stop, edit.price)
+            else -> null
+        }
+    } ?: draft
     val dragEstimate = drag?.let { edit ->
         when (val line = edit.line) {
-            is EditableLine.Draft -> estimateDraft(line.request.copy(entryPrice = edit.price))
-            is EditableLine.Pending -> estimatePending(line.order.id, edit.price)
+            is EditableLine.Draft, is EditableLine.DraftProtection -> actions.estimateDraft(activeDraft!!)
+            is EditableLine.Pending -> actions.estimatePending(line.order.id, edit.price)
+            is EditableLine.PendingProtection -> line.order.request.withProtection(line.stop, edit.price)
+                .let { actions.estimatePendingProtection(line.order.id, it.stopLoss, it.takeProfit) }
             is EditableLine.Protection -> null
         }
     }
-    val activePreview = if (drag?.line is EditableLine.Draft) dragEstimate else preview
+    val activePreview = if (drag?.line is EditableLine.Draft || drag?.line is EditableLine.DraftProtection) dragEstimate else preview
+    // A market draft enters at the side of the quote it trades against, so its lines show even while the estimate is invalid.
+    val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
+    val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
+        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection))
+    val currentLines by rememberUpdatedState(lines)
+    val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
+    // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
+    val legendShown = !chrome.ordering || readout != null
     val labelStyle = TextStyle(color = colors.Muted, fontSize = 10.sp)
     val periodMs = timeframe.minutes * 60_000L
     val step = plotWidth / viewport.count.toFloat()
@@ -292,23 +296,9 @@ fun TradingChart(
                                         point.x in left..right && point.y in plotBottom..bottom -> ChartDragMode.PANE
                                         else -> ChartDragMode.NONE
                                     }
-                                    val p = currentPosition
                                     val s = currentScale
-                                    val candidates = buildList<EditableLine> {
-                                        currentDraft?.takeIf { it.kind != OrderKind.MARKET && it.entryPrice != null }?.let { add(EditableLine.Draft(it)) }
-                                        currentOrders.filter { it.request.entryPrice != null }.forEach { order ->
-                                            if (order.role == OrderRole.ENTRY) add(EditableLine.Pending(order))
-                                            else if (order.isProtection && order.id !in currentRepresentedProtectionIds) {
-                                                val position = currentPositions.firstOrNull { it.id == order.positionId && it.protectionEditable }
-                                                if (position != null) add(EditableLine.Protection(position, order.role == OrderRole.STOP_LOSS, order.request.entryPrice!!))
-                                            }
-                                        }
-                                        if (p != null && p.protectionEditable && currentShowPositions) {
-                                            p.stopLoss?.let { add(EditableLine.Protection(p, true, it)) }
-                                            p.takeProfit?.let { add(EditableLine.Protection(p, false, it)) }
-                                        }
-                                    }
-                                    val hit = candidates.minByOrNull { abs(s.y(it.price) - point.y) }
+                                    // The line drawn last (the draft, then pending brackets) wins a tie, as it is drawn on top.
+                                    val hit = currentLines.asReversed().mapNotNull { it.edit }.minByOrNull { abs(s.y(it.price) - point.y) }
                                     if (mode == ChartDragMode.PLOT && hit != null && abs(s.y(hit.price) - point.y) < 22 * density.density) {
                                         drag = LineDrag(hit, s, hit.price)
                                     }
@@ -332,11 +322,15 @@ fun TradingChart(
                                 },
                                 onDragEnd = { _ ->
                                     drag?.takeIf { it.price != it.line.price }?.let { edit ->
+                                        val act = currentActions
                                         when (val line = edit.line) {
-                                            is EditableLine.Protection -> currentProtectionCallback(line.position,
+                                            is EditableLine.Protection -> act.onProtection(line.position,
                                                 if (line.stop) edit.price else line.position.stopLoss, if (line.stop) line.position.takeProfit else edit.price)
-                                            is EditableLine.Pending -> currentPendingCallback(line.order, edit.price)
-                                            is EditableLine.Draft -> currentDraftCallback(edit.price)
+                                            is EditableLine.Pending -> act.onPendingEntry(line.order, edit.price)
+                                            is EditableLine.PendingProtection -> line.order.request.withProtection(line.stop, edit.price)
+                                                .let { act.onPendingProtection(line.order, it.stopLoss, it.takeProfit) }
+                                            is EditableLine.Draft -> act.onDraftEntry(edit.price)
+                                            is EditableLine.DraftProtection -> act.onDraftProtection(line.stop, edit.price)
                                         }
                                     }
                                     drag = null
@@ -365,6 +359,7 @@ fun TradingChart(
                     val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                     val labelPadding = 3.dp.toPx()
                     val priceTags = mutableListOf<PriceTag>()
+                    val placedLabels = listOfNotNull(legendArea?.takeIf { legendShown }).toMutableList()
                     fun priceLine(price: Long, label: String, color: Color, dashed: Boolean = true, alpha: Float = 1f) {
                         val y = scale.y(price)
                         if (y !in top..plotBottom) return
@@ -372,9 +367,13 @@ fun TradingChart(
                             pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
                         val measured = textMeasurer.measure(label, labelStyle)
                         val labelTop = y - measured.size.height - labelPadding
-                        drawRect(colors.Surface.copy(alpha = 0.94f), Offset(left + labelPadding, labelTop - labelPadding),
-                            Size(measured.size.width + labelPadding * 2, measured.size.height + labelPadding * 2))
-                        text(label, left + labelPadding * 2, labelTop, colors.Ink)
+                        val box = Size(measured.size.width + labelPadding * 2, measured.size.height + labelPadding * 2)
+                        // Labels of nearby lines would print over each other, so a label moves right of any it would cover.
+                        var x = left + labelPadding
+                        while (true) x = placedLabels.firstOrNull { it.overlaps(Rect(Offset(x, labelTop - labelPadding), box)) }?.right?.plus(labelPadding) ?: break
+                        placedLabels.add(Rect(Offset(x, labelTop - labelPadding), box))
+                        drawRect(colors.Surface.copy(alpha = 0.94f), Offset(x, labelTop - labelPadding), box)
+                        text(label, x + labelPadding, labelTop, colors.Ink)
                         priceTags.add(PriceTag(price, colors.Ink, colors.Surface))
                     }
                     for (i in 0..5) {
@@ -390,8 +389,7 @@ fun TradingChart(
                         text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
                     clipRect(left, top, right, plotBottom) {
-                    val draftEntry = activeDraft?.entryPrice ?: activePreview?.entryPrice
-                    if (activePreview?.valid == true && activeDraft != null && draftEntry != null) {
+                    if (activeDraft != null && draftEntry != null) {
                         val entryY = scale.y(draftEntry)
                         listOf(activeDraft.stopLoss to colors.Down, activeDraft.takeProfit to colors.Up).forEach { (price, color) ->
                             if (price != null) {
@@ -456,51 +454,14 @@ fun TradingChart(
                             if (x1 != null && x2 != null) drawLine(colors.Muted, Offset(x1, scale.y(trade.entryPrice)), Offset(x2, scale.y(trade.exitPrice)), 1.5f)
                         }
                     }
-                    if (showPositions) {
-                        positions.forEach { p ->
-                            val selected = p.id == selectedPosition?.id
-                            priceLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)}  #${p.id.takeLast(5)}", colors.Accent, false, if (selected) .85f else .3f)
+                    lines.forEach { line ->
+                        val color = when (line.tone) {
+                            LineTone.POSITION -> colors.Accent
+                            LineTone.STOP -> colors.Stop
+                            LineTone.TARGET -> colors.Target
+                            LineTone.ORDER -> colors.Muted
                         }
-                        selectedPosition?.let { p ->
-                            val protectionDrag = drag?.takeIf { (it.line as? EditableLine.Protection)?.position?.id == p.id }
-                            val sl = protectionDrag?.takeIf { (it.line as EditableLine.Protection).stop }?.price ?: p.stopLoss
-                            val tp = protectionDrag?.takeIf { !(it.line as EditableLine.Protection).stop }?.price ?: p.takeProfit
-                            fun label(price: Long, stop: Boolean): String {
-                                val pnl = grossPnl(instrument, p.side, p.lotsHundredths, p.entryPrice, price) - p.entryFeeMicros - commission(instrument, p.lotsHundredths)
-                                return "${if (stop) "SL 止损" else "TP 止盈"} ${if (!p.feesKnown) "毛" else ""} ${money(pnl, true)} USD${if (protectionDrag != null) " · 预览" else if (p.protectionEditable) " · 拖动" else " · 仅显示"}"
-                            }
-                            sl?.let { priceLine(it, label(it, true), colors.Stop) }
-                            tp?.let { priceLine(it, label(it, false), colors.Target) }
-                        }
-                    }
-                    if (showOrders) orders.filterNot { it.isProtection && it.id in representedProtectionIds }.forEach { order ->
-                        val moving = drag?.takeIf { edit ->
-                            when (val line = edit.line) {
-                                is EditableLine.Pending -> line.order.id == order.id
-                                is EditableLine.Protection -> order.id == if (line.stop) line.position.stopLossOrderId else line.position.takeProfitOrderId
-                                else -> false
-                            }
-                        }
-                        val price = moving?.price ?: order.request.entryPrice!!
-                        val suffix = if (moving != null) " · 预览" else if (!allowOrderEdit || !order.editable) " · 仅显示" else when (order.role) {
-                            OrderRole.ENTRY -> " · 拖动入场"
-                            OrderRole.STOP_LOSS -> " · 拖动止损"
-                            OrderRole.TAKE_PROFIT -> " · 拖动止盈"
-                            OrderRole.UNRESOLVED -> " · 仅显示"
-                        }
-                        val color = when (order.role) {
-                            OrderRole.STOP_LOSS -> colors.Stop
-                            OrderRole.TAKE_PROFIT -> colors.Target
-                            else -> colors.Muted
-                        }
-                        priceLine(price, "${order.role.label()} ${order.request.side.label()} ${order.request.kind.name}  #${order.id.substringAfterLast(':')}$suffix", color)
-                    }
-                    if (activeDraft != null && draftEntry != null && draftEntry > 0) {
-                        priceLine(draftEntry, "${activeDraft.side.label()} ${activeDraft.kind.name} 草稿 · ${instrument.formatQuantity(activeDraft.lotsHundredths)} ${instrument.quantityUnit}${if (activeDraft.kind != OrderKind.MARKET) " · 拖动入场" else ""}", colors.Muted)
-                        if (activePreview?.valid == true) {
-                            activeDraft.stopLoss?.let { priceLine(it, "预览 SL · ${activePreview.stopLossPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", colors.Stop, alpha = .65f) }
-                            activeDraft.takeProfit?.let { priceLine(it, "预览 TP · ${activePreview.takeProfitPnlMicros?.let { v -> money(v, true) } ?: "—"} USD", colors.Target, alpha = .65f) }
-                        }
+                        priceLine(line.price, line.label, color, line.dashed, line.alpha)
                     }
                     }
                     if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, plotBottom, paneHeight, step,
@@ -562,11 +523,8 @@ fun TradingChart(
                 val barIndex = crosshair ?: visible.lastIndex
                 val bar = visible.getOrNull(barIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + barIndex - 1)
-                val readout = dragEstimate?.let { estimate ->
-                    "入场预览 ${drag?.price?.let(instrument::formatPrice)}   SL ${estimate.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${estimate.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   保证金 ${if (estimate.marginKnown) money(estimate.marginMicros) + " USD" else "未知"}   ${estimate.errors.joinToString("；")}"
-                }
-                // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
-                if (!chrome.ordering || readout != null) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp)
+                    .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (!compact) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
@@ -609,8 +567,8 @@ fun TradingChart(
  * How [TradingChart] arranges its controls. [legendCollapsed] folds the legend with its indicator list, and
  * [onLegendCollapsed] receives each toggle so the screen can remember it. [compact] (phones) pins one toolbar row above
  * the plot, closed by [toolbarEnd], instead of the floating toolbar, and the legend stays hidden while [ordering] (the
- * order panel is open). Grouped in one parameter because the chart already takes 30, and two more made D8 emit a
- * TradingChart that ART's verifier rejected (VerifyError on Android).
+ * order panel is open). Grouped in one parameter because at 32 parameters D8 emitted a TradingChart that ART's verifier
+ * rejected (VerifyError on Android); [ChartOrderActions] groups the order-line callbacks for the same reason.
  */
 class ChartChrome(
     val compact: Boolean = false,

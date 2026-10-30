@@ -31,6 +31,7 @@ internal data class OrderDraft(
 }
 
 internal data class PendingEntryEdit(val order: PendingOrder, val entry: String)
+internal data class PendingProtectionEdit(val order: PendingOrder, val stopLoss: String, val takeProfit: String)
 internal data class ProtectionEdit(val position: Position, val stopLoss: String, val takeProfit: String)
 internal sealed interface Confirmation {
     data class Place(val request: OrderRequest) : Confirmation

@@ -13,6 +13,7 @@ import kotlin.time.Clock
 
 /** Bars requested per symbol and timeframe and kept in memory: twice the largest indicator period (1000), so that period still yields 1000 values. */
 const val CHART_BARS = 2000
+private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
 
 /** Server-authoritative adapter. No remote order is executed by the local demo engine. */
 class TradovateBroker(
@@ -541,7 +542,9 @@ class TradovateBroker(
                     stop?.let { book.orderVersion(it)?.priceValue("stopPrice") }, target?.let { book.orderVersion(it)?.priceValue("price") }),
                     order.str("timestamp")?.let(::timestamp) ?: 0, version.long("id") ?: 1,
                     role = relation.role, positionId = if (associated) "$aid:$contract" else null, editable = editable, note = note,
-                    filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100))
+                    filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100),
+                    stopLossOrderId = stop?.toString(), takeProfitOrderId = target?.toString(),
+                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id))
             }
             val fills = book.list("fill").filter { f -> f.bool("active") != false && orders.any { it.long("id") == f.long("orderId") } }.mapNotNull { f ->
                 val spec = contractSpecs[f.long("contractId")] ?: return@mapNotNull null
@@ -603,6 +606,11 @@ class TradovateBroker(
                 if (order.role != OrderRole.ENTRY || !order.editable) return OrderPreview(null, errors = listOf("该单不是可编辑入场单；保护单请使用仓位保护价入口，关联待确认的订单不可改价"))
                 return estimate(accountId, order.request.copy(entryPrice = entryPrice), modifying = true)
             }
+            override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?): OrderPreview {
+                val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
+                if (order.role != OrderRole.ENTRY || !order.editable || !order.protectionEditable) return OrderPreview(null, errors = listOf(PENDING_BRACKETS_LOCKED))
+                return estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
+            }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
                 val estimate = estimate(accountId, request)
                 require(estimate.valid) { estimate.errors.joinToString("；") }
@@ -631,6 +639,31 @@ class TradovateBroker(
                     put("clOrdId", tag(requestId)); put("isAutomated", false)
                 })
             }
+            override suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
+                command(accountId, requestId, "protect-order:$orderId:$expectedVersion:$stopLoss:$takeProfit") {
+                    val order = state.value.orders.firstOrNull { it.id == orderId } ?: errorArgument("挂单已成交、撤销或不属于当前账户")
+                    require(order.version == expectedVersion) { "挂单版本已变化，请重新选择" }
+                    require(order.role == OrderRole.ENTRY && order.editable && order.protectionEditable) { PENDING_BRACKETS_LOCKED }
+                    val changes = listOf(order.request.stopLoss != stopLoss, order.request.takeProfit != takeProfit).count { it }
+                    require(changes == 1) { "每次只能修改一条保护线，不能把两次服务器改单当作原子操作" }
+                    val stop = order.request.stopLoss != stopLoss
+                    val price = if (stop) stopLoss else takeProfit
+                    require(price != null && (if (stop) order.request.stopLoss else order.request.takeProfit) != null) { "首版仅修改已有保护价；增删保护请在官网操作" }
+                    val estimate = estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
+                    require(estimate.valid) { estimate.errors.joinToString("；") }
+                    val spec = instruments.first { it.symbol == order.request.symbol }
+                    val binding = lock.withLock {
+                        val classifier = ProtectionClassifier(book, accountId.toLong())
+                        require(classifier.pendingBracketsEditable(orderId.toLong())) { PENDING_BRACKETS_LOCKED }
+                        val id = requireNotNull(classifier.children(orderId.toLong(), if (stop) OrderRole.STOP_LOSS else OrderRole.TAKE_PROFIT).singleOrNull()) { "没有唯一可修改的保护订单" }
+                        require(id.toString() == if (stop) order.stopLossOrderId else order.takeProfitOrderId) { "保护订单已被替换" }
+                        id to requireNotNull(book.orderVersion(id)?.long("orderQty"))
+                    }
+                    sendWrite(accountId, requestId, "modify", binding.first, "order/modifyorder", buildJsonObject {
+                        put("orderId", binding.first); put("orderQty", binding.second); put("orderType", if (stop) "Stop" else "Limit")
+                        put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
+                    })
+                }
             override suspend fun cancelOrder(requestId: String, orderId: String) = command(accountId, requestId, "cancel:$orderId") {
                 require(state.value.orders.any { it.id == orderId }) { "挂单已结束或不属于当前账户" }
                 sendWrite(accountId, requestId, "cancel", orderId.toLong(), "order/cancelorder", buildJsonObject { put("orderId", orderId.toLong()); put("clOrdId", tag(requestId)); put("isAutomated", false) })

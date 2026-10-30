@@ -27,6 +27,11 @@ interface AccountSession {
     fun preview(request: OrderRequest): OrderPreview
     fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview
     suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long): TradeResult
+    /** Estimate for a pending entry whose stop loss and take profit become [stopLoss] and [takeProfit]. */
+    fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?): OrderPreview =
+        OrderPreview(null, errors = listOf("当前交易商不支持修改挂单止损/止盈"))
+    suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?): TradeResult =
+        TradeResult(false, "当前交易商不支持修改挂单止损/止盈")
     suspend fun placeOrder(requestId: String, request: OrderRequest): TradeResult
     suspend fun closePosition(requestId: String, positionId: String): TradeResult
     suspend fun cancelOrder(requestId: String, orderId: String): TradeResult

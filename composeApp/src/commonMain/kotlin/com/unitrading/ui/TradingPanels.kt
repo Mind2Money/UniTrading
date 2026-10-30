@@ -231,6 +231,7 @@ internal fun TradeTerminal(
     busy: Boolean,
     modifier: Modifier = Modifier,
     onSelectExecution: (Execution) -> Unit = {},
+    onProtectOrder: (PendingOrder) -> Unit = {},
 ) {
     var tab by remember(plugin.descriptor.id, account.accountId) { mutableStateOf(0) }
     val instruments = plugin.instruments.associateBy { it.symbol }
@@ -280,17 +281,29 @@ internal fun TradeTerminal(
                     items(account.orders, key = { it.id }) { order ->
                         val r = order.request
                         val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
+                        fun bracketsEditable(entry: PendingOrder) = plugin.capabilities.modifyPendingProtection && entry.editable && entry.protectionEditable
+                        // A bracket of an unfilled entry is repriced through that entry.
+                        val entry = if (order.isProtection && order.positionId == null)
+                            account.orders.firstOrNull { it.role == OrderRole.ENTRY && order.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) } else null
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("${r.symbol}   ${order.role.label()} · ${r.side.label()}${r.kind.label()}   ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
                                 Text("${order.role.editLabel()} ${r.entryPrice?.let(instrument::formatPrice)}" +
+                                    (if (order.role == OrderRole.ENTRY && (r.stopLoss != null || r.takeProfit != null))
+                                        " · SL ${r.stopLoss?.let(instrument::formatPrice) ?: "—"} / TP ${r.takeProfit?.let(instrument::formatPrice) ?: "—"}" else "") +
                                     (if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) " · 未占用保证金" else " · 服务器委托"), color = TradingColors.Muted, fontSize = 10.sp)
                                 if (order.filledLotsHundredths > 0) Text("已成交 ${instrument.formatQuantity(order.filledLotsHundredths)} ${instrument.quantityUnit}", color = TradingColors.Muted, fontSize = 10.sp)
                                 order.note?.let { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
                             }
-                            TextButton({ onEditOrder(order) }, enabled = !busy && order.editable &&
-                                (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders),
+                            TextButton({ onEditOrder(order) }, enabled = !busy && (order.editable &&
+                                (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders) || entry?.let(::bracketsEditable) == true),
                                 modifier = Modifier.testTag("edit-order-${order.id}")) { Text(order.role.editLabel(), fontSize = 11.sp) }
+                            if (order.role == OrderRole.ENTRY && plugin.capabilities.modifyPendingProtection &&
+                                (r.stopLoss != null || r.takeProfit != null || plugin.capabilities.addProtection)) {
+                                TextButton({ onProtectOrder(order) }, enabled = !busy && bracketsEditable(order), modifier = Modifier.testTag("protect-order-${order.id}")) {
+                                    Text("保护价", fontSize = 11.sp)
+                                }
+                            }
                             TextButton({ onCancel(order) }, enabled = !busy) { Text("撤单") }
                         }
                         DividerLine()

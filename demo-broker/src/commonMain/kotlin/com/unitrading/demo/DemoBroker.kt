@@ -83,17 +83,16 @@ class DemoBroker(
                 val saved = committed.value!!
                 return estimate(request, saved.accounts.first { it.state.accountId == accountId }.state, saved.market)
             }
-            override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {
-                val saved = committed.value!!
-                val state = saved.accounts.first { it.state.accountId == accountId }.state
-                val order = state.orders.firstOrNull { it.id == orderId }
-                    ?: return OrderPreview(null, errors = listOf("挂单已成交、已撤销或不属于当前账户"))
-                return estimate(order.request.copy(entryPrice = entryPrice),
-                    state.copy(orders = state.orders.filterNot { it.id == orderId }), saved.market)
-            }
+            override fun previewOrderModification(orderId: String, entryPrice: Long) =
+                previewPending(accountId, orderId) { it.copy(entryPrice = entryPrice) }
+            override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?) =
+                previewPending(accountId, orderId) { it.copy(stopLoss = stopLoss, takeProfit = takeProfit) }
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) =
                 submit(accountId, requestId, Command(CommandKind.MODIFY_ORDER, entityId = orderId,
                     expectedVersion = expectedVersion, entryPrice = entryPrice))
+            override suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
+                submit(accountId, requestId, Command(CommandKind.PROTECT_ORDER, entityId = orderId,
+                    expectedVersion = expectedVersion, stopLoss = stopLoss, takeProfit = takeProfit))
             override suspend fun placeOrder(requestId: String, request: OrderRequest) =
                 submit(accountId, requestId, Command(CommandKind.PLACE, order = request))
             override suspend fun closePosition(requestId: String, positionId: String) =
@@ -116,6 +115,15 @@ class DemoBroker(
             quoteRevision = market.revision)
     } catch (error: IllegalArgumentException) {
         OrderPreview(null, errors = listOf(error.message ?: "无效订单"), quoteRevision = market.revision)
+    }
+
+    /** Estimates a pending order as [change] would leave it, without counting the order itself against the account. */
+    private fun previewPending(accountId: String, orderId: String, change: (OrderRequest) -> OrderRequest): OrderPreview {
+        val saved = committed.value!!
+        val state = saved.accounts.first { it.state.accountId == accountId }.state
+        val order = state.orders.firstOrNull { it.id == orderId }
+            ?: return OrderPreview(null, errors = listOf("挂单已成交、已撤销或不属于当前账户"))
+        return estimate(change(order.request), state.copy(orders = state.orders.filterNot { it.id == orderId }), saved.market)
     }
 
     override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
@@ -223,17 +231,19 @@ class DemoBroker(
                     event(working, "撤单 ${order.id}")
                     TradeResult(true, "已撤单", order.id)
                 }
-                CommandKind.MODIFY_ORDER -> {
+                CommandKind.MODIFY_ORDER, CommandKind.PROTECT_ORDER -> {
                     val index = working.orders.indexOfFirst { it.id == command.entityId }
                     require(index >= 0) { "挂单已成交、已撤销或不属于当前账户" }
                     val order = working.orders[index]
                     require(order.version == command.expectedVersion) { "挂单版本已过期，请刷新后重试" }
-                    val updated = order.request.copy(entryPrice = requireNotNull(command.entryPrice))
+                    val entry = command.kind == CommandKind.MODIFY_ORDER
+                    val updated = if (entry) order.request.copy(entryPrice = requireNotNull(command.entryPrice))
+                        else order.request.copy(stopLoss = command.stopLoss, takeProfit = command.takeProfit)
                     val available = accountSnapshot(working).copy(orders = working.orders.filterNot { it.id == order.id })
                     terms(updated, available, currentMarket())
                     working.orders[index] = order.copy(request = updated, version = checkedAdd(order.version, 1))
-                    event(working, "修改挂单入场价 ${order.id}")
-                    TradeResult(true, "挂单入场价已更新", order.id)
+                    event(working, "${if (entry) "修改挂单入场价" else "修改挂单止损/止盈"} ${order.id}")
+                    TradeResult(true, if (entry) "挂单入场价已更新" else "挂单止损/止盈已更新", order.id)
                 }
                 CommandKind.PROTECT -> {
                     val index = working.positions.indexOfFirst { it.id == command.entityId }
@@ -720,7 +730,7 @@ class DemoBroker(
                 when (command.kind) {
                     CommandKind.PLACE -> require(command.order != null && command.entityId == null && command.expectedVersion == null && command.stopLoss == null && command.takeProfit == null)
                     CommandKind.CLOSE, CommandKind.CANCEL -> require(command.order == null && command.entityId != null && command.expectedVersion == null && command.stopLoss == null && command.takeProfit == null)
-                    CommandKind.PROTECT -> require(command.order == null && command.entityId != null && command.expectedVersion != null)
+                    CommandKind.PROTECT, CommandKind.PROTECT_ORDER -> require(command.order == null && command.entityId != null && command.expectedVersion != null)
                     CommandKind.MODIFY_ORDER -> require(command.order == null && command.entityId != null && command.expectedVersion != null && command.entryPrice != null && command.stopLoss == null && command.takeProfit == null)
                 }
                 if (record.result.accepted) {
@@ -728,7 +738,7 @@ class DemoBroker(
                     val kind = when (command.kind) {
                         CommandKind.PLACE -> if (command.order!!.kind == OrderKind.MARKET) "position" else "order"
                         CommandKind.CLOSE -> "trade"
-                        CommandKind.CANCEL, CommandKind.MODIFY_ORDER -> "order"
+                        CommandKind.CANCEL, CommandKind.MODIFY_ORDER, CommandKind.PROTECT_ORDER -> "order"
                         CommandKind.PROTECT -> "position"
                     }
                     checkId(requireNotNull(record.result.entityId), kind, unique = false)
@@ -739,7 +749,7 @@ class DemoBroker(
                                 require(it.positionId == command.entityId)
                             }
                         }
-                        CommandKind.CANCEL, CommandKind.PROTECT, CommandKind.MODIFY_ORDER -> require(record.result.entityId == command.entityId)
+                        CommandKind.CANCEL, CommandKind.PROTECT, CommandKind.MODIFY_ORDER, CommandKind.PROTECT_ORDER -> require(record.result.entityId == command.entityId)
                         CommandKind.PLACE -> Unit
                     }
                     command.order?.let {
@@ -749,7 +759,7 @@ class DemoBroker(
                         else validatePrice(instrument, requireNotNull(it.entryPrice))
                         checkProtection(instrument, it.side, it.stopLoss, it.takeProfit)
                     }
-                    if (command.kind == CommandKind.PROTECT || command.kind == CommandKind.MODIFY_ORDER) require(command.expectedVersion!! > 0)
+                    if (command.kind in setOf(CommandKind.PROTECT, CommandKind.MODIFY_ORDER, CommandKind.PROTECT_ORDER)) require(command.expectedVersion!! > 0)
                     if (command.kind == CommandKind.MODIFY_ORDER) require(command.entryPrice!! > 0)
                 } else require(record.result.entityId == null)
             }
@@ -768,7 +778,7 @@ private fun closePrice(side: Side, quote: Quote) = if (side == Side.BUY) quote.b
 private data class Terms(val instrument: Instrument, val entry: Long, val margin: Long, val fee: Long)
 
 @Serializable
-private enum class CommandKind { PLACE, CLOSE, CANCEL, PROTECT, MODIFY_ORDER }
+private enum class CommandKind { PLACE, CLOSE, CANCEL, PROTECT, MODIFY_ORDER, PROTECT_ORDER }
 @Serializable
 private data class Command(val kind: CommandKind, val order: OrderRequest? = null, val entityId: String? = null,
     val expectedVersion: Long? = null, val stopLoss: Long? = null, val takeProfit: Long? = null, val entryPrice: Long? = null)

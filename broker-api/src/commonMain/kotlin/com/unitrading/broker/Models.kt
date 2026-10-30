@@ -85,6 +85,8 @@ data class BrokerCapabilities(
     val addProtection: Boolean = true,
     val removeProtection: Boolean = true,
     val atomicProtectionEdit: Boolean = true,
+    /** A pending entry's stop loss and take profit can move before it fills; add/remove/atomic rules as for positions. */
+    val modifyPendingProtection: Boolean = true,
 )
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)
@@ -154,6 +156,11 @@ data class PendingOrder(
     val editable: Boolean = true,
     val note: String? = null,
     val filledLotsHundredths: Long = 0,
+    /** Separate bracket orders holding an entry's request.stopLoss / takeProfit, where the broker keeps them apart. */
+    val stopLossOrderId: String? = null,
+    val takeProfitOrderId: String? = null,
+    /** Whether an entry's stop loss and take profit can be moved before it fills. */
+    val protectionEditable: Boolean = true,
 ) {
     val isProtection: Boolean get() = role == OrderRole.STOP_LOSS || role == OrderRole.TAKE_PROFIT
 }

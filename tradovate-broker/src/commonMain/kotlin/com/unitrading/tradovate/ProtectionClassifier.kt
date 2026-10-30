@@ -86,6 +86,21 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         return PositionProtection(stop, target, working, revision, if (working) null else "保护订单正在处理，暂不可修改")
     }
 
+    /**
+     * Whether a working, unfilled entry's brackets can be repriced before it fills: at most one stop and one target,
+     * each an untouched native child (not an ATM leg, which the strategy prices from the fill) covering the whole entry.
+     */
+    fun pendingBracketsEditable(entryId: Long): Boolean {
+        if (!entryEditable(entryId)) return false
+        val quantity = book.orderVersion(entryId)?.long("orderQty") ?: return false
+        val stops = children(entryId, OrderRole.STOP_LOSS)
+        val targets = children(entryId, OrderRole.TAKE_PROFIT)
+        return stops.size <= 1 && targets.size <= 1 && (stops + targets).all { id ->
+            relation(id).group?.startsWith("atm:") != true && all[id]?.str("ordStatus") in setOf("Working", "Suspended") &&
+                filledQuantity(id) == 0L && book.orderVersion(id)?.long("orderQty") == quantity
+        }
+    }
+
     fun children(parentId: Long, role: OrderRole): List<Long> = relations.filter { (id, relation) ->
         relation.parentId == parentId && relation.role == role && activeOrder(all[id] ?: return@filter false)
     }.keys.toList()

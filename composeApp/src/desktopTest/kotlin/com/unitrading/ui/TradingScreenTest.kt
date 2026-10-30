@@ -105,11 +105,14 @@ class TradingScreenTest {
         compose.onNodeWithTag("symbol-EURUSD").assertDoesNotExist()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
     }
-    private fun dragEntry(price: Long, direction: Int, draftPrices: List<Long> = emptyList()): Long {
+    /** Drags the line at [price] 24px down (direction 1) or up (-1); the chart's auto scale includes [draftPrices]. */
+    private fun dragLine(price: Long, direction: Int, draftPrices: List<Long> = emptyList(), release: Boolean = true): Long {
         val q = plugin.market.value.quotes.getValue(instrument.symbol)
         val position = session.state.value.positions.firstOrNull { it.symbol == instrument.symbol }
         val extras = listOfNotNull(q.bid, q.ask, position?.entryPrice, position?.stopLoss, position?.takeProfit) +
-            session.state.value.orders.filter { it.request.symbol == instrument.symbol }.mapNotNull { it.request.entryPrice } + draftPrices
+            session.state.value.orders.filter { it.request.symbol == instrument.symbol }.flatMap { order ->
+                listOfNotNull(order.request.entryPrice) + if (order.role == OrderRole.ENTRY) listOfNotNull(order.request.stopLoss, order.request.takeProfit) else emptyList()
+            } + draftPrices
         val chart = compose.onNodeWithTag("trading-chart")
         val bounds = chart.fetchSemanticsNode().size
         val scale = PriceScale.from(plugin.history(instrument.symbol, Timeframe.M5).takeLast(80), extras, 18f * .6f, bounds.height - 30f * .6f)
@@ -118,7 +121,7 @@ class TradingScreenTest {
             down(Offset(bounds.width * .55f, y))
             moveBy(Offset(0f, 6f * direction))
             moveBy(Offset(0f, 18f * direction))
-            up()
+            if (release) up()
         }
         return scale.price(y + 24f * direction, instrument.tickSize)
     }
@@ -129,7 +132,7 @@ class TradingScreenTest {
         val entry = q.ask + if (kind == OrderKind.LIMIT) -500 else 500
         compose.onNodeWithText(kind.label()).performClick()
         compose.onNodeWithTag("order-entry").performTextReplacement(instrument.formatPrice(entry))
-        val updated = dragEntry(entry, if (kind == OrderKind.LIMIT) 1 else -1, listOf(entry))
+        val updated = dragLine(entry, if (kind == OrderKind.LIMIT) 1 else -1, listOf(entry))
         compose.onNodeWithTag("order-entry").assertTextContains(instrument.formatPrice(updated))
         compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
         assertEquals(before.positions, session.state.value.positions)
@@ -144,7 +147,7 @@ class TradingScreenTest {
         runBlocking { assertTrue(session.placeOrder("ui-pending", OrderRequest(instrument.symbol, Side.BUY, kind, 10, entry)).accepted) }
         val order = session.state.value.orders.single()
         render()
-        val updated = dragEntry(entry, if (kind == OrderKind.LIMIT) 1 else -1)
+        val updated = dragLine(entry, if (kind == OrderKind.LIMIT) 1 else -1)
         compose.onNodeWithTag("pending-entry-dialog").assertExists()
         assertEquals(order, session.state.value.orders.single())
         compose.onNodeWithTag("pending-entry").assertTextContains(instrument.formatPrice(updated))
@@ -154,13 +157,62 @@ class TradingScreenTest {
     }
     @Test fun limitOrderDragWaitsForConfirmation() = pendingEntryDrag(OrderKind.LIMIT)
     @Test fun stopOrderDragWaitsForConfirmation() = pendingEntryDrag(OrderKind.STOP)
+    @Test fun draftStopLossDragShowsItsResultAndOnlyChangesTheTicket() {
+        render()
+        val before = session.state.value
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        val stop = entry - 400
+        compose.onNodeWithText(OrderKind.LIMIT.label()).performClick()
+        compose.onNodeWithTag("order-entry").performTextReplacement(instrument.formatPrice(entry))
+        compose.onNodeWithTag("order-sl").performTextReplacement(instrument.formatPrice(stop))
+        val updated = dragLine(stop, 1, listOf(entry, entry, stop), release = false)
+        compose.onNodeWithTag("chart-readout").assertTextContains("止损预览 ${instrument.formatPrice(updated)}", substring = true)
+        compose.onNodeWithTag("chart-readout").assertTextContains("USD", substring = true)
+        compose.onNodeWithTag("trading-chart").performTouchInput { up() }
+        compose.onNodeWithTag("order-sl").assertTextContains(instrument.formatPrice(updated))
+        compose.onNodeWithTag("order-entry").assertTextContains(instrument.formatPrice(entry))
+        compose.onNodeWithTag("pending-protection-dialog").assertDoesNotExist()
+        assertEquals(before.positions, session.state.value.positions)
+        assertEquals(before.orders, session.state.value.orders)
+    }
+    @Test fun pendingStopLossDragWaitsForConfirmation() {
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        runBlocking { assertTrue(session.placeOrder("ui-pending-sl", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry, entry - 400, entry + 800)).accepted) }
+        val order = session.state.value.orders.single()
+        render()
+        val updated = dragLine(entry - 400, 1)
+        compose.onNodeWithTag("pending-protection-dialog").assertExists()
+        compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
+        assertEquals(order, session.state.value.orders.single())
+        compose.onNodeWithTag("pending-protect-sl").assertTextContains(instrument.formatPrice(updated))
+        compose.onNodeWithTag("pending-protect-tp").assertTextContains(instrument.formatPrice(entry + 800))
+        compose.onNodeWithTag("confirm-pending-protection").performClick()
+        compose.waitUntil(5_000) { session.state.value.orders.single().version == 2L }
+        assertEquals(order.request.copy(stopLoss = updated), session.state.value.orders.single().request)
+    }
+    @Test fun pendingOrderRowOpensItsStopAndTarget() {
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        runBlocking { assertTrue(session.placeOrder("ui-pending-row", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry)).accepted) }
+        val order = session.state.value.orders.single()
+        render()
+        compose.onNodeWithTag("terminal-tab-1").performClick()
+        compose.onNodeWithTag("protect-order-${order.id}").performClick()
+        compose.onNodeWithTag("pending-protect-tp").performTextReplacement(instrument.formatPrice(entry + 700))
+        compose.onNode(hasText("+", substring = true) and hasAnyAncestor(hasTestTag("pending-protection-dialog"))).assertExists()
+        compose.onNodeWithTag("confirm-pending-protection").performClick()
+        compose.waitUntil(5_000) { session.state.value.orders.single().version == 2L }
+        assertEquals(order.request.copy(takeProfit = entry + 700), session.state.value.orders.single().request)
+    }
     @Test fun cancelledOrderCannotBeConfirmedAfterDragging() {
         val q = plugin.market.value.quotes.getValue(instrument.symbol)
         val entry = q.ask - 500
         runBlocking { session.placeOrder("ui-pending", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry)) }
         val order = session.state.value.orders.single()
         render()
-        dragEntry(entry, 1)
+        dragLine(entry, 1)
         compose.onNodeWithTag("pending-entry-dialog").assertExists()
         runBlocking { session.cancelOrder("cancel-during-edit", order.id) }
         compose.onNodeWithTag("confirm-pending-entry").assertIsNotEnabled()

@@ -62,6 +62,26 @@ class ProtectionClassificationTest {
         assertTrue(ProtectionClassifier(book, 100).forPosition(200, Side.SELL, 1).editable)
         assertFalse(ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1).editable)
     }
+    @Test fun onlyNativeBracketsCoveringAnUnfilledWorkingEntryCanMoveBeforeTheFill() {
+        fun book(entryStatus: String = "Working", bracketQuantity: Long = 1, atm: Boolean = false, extraStop: Boolean = false) = EntityBook().apply {
+            apply("order", json("""{"id":700,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"$entryStatus","timestamp":"$stamp"}"""))
+            apply("orderVersion", json("""{"id":1700,"orderId":700,"orderQty":1,"orderType":"Limit","price":5480}"""))
+            val parent = if (atm) "" else ",\"parentId\":700"
+            putOrder(order(701, "Limit", quantity = bracketQuantity, extra = parent)); putOrder(order(702, "Stop", quantity = bracketQuantity, extra = parent))
+            if (extraStop) putOrder(order(703, "Stop", extra = parent))
+            if (atm) {
+                apply("orderStrategy", strategy())
+                for ((id, label) in listOf(700L to "0", 701L to "256", 702L to "257")) apply("orderStrategyLink", link(id, label))
+            }
+        }
+        assertTrue(ProtectionClassifier(book(), 100).pendingBracketsEditable(700))
+        assertFalse(ProtectionClassifier(book(bracketQuantity = 2), 100).pendingBracketsEditable(700))
+        assertFalse(ProtectionClassifier(book(entryStatus = "PendingReplace"), 100).pendingBracketsEditable(700))
+        assertFalse(ProtectionClassifier(book(extraStop = true), 100).pendingBracketsEditable(700))
+        val atm = ProtectionClassifier(book(atm = true), 100)
+        assertEquals(OrderRole.STOP_LOSS, atm.relation(702).role)
+        assertFalse(atm.pendingBracketsEditable(700), "ATM legs are priced by the strategy at the fill")
+    }
     @Test fun unrelatedOppositeOrdersAreUnresolvedNotGuessedProtectionOrEntry() {
         val book = EntityBook().apply {
             apply("position", position())

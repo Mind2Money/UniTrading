@@ -69,6 +69,36 @@ class PendingModificationTest {
         assertFalse(s.modifyOrder("after-cancel", cancelled.id, cancelled.version, current.ask + 600).accepted)
     }
 
+    @Test fun pendingStopAndTargetMoveBeforeTheFillAndProtectTheFilledPosition() = runTest {
+        val b = broker()
+        val s = b.openSession(b.accounts.first().id)
+        val q = b.market.value.quotes.getValue("EURUSD")
+        val entry = q.ask - 500
+        assertTrue(s.placeOrder("place", OrderRequest("EURUSD", Side.BUY, OrderKind.LIMIT, 10, entry, entry - 400, entry + 800)).accepted)
+        val old = s.state.value.orders.single()
+        val preview = s.previewOrderProtection(old.id, entry - 300, entry + 900)
+        assertTrue(preview.valid, preview.errors.toString())
+        assertEquals(s.preview(old.request.copy(stopLoss = entry - 300, takeProfit = entry + 900)).stopLossPnlMicros, preview.stopLossPnlMicros)
+        assertFalse(s.previewOrderProtection(old.id, entry + 100, entry + 900).valid, "A stop above a buy entry is rejected")
+        assertFalse(s.modifyOrderProtection("wrong-side", old.id, old.version, entry + 100, entry + 900).accepted)
+        assertFalse(s.modifyOrderProtection("stale", old.id, 0, entry - 300, entry + 900).accepted)
+        assertFalse(b.openSession(b.accounts[1].id).modifyOrderProtection("foreign", old.id, old.version, entry - 300, entry + 900).accepted)
+        assertEquals(old, s.state.value.orders.single())
+        val result = s.modifyOrderProtection("move", old.id, old.version, entry - 300, entry + 900)
+        assertTrue(result.accepted, result.message)
+        assertEquals(result, s.modifyOrderProtection("move", old.id, old.version, entry - 300, entry + 900))
+        val updated = s.state.value.orders.single()
+        assertEquals(old.request.copy(stopLoss = entry - 300, takeProfit = entry + 900), updated.request)
+        assertEquals(2, updated.version)
+        assertTrue(s.modifyOrderProtection("remove-target", updated.id, updated.version, entry - 300, null).accepted)
+        assertNull(s.state.value.orders.single().request.takeProfit)
+        assertEquals(b.exportState(), DemoBroker(DemoConfigs.all.first(), b.exportState()).exportState())
+        b.setQuote("EURUSD", entry - 12, entry, q.timeMs + 1_000)
+        assertEquals(entry - 300, s.state.value.positions.single().stopLoss)
+        assertNull(s.state.value.positions.single().takeProfit)
+        assertFalse(s.modifyOrderProtection("after-fill", updated.id, 3, entry - 200, null).accepted)
+    }
+
     @Test fun existingOrderCanBeEditedAtCapacity() = runTest {
         val b = broker()
         val s = b.openSession(b.accounts.first().id)
