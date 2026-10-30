@@ -2,6 +2,7 @@ package com.unitrading.ui
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -9,20 +10,25 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.CredentialStore
 import com.unitrading.broker.*
+import com.unitrading.chart.dateTime
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
+import javax.imageio.ImageIO
 import kotlin.test.assertTrue
 
 class RemoteWorkbenchTest {
-    @Test fun rawExecutionClickSelectsChartAndUnknownFeesNeverDisplayAsNetPnl() {
+    @Test fun pairedHistoryExpandsLegsAndLocatesChartWithoutShowingRawExecutions() {
         val source = remote()
         val at = 1_798_589_000_000L
-        val fill = Execution("10", "MESZ6", Side.BUY, 100, 5_500_000_000, at, "20")
+        val fill = Execution("10", "MESZ6", Side.BUY, 300, 5_500_000_000, at, "20")
         val pair = ClosedTrade("pair-1", "p", "MESZ6", Side.BUY, 100, 5_499_000_000, 5_500_000_000, at - 300_000, at,
             netPnlMicros = null, reason = "服务器成交配对", grossPnlMicros = 5_000_000)
+        val snapshot = MutableStateFlow(source.openSession(source.accounts.single().id).state.value.copy(
+            executions = listOf(fill, fill.copy(id = "11")), trades = listOf(pair)))
         val plugin = object : BrokerPlugin by source {
             override fun history(symbol: String, timeframe: Timeframe) = (0..100).map {
                 Candle(at - (100 - it) * timeframe.minutes * 60_000L, 5_500_000_000, 5_501_000_000, 5_499_000_000, 5_500_000_000)
@@ -30,18 +36,37 @@ class RemoteWorkbenchTest {
             override fun openSession(accountId: String): AccountSession {
                 val delegate = source.openSession(accountId)
                 return object : AccountSession by delegate {
-                    override val state = MutableStateFlow(delegate.state.value.copy(executions = listOf(fill), trades = listOf(pair)))
+                    override val state = snapshot
                 }
             }
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin))
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.onNodeWithTag("terminal-tab-2").performClick()
+        compose.onNodeWithText("历史 1").assertExists()
+        compose.onNodeWithTag("execution-10").assertDoesNotExist()
+        compose.onNodeWithTag("execution-11").assertDoesNotExist()
+        compose.onNodeWithTag("paired-trade-details-pair-1").assertDoesNotExist()
         compose.onNodeWithText("毛 +5.00 USD").performScrollTo().assertExists()
         compose.onNodeWithText("费用未知，净盈亏待确认").assertExists()
-        compose.onNodeWithTag("execution-10").performScrollTo().performClick()
-        compose.onNodeWithTag("selected-execution").assertTextContains("选中成交 #10", substring = true)
+        compose.onNodeWithTag("paired-trade-pair-1").performClick()
+        compose.onNodeWithText("入场 · 买入   1 张   5499.00").performScrollTo().assertExists()
+        compose.onNodeWithText("出场 · 卖出   1 张   5500.00").performScrollTo().assertExists()
+        val inDetails = hasAnyAncestor(hasTestTag("paired-trade-details-pair-1"))
+        compose.onNode(hasText("${dateTime(pair.openedAtMs)} UTC") and inDetails).assertExists()
+        compose.onNode(hasText("${dateTime(pair.closedAtMs)} UTC") and inDetails).assertExists()
+        val target = File("../artifacts/paired-trade-history.png")
+        target.parentFile.mkdirs()
+        ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", target)
+        compose.onNodeWithTag("locate-trade-pair-1").performScrollTo().performClick()
+        compose.onNodeWithText("选中历史  #pair-1", substring = true).assertExists()
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        compose.onNodeWithTag("paired-trade-pair-1").performScrollTo().performClick()
+        compose.onNodeWithTag("paired-trade-details-pair-1").assertDoesNotExist()
+        compose.runOnIdle { snapshot.value = snapshot.value.copy(trades = emptyList()) }
+        compose.onNodeWithText("历史 0").assertExists()
+        compose.onNodeWithText("暂无已配对交易").assertExists()
+        compose.onNodeWithTag("execution-10").assertDoesNotExist()
     }
     @Test fun removingSelectedInstrumentFallsBackAndEmptyCatalogCanRecover() {
         val source = remote()
@@ -142,7 +167,7 @@ class RemoteWorkbenchTest {
     @Test fun emptyRemoteCatalogDoesNotCrashOrCreateMockInstruments() {
         render(remote(empty = true))
         compose.onNodeWithText("查询合约").assertExists()
-        compose.onNodeWithText("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。").assertExists()
+        compose.onNodeWithText("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。").assertExists()
         compose.onNodeWithTag("review-order").assertDoesNotExist()
     }
 }

@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -233,14 +235,14 @@ internal fun TradeTerminal(
     onEditOrder: (PendingOrder) -> Unit,
     busy: Boolean,
     modifier: Modifier = Modifier,
-    onSelectExecution: (Execution) -> Unit = {},
     onProtectOrder: (PendingOrder) -> Unit = {},
 ) {
     var tab by remember(plugin.descriptor.id, account.accountId) { mutableStateOf(0) }
+    var expandedTrades by remember(plugin.descriptor.id, account.accountId) { mutableStateOf(emptySet<String>()) }
     val instruments = plugin.instruments.associateBy { it.symbol }
     Column(modifier.background(TradingColors.Surface)) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("持仓 ${account.positions.size}", "挂单 ${account.orders.size}", "历史 ${if (account.executions.isEmpty()) account.trades.size else account.executions.size}", "活动").forEachIndexed { index, title ->
+            listOf("持仓 ${account.positions.size}", "挂单 ${account.orders.size}", "历史 ${account.trades.size}", "活动").forEachIndexed { index, title ->
                 TextButton({ tab = index }, Modifier.testTag("terminal-tab-$index")) {
                     Text(title, color = if (tab == index) TradingColors.Accent else TradingColors.Muted, fontSize = 12.sp, fontWeight = if (tab == index) FontWeight.SemiBold else FontWeight.Normal)
                 }
@@ -313,26 +315,19 @@ internal fun TradeTerminal(
                     }
                 }
                 2 -> {
-                    if (account.trades.isEmpty() && account.executions.isEmpty()) item { EmptyState("暂无已平仓交易", "平仓后可在这里和图表中查看成交记录。") }
-                    if (account.executions.isNotEmpty()) item { Text("原始成交 · 点击定位图表", Modifier.padding(16.dp), fontSize = 12.sp, color = TradingColors.Muted) }
-                    items(account.executions.asReversed(), key = { "fill-${it.id}" }) { fill ->
-                        val spec = instruments[fill.symbol]
-                        if (spec != null) {
-                            Column(Modifier.fillMaxWidth().testTag("execution-${fill.id}").clickable { onSelectExecution(fill) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                                Text("${fill.symbol}   ${fill.side.label()} ${spec.formatQuantity(fill.lotsHundredths)} ${spec.quantityUnit}   ${spec.formatPrice(fill.price)}", fontSize = 12.sp)
-                                Text("${dateTime(fill.timeMs)} · 成交 #${fill.id} / 订单 #${fill.orderId}", color = TradingColors.Muted, fontSize = 10.sp)
-                                Text("原始成交；配对与费用以服务器记录为准", color = TradingColors.Muted, fontSize = 10.sp)
-                            }
-                            DividerLine()
-                        }
-                    }
-                    if (account.executions.isNotEmpty() && account.trades.isNotEmpty()) item { Text("服务器已配对交易", Modifier.padding(16.dp), fontSize = 12.sp, color = TradingColors.Muted) }
+                    if (account.trades.isEmpty()) item { EmptyState("暂无已配对交易", "完成配对后可在这里展开入场和出场明细。") }
                     items(account.trades.asReversed(), key = { it.id }) { t ->
                         val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, "合约规格暂不可用，目录恢复后才能操作。"); return@items }
-                        Row(Modifier.fillMaxWidth().clickable { onSelectTrade(t) }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val expanded = t.id in expandedTrades
+                        Row(Modifier.fillMaxWidth().testTag("paired-trade-${t.id}")
+                            .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
+                            .clickable(onClickLabel = if (expanded) "收起成交明细" else "展开成交明细") {
+                                expandedTrades = if (expanded) expandedTrades - t.id else expandedTrades + t.id
+                            }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (expanded) "▾" else "▸", color = TradingColors.Muted, fontSize = 12.sp)
                             Column(Modifier.weight(1f)) {
                                 Text("${t.symbol}   ${if (t.directionKnown) t.side.label() else "买卖配对"} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
-                                Text("${instrument.formatPrice(t.entryPrice)} → ${instrument.formatPrice(t.exitPrice)}", color = TradingColors.Muted, fontSize = 10.sp)
+                                Text("${instrument.formatPrice(t.entryPrice)} ${if (t.directionKnown) "→" else "/"} ${instrument.formatPrice(t.exitPrice)}", color = TradingColors.Muted, fontSize = 10.sp)
                                 if (compact) Text("${dateTime(t.closedAtMs)} · ${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
                             }
                             if (!compact) Text("${dateTime(t.closedAtMs)}\n${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
@@ -341,6 +336,21 @@ internal fun TradeTerminal(
                                     color = TradingColors.pnl(t.netPnlMicros ?: t.grossPnlMicros))
                                 if (t.netPnlMicros == null) Text("费用未知，净盈亏待确认", color = TradingColors.Muted, fontSize = 10.sp)
                                 if (!t.directionKnown) Text("同时间买卖配对", color = TradingColors.Muted, fontSize = 10.sp)
+                            }
+                        }
+                        if (expanded) {
+                            Column(Modifier.fillMaxWidth().testTag("paired-trade-details-${t.id}")
+                                .background(TradingColors.Raised.copy(alpha = .5f))
+                                .padding(start = 36.dp, end = 16.dp, top = 12.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val exitSide = if (t.side == Side.BUY) Side.SELL else Side.BUY
+                                PairedTradeLeg(if (t.directionKnown) "入场 · ${t.side.label()}" else t.side.label(),
+                                    instrument, t.lotsHundredths, t.entryPrice, t.openedAtMs)
+                                PairedTradeLeg(if (t.directionKnown) "出场 · ${exitSide.label()}" else exitSide.label(),
+                                    instrument, t.lotsHundredths, t.exitPrice, t.closedAtMs)
+                                if (!t.directionKnown) Text("买卖成交时间相同，入场和出场顺序未知", color = TradingColors.Muted, fontSize = 10.sp)
+                                TextButton({ onSelectTrade(t) }, Modifier.testTag("locate-trade-${t.id}"), contentPadding = PaddingValues(0.dp)) {
+                                    Text("定位图表", fontSize = 11.sp)
+                                }
                             }
                         }
                         DividerLine()
@@ -357,5 +367,13 @@ internal fun TradeTerminal(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PairedTradeLeg(label: String, instrument: Instrument, quantity: Long, price: Long, timeMs: Long) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("$label   ${instrument.formatQuantity(quantity)} ${instrument.quantityUnit}   ${instrument.formatPrice(price)}", fontSize = 12.sp)
+        Text("${dateTime(timeMs)} UTC", color = TradingColors.Muted, fontSize = 10.sp)
     }
 }

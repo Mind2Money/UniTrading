@@ -368,7 +368,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
                                     onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
-                                    onSelectExecution = { fill -> chosenSymbol = fill.symbol; focusedExecution = fill; focusedTrade = null; selectedPositionId = null; mobileTab = 1 },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             })
@@ -415,7 +414,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
                                     onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
-                                    onSelectExecution = { fill -> chosenSymbol = fill.symbol; focusedExecution = fill; focusedTrade = null; selectedPositionId = null; mobileTab = 1 },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
