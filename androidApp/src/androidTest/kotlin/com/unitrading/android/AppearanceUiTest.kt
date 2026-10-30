@@ -154,7 +154,7 @@ class AppearanceUiTest {
             }
             awaitText("图表")
             idle()
-            assertNotNull(node("图表")); assertNotNull(node("行情")); assertNotNull(node("交易")); assertNotNull(node("账户"))
+            assertNotNull(node("图表")); assertNotNull(node("行情")); assertNotNull(node("交易")); assertNotNull(node("设置"))
             screenshot("android-navigation-v114")
             val chart = awaitNode("拖动图表平移", description = true)
             val bounds = Rect().also(chart::getBoundsInScreen)
@@ -219,7 +219,7 @@ class AppearanceUiTest {
             screenshot("android-floating-notice")
             tap("关闭操作提示", description = true)
             assertNull(node("操作提示"))
-            tap("账户", last = true)
+            tap("设置", last = true)
             awaitText("交易商与账户")
             if (node("外观与主题") == null) {
                 val screen = Rect().also { automation.rootInActiveWindow.getBoundsInScreen(it) }

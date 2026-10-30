@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
-private val navigationIcons = listOf("行情", "图表", "交易", "账户").mapIndexed { index, name ->
+private val navigationIcons = listOf("行情", "图表", "交易", "设置").mapIndexed { index, name ->
     ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
         path(stroke = SolidColor(Color.Black), strokeLineWidth = 1.8f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
             when (index) {
@@ -26,8 +26,10 @@ private val navigationIcons = listOf("行情", "图表", "交易", "账户").map
                 }
                 2 -> { moveTo(3f, 7f); lineTo(20f, 7f); lineTo(16f, 3f); moveTo(21f, 17f); lineTo(4f, 17f); lineTo(8f, 21f) }
                 else -> {
-                    moveTo(8f, 7f); curveTo(8f, 1.7f, 16f, 1.7f, 16f, 7f); curveTo(16f, 12.3f, 8f, 12.3f, 8f, 7f); close()
-                    moveTo(4f, 21f); lineTo(4f, 18f); curveTo(4f, 12.5f, 20f, 12.5f, 20f, 18f); lineTo(20f, 21f); close()
+                    moveTo(4f, 7f); lineTo(8f, 7f); moveTo(12f, 7f); lineTo(20f, 7f)
+                    moveTo(8f, 4f); lineTo(12f, 4f); lineTo(12f, 10f); lineTo(8f, 10f); close()
+                    moveTo(4f, 17f); lineTo(14f, 17f); moveTo(18f, 17f); lineTo(20f, 17f)
+                    moveTo(14f, 14f); lineTo(18f, 14f); lineTo(18f, 20f); lineTo(14f, 20f); close()
                 }
             }
         }
@@ -38,7 +40,7 @@ private val navigationIcons = listOf("行情", "图表", "交易", "账户").map
 internal fun MobileNavigation(selected: Int, onSelect: (Int) -> Unit) {
     NavigationBar(containerColor = TradingColors.Surface, tonalElevation = 0.dp,
         windowInsets = WindowInsets(0, 0, 0, 0), modifier = Modifier.testTag("mobile-navigation")) {
-        listOf("行情", "图表", "交易", "账户").forEachIndexed { index, label ->
+        listOf("行情", "图表", "交易", "设置").forEachIndexed { index, label ->
             NavigationBarItem(selected = selected == index, onClick = { onSelect(index) },
                 icon = { Icon(navigationIcons[index], contentDescription = null, modifier = Modifier.size(24.dp)) },
                 label = { Text(label) }, alwaysShowLabel = true, modifier = Modifier.testTag("nav-$index"),

@@ -138,6 +138,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var confirmation by remember(accountKey, symbol) { mutableStateOf<Confirmation?>(null) }
         var mobileTab by remember { mutableStateOf(1) }
         var showAccounts by remember { mutableStateOf(false) }
+        var showSettings by remember { mutableStateOf(false) }
+        var showActivity by remember(accountKey) { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
@@ -305,6 +307,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (confirmation is Confirmation.Place) confirmation = null
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = panelOpen && !keyboardOpen, onBackCompleted = { minimizeOrder() })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 val chart: @Composable (Modifier) -> Unit = { m ->
                     // Minimizing hides only the form; the active draft remains editable on the chart.
                     val draftShown = if (compact) orderActive else showDraft
@@ -371,6 +375,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
                                 TextButton({ runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }, Modifier.testTag("reset-desktop-layout")) { Text("重置布局") }
                                 TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
+                                TextButton({ showActivity = false; showSettings = true }, Modifier.testTag("open-settings")) { Text("设置") }
                                 TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text("切换账户", fontSize = 12.sp) }
                                 if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                             }
@@ -451,7 +456,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
-                            else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                            else -> if (showActivity) {
+                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                    onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
+                            } else Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("settings-page")) {
                                 AccountStrip(account)
                                 DividerLine()
                                 if (!localDemo) connectionStatus()
@@ -462,6 +470,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
                                     if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
                                     TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
+                                    TextButton({ showActivity = true }, Modifier.testTag("open-activity")) { Text("活动记录") }
                                     LivePnlSwitch(runtime.livePnl)
                                     SavedLoginControls(runtime.savedLogins) { selectBroker("") }
                                     TextButton({ showConnection = true }) { Text("连接 Tradovate") }
@@ -473,7 +482,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (compact) {
                         if (!panelOpen) {
                             DividerLine()
-                            MobileNavigation(mobileTab) { mobileTab = it }
+                            MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
                         }
                     } else {
                         DividerLine()
@@ -501,6 +510,26 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         var dismissed by remember { mutableStateOf(false) }
                         if (!dismissed) FloatingNoticeCard(TradingNotice(0, message, persistent = true), "saved-login-status", { dismissed = true }, title = "登录状态")
                     } }
+                }
+                if (desktop && showSettings) {
+                    Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
+                        Surface(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.large, color = colors.Surface) {
+                            if (showActivity) {
+                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                    onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
+                            } else Column(Modifier.fillMaxSize().padding(18.dp).testTag("settings-page")) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("设置", Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                                    TextButton({ showSettings = false }, Modifier.testTag("close-settings")) { Text("完成") }
+                                }
+                                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    TextButton({ showTheme = true }) { Text("外观与主题") }
+                                    TextButton({ showActivity = true }, Modifier.testTag("open-activity")) { Text("活动记录") }
+                                    LivePnlSwitch(runtime.livePnl)
+                                }
+                            }
+                        }
+                    }
                 }
                 if (showOrder) {
                     Dialog(onDismissRequest = { if (!busy) showOrder = false }) {

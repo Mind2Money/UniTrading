@@ -94,7 +94,7 @@ class TradingScreenTest {
         compose.onNodeWithTag("confirm-action").performClick()
         compose.waitUntil(5_000) { session.state.value.positions.size == before.positions.size - 1 }
         assertEquals(before.trades.size + 1, session.state.value.trades.size)
-        compose.onNodeWithTag("terminal-tab-2").performClick()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("trade-${session.state.value.trades.last().id}")
         compose.onNodeWithText("${money(requireNotNull(session.state.value.trades.last().netPnlMicros), true)} USD").assertExists()
     }
     @Test fun switchingBrokerChangesCatalog() {
@@ -199,7 +199,7 @@ class TradingScreenTest {
         runBlocking { assertTrue(session.placeOrder("ui-pending-row", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry)).accepted) }
         val order = session.state.value.orders.single()
         render()
-        compose.onNodeWithTag("terminal-tab-1").performClick()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-${order.id}")
         compose.onNodeWithTag("protect-order-${order.id}").performClick()
         compose.onNodeWithTag("pending-protect-tp").performTextReplacement(instrument.formatPrice(entry + 700))
         compose.onNode(hasText("+", substring = true) and hasAnyAncestor(hasTestTag("pending-protection-dialog"))).assertExists()

@@ -42,7 +42,7 @@ class RemoteWorkbenchTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin))
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("terminal-tab-2").performClick()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("section-history")
         compose.onNodeWithText("历史 1").assertExists()
         compose.onNodeWithTag("execution-10").assertDoesNotExist()
         compose.onNodeWithTag("execution-11").assertDoesNotExist()
@@ -64,6 +64,7 @@ class RemoteWorkbenchTest {
         compose.onNodeWithTag("paired-trade-pair-1").performScrollTo().performClick()
         compose.onNodeWithTag("paired-trade-details-pair-1").assertDoesNotExist()
         compose.runOnIdle { snapshot.value = snapshot.value.copy(trades = emptyList()) }
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("section-history")
         compose.onNodeWithText("历史 0").assertExists()
         compose.onNodeWithText("暂无已配对交易").assertExists()
         compose.onNodeWithTag("execution-10").assertDoesNotExist()

@@ -10,7 +10,7 @@
 | Windows / Android 网页登录 | 已实现 | `DesktopTradovateLogin`、`AndroidTradovateLogin`；Windows Demo 只读账户/行情链路曾实测，Android 完整授权账户链路未记录为通过 |
 | 多用户、Demo/Live 登录恢复 | 已实现并用合成会话测试 | `SavedTradovateAccounts`；Windows DPAPI、Android Keystore AES-GCM；过期或撤销仍需认证，不保存密码字段 |
 | 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统/TradingV 主题，页面、面板、图表、K 线、盈亏等分别配置 |
-| Android Material 3 导航与手机布局 | 已实现，模拟器实测 | `MobileNavigation`：行情、图表、交易、账户；图表页单行工具条，下单在 `MobileTradeBar` / `MobileOrderPanel` 折叠面板，资金行移至交易/账户页，见[手机布局](mobile-layout.md)；设备 UI 测试注入合成账户，真机未验证 |
+| Android Material 3 导航与手机布局 | 已实现，模拟器实测 | `MobileNavigation`：行情、图表、交易、设置；图表页单行工具条，下单在 `MobileTradeBar` / `MobileOrderPanel` 折叠面板，资金行移至交易/设置页，交易区按持仓、挂单、历史竖排，活动移至设置子页，见[手机布局](mobile-layout.md)；设备 UI 测试注入合成账户，真机未验证 |
 | 图表缩放和平移 | 已实现并测试 | `TradingChart`、`ChartViewport`、`PriceScale`；两轴分别缩放、图内双向平移、复位 |
 | 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期请求并保留最近 2000 根（`CHART_BARS`），没有更早历史分页加载；服务器对 2000 根请求的实际返回量未实测 |
 | 净额持仓、挂单、原始成交 | 已实现并用协议测试覆盖 | `TradovateBroker.rebuild` 从服务器实体映射，不生成远程替代数据 |
