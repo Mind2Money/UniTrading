@@ -51,12 +51,19 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | --- | --- |
 | 构建 | branch push / PR / 手动执行 `:androidApp:assembleRelease`，检查 mapping/resources 输出并上传 unsigned APK |
 | 签名 | main/master 或 `v*` tag 的 push 使用 secrets 签名，再上传 signed APK |
-| 通知 | 对上述发布 push 调用 Telegram；未配置 Telegram secrets 时跳过 |
+| 通知 | 对上述发布 push 调用 Telegram；构建失败时也报告，取消运行时停止；未配置 Telegram secrets 时跳过 |
 | 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
-| 测试门禁 | **没有**调用 JVM/Compose 或 Android instrumentation 测试；没有 Windows/iOS 构建 job |
+| 测试门禁 | Windows 运行 broker-api、demo-broker、tradovate-broker、Compose desktop 测试并打包；Windows 与 Android release 构建均成功才签名；没有 Android instrumentation job |
+| iOS | macOS 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检；允许失败，不阻塞 Android 签名 |
+| 并发 | 同一 PR 的新运行取消旧运行；push 和手动运行按 run ID 独立分组，旧运行不会串行阻塞后续构建 |
+| 超时 | Windows / Android 构建 35 分钟，iOS 45 分钟，签名 / 通知各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒 |
 
-本次核对仅检查仓库配置，未读取 secrets，也未触发发布或消息通知；云端签名和发布结果未验证。仓库目前仅使用 main；workflow 中兼容 master 的条件不代表存在 master 分支。
+上述 job 超时从 runner 开始执行后计时，不能限制 GitHub 分配 runner 前的排队时间。各次 push 可并行执行，仍受账户 runner 并发额度限制，通知可能按完成顺序到达。
+
+2026-10-31 在隔离工作树验证 `fb9110d` 与本次 CI 配置修改：368 项 desktop 测试通过，0 failures、0 errors、0 skipped；Windows `createDistributable` 和 Android `assembleRelease` 成功，已检查 Windows 可执行文件、未签名 release APK、R8 mapping 和资源压缩报告。`actionlint` 及工作流 Bash 脚本语法检查通过。结果保存在本地 `artifacts/ci-fix-verification/result.json`。
+
+上述验证在 Windows 本机执行，未验证 iOS、云端签名或 Telegram 发布。仓库目前仅使用 main；workflow 中兼容 master 的条件不代表存在 master 分支。
 
 ## 验证证据及限制
 

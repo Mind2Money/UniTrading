@@ -13,9 +13,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Only a pull request run is made pointless by a newer push; a run on main
-  # or a tag is left to finish so every published build reaches Telegram.
+  # Replace obsolete PR checks, but give every push its own group. A slow iOS
+  # check or notification must not serialize subsequent builds on the branch.
+  # Published runs still finish signing and notifying without being cancelled.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -129,6 +130,7 @@ jobs:
   build-android:
     name: Android APK (R8)
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     outputs:
       apk_name: ${{ steps.apk.outputs.name }}
       version_name: ${{ steps.apk.outputs.version_name }}
@@ -239,6 +241,7 @@ jobs:
        github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       APK_NAME: ${{ needs.build-android.outputs.apk_name }}
     steps:
@@ -293,11 +296,12 @@ jobs:
     name: Telegram 通知
     needs: [build-android, sign-android]
     if: >-
-      always() && github.event_name == 'push' &&
+      !cancelled() && github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
        github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # A pattern, unlike a name, downloads nothing instead of failing when
       # signing did not run, so the failure still reaches Telegram.
@@ -308,6 +312,7 @@ jobs:
           merge-multiple: true
 
       - name: 推送到 Telegram
+        timeout-minutes: 5
         # Everything from the commit or the ref reaches the script through the
         # environment; written into the script with ${{ }}, a commit subject
         # holding a quote or $( ) would run in the shell next to the bot token.
@@ -343,15 +348,15 @@ jobs:
 
           if [ -n "$APK" ] && [ -f "$APK" ]; then
             CAPTION_FILE=$(mktemp)
+            trap 'rm -f "$CAPTION_FILE"' EXIT
             printf '%s' "$CAPTION" > "$CAPTION_FILE"
-            curl -sS --fail-with-body -X POST "${API}/sendDocument" \
+            curl -sS --fail-with-body --connect-timeout 15 --max-time 180 -X POST "${API}/sendDocument" \
               -F chat_id="${TELEGRAM_CHAT_ID}" \
               -F "document=@${APK}" \
               -F "caption=<${CAPTION_FILE}" \
               -F parse_mode=HTML
-            rm -f "$CAPTION_FILE"
           else
-            curl -sS --fail-with-body -X POST "${API}/sendMessage" \
+            curl -sS --fail-with-body --connect-timeout 15 --max-time 60 -X POST "${API}/sendMessage" \
               -H 'Content-Type: application/json' \
               --data "$(jq -n --arg c "$TELEGRAM_CHAT_ID" --arg t "$CAPTION" \
                 '{"chat_id":$c,"text":$t,"parse_mode":"HTML"}')"
