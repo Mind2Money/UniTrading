@@ -12,6 +12,7 @@
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
 - [手机布局](mobile-layout.md)：参考 MT5 的图表优先布局，单行图表工具条，下单收进可折叠面板，资金行移至交易/账户页。
+- [桌面布局](desktop-layout.md)：拖动分隔线调整各面板尺寸、本机记忆、窗口边界及重置操作。
 - [图表指标](indicators.md)：MA/EXPMA/BOLL 叠加线与 RSI/MACD/KDJ/ATR 副图，多指标叠加、参数与颜色自定义、本机保存。
 - [实时盈亏通知](live-pnl-notifications.md)：Android Live Update / 常驻通知与 iOS 灵动岛 Live Activity 显示当前账户浮动盈亏，刷新规则、权限与边界。
 - [验证记录索引](verification.md)：当前摘要及首版本地 Demo 的历史证据。

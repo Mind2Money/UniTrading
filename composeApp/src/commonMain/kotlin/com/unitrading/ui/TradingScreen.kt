@@ -262,7 +262,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
-                val terminalHeight = if (maxHeight > 830.dp) 235.dp else 190.dp
                 val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
                 // Phones are chart-first: on the chart tab the chart's own toolbar row replaces the app header, and the open
                 // order panel takes the tab bar's place until it is closed by its button, its handle or Back.
@@ -327,9 +326,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Badge(environmentLabel)
                             // Phones reach accounts, theme and the order ticket through the tab bar and the chart's order panel.
                             if (desktop) {
-                                Spacer(Modifier.weight(1f))
-                                Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", fontSize = 12.sp, color = colors.Muted)
+                                Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", Modifier.weight(1f),
+                                    fontSize = 12.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
+                                TextButton({ runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }, Modifier.testTag("reset-desktop-layout")) { Text("重置布局") }
                                 TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
                                 TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text("切换账户", fontSize = 12.sp) }
                                 if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
@@ -353,32 +353,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                     if (desktop) {
-                        Row(Modifier.weight(1f).fillMaxWidth()) {
-                            Column(Modifier.width(216.dp).fillMaxHeight().background(colors.Shell)) {
+                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
+                            accounts = {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
-                                DividerLine()
-                                MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))
-                            }
-                            VerticalDivider(color = colors.Border)
-                            Column(Modifier.weight(1f).fillMaxHeight()) {
-                                Row(Modifier.weight(1f).fillMaxWidth()) {
-                                    Column(Modifier.weight(1f).fillMaxHeight()) {
-                                        chart(Modifier.weight(1f))
-                                    }
-                                    if (wide) {
-                                        VerticalDivider(color = colors.Border)
-                                        OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.width(296.dp).fillMaxHeight().background(colors.Shell), environment = plugin.descriptor.environment)
-                                    }
-                                }
-                                DividerLine()
+                            },
+                            market = { m -> MarketWatch(plugin, market, symbol, ::chooseSymbol, m) },
+                            chart = chart,
+                            order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                { request?.let { confirmation = Confirmation.Place(it) } }, m.background(colors.Shell), environment = plugin.descriptor.environment) },
+                            terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
                                     onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
                                     onSelectExecution = { fill -> chosenSymbol = fill.symbol; focusedExecution = fill; focusedTrade = null; selectedPositionId = null; mobileTab = 1 },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = Modifier.fillMaxWidth().height(terminalHeight), onProtectOrder = { editPendingProtection(it) })
-                            }
-                        }
+                                    modifier = m, onProtectOrder = { editPendingProtection(it) })
+                            })
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))

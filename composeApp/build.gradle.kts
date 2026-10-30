@@ -94,3 +94,5 @@ compose.desktop {
         }
     }
 }
+
+apply(from = rootProject.file("gradle/desktop-run.gradle.kts"))
