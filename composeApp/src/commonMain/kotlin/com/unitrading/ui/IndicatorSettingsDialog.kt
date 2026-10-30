@@ -75,7 +75,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
             Column(Modifier.padding(20.dp)) {
                 Text("图表指标", style = MaterialTheme.typography.titleLarge)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("可叠加多个指标；参数与线色可自定义。保存后应用到所有品种和周期。", style = MaterialTheme.typography.bodySmall)
+                    Text("可添加多个指标，分别设置参数和线条颜色。保存后对所有品种和周期生效。", style = MaterialTheme.typography.bodySmall)
                     Text("添加指标", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         IndicatorKind.entries.forEach { kind ->
@@ -154,7 +154,7 @@ private fun IndicatorEditor(
             }
         }
         if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", fontSize = 10.sp, color = colors.Muted)
-        if (config == null) Text("参数或颜色无效，保存前请修正。", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+        if (config == null) Text("参数或颜色无效，请修改后保存。", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton({ onMove(-1) }, enabled = index > 0) { Text("上移", fontSize = 11.sp) }
             TextButton({ onMove(1) }, enabled = index < total - 1) { Text("下移", fontSize = 11.sp) }

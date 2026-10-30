@@ -38,7 +38,7 @@ class DesktopLoginHandoffTest {
             assertEquals(42, session.userId)
             assertEquals(TradovateEnvironment.DEMO, session.environment)
             assertNull(session.mdAccessToken)
-            assertTrue(phases.any { it.contains("网页登录已成功") })
+            assertTrue(phases.any { it.contains("网页登录成功") })
             assertTrue(phases.any { it.contains("1 秒后自动返回") })
             assertFalse(phases.any { it.contains(session.accessToken) })
         } finally { remove(directory) }

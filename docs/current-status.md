@@ -1,6 +1,6 @@
 # 当前实现与验证状态
 
-核对日期：2026-10-29。业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计提交不修改业务实现。
+核对日期：2026-10-29。业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计仅核对实现并更新文档。
 
 ## 功能与代码对应
 
@@ -33,7 +33,7 @@
 
 - 共享 JVM 编译使用 JDK 21 toolchain；Kotlin 2.4.20、Compose Multiplatform 1.12.0、Gradle 9.7.1、AGP 9.4.0。
 - Android compileSdk 37、targetSdk 36、minSdk 26。CI 安装包标识为 `platforms;android-37.0`；本机 SDK 路径放在不提交的 `local.properties`。
-- Windows 打包需要完整 JDK 的 `jpackage.exe`。本机 JBR 21 缺少该工具，1.1.3/1.1.4 分发目录使用 Microsoft JDK 25.0.2 打包；JBR 可编译不代表可打包。
+- Windows 打包需要完整 JDK 的 `jpackage.exe`。本机 JBR 21 缺少该工具，1.1.3/1.1.4 分发目录使用 Microsoft JDK 25.0.2 打包；JBR 可用于编译，但缺少打包工具。
 
 ```powershell
 ./gradlew.bat :composeApp:run
@@ -56,13 +56,13 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
 | 测试门禁 | **没有**调用 JVM/Compose 或 Android instrumentation 测试；没有 Windows/iOS 构建 job |
 
-本次只核对仓库配置，不读取 secrets、不触发发布/消息，也不将 workflow 存在写成云端签名或发布已经成功。仓库目前仅使用 main；workflow 中兼容 master 的条件不代表存在 master 分支。
+本次核对仅检查仓库配置，未读取 secrets，也未触发发布或消息通知；云端签名和发布结果未验证。仓库目前仅使用 main；workflow 中兼容 master 的条件不代表存在 master 分支。
 
 ## 验证证据及限制
 
 - 1.1.4 常规测试为 **127 项**：broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48，0 失败、0 跳过。
 - 本次审计重跑上述测试，并额外运行 3 个显式启用的诊断探针，合计 130 项；探针确认 A1 的缺陷现状，**通过不表示缺陷已修复**。命令及用例见[审计](implementation-audit.md)。
 - Android 1.1.4 已有模拟器触摸 UI 证据：导航、主题保存/Activity 重建、两轴缩放；1.1.3 另有 Keystore 加密、篡改拒绝和跨进程读取测试。本次未重新操作设备。
-- Windows Tradovate Demo 只读证据来自 1.1.1：2 个授权账户、2 个合约、155 根历史 K 线，订单请求 0。这不是最新版本真实交易或保存会话后的真实免登录验收。
+- Windows Tradovate Demo 只读证据来自 1.1.1：2 个授权账户、2 个合约、155 根历史 K 线，订单请求 0。这些结果仅验证该版本的只读流程，未验证最新版本的真实交易或保存会话后的免登录流程。
 - Windows 可运行目录、Android 1.1.4 debug APK 曾构建成功。真机、真实下单/改价/成交回执、iOS、Windows MSI、release APK 的设备运行均未在本次核对中验证。
 - 日志、截图、报告、APK 位于被 Git 忽略的 `artifacts/` / `build/`，克隆源码不会自带这些文件。历史 APK hash 只对应当时的产物。

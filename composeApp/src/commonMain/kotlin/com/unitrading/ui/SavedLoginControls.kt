@@ -26,7 +26,7 @@ internal fun SavedLoginControls(saved: SavedTradovateAccounts, onForgotten: () -
         TextButton({ confirm = true }, enabled = !restoring && !busy, modifier = Modifier.testTag("forget-saved-logins")) { Text("清除已保存登录") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("清除已保存登录？") },
-        text = { Text("断开本机 Tradovate 连接并删除保存的会话。浏览器保存的密码不受影响，服务器订单和仓位保持不变。") },
+        text = { Text("清除后将断开本机 Tradovate 连接，并删除保存的登录状态。浏览器密码、服务器订单和仓位不受影响。") },
         confirmButton = { TextButton({
             confirm = false
             scope.launch { busy = true; try { if (saved.forgetAll()) onForgotten() } finally { busy = false } }

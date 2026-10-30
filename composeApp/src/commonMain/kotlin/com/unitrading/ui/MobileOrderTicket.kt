@@ -106,8 +106,8 @@ internal fun MobileOrderTicket(
             if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 EstimateRow("数量范围 / 步长", "${instrument.formatQuantity(instrument.minLotsHundredths)}–${instrument.formatQuantity(instrument.maxLotsHundredths)} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
                 EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
-                EstimateRow(if (instrument.estimatesIncludeFees) "止损净结果" else "止损毛结果", preview?.stopLossPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")
-                EstimateRow(if (instrument.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", preview?.takeProfitPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")
+                EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")
+                EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} ${instrument.currency}" } ?: "未设置")
                 val risk = preview?.stopLossPnlMicros
                 val reward = preview?.takeProfitPnlMicros
                 EstimateRow("收益 / 风险", if (risk != null && reward != null && risk < 0 && reward > 0)

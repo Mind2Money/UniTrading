@@ -9,7 +9,7 @@
 - UI 只读状态并提交请求；不得在插件外直接增加余额、订单或仓位。
 - 交易商 ID 全局唯一，账户 ID 在交易商内唯一；同名品种不代表同一市场。
 
-当前默认注册表为空，由登录成功后注册 `tradovate-broker`。本地 Demo 实现保留为编译依赖与离线测试引擎，需显式启用 `includeDemoBrokers = true`。Tradovate 走官方网页登录与服务器权威状态；代码/协议测试不等于真实交易联调，边界见 [Tradovate 使用与验证](tradovate.md)。
+默认注册表为空，登录成功后注册 `tradovate-broker`。本地 Demo 实现保留为编译依赖与离线测试引擎，需显式启用 `includeDemoBrokers = true`。Tradovate 通过官方网页登录，账户状态以服务器为准；代码/协议测试不等于真实交易联调，边界见 [Tradovate 使用与验证](tradovate.md)。
 
 ## 注册
 
@@ -50,7 +50,7 @@ TradingScreen(runtime)
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
 | `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
 
-交易命令返回 `TradeResult`。`outcome` 区分 ACCEPTED、REJECTED、UNKNOWN；`accepted=true` 在远程插件中只表示已受理，不等于成交。结果未知不能解释为“未成交”或自动重发。示例远程插件按会话去重，同请求 ID 不重复发送；重新登录后仍应先核对服务器事实，不把内存去重当作跨会话交易保证。
+交易命令返回 `TradeResult`。`outcome` 区分 ACCEPTED、REJECTED、UNKNOWN；`accepted=true` 在远程插件中只表示已受理，不等于成交。结果未知时，不能据此判断未成交，也不能自动重发。示例远程插件按会话去重，同请求 ID 不重复发送；重新登录后应先核对服务器状态，内存中的去重记录不保证跨会话有效。
 
 ## 数值单位
 

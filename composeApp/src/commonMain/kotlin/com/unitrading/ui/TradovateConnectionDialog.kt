@@ -30,11 +30,11 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
                     FilterChip(environment == env, { if (!busy) environment = env }, label = { Text(env.wire) })
                 }
             }
-            Text("在官方网页中登录，成功后自动返回。首次最多保留 60 秒供浏览器保存密码；已记住的登录会更快交接。", fontSize = 12.sp)
-            Text("认证统一使用 Tradovate 认证服务，账户与行情连接保持你选择的 Demo/Live 环境；不会自动下单。", fontSize = 12.sp, color = TradingColors.Muted)
-            if (runtime.savedLogins.available) Text("登录成功后在本机加密保存，下次启动自动恢复有效会话；可在账户页清除。", fontSize = 12.sp)
+            Text("在官方网页登录后自动返回。首次登录最多等待 60 秒，供浏览器保存密码；已保存过登录信息时会更快返回。", fontSize = 12.sp)
+            Text("登录由 Tradovate 认证服务处理。账户和行情使用你选择的 Demo/Live 环境，连接后不会自动下单。", fontSize = 12.sp, color = TradingColors.Muted)
+            if (runtime.savedLogins.available) Text("应用会在本机加密保存登录状态，下次启动时恢复仍有效的登录。可在账户页清除。", fontSize = 12.sp)
             if (environment == TradovateEnvironment.LIVE) Text("Live：后续确认的订单会发送到真实账户。", color = TradingColors.Loss, fontSize = 12.sp)
-            if (login == null) Text("此平台尚未配置官方网页登录组件。", color = TradingColors.Loss)
+            if (login == null) Text("当前平台尚未配置官方网页登录组件。", color = TradingColors.Loss)
             if (busy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(progress, Modifier.testTag("login-progress"), fontSize = 12.sp)
@@ -52,10 +52,10 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
                     onConnected(id)
                     onDismiss()
                 } catch (_: TimeoutCancellationException) {
-                    error = "阶段超时：$progress。没有发送交易指令。"
+                    error = "连接超时：$progress。未发送交易指令。"
                 } catch (cancel: CancellationException) { throw cancel }
                 catch (e: Exception) {
-                    error = if (e is TradovateRemoteException) "$progress\n${e.message}" else "$progress\n登录交接未完成，请关闭旧登录窗口后重试。"
+                    error = if (e is TradovateRemoteException) "$progress\n${e.message}" else "$progress\n登录信息未能传回应用，请关闭旧登录窗口后重试。"
                 } finally { busy = false }
             }
         }, enabled = !busy && !restoring && login != null) { Text("打开官方登录页") } },

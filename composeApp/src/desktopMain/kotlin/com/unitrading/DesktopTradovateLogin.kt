@@ -49,11 +49,11 @@ class DesktopTradovateLogin(
                             if (line.startsWith("TOKEN ") && line.length <= 131_080) accumulator.accept(line.removePrefix("TOKEN "), "https://trader.tradovate.com", true)
                             when {
                                 line == "STATUS WAITING_BROWSER" -> onProgress("请在官方网页中登录")
-                                line == "STATUS SESSION_CAPTURED" -> onProgress("网页登录已成功，已收到会话")
+                                line == "STATUS SESSION_CAPTURED" -> onProgress("网页登录成功，已收到登录信息")
                                 line.startsWith("STATUS PASSWORD_SAVE ") -> line.substringAfterLast(' ').toIntOrNull()?.takeIf { it in 0..60 }?.let {
-                                    onProgress("登录成功，正在保留密码保存提示；${it} 秒后自动返回，可在浏览器点击“立即返回”")
+                                    onProgress("登录成功，等待浏览器保存密码。${it} 秒后自动返回，也可点击“立即返回”")
                                 }
-                                line == "STATUS RETURNING" -> onProgress("登录成功，正在交接账户会话…")
+                                line == "STATUS RETURNING" -> onProgress("登录成功，正在将账户信息传回应用…")
                             }
                             if (line == "DONE") done = true
                         }

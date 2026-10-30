@@ -5,7 +5,7 @@
 2026-10-29 核对：常规套件 127 项（broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48），全部通过。本次另用 3 个显式启用的审计探针确认指令等待/重连对账缺口；探针通过表示复现成功，不表示业务缺口已修复。详见[实现核对](implementation-audit.md)。
 
 - Windows 可运行目录、Android 1.1.4 debug APK 已构建；模拟器 UI 已验证主题、导航、两轴缩放和 Activity 重建后的主题恢复，见[1.1.4 记录](theme-navigation-chart.md)。
-- 加密会话保存、DPAPI / Keystore、篡改拒绝与恢复测试见[1.1.3 记录](saved-login-fix.md)；没有将其写成真实账户长期免登录实测。
+- 加密会话保存、DPAPI / Keystore、篡改拒绝与恢复测试见[1.1.3 记录](saved-login-fix.md)；这些测试未覆盖真实账户长期免登录的情况。
 - Tradovate Demo 真实只读账户、报价和历史证据来自[1.1.1 登录交接记录](tradovate-login-fix.md)。真实下单、改价及成交回执尚未联调。
 - Android release/R8、CI 签名和 Telegram 流程有实现；其配置及测试门禁缺口见[当前状态](current-status.md)。不以 debug 测试代替 release 验收。
 - iOS 同时缺少登录实现与 Mac 构建验证；真机、MSI 和本次云端发布状态未验证。
@@ -27,7 +27,7 @@
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :composeApp:desktopTest :androidApp:assembleDebug
 ```
 
-最终构建结果：`BUILD SUCCESSFUL`，**52 项自动测试通过，0 failures、0 errors、0 skipped**（broker-api 3 项、demo-broker 28 项、composeApp 21 项）。APK 路径：`androidApp/build/outputs/apk/debug/androidApp-debug.apk`。这是本地调试签名包，不是正式发布签名包。
+最终构建结果：`BUILD SUCCESSFUL`，52 项自动测试通过，0 failures、0 errors、0 skipped（broker-api 3 项、demo-broker 28 项、composeApp 21 项）。APK 路径：`androidApp/build/outputs/apk/debug/androidApp-debug.apk`。该 APK 使用本地调试签名，尚未使用正式发布签名。
 
 交付 APK 的 SHA-256：`9f54dd3164c9db2e28a87391d96800eddac93818738cb87f76cdc2165e8555a1`。
 
@@ -43,7 +43,7 @@
 | OrderDraftTest | 无效价格不能变成空保护价、数量精度、参考保护方向 |
 | TradingScreenTest | 下单预览/确认、SL 拖动与取消、账户/交易商切换、平仓入历史、OHLC 表、Limit/Stop 草稿拖动、挂单拖动确认、编辑中撤单阻止确认、截图和短高度布局 |
 
-JUnit 报告在各模块 `build/reports/tests/desktopTest` 和 `build/test-results/desktopTest`。Compose UI 测试实际派发点击、输入与拖动事件，不只是检查编译；它们运行于 Desktop 测试宿主，不冒充 Android instrumentation 测试。
+JUnit 报告在各模块 `build/reports/tests/desktopTest` 和 `build/test-results/desktopTest`。Compose UI 测试在 Desktop 宿主中派发点击、输入和拖动事件，验证界面行为。Android instrumentation 测试需单独运行。
 
 ## Android 实际操作与账本核对
 

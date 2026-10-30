@@ -73,12 +73,12 @@ class TradovateLoginActivity : ComponentActivity() {
         actions.addView(done); actions.addView(cancel)
         layout.addView(status); layout.addView(actions)
         val autofill = getSystemService(AutofillManager::class.java)
-        val hint = TextView(this).apply { text = if (autofill?.isEnabled == true) "保存与自动填充由系统密码服务提供；请在登录后选择保存。" else "未启用系统自动填充服务。请在系统设置中选择密码/自动填充服务。"; setTextColor(Color.LTGRAY); textSize = 12f }
+        val hint = TextView(this).apply { text = if (autofill?.isEnabled == true) "系统密码服务负责保存和自动填充。登录后可选择保存密码。" else "系统自动填充尚未启用，请到系统设置选择密码或自动填充服务。"; setTextColor(Color.LTGRAY); textSize = 12f }
         layout.addView(hint)
         if (autofill?.isEnabled != true) layout.addView(Button(this).apply { text = "系统自动填充设置"; setOnClickListener { startActivity(Intent(Settings.ACTION_SETTINGS)) } })
         setContentView(layout)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) || !WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-            status.text = "请先更新 Android System WebView：需要安全消息桥、文档起始脚本与独立浏览器 profile。"
+            status.text = "请先更新 Android System WebView。当前版本缺少登录所需的安全消息、页面启动脚本或独立浏览器配置支持。"
             return
         }
         val web = WebView(this)
@@ -132,11 +132,11 @@ class TradovateLoginActivity : ComponentActivity() {
                         delay(1_500)
                         while (!hasWindowFocus() && android.os.SystemClock.elapsedRealtime() - started < 60_000) {
                             val seconds = ((60_000 - (android.os.SystemClock.elapsedRealtime() - started)) / 1000).coerceAtLeast(0)
-                            status.text = "登录成功，等待系统密码保存提示；最多再保留 ${seconds} 秒"
+                            status.text = "登录成功，等待系统提示保存密码，最多再等 ${seconds} 秒"
                             LoginTransfer.progress?.invoke(status.text.toString())
                             delay(250)
                         }
-                        LoginTransfer.progress?.invoke("登录会话已取得，正在自动返回…")
+                        LoginTransfer.progress?.invoke("已收到登录信息，正在自动返回…")
                         completeLogin()
                     }
                 }

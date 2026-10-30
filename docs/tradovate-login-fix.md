@@ -21,7 +21,7 @@
 - Android 收到有效会话后自动提交系统 autofill 上下文，待保存提示处理后自动返回；无需再点“完成登录”。
 - 显示可区分的阶段：网页登录 → 已取得会话/等待保存密码 → 账户授权 → 完整账户同步 → 合约/资金加载 → 行情授权。连接等待有超时，可取消。
 - 原生主机改为版本化输出，避免覆盖用户仍在使用的旧登录窗口，不删除保存的浏览器资料。
-- 使用账户访问令牌建立行情连接；市场数据拒绝单独报告，不把它重新解释为未登录。
+- 使用账户访问令牌建立行情连接；行情授权被拒绝时单独报告，保留已有的登录状态。
 - `user/syncrequest` 显式订阅 account/order/position 等实体类型，读取当前授权上下文而非显式指定认证域用户 ID；请求完整响应，缺少关键集合时明确报错。
 - 先从所选交易环境读取 `account/list`，按服务器授权账户 ID 映射目录，支持受托账户和没有 owner 字段的记录；不再用 owner/userId 相等作为权限依据。
 
@@ -42,7 +42,7 @@
 
 已通过 UniTrading 自己的官方登录窗口完成 Demo 登录和自动交接。浏览器自身自动填充了保存的凭据；诊断只点击官方 Login 按钮，未读取密码字段、未导出令牌。
 
-最终结果：`connected=true`、`accountCount=2`、`instrumentCount=2`、`quoteAvailable=true`、`historyBars=155`、`sentOrderRequests=0`。只读传输层未发现任何写入尝试。这里验证了真实的会话→账户→行情/历史链路；不代表真实下单、改价或成交已经联调。
+最终结果：`connected=true`、`accountCount=2`、`instrumentCount=2`、`quoteAvailable=true`、`historyBars=155`、`sentOrderRequests=0`。只读传输层未发现任何写入尝试。本次实测覆盖会话→账户→行情/历史链路，真实下单、改价和成交仍未联调。
 
 回归结果：86 项 JVM/KMP/Compose 测试通过，0 失败、0 跳过；原生登录 host 的 52 项断言通过，Android 1.1.1 调试包构建成功。
 

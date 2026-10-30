@@ -63,7 +63,7 @@ class SavedTradovateAccounts(
             saveFailed = false
         }
         catch (cancel: CancellationException) { throw cancel }
-        catch (_: Exception) { saveFailed = true; message.value = "登录状态保存失败，本次连接仍可使用；请检查设备存储后重试。" }
+        catch (_: Exception) { saveFailed = true; message.value = "登录状态保存失败，当前连接仍可使用。请检查设备存储后重试。" }
     }
 
     suspend fun restore() = operations.withLock {
@@ -72,7 +72,7 @@ class SavedTradovateAccounts(
         try {
             if (!initialized) {
                 val data = try { store.read() } catch (cancel: CancellationException) { throw cancel }
-                catch (_: Exception) { message.value = "无法读取已保存登录，请重新登录或清除已保存登录。"; unreadable = true; loaded = true; return@withLock }
+                catch (_: Exception) { message.value = "无法读取保存的登录信息，请重新登录或清除已保存登录。"; unreadable = true; loaded = true; return@withLock }
                 try {
                     state = data?.let { Json.decodeFromString<SavedConnections>(it) } ?: SavedConnections()
                     check(state.version == 1 && state.sessions.map { it.brokerId }.distinct().size == state.sessions.size)
@@ -80,7 +80,7 @@ class SavedTradovateAccounts(
                     initialized = true
                 } catch (_: Exception) {
                     state = SavedConnections()
-                    message.value = "已保存登录损坏，原文件未覆盖；请重新登录或清除已保存登录。"
+                    message.value = "保存的登录信息已损坏，原文件未覆盖。请重新登录或清除已保存登录。"
                     loaded = true
                     unreadable = true
                     return@withLock

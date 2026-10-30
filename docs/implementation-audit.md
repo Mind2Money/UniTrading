@@ -1,6 +1,6 @@
 # 代码与文档核对：1.1.4
 
-> 以下是修复前的审计记录。当前 A1–A7 的实现与验证进度见[修复进度](remediation-progress.md)；原来的缺陷观测探针已转换为常规恢复测试。
+> 以下是修复前的审计记录。当前 A1 至 A7 的实现与验证进度见[修复进度](remediation-progress.md)；原来的缺陷观测探针已转换为常规恢复测试。
 
 日期：2026-10-29。业务代码基线：`main` / `2dcf7e1`。覆盖 README、全部 `docs/*.md`、native host 说明、Gradle/CI、共享 UI、图表、平台入口与 Tradovate 状态/命令流程。本次提交同步文档并保存离线诊断，以下业务缺口尚未修复。
 
@@ -16,7 +16,7 @@ REST 返回成功后，`awaiting` 会阻止后续写指令。正常增量事件�
 2. 重连完整快照已含受理订单：`connect` 加载 `book.snapshot` 后仅 `rebuild`，没有调用 `reconcile`。探针看到订单 700 已进入账户列表，但等待标记仍在。
 3. 平仓后服务器以 `Deleted` 删除 position：`EntityBook.event` 已删除仓位，而 `reconcile` 的 close 分支只查找仍存在的 `netPos == 0` 记录。探针看到空仓后仍无法继续写入。
 
-影响：即使服务器状态已经更新，也可能持续锁住下单、改单、撤单和平仓，直到另一个可完成对账的事件或新会话出现。没有发现这些路径自动重发订单；缺口在确认与恢复。第三种情况为协议层合成事件复现，不宣称真实服务端一定使用该结束形态。
+影响：即使服务器状态已经更新，也可能持续锁住下单、改单、撤单和平仓，直到另一个可完成对账的事件或新会话出现。没有发现这些路径自动重发订单；缺口在确认与恢复。第三种情况使用协议层合成事件复现，真实服务端是否采用该结束方式尚未确认。
 
 后续修复需保留“不确定结果不自动重发”的边界，增加完整快照后的对账、等待期限处理、明确的重新同步入口，以及净仓删除/归零的可靠确认。
 
@@ -24,9 +24,9 @@ REST 返回成功后，`awaiting` 会阻止后续写指令。正常增量事件�
 
 [MainViewController.kt](../composeApp/src/iosMain/kotlin/com/unitrading/MainViewController.kt) 只调用 `UniTradingApp(store)`；[UniTradingApp / TradingScreen](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt) 的 login 默认为 null，默认注册表为空。[连接对话框](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradovateConnectionDialog.kt) 在 login 为 null 时禁用登录按钮。
 
-iOS 除了缺少 Mac 构建验证，还缺网页认证实现和凭据存储接线；仅补一次编译验收无法使交易流程可用。
+iOS 尚未通过 Mac 构建验证，也缺少网页认证实现和凭据存储接入。交易流程可用前，需要补齐这些实现并验证。
 
-### A3 远程历史交易闭环尚未完成（部分实现）
+### A3 远程历史交易功能尚未完成（部分实现）
 
 [TradovateBroker.rebuild](../tradovate-broker/src/commonMain/kotlin/com/unitrading/tradovate/TradovateBroker.kt) 发布原始 `Execution`，未生成配对的 `ClosedTrade`；订单预估设置 `feesKnown=false` / `marginKnown=false`。[TradeTerminal](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingPanels.kt) 的原始成交行没有点击定位回调；[TradingChart](../composeApp/src/commonMain/kotlin/com/unitrading/chart/TradingChart.kt) 的历史选中逻辑只查询 `trades`。
 
@@ -42,7 +42,7 @@ iOS 除了缺少 Mac 构建验证，还缺网页认证实现和凭据存储接�
 
 [TradingScreen](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt) 仅在 plugin 实例变化时初始化 symbol，随后使用 `plugin.instruments.first { it.symbol == symbol }`。同一插件若把 `[A,B]` 目录改为 `[B]`，空目录判断不会触发，查找 A 会抛出 `NoSuchElementException`。
 
-这与插件文档允许异步更新目录的约定不完整。当前 Tradovate 合约缓存主要追加，尚未在真实连接观察到该崩溃；问题针对目录可删除/替换的插件路径，未运行 UI 复现。
+该回退逻辑未完整支持插件文档约定的异步目录更新。当前 Tradovate 合约缓存主要追加，尚未在真实连接观察到该崩溃；问题针对目录可删除/替换的插件路径，未运行 UI 复现。
 
 ### A6 部分图表设计要求仅实现了基础形式
 

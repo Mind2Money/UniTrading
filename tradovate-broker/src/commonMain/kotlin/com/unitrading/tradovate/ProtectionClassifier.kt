@@ -74,12 +74,12 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         if (confirmed.map { relation(it.long("id")!!).group }.distinct().size != 1) return unavailable("存在多组保护，请在挂单列表中逐项核对")
         val stops = confirmed.filter { relation(it.long("id")!!).role == OrderRole.STOP_LOSS }
         val targets = confirmed.filter { relation(it.long("id")!!).role == OrderRole.TAKE_PROFIT }
-        if (stops.size > 1 || targets.size > 1) return unavailable("存在多个同类保护价，不选择任意一条作为仓位保护")
+        if (stops.size > 1 || targets.size > 1) return unavailable("存在多个同类保护价，无法确定哪一条对应当前仓位")
         if (confirmed.size == 2 && relation(confirmed.first().long("id")!!).group?.startsWith("parent:") == true && !linkedOco(confirmed[0], confirmed[1])) {
             return unavailable("父子关系已确认，但尚未确认两条保护单的 OCO 互斥关系")
         }
         if (confirmed.any { remainingQuantity(it.long("id")!!) != quantity }) return unavailable("保护单剩余数量与当前净仓不一致，仅显示订单")
-        if (relevant.any { relation(it.long("id")!!).role == OrderRole.UNRESOLVED }) return unavailable("另有未确认的反向单，暂不开放仓位保护修改")
+        if (relevant.any { relation(it.long("id")!!).role == OrderRole.UNRESOLVED }) return unavailable("另有反向单的关联尚未确认，暂不能修改仓位保护")
         val stop = stops.singleOrNull()?.long("id")
         val target = targets.singleOrNull()?.long("id")
         val working = confirmed.all { it.str("ordStatus") == "Working" }

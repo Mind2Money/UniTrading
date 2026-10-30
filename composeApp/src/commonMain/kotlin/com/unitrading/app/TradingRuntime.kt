@@ -70,7 +70,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (error: Exception) {
-            storageError.value = "当前操作已在内存生效，但保存失败：${error.message}。请重试保存后再退出。"
+            storageError.value = "操作已生效，但未能保存：${error.message}。请重试保存后再退出。"
             paused.value = true
             false
         }

@@ -55,13 +55,13 @@ internal fun PendingProtectionDialog(
             Text("原 SL ${request.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${request.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
             PriceInput(if (capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { onEdit(edit.copy(stopLoss = it)) }, "pending-protect-sl")
             PriceInput(if (capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { onEdit(edit.copy(takeProfit = it)) }, "pending-protect-tp")
-            if (!capabilities.atomicProtectionEdit) Text("每次修改一条保护线；修改另一条前请等待服务器确认。", fontSize = 11.sp)
+            if (!capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", fontSize = 11.sp)
             capabilityError?.let { Text(it, color = colors.Loss, fontSize = 11.sp) }
-            EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", result(sl, preview?.stopLossPnlMicros))
-            EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", result(tp, preview?.takeProfitPnlMicros))
-            Text("按挂单入场价估算；入场成交后按新的止损/止盈保护。确认后交易商才会校验并更新。", color = colors.Muted, fontSize = 11.sp)
+            EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", result(sl, preview?.stopLossPnlMicros))
+            EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", result(tp, preview?.takeProfitPnlMicros))
+            Text("盈亏按挂单入场价估算，新的止损/止盈在入场成交后生效。确认后由交易商校验并更新。", color = colors.Muted, fontSize = 11.sp)
             if (!validVersion) Text("挂单已成交、已撤销或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
-            if (!validInput) Text("价格必须为正数并符合品种最小变动单位。", color = colors.Loss, fontSize = 11.sp)
+            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, fontSize = 11.sp)
             preview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
         } },
         confirmButton = { Button({ onConfirm(sl, tp) }, Modifier.testTag("confirm-pending-protection"),

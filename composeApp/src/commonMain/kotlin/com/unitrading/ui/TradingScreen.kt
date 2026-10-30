@@ -87,7 +87,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("UniTrading · ${plugin.descriptor.name}", fontSize = 20.sp)
                     Text(feed.statusMessage, color = colors.Muted)
-                    Text("连接后由交易商提供账户和合约。空列表不会生成本地替代数据。", fontSize = 12.sp)
+                    Text("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。", fontSize = 12.sp)
                     BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
                     OutlinedTextField(query, { query = it }, label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
                     Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
@@ -423,7 +423,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text(plugin.descriptor.description, fontSize = 12.sp, color = colors.Muted)
-                                    if (localDemo) Text("模拟时钟每秒前进 15 秒。暂停或退出时，不补造离线成交。", fontSize = 12.sp, color = colors.Muted)
+                                    if (localDemo) Text("模拟时间每秒推进 15 秒。暂停或退出期间不生成成交。", fontSize = 12.sp, color = colors.Muted)
                                     if (localDemo) OutlinedButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续模拟行情" else "暂停模拟行情") }
                                     if (localDemo) TextButton({ confirmation = Confirmation.Reset }) { Text("重置所有模拟账户") }
                                     TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
@@ -446,7 +446,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
                             Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = colors.Muted, fontSize = 10.sp)
                             Spacer(Modifier.weight(1f))
-                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   服务器权威状态   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
+                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   状态以服务器为准   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
                         }
                     }
                 }
@@ -499,12 +499,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}")
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
-                                    Text("提交时按最新报价与账户状态再次校验，预估不是锁定成交价。", fontSize = 12.sp, color = colors.Muted)
+                                    Text("提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。", fontSize = 12.sp, color = colors.Muted)
                                     livePreview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 12.sp) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${action.order.id}。" +
-                                    if (action.order.isProtection) "这会移除该项保护，服务器可能联动关联订单。" else "若已被触发，交易商将拒绝撤单。")
+                                    if (action.order.isProtection) "撤单后将移除这项保护，服务器也可能调整关联订单。" else "若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
                         } },
@@ -537,9 +537,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = colors.Muted, fontSize = 11.sp)
                             PriceInput("新入场价", edit.entry, { pendingEdit = edit.copy(entry = it) }, "pending-entry")
                             EstimateRow("预计保证金", estimate?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
-                            EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-                            Text("仅修改入场价；原订单类型、数量、SL/TP 保持不变。确认后按最新报价重新校验。", color = colors.Muted, fontSize = 11.sp)
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            Text("本次只改入场价，订单类型、数量和 SL/TP 不变。确认后会按最新报价重新校验。", color = colors.Muted, fontSize = 11.sp)
                             if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
                             if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, fontSize = 11.sp)
                             estimate?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
@@ -583,13 +583,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
                             PriceInput(if (plugin.capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
                             PriceInput(if (plugin.capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
-                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次修改一条保护线；修改另一条前请等待服务器确认。", fontSize = 11.sp)
+                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", fontSize = 11.sp)
                             capabilityError?.let { Text(it, color = colors.Loss, fontSize = 11.sp) }
-                            EstimateRow(if (spec.estimatesIncludeFees) "止损净结果" else "止损毛结果", estimate(sl))
-                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", estimate(tp))
-                            Text("当前为预览，确认后交易商才会校验并更新。跳空时实际结果可能不同。", color = colors.Muted, fontSize = 11.sp)
-                            if (!validVersion) Text("仓位已关闭或保护价版本已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
-                            if (!validInput) Text("价格必须为正数并符合品种最小变动单位。", color = colors.Loss, fontSize = 11.sp)
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate(sl))
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate(tp))
+                            Text("当前显示预估结果。确认后由交易商校验并更新，跳空可能使实际结果与预估不同。", color = colors.Muted, fontSize = 11.sp)
+                            if (!validVersion) Text("仓位已关闭或保护价已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
+                            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, fontSize = 11.sp)
                         } },
                         confirmButton = { Button({
                             protection = null

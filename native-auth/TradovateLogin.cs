@@ -243,7 +243,7 @@ namespace UniTrading.NativeAuth
             this.profile = profile;
             this.script = script;
             ExitResult = 2;
-            Text = "Tradovate 登录 — UniTrading · " + (environment == "live" ? "Live 实盘" : "Demo 模拟");
+            Text = "Tradovate 登录 | UniTrading · " + (environment == "live" ? "Live 实盘" : "Demo 模拟");
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(720, 600);
             Size = new Size(1100, 820);
@@ -344,7 +344,7 @@ namespace UniTrading.NativeAuth
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(script);
                 if (closing) return;
                 reloadButton.Enabled = true;
-                statusLabel.Text = "请在官方网页登录；成功后自动交接。首次保留最多 60 秒供浏览器保存密码。";
+                statusLabel.Text = "请在官方网页登录，成功后自动返回。首次登录最多等待 60 秒，供浏览器保存密码。";
                 PipeOutput.Write("STATUS WAITING_BROWSER");
                 core.Navigate("https://trader.tradovate.com/welcome");
             }
@@ -445,7 +445,7 @@ namespace UniTrading.NativeAuth
                 completion.PasswordStoreChanged(clock.ElapsedMilliseconds);
             if (completion.ShouldComplete(clock.ElapsedMilliseconds)) { FinishLogin(); return; }
             var remaining = completion.SecondsRemaining(clock.ElapsedMilliseconds);
-            statusLabel.Text = "网页登录已成功，正在等待浏览器保存密码；" + remaining + " 秒后自动返回，可点击“立即返回”。";
+            statusLabel.Text = "网页登录成功，正在等待浏览器保存密码。" + remaining + " 秒后自动返回，可点击“立即返回”。";
             if (remaining != reportedRemaining)
             {
                 reportedRemaining = remaining;

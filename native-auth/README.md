@@ -1,8 +1,8 @@
 # Windows Tradovate 登录窗口
 
-独立的 x64 WinForms / WebView2 host，供 Kotlin Desktop 以重定向进程管道调用。只用于用户主动打开的 Tradovate 官方登录页，不读取其他浏览器的密码、cookie 或配置。
+独立的 x64 WinForms / WebView2 host，由 Kotlin Desktop 启动，通过重定向的进程管道通信。只用于用户主动打开的 Tradovate 官方登录页，不读取其他浏览器的密码、cookie 或配置。
 
-host 当前独立版本为 1.1.1，与主应用 1.1.4 的版本号不同。主应用在交接后通过 DPAPI 保存会话，host 的管道协议和浏览器 profile 路径未因此改变；见[当前状态](../docs/current-status.md)。
+host 当前独立版本为 1.1.1，与主应用 1.1.4 的版本号不同。主应用收到登录信息后通过 DPAPI 保存会话，host 的管道协议和浏览器 profile 路径未因此改变；见[当前状态](../docs/current-status.md)。
 
 ## 构建
 
@@ -45,10 +45,10 @@ DONE
 - JS 通过顶层页面的 `window.chrome.webview.postMessage(JSON.stringify(...))` 发送上述 `kind: auth` 对象。
 - host 监听固定官方域名的 `/v1/auth/*` 与 `/auth/*` 单层认证响应，兼容响应包装及标准 token 别名。认证使用共享 live 域名，不据此改变用户选择的 Demo/Live 交易环境；不读取请求密码。
 - 只接受来源与当前顶层文档均为 **HTTPS `trader.tradovate.com`、443 端口** 的消息；认证响应来源限定 live/demo/tv/tv-demo 的 `tradovateapi.com` 主机，不接受任意域名。
-- 输入最多 128 KiB，token 长度 20–32768 且不允许空白/控制字符；未知字段不转发。环境不符、失败/挑战响应和非法消息被忽略。
+- 输入最多 128 KiB，token 长度为 20 至 32768 且不允许空白/控制字符；未知字段不转发。环境不符、失败/挑战响应和非法消息被忽略。
 - 收到账户 token 后自动进入交接，不等待独立行情 token。首次保留最多 60 秒供浏览器保存密码；发现密码库文件的大小/修改时间变化（不读取内容）后等待 1.5 秒，已有完成标记或续期会话也只等待 1.5 秒。
 - “立即返回”可跳过等待；登录后直接关闭窗口也完成交接。明确点击“取消登录”仍丢弃会话。
-- 管道 `STATUS WAITING_BROWSER/SESSION_CAPTURED/PASSWORD_SAVE <秒数>/RETURNING` 只含阶段，不含凭据；主程序显示这些阶段，不再笼统写成等待登录。
+- 管道 `STATUS WAITING_BROWSER/SESSION_CAPTURED/PASSWORD_SAVE <秒数>/RETURNING` 只含阶段，不含凭据；主程序按这些阶段显示登录进度。
 - `DONE` 且退出码 0 表示交接成功。取消退出码 2；配置/初始化/管道失败退出码 3。错误行只有固定错误码，不包含异常文本、认证响应或敏感 URL。
 
 ## 浏览器与密码
@@ -61,4 +61,4 @@ DONE
 
 ## 验证状态
 
-构建脚本默认执行不联网的 policy self-test，覆盖环境、origin、端口、URI 用户信息、字段清理、消息大小、token 长度、错误响应和敏感 URL 展示规则。该测试不等于真实 Tradovate 登录或浏览器密码保存已联调；后者需要用户在正式登录窗内操作。
+构建脚本默认执行不联网的 policy self-test，覆盖环境、origin、端口、URI 用户信息、字段清理、消息大小、token 长度、错误响应和敏感 URL 展示规则。该测试仅验证离线策略。真实 Tradovate 登录和浏览器密码保存需在正式登录窗口中单独验证。

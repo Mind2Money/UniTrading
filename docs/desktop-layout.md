@@ -18,14 +18,14 @@
 
 ## 窗口与尺寸限制
 
-- 沿用原布局断点：宽度至少 900dp 且高度至少 600dp 时使用桌面工作区；宽度至少 1240dp 时下单栏固定在右侧，较窄桌面窗口通过“下单”打开票据。
-- 左侧栏宽度 180–520dp，下单栏宽度 260–560dp；同时保留至少 320dp 的图表宽度。
+- 布局切换条件：宽度至少 900dp 且高度至少 600dp 时使用桌面工作区；宽度至少 1240dp 时下单栏固定在右侧，较窄桌面窗口通过“下单”打开下单表单。
+- 左侧栏宽度为 180 至 520dp，下单栏宽度为 260 至 560dp；同时保留至少 320dp 的图表宽度。
 - 账户区优先保留至少 100dp，行情区至少 140dp；底部交易区优先保留至少 128dp，图表上部区域至少 240dp。若提示栏或窗口高度使剩余空间不足，则按可用高度缩小下限，避免负尺寸或布局越界。
 - 缩小窗口只限制当前显示尺寸，不改写保存的偏好；恢复窗口后重新使用偏好尺寸。切换到手机布局再切回也保留尺寸。
 
 ## 保存与实现
 
-- 拖动实时更新内存状态，松手后写入本机 `desktop-layout-v1`；采用 dp 存储，不与当前账户、下单草稿或图表缩放混合保存。
+- 拖动实时更新内存状态，松手后写入本机 `desktop-layout-v1`；采用 dp 存储，与当前账户、下单草稿和图表缩放分开保存。
 - 写入按顺序执行，完成较早的保存不会覆盖较新的界面尺寸。保存失败时当前布局仍有效，工作区显示错误及“重试保存”。
 - 默认尺寸：左栏 216dp、下单栏 296dp、账户区 260dp、底部交易区 220dp。
 - 入口：[DesktopWorkspace.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/DesktopWorkspace.kt)、[DesktopPanelGeometry.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/DesktopPanelGeometry.kt)、[DesktopLayout.kt](../composeApp/src/commonMain/kotlin/com/unitrading/app/DesktopLayout.kt)。

@@ -39,4 +39,4 @@ Android 凭据测试使用独立 `com.unitrading.demo.credentialtest` 包名，�
 
 Windows `:composeApp:createDistributable` 与正常包名的 Android `:androidApp:assembleDebug` 均构建成功。编译使用 JDK 21 toolchain；Android Studio 的 JBR 缺少 `jpackage.exe`，桌面打包改用本机 Microsoft JDK 25.0.2。Windows 输出为 `composeApp/build/compose/binaries/main/app/UniTrading/UniTrading.exe`（须保留同目录依赖），Android 输出为 `androidApp/build/outputs/apk/debug/androidApp-debug.apk`（调试签名）。APK SHA-256：`8cb7a42f4e98e4f69085d075d60baa97418fc1c843658262abbd1ee2235accda`。
 
-真实 Tradovate 服务端撤销/到期后的认证仍由官方决定；本轮不把模拟测试当作真实账户免登录实测。iOS 未验证。
+会话撤销或到期后的认证由 Tradovate 服务端决定。本轮模拟测试未覆盖真实账户免登录流程，iOS 也未验证。
