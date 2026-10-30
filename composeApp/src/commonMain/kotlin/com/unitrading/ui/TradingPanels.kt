@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.chart.dateTime
-import kotlinx.coroutines.launch
 
 @Composable
 internal fun BrokerAccountChooser(
@@ -67,53 +66,6 @@ internal fun BrokerAccountChooser(
             }
         }
         Spacer(Modifier.height(12.dp))
-    }
-}
-
-@Composable
-internal fun MarketWatch(plugin: BrokerPlugin, market: MarketSnapshot, selected: String, onSymbol: (String) -> Unit, modifier: Modifier = Modifier) {
-    var query by remember(plugin.descriptor.id) { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-    var searchError by remember(plugin) { mutableStateOf<String?>(null) }
-    Column(modifier) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            SectionTitle("市场报价", modifier = Modifier.weight(1f))
-            Text("${plugin.instruments.size} 个品种", color = TradingColors.Muted, fontSize = 10.sp)
-        }
-        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 14.dp).testTag("symbol-search"),
-            placeholder = { Text("搜索品种", fontSize = 12.sp) }, singleLine = true, shape = RoundedCornerShape(8.dp))
-        if (plugin.descriptor.environment != BrokerEnvironment.LOCAL_DEMO) {
-            TextButton({ scope.launch { try { plugin.searchInstruments(query) ; searchError = null } catch (_: Exception) { searchError = "合约搜索失败，请检查连接与授权" } } }, enabled = query.isNotBlank() && market.connected) { Text("查询服务器合约", fontSize = 11.sp) }
-            searchError?.let { Text(it, color = TradingColors.Loss, fontSize = 10.sp) }
-        }
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text("交易品种", Modifier.weight(1f), fontSize = 10.sp, color = TradingColors.Muted)
-            Text("Bid / Ask", fontSize = 10.sp, color = TradingColors.Muted)
-        }
-        val filtered = plugin.instruments.filter { it.symbol.contains(query, true) || it.name.contains(query, true) }
-        LazyColumn(Modifier.weight(1f)) {
-            if (filtered.isEmpty()) item { EmptyState("未找到品种", "更换关键词或选择其他交易商。") }
-            items(filtered, key = { it.symbol }) { instrument ->
-                val quote = market.quotes[instrument.executionSymbol]
-                Row(Modifier.fillMaxWidth().testTag("symbol-${instrument.symbol}").clickable { onSymbol(instrument.symbol) }
-                    .background(if (instrument.symbol == selected) TradingColors.Raised else Color.Transparent)
-                    .padding(horizontal = 16.dp, vertical = 13.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text(instrument.symbol, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text(instrument.name, fontSize = 10.sp, color = TradingColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(quote?.let { instrument.formatPrice(it.bid) } ?: "—", fontSize = 12.sp)
-                        Text(quote?.let { instrument.formatPrice(it.ask) } ?: "—", fontSize = 10.sp, color = TradingColors.Muted)
-                    }
-                }
-                DividerLine(Modifier.padding(horizontal = 14.dp))
-            }
-        }
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Text("${plugin.descriptor.name} 提供", fontSize = 10.sp, color = TradingColors.Muted)
-            Text(if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) "全部为本地生成的模拟行情" else "行情与标的由 Tradovate 提供", fontSize = 10.sp, color = TradingColors.Muted)
-        }
     }
 }
 

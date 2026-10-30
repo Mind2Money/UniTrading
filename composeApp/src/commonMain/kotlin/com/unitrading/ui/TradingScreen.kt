@@ -380,7 +380,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             accounts = {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                             },
-                            market = { m -> MarketWatch(plugin, market, symbol, ::chooseSymbol, m) },
+                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m) },
                             chart = chart,
                             order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                 { request?.let { confirmation = Confirmation.Place(it) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
@@ -394,7 +394,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             })
                     } else {
                         when (mobileTab) {
-                            0 -> MarketWatch(plugin, market, symbol, ::chooseSymbol, Modifier.weight(1f))
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f))
                             1 -> BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                                 // Landscape phones dock the open ticket beside the chart; portrait phones stack it under the chart.
                                 val dock = maxWidth >= 600.dp && maxWidth > maxHeight && !keyboardOpen
