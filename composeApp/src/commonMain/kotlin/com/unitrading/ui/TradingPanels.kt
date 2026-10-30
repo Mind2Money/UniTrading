@@ -160,17 +160,17 @@ internal fun OrderTicket(
         DividerLine()
         Text("下单前预估", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         EstimateRow("预计入场", preview?.entryPrice?.let(instrument::formatPrice) ?: "—")
-        EstimateRow(if (instrument.estimatesIncludeFees) "止损净结果" else "止损毛结果", preview?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-        EstimateRow(if (instrument.estimatesIncludeFees) "止盈净结果" else "止盈毛结果", preview?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+        EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+        EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
         val risk = preview?.stopLossPnlMicros
         val reward = preview?.takeProfitPnlMicros
         val ratio = if (risk != null && reward != null && risk < 0 && reward > 0) formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—"
         EstimateRow("收益 / 风险", ratio)
         EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
         EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} USD" } ?: "—")
-        Text("按当前报价估算；成交和止损可能受后续报价及跳空影响。", fontSize = 10.sp, color = TradingColors.Muted)
+        Text("按当前报价估算。后续报价变化或跳空可能影响成交和止损执行。", fontSize = 10.sp, color = TradingColors.Muted)
         if (draft.kind != OrderKind.MARKET) Text("挂单不预占保证金，触发时重新校验资金与保护价。", color = TradingColors.Muted, fontSize = 10.sp)
-        if (preview == null) Text("请输入有效数量与价格，不能超过品种的小数精度。", color = TradingColors.Loss, fontSize = 11.sp)
+        if (preview == null) Text("请输入有效的数量和价格，小数位数须符合该品种的精度。", color = TradingColors.Loss, fontSize = 11.sp)
         preview?.warnings?.forEach { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
         preview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 11.sp) }
         Button(onSubmit, Modifier.fillMaxWidth().height(46.dp).testTag("review-order"), enabled = preview?.valid == true && !busy) {
@@ -198,6 +198,14 @@ internal fun EstimateRow(label: String, value: String) {
 @Composable
 internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().background(TradingColors.Shell).horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("今日盈亏 USD（券商）", color = TradingColors.Muted, fontSize = 10.sp)
+            Text(account.dailyPnl?.let { money(it.totalMicros, true) } ?: "—", Modifier.testTag("daily-pnl-value"),
+                fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TradingColors.pnl(account.dailyPnl?.totalMicros))
+            Text(account.dailyPnl?.let { daily ->
+                "${daily.tradingDay?.let { "$it 交易日 · " } ?: ""}快照 ${clockLabel(daily.updatedAtMs, true)} UTC"
+            } ?: "等待券商数据", Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, fontSize = 10.sp)
+        }
         val level = if (account.marginKnown && account.equityKnown && account.marginMicros > 0) "${account.equityMicros.toDouble().div(account.marginMicros).times(100).toInt()}%" else "—"
         listOf("余额 USD" to if (account.balanceKnown) money(account.balanceMicros) else "—", (if (account.equityEstimated) "净值 USD（估算）" else "净值 USD") to if (account.equityKnown) money(account.equityMicros) else "—", "浮动盈亏" to if (account.equityKnown && account.balanceKnown) money(account.floatingPnlMicros, true) else "—",
             "已用保证金" to if (account.marginKnown) money(account.marginMicros) else "—", "可用保证金" to if (account.equityKnown && account.marginKnown) money(account.freeMarginMicros) else "—", "保证金比例" to level).forEach { (label, value) ->
@@ -244,7 +252,7 @@ internal fun TradeTerminal(
                 0 -> {
                     if (account.positions.isEmpty()) item { EmptyState("暂无持仓", "选择品种，在订单面板检查当前环境和账户后提交。") }
                     items(account.positions, key = { it.id }) { p ->
-                        val instrument = instruments[p.symbol] ?: run { EmptyState(p.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
+                        val instrument = instruments[p.symbol] ?: run { EmptyState(p.symbol, "合约规格暂不可用，目录恢复后才能操作。"); return@items }
                         val q = market.quotes[p.symbol]
                         val pnl = q?.let { positionPnl(instrument, p, it) }
                         Column(Modifier.fillMaxWidth().background(if (selectedPosition == p.id) TradingColors.Raised.copy(alpha = .7f) else Color.Transparent).clickable { onSelectPosition(p) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -275,7 +283,7 @@ internal fun TradeTerminal(
                     if (account.orders.isEmpty()) item { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。") }
                     items(account.orders, key = { it.id }) { order ->
                         val r = order.request
-                        val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
+                        val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, "合约规格暂不可用，目录恢复后才能操作。"); return@items }
                         fun bracketsEditable(entry: PendingOrder) = plugin.capabilities.modifyPendingProtection && entry.editable && entry.protectionEditable
                         // A bracket of an unfilled entry is repriced through that entry.
                         val entry = if (order.isProtection && order.positionId == null)
@@ -320,7 +328,7 @@ internal fun TradeTerminal(
                     }
                     if (account.executions.isNotEmpty() && account.trades.isNotEmpty()) item { Text("服务器已配对交易", Modifier.padding(16.dp), fontSize = 12.sp, color = TradingColors.Muted) }
                     items(account.trades.asReversed(), key = { it.id }) { t ->
-                        val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
+                        val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, "合约规格暂不可用，目录恢复后才能操作。"); return@items }
                         Row(Modifier.fillMaxWidth().clickable { onSelectTrade(t) }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("${t.symbol}   ${if (t.directionKnown) t.side.label() else "买卖配对"} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
@@ -339,7 +347,7 @@ internal fun TradeTerminal(
                     }
                 }
                 else -> {
-                    if (account.events.isEmpty()) item { EmptyState("暂无活动", "交易指令、触发和拒绝原因会记录在此。") }
+                    if (account.events.isEmpty()) item { EmptyState("暂无活动", "这里记录交易指令、触发情况和拒绝原因。") }
                     items(account.events.asReversed()) { event ->
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(clockLabel(event.timeMs, true), fontSize = 10.sp, color = TradingColors.Muted)

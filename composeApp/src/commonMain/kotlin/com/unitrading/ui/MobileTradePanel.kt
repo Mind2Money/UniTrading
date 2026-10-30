@@ -47,11 +47,17 @@ internal fun MobileTradeBar(
         if (!short) Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val known = account.equityKnown && account.balanceKnown
-            Row(Modifier.weight(1f).heightIn(min = 44.dp).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onPositions)
-                .testTag("panel-positions"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("持仓 ${account.positions.size}", fontSize = 12.sp, color = colors.Muted, maxLines = 1)
+            Column(Modifier.weight(1f).heightIn(min = 44.dp).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onPositions)
+                .testTag("panel-positions"), verticalArrangement = Arrangement.Center) {
+                Text("持仓 ${account.positions.size} · 浮动", fontSize = 10.sp, color = colors.Muted, maxLines = 1)
                 Text(if (known) money(account.floatingPnlMicros, true) else "—", fontSize = 13.sp, fontWeight = FontWeight.Medium,
                     color = if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Column(Modifier.weight(1f).heightIn(min = 44.dp).clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onPositions)
+                .testTag("panel-daily-pnl"), verticalArrangement = Arrangement.Center) {
+                Text("今日盈亏 · 券商", fontSize = 10.sp, color = colors.Muted, maxLines = 1)
+                Text(account.dailyPnl?.let { money(it.totalMicros, true) } ?: "—", fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    color = colors.pnl(account.dailyPnl?.totalMicros), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(Modifier.clip(RoundedCornerShape(6.dp)).clickable(role = Role.Button, onClick = onOpen).testTag("open-order")
                 .heightIn(min = 44.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

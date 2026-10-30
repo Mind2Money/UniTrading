@@ -9,6 +9,7 @@ Kotlin Multiplatform 交易终端，通过 Tradovate 登录连接服务器账户
 - 默认无交易商和账户，首次启动直接提示登录；支持 Tradovate Demo/Live 登录及加密会话恢复。
 - Android 使用 Material 3 图标底部导航；手机图表页参考 MT5 以图表为主，下单收进图表下方可折叠的面板，见 [手机布局](docs/mobile-layout.md)；桌面保留多栏工作台。
 - 实时盈亏通知：当前账户的浮动盈亏、净值和持仓数显示在 Android 常驻通知（Android 16 起为 Live Update / HyperOS 超级岛，状态栏显示盈亏，前台服务保持后台刷新）和 iOS 灵动岛 / 锁屏 Live Activity，可在账户页关闭，见 [实时盈亏通知](docs/live-pnl-notifications.md)。
+- 今日盈亏使用 Tradovate 返回的账户总盈亏快照，按券商交易日展示，附更新时间；桌面资金栏、手机交易/账户页及图表摘要均可查看，见 [今日盈亏](docs/daily-pnl.md)。
 - 深色、浅色、跟随系统和 TradingV（TradingView 黑色配色）预设主题；可单独配置页面/面板/图表背景、网格、K 线、盈亏数字和保护线颜色，RGB 选色与十六进制输入，保存后重启恢复。
 - 由插件提供品种、合约规格、Bid/Ask、历史 K 线、账户、订单及成交。
 - 市价、限价、突破挂单；撤单、全量净仓平仓；新订单附带 SL/TP，或修改满足关联条件的已有保护单。

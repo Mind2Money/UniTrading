@@ -186,6 +186,16 @@ data class ActivityEvent(val timeMs: Long, val message: String)
 @Serializable
 data class Execution(val id: String, val symbol: String, val side: Side, val lotsHundredths: Long, val price: Long, val timeMs: Long, val orderId: String)
 @Serializable
+data class DailyPnl(
+    val totalMicros: Long,
+    val realizedMicros: Long? = null,
+    val openMicros: Long? = null,
+    /** Broker session date, never inferred from the device's calendar. */
+    val tradingDay: String? = null,
+    /** Time the authoritative snapshot was received. */
+    val updatedAtMs: Long,
+)
+@Serializable
 data class AccountSnapshot(
     val accountId: String,
     val balanceMicros: Long,
@@ -200,6 +210,7 @@ data class AccountSnapshot(
     val equityKnown: Boolean = true,
     val marginKnown: Boolean = true,
     val equityEstimated: Boolean = false,
+    val dailyPnl: DailyPnl? = null,
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

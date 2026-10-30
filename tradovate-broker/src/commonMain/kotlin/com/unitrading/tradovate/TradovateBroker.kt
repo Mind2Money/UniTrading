@@ -47,7 +47,9 @@ class TradovateBroker(
     private val synchronizationLock = Mutex()
     private val requestPace = Mutex()
     private var lastRequestMs: Long? = null
-    private val financials = mutableMapOf<Long, JsonObject>()
+    private data class FinancialSnapshot(val values: JsonObject, val dailyPnl: DailyPnl?)
+    private val financials = mutableMapOf<Long, FinancialSnapshot>()
+    private var financialRevision = 0L
     private val fillFees = mutableMapOf<Long, Long?>()
     private var historyDetailsJob: Job? = null
     private var historyDetailsRevision = 0L
@@ -187,6 +189,8 @@ class TradovateBroker(
         }
         lock.withLock {
             book.snapshot(snapshot)
+            financials.clear()
+            financialRevision++
             queuedEvents.forEach(book::event)
             queuedEvents.clear()
             tradeFillTracker.baseline(book, authorizedAccounts, now())
@@ -302,8 +306,14 @@ class TradovateBroker(
         for (account in accounts) {
             val id = account.id.toLongOrNull() ?: continue
             try {
+                val revision = lock.withLock { financialRevision }
                 val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", id) }).jsonObject
-                lock.withLock { financials[id] = snapshot; rebuild() }
+                lock.withLock {
+                    if (revision == financialRevision) {
+                        financials[id] = FinancialSnapshot(snapshot, mapDailyPnl(snapshot, latestUsdCashBalance(id), now()))
+                        rebuild()
+                    }
+                }
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
         }
@@ -386,7 +396,15 @@ class TradovateBroker(
                 }
                 if (data.str("entityType") in setOf("position", "cashBalance", "fill")) {
                     financials.clear()
-                    if (balanceJob?.isActive != true) balanceJob = scope.launch { delay(2_000); refreshBalances() }
+                    financialRevision++
+                    if (balanceJob?.isActive != true) balanceJob = scope.launch {
+                        do {
+                            delay(2_000)
+                            val revision = lock.withLock { financialRevision }
+                            refreshBalances()
+                            val changed = lock.withLock { revision != financialRevision }
+                        } while (changed && !stopped)
+                    }
                 }
                 val deletedId = if (data.str("eventType").equals("Deleted", true)) (data["entity"] as? JsonObject)?.long("id") else null
                 reconcile(deletedPositionId = deletedId.takeIf { data.str("entityType") == "position" },
@@ -552,8 +570,8 @@ class TradovateBroker(
                     (f.long("qty") ?: return@mapNotNull null) * 100, f.priceValue("price") ?: return@mapNotNull null,
                     f.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null, f.long("orderId").toString())
             }.sortedBy { it.timeMs }
-            val finance = financials[aid]
-            val cash = book.list("cashBalance").filter { it.long("accountId") == aid && book.item("currency", it.long("currencyId") ?: 0)?.str("name") == "USD" }.maxByOrNull { it.str("timestamp") ?: "" }
+            val finance = financials[aid]?.values
+            val cash = latestUsdCashBalance(aid)
             val balance = finance?.moneyValue("totalCashValue") ?: cash?.moneyValue("amount")
             val pnlKnown = positions.size == rawPositions.size && positions.all { fresh(quotes[it.symbol]) }
             val floating = if (pnlKnown) runCatching { positions.sumOf { p -> positionPnl(contractSpecs.values.first { it.symbol == p.symbol }, p, quotes.getValue(p.symbol)) } }.getOrNull() else null
@@ -562,7 +580,8 @@ class TradovateBroker(
             val margin = finance?.moneyValue("initialMargin")
             val snapshot = AccountSnapshot(account.id, balance ?: 0, equity ?: 0, margin ?: 0, positions, pending,
                 trades = pairedTrades(book, aid, contractSpecs, fillFees), events = localEvents[account.id] ?: emptyList(), executions = fills,
-                balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty())
+                balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty(),
+                dailyPnl = financials[aid]?.dailyPnl)
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()
@@ -571,11 +590,15 @@ class TradovateBroker(
         publish()
     }
 
+    private fun latestUsdCashBalance(accountId: Long): JsonObject? = book.list("cashBalance")
+        .filter { it.long("accountId") == accountId && book.item("currency", it.long("currencyId") ?: 0)?.str("name") == "USD" }
+        .maxByOrNull { it.str("timestamp") ?: "" }
+
     private fun publish() {
         val unresolved = unknownCommands.isNotEmpty()
         val pending = awaiting.isNotEmpty()
         val message = when {
-            unresolved -> "存在待核对的交易指令，已禁止继续写入；请重新同步账户或在 Tradovate 官网核对"
+            unresolved -> "有交易指令尚待核对，已暂停发送后续指令。请同步账户或到 Tradovate 官网核对"
             pending -> "指令已受理，等待服务端订单/仓位更新"
             else -> problem
         }
@@ -645,10 +668,10 @@ class TradovateBroker(
                     require(order.version == expectedVersion) { "挂单版本已变化，请重新选择" }
                     require(order.role == OrderRole.ENTRY && order.editable && order.protectionEditable) { PENDING_BRACKETS_LOCKED }
                     val changes = listOf(order.request.stopLoss != stopLoss, order.request.takeProfit != takeProfit).count { it }
-                    require(changes == 1) { "每次只能修改一条保护线，不能把两次服务器改单当作原子操作" }
+                    require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                     val stop = order.request.stopLoss != stopLoss
                     val price = if (stop) stopLoss else takeProfit
-                    require(price != null && (if (stop) order.request.stopLoss else order.request.takeProfit) != null) { "首版仅修改已有保护价；增删保护请在官网操作" }
+                    require(price != null && (if (stop) order.request.stopLoss else order.request.takeProfit) != null) { "这里只能修改已有保护价，添加或删除保护请到官网操作" }
                     val estimate = estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
                     require(estimate.valid) { estimate.errors.joinToString("；") }
                     val spec = instruments.first { it.symbol == order.request.symbol }
@@ -677,9 +700,9 @@ class TradovateBroker(
                 val p = state.value.positions.firstOrNull { it.id == positionId } ?: errorArgument("仓位已结束或不属于当前账户")
                 require(p.version == expectedVersion && p.protectionEditable) { "仓位或保护订单关系已变化，请在官网核对" }
                 val changes = listOf(p.stopLoss != stopLoss, p.takeProfit != takeProfit).count { it }
-                require(changes == 1) { "每次只能修改一条保护线，不能把两次服务器改单当作原子操作" }
+                require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                 val stop = p.stopLoss != stopLoss
-                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "首版仅修改已有保护价；增删保护请在官网操作" }
+                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有保护价，添加或删除保护请到官网操作" }
                 val spec = instruments.first { it.symbol == p.symbol }
                 validateProtection(spec, p.side, quotes[p.symbol], stopLoss, takeProfit)
                 val binding = lock.withLock {
@@ -721,7 +744,7 @@ class TradovateBroker(
         OrderPreview(entry, stopLossPnlMicros = request.stopLoss?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             takeProfitPnlMicros = request.takeProfit?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             quoteRevision = market.value.revision, marginKnown = false, feesKnown = false,
-            warnings = listOf("盈亏为按合约价值估算的毛结果；手续费、保证金及最终成交由 Tradovate 确定"))
+            warnings = listOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Tradovate 为准"))
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
 
     private fun validateProtection(spec: Instrument, side: Side, quote: Quote?, sl: Long?, tp: Long?) {
@@ -816,7 +839,7 @@ class TradovateBroker(
                 publish()
             }
             if (certainRejection) TradeResult(false, safeMessage(error.message ?: "请求被拒绝"))
-            else TradeResult(false, "交易结果未知，未自动重试。请在 Tradovate 官网核对，当前会话禁止继续写入。", outcome = CommandOutcome.UNKNOWN)
+            else TradeResult(false, "交易结果未知，未自动重试。请到 Tradovate 官网核对，当前会话已暂停发送交易指令。", outcome = CommandOutcome.UNKNOWN)
         }
     }
 
