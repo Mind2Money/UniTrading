@@ -134,8 +134,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var orderOpen by remember { mutableStateOf(false) }
         var orderExpanded by remember(accountKey) { mutableStateOf(false) }
         var busy by remember { mutableStateOf(false) }
-        var notice by remember { mutableStateOf<String?>(null) }
+        var notice by remember { mutableStateOf<TradingNotice?>(null) }
+        var nextNoticeId by remember { mutableLongStateOf(0) }
         val scope = rememberCoroutineScope()
+        fun showNotice(message: String, attention: Boolean = false) {
+            notice = TradingNotice(++nextNoticeId, message, if (attention) NoticeTone.ATTENTION else NoticeTone.INFO, persistent = attention)
+        }
+        fun syncAccount() {
+            if (busy || !market.connected) return
+            busy = true
+            scope.launch {
+                try { plugin.resynchronize(); showNotice("账户状态已同步") }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { showNotice("同步失败，请检查连接后重试；未重发交易指令", attention = true) }
+                finally { busy = false }
+            }
+        }
         val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
         val intervals = IntervalOptions(chartPreferences.favorites, chartPreferences.custom,
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
@@ -186,19 +200,19 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 try {
                     val result = action()
                     runtime.save()
-                    notice = "$origin：${result.message}"
+                    showNotice("$origin：${result.message}", attention = !result.accepted || result.outcome == CommandOutcome.UNKNOWN)
                     if (result.accepted) { showDraft = false; onAccepted() }
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (error: Exception) {
-                    notice = "操作失败：${error.message}"
+                    showNotice("操作失败：${error.message}", attention = true)
                 } finally { busy = false }
             }
         }
         fun editProtection(position: Position, sl: Long? = position.stopLoss, tp: Long? = position.takeProfit) {
             if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
             val spec = plugin.instruments.firstOrNull { it.symbol == position.symbol }
-                ?: run { notice = "品种或账户已切换，请重新选择仓位"; return }
+                ?: run { showNotice("品种或账户已切换，请重新选择仓位", attention = true); return }
             chosenSymbol = position.symbol
             selectedPositionId = position.id
             pendingProtection = null
@@ -211,7 +225,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val current = account.orders.firstOrNull { it.id == order.id }
             if (current == null || current.version != order.version || current.request != order.request || current.role != OrderRole.ENTRY ||
                 !current.editable || !current.protectionEditable || !plugin.capabilities.modifyPendingProtection) {
-                notice = "订单状态或保护关联已变化，请重新选择"
+                showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
@@ -234,12 +248,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 return
             }
             if (current == null || current.version != order.version || current.role != order.role || !current.editable) {
-                notice = "订单状态或保护关联已变化，请重新选择"
+                showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
             if (current.isProtection) {
                 val position = account.positions.firstOrNull { it.id == current.positionId && it.protectionEditable }
-                if (position == null) { notice = "保护单尚未唯一关联到当前仓位"; return }
+                if (position == null) { showNotice("保护单尚未唯一关联到当前仓位", attention = true); return }
                 pendingEdit = null
                 editProtection(position, if (current.role == OrderRole.STOP_LOSS) price else position.stopLoss,
                     if (current.role == OrderRole.TAKE_PROFIT) price else position.takeProfit)
@@ -295,39 +309,43 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOpen, toolbarEnd = { Badge(environmentLabel) }))
+                            ordering = compact && orderOpen, toolbarEnd = {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (!localDemo) ConnectionStatusControl(market, compact = true, busy,
+                                        onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
+                                    Badge(environmentLabel)
+                                }
+                            }))
                 }
                 val connectionStatus: @Composable () -> Unit = {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(market.statusMessage, Modifier.weight(1f), color = colors.Muted, fontSize = 11.sp)
-                        if (plugin.capabilities.resynchronize) TextButton({
-                            busy = true
-                            scope.launch {
-                                try { plugin.resynchronize(); notice = "账户状态已同步" }
-                                catch (cancel: CancellationException) { throw cancel }
-                                catch (_: Exception) { notice = "同步失败，请检查连接后重试；未重发交易指令" }
-                                finally { busy = false }
-                            }
-                        }, enabled = !busy && market.connected, modifier = Modifier.testTag("resynchronize-account")) { Text("同步账户") }
+                        if (plugin.capabilities.resynchronize) TextButton({ syncAccount() }, enabled = !busy && market.connected,
+                            modifier = Modifier.testTag("resynchronize-account-page")) { Text("同步账户") }
                     }
                 }
                 Column(Modifier.fillMaxSize()) {
                     if (!chartFirst) {
-                        Row(Modifier.fillMaxWidth().height(if (compact) 48.dp else 60.dp).padding(horizontal = if (compact) 14.dp else 22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Canvas(Modifier.size(if (compact) 24.dp else 28.dp)) {
+                        Row(Modifier.fillMaxWidth().height(if (compact) 48.dp else 44.dp).testTag("app-toolbar")
+                            .padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Canvas(Modifier.size(22.dp)) {
                                 drawLine(colors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
                                 drawLine(colors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
                                 drawLine(colors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
                             }
                             Column(if (compact) Modifier.weight(1f) else Modifier) {
-                                Text("UniTrading", fontSize = if (compact) 17.sp else 21.sp, fontWeight = FontWeight.SemiBold)
+                                Text("UniTrading", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                                 if (compact) Text(session.account.name, fontSize = 10.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Badge(environmentLabel)
+                            if (!localDemo && compact) ConnectionStatusControl(market, compact = true, busy,
+                                onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
                             // Phones reach accounts, theme and the order ticket through the tab bar and the chart's order panel.
                             if (desktop) {
-                                Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", Modifier.weight(1f),
+                                Text(session.account.name, Modifier.weight(1f),
                                     fontSize = 12.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (!localDemo) ConnectionStatusControl(market, compact = false, busy,
+                                    onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
                                 if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
                                 TextButton({ runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }, Modifier.testTag("reset-desktop-layout")) { Text("重置布局") }
                                 TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
@@ -336,21 +354,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                         }
                         DividerLine()
-                    }
-                    loginMessage?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("saved-login-status"), fontSize = 11.sp, color = colors.Muted) }
-                    // Phones show the connection line only while trading is not ready; their account tab always carries it.
-                    if (!localDemo && (desktop || mobileTab != 3 && !market.tradingReady)) connectionStatus()
-                    if (storageError != null) {
-                        Row(Modifier.fillMaxWidth().background(colors.Raised).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(storageError!!, Modifier.weight(1f), fontSize = 11.sp, color = colors.Loss)
-                            TextButton({ scope.launch { runtime.save() } }) { Text("重试保存") }
-                        }
-                    }
-                    notice?.let { message ->
-                        Row(Modifier.fillMaxWidth().background(colors.Raised).padding(start = 18.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(message, Modifier.weight(1f).testTag("trade-notice"), fontSize = 11.sp)
-                            TextButton({ notice = null }) { Text("关闭", fontSize = 10.sp) }
-                        }
                     }
                     if (desktop) {
                         DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
@@ -449,6 +452,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   状态以服务器为准   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
                         }
                     }
+                }
+                // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
+                Column(Modifier.align(if (desktop) Alignment.TopEnd else Alignment.TopCenter)
+                    .padding(start = 12.dp, end = 12.dp, top = if (desktop) 54.dp else if (keyboardOpen) 8.dp else 58.dp)
+                    .widthIn(max = 420.dp).fillMaxWidth().heightIn(max = maxHeight * .65f)
+                    .verticalScroll(rememberScrollState()).testTag("notification-overlay"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    storageError?.let { message ->
+                        FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
+                            title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
+                    }
+                    notice?.let { current ->
+                        FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                    }
+                    loginMessage?.let { message -> key(message) {
+                        var dismissed by remember { mutableStateOf(false) }
+                        if (!dismissed) FloatingNoticeCard(TradingNotice(0, message, persistent = true), "saved-login-status", { dismissed = true }, title = "登录状态")
+                    } }
                 }
                 if (showOrder) {
                     Dialog(onDismissRequest = { if (!busy) showOrder = false }) {
