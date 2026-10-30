@@ -1,5 +1,11 @@
 package com.unitrading.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -119,7 +125,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val symbol = instrument.symbol
         val quote = market.quotes[symbol]
         var timeframe by remember { mutableStateOf(Timeframe.M5) }
-        var draft by remember(accountKey, symbol) { mutableStateOf(OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")) }
+        val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
+        val orderSession = remember(accountKey, symbol) { orderSessions.getOrPut(symbol) { MobileOrderSession(instrument) } }
+        var draft by orderSession.draft
         var showDraft by remember(accountKey, symbol) { mutableStateOf(false) }
         var selectedPositionId by remember(accountKey) { mutableStateOf<String?>(null) }
         var focusedTrade by remember(accountKey) { mutableStateOf<ClosedTrade?>(null) }
@@ -131,8 +139,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var mobileTab by remember { mutableStateOf(1) }
         var showAccounts by remember { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
-        var orderOpen by remember { mutableStateOf(false) }
-        var orderExpanded by remember(accountKey) { mutableStateOf(false) }
+        var orderPanelState by orderSession.panelState
+        val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
+        val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
+        var orderExpanded by orderSession.expanded
         var busy by remember { mutableStateOf(false) }
         var notice by remember { mutableStateOf<TradingNotice?>(null) }
         var nextNoticeId by remember { mutableLongStateOf(0) }
@@ -164,7 +174,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
 
         LaunchedEffect(runtime) { runtime.run() }
         LaunchedEffect(plugin, symbol, timeframe) { plugin.watch(symbol, timeframe) }
-        LaunchedEffect(accountKey) { showOrder = false; orderOpen = false; notice = null }
+        LaunchedEffect(accountKey) { showOrder = false; notice = null }
         LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
             if (chosenSymbol != symbol) {
                 chosenSymbol = symbol
@@ -278,14 +288,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compactShort = compact && maxHeight < 550.dp
                 val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
                 // Phones are chart-first: on the chart tab the chart's own toolbar row replaces the app header, and the open
-                // order panel takes the tab bar's place until it is closed by its button, its handle or Back.
+                // order panel takes the tab bar's place while editing; minimizing restores navigation.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
-                fun closeOrder() { focusManager.clearFocus(); orderOpen = false; orderExpanded = false }
-                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = panelOpen && !keyboardOpen, onBackCompleted = { closeOrder() })
+                fun minimizeOrder() { focusManager.clearFocus(); orderPanelState = MobileOrderPanelState.MINIMIZED }
+                fun closeOrder() {
+                    focusManager.clearFocus()
+                    orderPanelState = MobileOrderPanelState.CLOSED
+                    orderExpanded = false
+                    showDraft = false
+                    draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                    if (confirmation is Confirmation.Place) confirmation = null
+                }
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = panelOpen && !keyboardOpen, onBackCompleted = { minimizeOrder() })
                 val chart: @Composable (Modifier) -> Unit = { m ->
-                    // On phones the draft lines follow the order panel; wider layouts show them once the ticket is edited.
-                    val draftShown = if (compact) orderOpen else showDraft
+                    // Minimizing hides only the form; the active draft remains editable on the chart.
+                    val draftShown = if (compact) orderActive else showDraft
                     // Draft lines take a drop at once; pending orders and positions wait for the confirmation dialogs.
                     val actions = ChartOrderActions(
                         estimateDraft = session::preview,
@@ -305,7 +323,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
                         m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
-                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderOpen = true else if (!wide) showOrder = true },
+                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
@@ -381,13 +399,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 val panelHeight = if (keyboardOpen) maxHeight else
                                     (maxHeight * if (orderExpanded) .86f else .70f).coerceAtMost(if (orderExpanded) maxHeight else 600.dp)
                                 val bar: @Composable () -> Unit = {
-                                    MobileTradeBar(instrument, quote, account, onOpen = { orderOpen = true },
-                                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); orderOpen = true },
-                                        onPositions = { mobileTab = 2 }, short = compactShort)
+                                    if (orderActive) MinimizedOrderBar(instrument, draft, busy,
+                                        onRestore = { orderPanelState = MobileOrderPanelState.EDITING }, onClose = { closeOrder() })
+                                    else MobileTradeBar(account, onOpen = { orderPanelState = MobileOrderPanelState.EDITING },
+                                        onPositions = { mobileTab = 2 })
                                 }
                                 val panel: @Composable (Modifier) -> Unit = { m ->
                                     MobileOrderPanel(instrument, session.account.name, environmentLabel, handle = !dock && !keyboardOpen,
-                                        onClose = { closeOrder() }, modifier = m, expanded = orderExpanded,
+                                        onMinimize = { minimizeOrder() }, onClose = { closeOrder() }, modifier = m, busy = busy, expanded = orderExpanded,
                                         onExpand = if (dock || keyboardOpen) null else ({ orderExpanded = !orderExpanded })) {
                                         MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } },
                                             Modifier.weight(1f), environment = plugin.descriptor.environment)
@@ -398,14 +417,24 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         chart(Modifier.weight(1f))
                                         if (!orderOpen) bar()
                                     }
-                                    if (orderOpen) {
-                                        VerticalDivider(color = colors.Border)
-                                        panel(Modifier.width(340.dp).fillMaxHeight())
+                                    AnimatedVisibility(orderOpen,
+                                        enter = expandHorizontally(tween(280), expandFrom = Alignment.End),
+                                        exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.End)) {
+                                        Row {
+                                            VerticalDivider(color = colors.Border)
+                                            panel(Modifier.width(340.dp).fillMaxHeight())
+                                        }
                                     }
                                 } else Column(Modifier.fillMaxSize()) {
                                     // Keep the chart composed so opening the IME does not reset its viewport or layers.
                                     chart(if (orderOpen && keyboardOpen) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics { } else Modifier.weight(1f))
-                                    if (orderOpen) panel(Modifier.fillMaxWidth().height(panelHeight)) else bar()
+                                    val animatedHeight by animateDpAsState(
+                                        if (orderOpen) panelHeight else 76.dp,
+                                        animationSpec = tween(280), label = "order-panel-height")
+                                    Crossfade(orderOpen, Modifier.fillMaxWidth().height(animatedHeight).clipToBounds(),
+                                        animationSpec = tween(180), label = "order-panel-content") { editing ->
+                                        if (editing) panel(Modifier.fillMaxSize()) else bar()
+                                    }
                                 }
                             }
                             2 -> Column(Modifier.weight(1f)) {
@@ -530,7 +559,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             confirmation = null
                             val id = requestId()
                             when (action) {
-                                is Confirmation.Place -> perform({ orderOpen = false }) { session.placeOrder(id, action.request) }
+                                is Confirmation.Place -> perform({ if (compact) closeOrder() }) { session.placeOrder(id, action.request) }
                                 is Confirmation.Close -> perform { session.closePosition(id, action.position.id) }
                                 is Confirmation.Cancel -> perform { session.cancelOrder(id, action.order.id) }
                                 Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }

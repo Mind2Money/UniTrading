@@ -31,11 +31,10 @@ class DailyPnlUiTest {
     }
 
     @Test fun phoneChartBarShowsDailyAndFloatingPnlSeparatelyAndLinksToTrading() {
-        val spec = Instrument("MESZ6", "Micro S&P", "期货", 2, tickValueMicrosPerLot = 1250000)
         val snapshot = AccountSnapshot("a", 25_000_000_000, equityMicros = 25_010_000_000, dailyPnl = DailyPnl(-12_500_000, updatedAtMs = 0))
         var opened = false
         compose.setContent { TradingTheme { Column(Modifier.requiredWidth(400.dp)) {
-            MobileTradeBar(spec, Quote(550000, 550025, 0), snapshot, {}, {}, { opened = true })
+            MobileTradeBar(snapshot, {}, { opened = true })
             AccountStrip(snapshot)
         } } }
         compose.onNodeWithTag("panel-daily-pnl").assertTextContains("-12.50")

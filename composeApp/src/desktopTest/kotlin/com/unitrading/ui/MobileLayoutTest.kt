@@ -67,7 +67,8 @@ class MobileLayoutTest {
         compose.onNodeWithTag("chart-readout").assertExists()
         capture("mobile-chart-first")
 
-        compose.onNodeWithTag("quick-sell").performClick()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-side-SELL").performClick()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNode(hasText(Side.SELL.label()) and isSelectable()).assertIsSelected()
         compose.onNodeWithTag("mobile-navigation").assertDoesNotExist()
@@ -75,12 +76,12 @@ class MobileLayoutTest {
         assertTrue(height("trading-chart") > host * .2f, "The chart stays visible above the open ticket")
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         compose.onNodeWithTag("order-quantity").assertIsDisplayed()
-        compose.onNodeWithTag("order-sl-enabled").assertIsDisplayed().assertIsOff()
-        compose.onNodeWithTag("order-tp-enabled").assertIsDisplayed().assertIsOff()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsDisplayed().assertIsOff()
+        compose.onNodeWithTag("order-tp-enabled").performScrollTo().assertIsDisplayed().assertIsOff()
         compose.onNodeWithTag("order-quantity-slider").assertIsDisplayed()
         capture("mobile-order-panel")
 
-        compose.onNodeWithTag("collapse-order").performClick()
+        compose.onNodeWithTag("close-order").performClick()
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
         compose.onNodeWithTag("mobile-navigation").assertExists()
         compose.onNodeWithTag("chart-readout").assertExists()
@@ -133,17 +134,19 @@ class MobileLayoutTest {
 
     @Test fun handleSwipesAndTapsToggleThePanel() {
         render()
-        compose.onNodeWithTag("order-panel-handle").performTouchInput { swipeUp(startY = centerY, endY = centerY - 120f) }
+        compose.onNodeWithTag("order-panel-handle").assertDoesNotExist()
+        compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNodeWithTag("order-panel-handle").performTouchInput { swipeDown(startY = centerY, endY = centerY + 120f) }
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
-        compose.onNodeWithTag("order-panel-handle").performClick()
+        compose.onNodeWithTag("minimized-order").assertExists()
+        compose.onNodeWithTag("restore-order").performClick()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNodeWithTag("order-panel-handle").performClick()
-        compose.onNodeWithTag("trade-bar").assertExists()
+        compose.onNodeWithTag("minimized-order").assertExists()
     }
 
-    @Test fun systemBackClosesTheOpenPanelOnly() {
+    @Test fun systemBackMinimizesWithoutDiscardingTheDraft() {
         var fallbacks = 0
         val dispatcher = NavigationEventDispatcher(onBackCompletedFallback = { fallbacks++ })
         val back = DirectNavigationEventInput().also(dispatcher::addInput)
@@ -156,7 +159,10 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
         compose.onNodeWithTag("mobile-navigation").assertExists()
         assertEquals(0, fallbacks)
-        // With the panel closed, Back goes to the platform (leaving the app) instead of being swallowed.
+        compose.onNodeWithTag("minimized-order").assertExists()
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("close-order").performClick()
+        // Only explicit closure discards the draft; Back is then handed to the platform.
         compose.runOnIdle { back.backCompleted() }
         assertEquals(1, fallbacks)
     }
@@ -173,6 +179,63 @@ class MobileLayoutTest {
         compose.waitUntil(5_000) { session.state.value.positions.size == before + 1 }
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("order-panel").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("mobile-navigation").assertExists()
+    }
+
+    @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() {
+        render()
+        val instrument = plugin.instruments.first()
+        val before = session.state.value
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.23")
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(instrument.formatPrice(entry))
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("minimized-order").assertExists()
+        compose.onNodeWithTag("mobile-navigation").assertExists()
+        assertTrue(height("trading-chart") > height("test-host") * .75f)
+        capture("mobile-order-minimized")
+        // Turning protection off before the drag gives a deterministic price scale.
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsOn().performClick()
+        compose.onNodeWithTag("minimize-order").performClick()
+        val position = before.positions.firstOrNull { it.symbol == instrument.symbol }
+        val extras = listOfNotNull(q.bid, q.ask, position?.entryPrice, position?.stopLoss, position?.takeProfit, entry) +
+            before.orders.filter { it.request.symbol == instrument.symbol }.mapNotNull { it.request.entryPrice }
+        val chart = compose.onNodeWithTag("trading-chart")
+        val bounds = chart.fetchSemanticsNode().size
+        val scale = PriceScale.from(plugin.history(instrument.symbol, Timeframe.M5).takeLast(80), extras, 18f * .75f, bounds.height - 30f * .75f)
+        val y = scale.y(entry)
+        chart.performTouchInput { down(Offset(bounds.width * .55f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
+        compose.onNodeWithTag("order-panel").assertDoesNotExist()
+        compose.onNodeWithTag("nav-2").performClick()
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.23")
+        compose.onNodeWithTag("order-entry").assertTextContains(instrument.formatPrice(scale.price(y + 24f, instrument.tickSize)))
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("close-order").performClick()
+        compose.onNodeWithTag("minimized-order").assertDoesNotExist()
+        compose.onNodeWithTag("trade-bar").assertExists()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
+        compose.onNodeWithTag("order-kind-MARKET").assertIsSelected()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsOff()
+        compose.onNodeWithTag("order-tp-enabled").assertIsOff()
+        assertEquals(before, session.state.value, "Draft lifecycle and chart edits must never send orders")
+    }
+
+    @Test fun openingThePanelAnimatesItsHeight() {
+        render()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("open-order").performClick()
+        compose.mainClock.advanceTimeBy(64)
+        val intermediate = height("order-panel")
+        compose.mainClock.advanceTimeBy(400)
+        assertTrue(height("order-panel") > intermediate, "The ticket grows during the opening animation")
+        compose.mainClock.autoAdvance = true
     }
 
     @Test fun toolbarRowKeepsIntervalsIndicatorsAndLayers() {
@@ -201,14 +264,14 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-quantity").assertExists()
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         capture("mobile-landscape-order")
-        compose.onNodeWithTag("collapse-order").performClick()
+        compose.onNodeWithTag("close-order").performClick()
         compose.onNodeWithTag("trade-bar").assertExists()
     }
 
     @Test fun quantityButtonsAndSideQuotesOnlyEditTheDraft() {
         render()
         val before = session.state.value
-        compose.onNodeWithTag("quick-buy").performClick()
+        compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("quantity-increase").performClick()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.11")
         compose.onNodeWithTag("quantity-decrease").performClick()

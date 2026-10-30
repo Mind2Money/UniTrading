@@ -166,7 +166,7 @@ class AppearanceUiTest {
             swipe(bounds.left + bounds.width() * .25f, bounds.bottom - 15f * density, bounds.left + bounds.width() * .6f, bounds.bottom - 15f * density)
             assertNotEquals(zoomed, awaitChartChange(zoomed))
             screenshot("android-chart-zoom-v114")
-            // The order ticket waits in the collapsed panel under the chart; system Back closes it without leaving the app.
+            // The button opens the ticket; Back minimizes the active draft without leaving the app.
             tap("下单")
             awaitText("新建订单")
             assertNull("The open panel takes the tab bar's place", node("图表"))
@@ -204,6 +204,9 @@ class AppearanceUiTest {
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitText("图表")
             assertNull(node("新建订单"))
+            awaitText("${runtime.registry.plugins.first().instruments.first().symbol} · 草稿保留 · 可拖动图表调价")
+            screenshot("android-order-minimized")
+            tap("关闭并放弃本次下单", description = true)
             val beforeNotice = Rect().also(awaitNode("拖动图表平移", description = true)::getBoundsInScreen)
             tap("下单")
             tap("检查并模拟买入")
