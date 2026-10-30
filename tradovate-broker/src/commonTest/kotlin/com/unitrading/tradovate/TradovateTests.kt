@@ -27,6 +27,8 @@ internal class MockTradovateWire : TradovateWire {
     var fractionalChartId = false
     var reducedPrecisionChartTime = false
     var renewal = obj("""{"accessToken":"renewed-test-token-1234567890","expirationTime":"2100-01-01T00:00:00Z"}""")
+    val feeResponses = mutableMapOf<Long, JsonArray>()
+    val historyItems = mutableMapOf<String, JsonArray>()
     var snapshot = obj("""{
       "accounts":[{"id":100,"name":"Demo account","userId":42},{"id":101,"name":"Second account","userId":42},{"id":999,"name":"Foreign account","userId":9}],
       "contracts":[{"id":200,"name":"MESZ6","contractMaturityId":300}],
@@ -38,6 +40,9 @@ internal class MockTradovateWire : TradovateWire {
     }""")
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         requests.add(Request(method, path, body))
+        if (path == "fillPair/list") return snapshot["fillPairs"] ?: JsonArray(emptyList())
+        if (path.startsWith("fillFee/deps")) return feeResponses[path.substringAfter("masterid=").toLong()] ?: JsonArray(emptyList())
+        if (path.startsWith("fill/items") || path.startsWith("order/items")) return historyItems[path.substringBefore('/')] ?: JsonArray(emptyList())
         if (path == "auth/renewaccesstoken") return renewal
         if (path == "account/list") return JsonArray(snapshot.array("accounts").filter { it.long("id") != 999L })
         if (path.startsWith("cashBalance/")) return obj("""{"totalCashValue":25000,"netLiq":25000,"initialMargin":0}""")

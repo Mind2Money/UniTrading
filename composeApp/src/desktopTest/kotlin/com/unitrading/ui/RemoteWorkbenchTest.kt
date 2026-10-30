@@ -17,6 +17,32 @@ import org.junit.Test
 import kotlin.test.assertTrue
 
 class RemoteWorkbenchTest {
+    @Test fun rawExecutionClickSelectsChartAndUnknownFeesNeverDisplayAsNetPnl() {
+        val source = remote()
+        val at = 1_798_589_000_000L
+        val fill = Execution("10", "MESZ6", Side.BUY, 100, 5_500_000_000, at, "20")
+        val pair = ClosedTrade("pair-1", "p", "MESZ6", Side.BUY, 100, 5_499_000_000, 5_500_000_000, at - 300_000, at,
+            netPnlMicros = null, reason = "服务器成交配对", grossPnlMicros = 5_000_000)
+        val plugin = object : BrokerPlugin by source {
+            override fun history(symbol: String, timeframe: Timeframe) = (0..100).map {
+                Candle(at - (100 - it) * timeframe.minutes * 60_000L, 5_500_000_000, 5_501_000_000, 5_499_000_000, 5_500_000_000)
+            }
+            override fun openSession(accountId: String): AccountSession {
+                val delegate = source.openSession(accountId)
+                return object : AccountSession by delegate {
+                    override val state = MutableStateFlow(delegate.state.value.copy(executions = listOf(fill), trades = listOf(pair)))
+                }
+            }
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin))
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.onNodeWithTag("terminal-tab-2").performClick()
+        compose.onNodeWithText("毛 +5.00 USD").performScrollTo().assertExists()
+        compose.onNodeWithText("费用未知，净盈亏待确认").assertExists()
+        compose.onNodeWithTag("execution-10").performScrollTo().performClick()
+        compose.onNodeWithTag("selected-execution").assertTextContains("选中成交 #10", substring = true)
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+    }
     @Test fun removingSelectedInstrumentFallsBackAndEmptyCatalogCanRecover() {
         val source = remote()
         val changes = MutableStateFlow(source.catalog.value)

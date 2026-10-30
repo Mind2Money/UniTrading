@@ -168,8 +168,11 @@ data class ClosedTrade(
     val exitPrice: Long,
     val openedAtMs: Long,
     val closedAtMs: Long,
-    val netPnlMicros: Long,
+    val netPnlMicros: Long?,
     val reason: String,
+    val grossPnlMicros: Long? = null,
+    val feesMicros: Long? = null,
+    val directionKnown: Boolean = true,
 )
 @Serializable
 data class ActivityEvent(val timeMs: Long, val message: String)

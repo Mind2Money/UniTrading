@@ -344,9 +344,9 @@ class DemoBroker(
         val net = checkedAdd(cash, -position.entryFeeMicros)
         val balance = checkedAdd(ledger.balance, cash)
         val archived = if (ledger.trades.size == MAX_TRADES)
-            checkedAdd(ledger.archivedNetPnl, ledger.trades.first().netPnlMicros) else ledger.archivedNetPnl
+            checkedAdd(ledger.archivedNetPnl, requireNotNull(ledger.trades.first().netPnlMicros)) else ledger.archivedNetPnl
         val trade = ClosedTrade(id("trade"), position.id, position.symbol, position.side, position.lotsHundredths,
-            position.entryPrice, exit, position.openedAtMs, now, net, reason)
+            position.entryPrice, exit, position.openedAtMs, now, net, reason, grossPnlMicros = gross, feesMicros = gross - net)
         ledger.balance = balance
         ledger.positions.removeAll { it.id == position.id }
         if (ledger.trades.size == MAX_TRADES) ledger.trades.removeAt(0)
@@ -676,7 +676,7 @@ class DemoBroker(
                 val net = checkedAdd(grossPnl(instrument, trade.side, trade.lotsHundredths, trade.entryPrice, trade.exitPrice),
                     -checkedMultiply(commission(instrument, trade.lotsHundredths), 2))
                 require(net == trade.netPnlMicros) { "成交净盈亏与费用不一致" }
-                balance = checkedAdd(balance, trade.netPnlMicros)
+                balance = checkedAdd(balance, requireNotNull(trade.netPnlMicros))
             }
             require(balance == state.balanceMicros) { "余额与账本不一致" }
             val recomputed = accountSnapshot(Ledger.from(account), saved.market.quotes)

@@ -43,6 +43,9 @@ class TradovateBroker(
     private val requestPace = Mutex()
     private var lastRequestMs: Long? = null
     private val financials = mutableMapOf<Long, JsonObject>()
+    private val fillFees = mutableMapOf<Long, Long?>()
+    private var historyDetailsJob: Job? = null
+    private var historyDetailsRevision = 0L
     private val contractSpecs = mutableMapOf<Long, Instrument>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
@@ -157,10 +160,10 @@ class TradovateBroker(
     private suspend fun synchronizeAccount(account: TradovateSocket) = synchronizationLock.withLock {
         lock.withLock { synchronizing = true; queuedEvents.clear() }
         try {
-        val snapshot = account.request("user/syncrequest", buildJsonObject {
+        var snapshot = account.request("user/syncrequest", buildJsonObject {
             put("splitResponses", false)
             putJsonArray("entityTypes") {
-                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
+                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "fillPair", "fillFee", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
             }
         })
         if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
@@ -168,6 +171,14 @@ class TradovateBroker(
         }
         if (authorizedAccounts.isNotEmpty() && snapshot.array("accounts").none { it.long("id") in authorizedAccounts }) {
             throw TradovateRemoteException(0, "已发现授权账户，但账户流未返回对应记录；未将缺失状态当作空仓")
+        }
+        if (snapshot["fillPairs"] !is JsonArray) {
+            // Keep queuing incremental events until REST fallback and snapshot can be applied together.
+            try {
+                val pairs = rest("GET", "fillPair/list") as? JsonArray
+                if (pairs != null) snapshot = JsonObject(snapshot + ("fillPairs" to pairs))
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { problem = "成交配对暂时无法读取，可重试同步" }
         }
         lock.withLock {
             book.snapshot(snapshot)
@@ -178,6 +189,7 @@ class TradovateBroker(
             reconcile(fullSnapshot = true)
             rebuild()
         }
+        lock.withLock { scheduleHistoryDetails(invalidate = true) }
         } finally {
             withContext(NonCancellable) { lock.withLock {
                 if (synchronizing) {
@@ -241,7 +253,7 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel()
+        maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch { runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }; wire.close(); scope.cancel() }
     }
 
@@ -290,6 +302,68 @@ class TradovateBroker(
         }
     }
 
+    /** Caller holds lock; one worker coalesces entity updates and preserves known fees for unchanged fills. */
+    private fun scheduleHistoryDetails(invalidate: Boolean = false) {
+        historyDetailsRevision++
+        if (invalidate) { fillFees.clear(); rebuild() }
+        if (historyDetailsJob?.isActive == true) return
+        historyDetailsJob = scope.launch {
+            var again = true
+            while (again) {
+                val revision = lock.withLock { historyDetailsRevision }
+                hydrateTradeEntities(revision)
+                val ids = lock.withLock {
+                    val accountOrders = book.list("order").filter { it.long("accountId") in authorizedAccounts }.mapNotNull { it.long("id") }.toSet()
+                    val paired = book.list("fillPair").filter { it.bool("active") == true }.flatMap { listOfNotNull(it.long("buyFillId"), it.long("sellFillId")) }.toSet()
+                    book.list("fill").filter { it.long("id") in paired && it.long("orderId") in accountOrders && it.bool("active") == true }
+                        .sortedByDescending { it.str("timestamp") }.mapNotNull { it.long("id") }.filter { it !in fillFees }
+                }
+                for (id in ids) {
+                    ensureActive()
+                    val response = try { rest("GET", "fillFee/deps?masterid=$id") as? JsonArray }
+                        catch (cancel: CancellationException) { throw cancel }
+                        catch (_: Exception) { null }
+                    lock.withLock {
+                        if (revision == historyDetailsRevision) {
+                            fillFees[id] = response?.filterIsInstance<JsonObject>()?.let { usdFillFees(it, book) }
+                            rebuild()
+                        }
+                    }
+                    if (lock.withLock { revision != historyDetailsRevision }) break
+                }
+                again = lock.withLock {
+                    if (revision == historyDetailsRevision) { historyDetailsJob = null; false } else true
+                }
+            }
+        }
+    }
+
+    private suspend fun hydrateTradeEntities(revision: Long) {
+        for (type in listOf("fill", "order")) {
+            val missing = lock.withLock {
+                val paired = book.list("fillPair").filter { it.bool("active") == true }
+                    .flatMap { listOfNotNull(it.long("buyFillId"), it.long("sellFillId")) }.distinct()
+                val ids = if (type == "fill") paired else paired.mapNotNull { book.item("fill", it)?.long("orderId") }.distinct()
+                ids.filter { it > 0 && book.item(type, it) == null }
+            }
+            for (ids in missing.chunked(50)) {
+                if (lock.withLock { revision != historyDetailsRevision }) return
+                val rows = try { rest("GET", "$type/items?ids=${ids.joinToString(",")}") as? JsonArray }
+                    catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { null }
+                lock.withLock {
+                    if (revision == historyDetailsRevision) rows?.filterIsInstance<JsonObject>()?.filter { it.long("id") in ids }
+                        ?.filter { type != "order" || it.long("accountId") in authorizedAccounts }?.forEach { book.apply(type, it) }
+                }
+            }
+        }
+        val contracts = lock.withLock {
+            val ownOrders = book.list("order").filter { it.long("accountId") in authorizedAccounts }.mapNotNull { it.long("id") }.toSet()
+            book.list("fill").filter { it.long("orderId") in ownOrders }.mapNotNull { it.long("contractId") }.distinct()
+        }
+        if (lock.withLock { revision == historyDetailsRevision }) hydrateContracts(contracts)
+    }
+
     private suspend fun accountEvent(frame: JsonObject) {
         if (frame.str("e") != "props") return
         val data = frame["d"] as? JsonObject ?: return
@@ -299,6 +373,10 @@ class TradovateBroker(
                 queuedEvents.add(data)
             } else {
                 book.event(data)
+                if (data.str("entityType") in setOf("fill", "fillPair", "fillFee")) {
+                    if (data.str("entityType") == "fill") (data["entity"] as? JsonObject)?.long("id")?.let(fillFees::remove)
+                    scheduleHistoryDetails(invalidate = data.str("entityType") == "fillFee")
+                }
                 if (data.str("entityType") in setOf("position", "cashBalance", "fill")) {
                     financials.clear()
                     if (balanceJob?.isActive != true) balanceJob = scope.launch { delay(2_000); refreshBalances() }
@@ -473,7 +551,7 @@ class TradovateBroker(
             val equity = estimatedEquity ?: finance?.moneyValue("netLiq")
             val margin = finance?.moneyValue("initialMargin")
             val snapshot = AccountSnapshot(account.id, balance ?: 0, equity ?: 0, margin ?: 0, positions, pending,
-                events = localEvents[account.id] ?: emptyList(), executions = fills,
+                trades = pairedTrades(book, aid, contractSpecs, fillFees), events = localEvents[account.id] ?: emptyList(), executions = fills,
                 balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty())
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }

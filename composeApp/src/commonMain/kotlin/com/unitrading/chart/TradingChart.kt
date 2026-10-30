@@ -77,6 +77,7 @@ fun TradingChart(
     modifier: Modifier = Modifier,
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
     executions: List<Execution> = emptyList(),
+    focusedExecution: Execution? = null,
     connected: Boolean = true,
     onSide: (Side) -> Unit = {},
     instruments: List<Instrument> = emptyList(),
@@ -101,6 +102,7 @@ fun TradingChart(
     var drag by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
+    var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val left = with(density) { 12.dp.toPx() }
@@ -132,6 +134,7 @@ fun TradingChart(
     val currentProtectionCallback by rememberUpdatedState(onProtection)
     val currentShowPositions by rememberUpdatedState(showPositions)
     val currentTrades by rememberUpdatedState(trades)
+    val currentExecutions by rememberUpdatedState(executions)
     val representedProtectionIds = if (showPositions) setOfNotNull(selectedPosition?.stopLossOrderId, selectedPosition?.takeProfitOrderId) else emptySet()
     val currentOrders by rememberUpdatedState(if (showOrders && allowOrderEdit) orders.filter { it.editable } else emptyList())
     val currentPositions by rememberUpdatedState(positions)
@@ -160,7 +163,16 @@ fun TradingChart(
     LaunchedEffect(focusedTrade?.id, instrument.symbol, timeframe) {
         if (focusedTrade != null && focusedTrade.symbol == instrument.symbol) {
             selectedTrade = focusedTrade
+            selectedExecution = null
             val index = candles.indexOfLast { it.timeMs <= focusedTrade.closedAtMs }
+            if (index >= 0) viewport = viewport.copy(offset = candles.size - index - viewport.count / 2).bounded(candles.size)
+        }
+    }
+    LaunchedEffect(focusedExecution?.id, instrument.symbol, timeframe, candles.firstOrNull()?.timeMs) {
+        if (focusedExecution != null && focusedExecution.symbol == instrument.symbol) {
+            selectedExecution = focusedExecution
+            selectedTrade = null
+            val index = candles.indexOfLast { it.timeMs <= focusedExecution.timeMs }
             if (index >= 0) viewport = viewport.copy(offset = candles.size - index - viewport.count / 2).bounded(candles.size)
         }
     }
@@ -257,6 +269,11 @@ fun TradingChart(
                                     crosshairY = point.y
                                     if (showHistory) selectedTrade = currentTrades.firstOrNull { trade ->
                                         trade.closedAtMs in bars[index].timeMs until (bars[index].timeMs + periodMs)
+                                    }
+                                    if (showHistory) {
+                                        selectedExecution = currentExecutions.filter { it.timeMs in bars[index].timeMs until (bars[index].timeMs + periodMs) }
+                                            .minByOrNull { abs(currentScale.y(it.price) - point.y) }?.takeIf { abs(currentScale.y(it.price) - point.y) <= 24 * density.density }
+                                        if (selectedExecution != null) selectedTrade = null
                                     }
                                 }
                             }, onLongPress = { point -> crosshair = visibleIndex(point.x); crosshairY = point.y })
@@ -413,6 +430,7 @@ fun TradingChart(
                             }
                             drawPath(marker, colors.Surface, style = Stroke(4f))
                             drawPath(marker, if (up) colors.Up else colors.Down)
+                            if (execution.id == selectedExecution?.id) drawCircle(colors.Accent, 9.dp.toPx(), Offset(x, y), style = Stroke(2.dp.toPx()))
                         }
                     }
                     if (showHistory) trades.forEach { trade ->
@@ -559,7 +577,7 @@ fun TradingChart(
                     onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
-                    onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null },
+                    onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
                     // On phones the small control sits bottom-left, away from the newest bars at the right edge.
                     modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = navigationBottom)
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
@@ -570,7 +588,11 @@ fun TradingChart(
                 Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = colors.Muted)
             }
             selectedTrade?.let { trade ->
-                Text("选中历史  #${trade.id} · ${trade.side.label()} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${money(trade.netPnlMicros, true)} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
+                Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
+            }
+            selectedExecution?.let { fill ->
+                Text("选中成交 #${fill.id} · ${dateTime(fill.timeMs)} UTC · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
+                    Modifier.padding(horizontal = 14.dp, vertical = 3.dp).testTag("selected-execution"), fontSize = 10.sp)
             }
         }
         // Gesture and marker hints; phones drop the row to give the height to the chart (the plot's description keeps the gestures).

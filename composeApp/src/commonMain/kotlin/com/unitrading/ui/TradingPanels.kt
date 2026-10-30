@@ -230,6 +230,7 @@ internal fun TradeTerminal(
     onEditOrder: (PendingOrder) -> Unit,
     busy: Boolean,
     modifier: Modifier = Modifier,
+    onSelectExecution: (Execution) -> Unit = {},
 ) {
     var tab by remember(plugin.descriptor.id, account.accountId) { mutableStateOf(0) }
     val instruments = plugin.instruments.associateBy { it.symbol }
@@ -297,27 +298,34 @@ internal fun TradeTerminal(
                 }
                 2 -> {
                     if (account.trades.isEmpty() && account.executions.isEmpty()) item { EmptyState("暂无已平仓交易", "平仓后可在这里和图表中查看成交记录。") }
+                    if (account.executions.isNotEmpty()) item { Text("原始成交 · 点击定位图表", Modifier.padding(16.dp), fontSize = 12.sp, color = TradingColors.Muted) }
                     items(account.executions.asReversed(), key = { "fill-${it.id}" }) { fill ->
                         val spec = instruments[fill.symbol]
                         if (spec != null) {
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Column(Modifier.fillMaxWidth().testTag("execution-${fill.id}").clickable { onSelectExecution(fill) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
                                 Text("${fill.symbol}   ${fill.side.label()} ${spec.formatQuantity(fill.lotsHundredths)} ${spec.quantityUnit}   ${spec.formatPrice(fill.price)}", fontSize = 12.sp)
                                 Text("${dateTime(fill.timeMs)} · 成交 #${fill.id} / 订单 #${fill.orderId}", color = TradingColors.Muted, fontSize = 10.sp)
-                                Text("原始成交；未将未配对成交伪装为含费用的已实现净盈亏", color = TradingColors.Muted, fontSize = 10.sp)
+                                Text("原始成交；配对与费用以服务器记录为准", color = TradingColors.Muted, fontSize = 10.sp)
                             }
                             DividerLine()
                         }
                     }
+                    if (account.executions.isNotEmpty() && account.trades.isNotEmpty()) item { Text("服务器已配对交易", Modifier.padding(16.dp), fontSize = 12.sp, color = TradingColors.Muted) }
                     items(account.trades.asReversed(), key = { it.id }) { t ->
                         val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, "合约规格暂不可用，待目录恢复后可操作。"); return@items }
                         Row(Modifier.fillMaxWidth().clickable { onSelectTrade(t) }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("${t.symbol}   ${t.side.label()} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
+                                Text("${t.symbol}   ${if (t.directionKnown) t.side.label() else "买卖配对"} ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", fontSize = 12.sp)
                                 Text("${instrument.formatPrice(t.entryPrice)} → ${instrument.formatPrice(t.exitPrice)}", color = TradingColors.Muted, fontSize = 10.sp)
                                 if (compact) Text("${dateTime(t.closedAtMs)} · ${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
                             }
                             if (!compact) Text("${dateTime(t.closedAtMs)}\n${t.reason}", color = TradingColors.Muted, fontSize = 10.sp)
-                            Text("${money(t.netPnlMicros, true)} USD", fontSize = 12.sp, color = TradingColors.pnl(t.netPnlMicros))
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(t.netPnlMicros?.let { "${money(it, true)} USD" } ?: t.grossPnlMicros?.let { "毛 ${money(it, true)} USD" } ?: "—", fontSize = 12.sp,
+                                    color = TradingColors.pnl(t.netPnlMicros ?: t.grossPnlMicros))
+                                if (t.netPnlMicros == null) Text("费用未知，净盈亏待确认", color = TradingColors.Muted, fontSize = 10.sp)
+                                if (!t.directionKnown) Text("同时间买卖配对", color = TradingColors.Muted, fontSize = 10.sp)
+                            }
                         }
                         DividerLine()
                     }

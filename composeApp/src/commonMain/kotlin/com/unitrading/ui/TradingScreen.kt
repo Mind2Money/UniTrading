@@ -116,6 +116,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         var showDraft by remember(accountKey, symbol) { mutableStateOf(false) }
         var selectedPositionId by remember(accountKey) { mutableStateOf<String?>(null) }
         var focusedTrade by remember(accountKey) { mutableStateOf<ClosedTrade?>(null) }
+        var focusedExecution by remember(accountKey) { mutableStateOf<Execution?>(null) }
         var protection by remember(accountKey) { mutableStateOf<ProtectionEdit?>(null) }
         var pendingEdit by remember(accountKey) { mutableStateOf<PendingEntryEdit?>(null) }
         var confirmation by remember(accountKey, symbol) { mutableStateOf<Confirmation?>(null) }
@@ -144,13 +145,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
         LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
             if (chosenSymbol != symbol) {
                 chosenSymbol = symbol
-                selectedPositionId = null; focusedTrade = null; protection = null; pendingEdit = null; confirmation = null
+                selectedPositionId = null; focusedTrade = null; focusedExecution = null; protection = null; pendingEdit = null; confirmation = null
             }
         }
 
         fun chooseSymbol(value: String) {
             chosenSymbol = value
             focusedTrade = null
+            focusedExecution = null
             selectedPositionId = null
             protection = null
             pendingEdit = null
@@ -235,7 +237,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, { p, sl, tp -> editProtection(p, sl, tp) },
                         visibleOrders, plugin.capabilities.modifyPendingOrders, { order, price -> editPending(order, price) },
                         { changeDraft(draft.copy(entry = instrument.formatPrice(it))) }, session::preview, session::previewOrderModification,
-                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true },
+                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == symbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         onSide = { side -> changeDraft(draft.copy(side = side, stopLoss = "", takeProfit = "")); if (compact) orderOpen = true else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
@@ -317,8 +319,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                 }
                                 DividerLine()
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
+                                    onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
+                                    onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
+                                    onSelectExecution = { fill -> chosenSymbol = fill.symbol; focusedExecution = fill; focusedTrade = null; selectedPositionId = null; mobileTab = 1 },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.fillMaxWidth().height(terminalHeight))
                             }
@@ -359,8 +362,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null) {
                                 AccountStrip(account)
                                 DividerLine()
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                    onSelectPosition = { p -> chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                    onSelectTrade = { t -> chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
+                                    onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                    onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
+                                    onSelectExecution = { fill -> chosenSymbol = fill.symbol; focusedExecution = fill; focusedTrade = null; selectedPositionId = null; mobileTab = 1 },
                                     onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth())
                             }

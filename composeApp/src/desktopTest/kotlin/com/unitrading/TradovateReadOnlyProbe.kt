@@ -50,7 +50,7 @@ private class ReadOnlyProbeWire : TradovateWire {
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         check(environment == TradovateEnvironment.DEMO)
         val endpoint = path.substringBefore('?')
-        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contractMaturity/item", "product/item", "currency/item") ||
+        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contractMaturity/item", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
             method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot"
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
         return delegate.request(environment, token, method, path, body)

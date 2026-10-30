@@ -95,7 +95,7 @@ class TradingScreenTest {
         compose.waitUntil(5_000) { session.state.value.positions.size == before.positions.size - 1 }
         assertEquals(before.trades.size + 1, session.state.value.trades.size)
         compose.onNodeWithTag("terminal-tab-2").performClick()
-        compose.onNodeWithText("${money(session.state.value.trades.last().netPnlMicros, true)} USD").assertExists()
+        compose.onNodeWithText("${money(requireNotNull(session.state.value.trades.last().netPnlMicros), true)} USD").assertExists()
     }
     @Test fun switchingBrokerChangesCatalog() {
         render()
