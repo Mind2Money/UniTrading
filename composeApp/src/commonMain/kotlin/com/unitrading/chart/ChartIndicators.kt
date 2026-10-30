@@ -125,7 +125,8 @@ internal fun DrawScope.drawIndicatorPanes(
         val bounds = paneRange(kind, item.series, range)
         fun y(v: Double) = valueBottom - ((v - bounds.start) / (bounds.endInclusive - bounds.start) * (valueBottom - valueTop)).toFloat()
         drawLine(palette.Border, Offset(left, paneTop), Offset(right, paneTop), 1f)
-        kind.guides.filter { it in bounds }.forEach { guide ->
+        val guides = item.config.guides.filter { it in bounds }
+        guides.forEach { guide ->
             drawLine(palette.Grid, Offset(left, y(guide)), Offset(right, y(guide)), 1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f)))
         }
         clipRect(left, paneTop + 1f, right, paneBottom) {
@@ -148,6 +149,17 @@ internal fun DrawScope.drawIndicatorPanes(
         }
         axisText(formatIndicatorValue(kind, bounds.endInclusive, instrument), valueTop)
         axisText(formatIndicatorValue(kind, bounds.start, instrument), valueBottom)
+        if (kind == IndicatorKind.RSI) {
+            // Keep nearby labels from overlapping each other or the axis bounds in short panes.
+            val labelRows = mutableListOf(valueTop, valueBottom)
+            guides.sortedDescending().forEach { guide ->
+                val row = y(guide)
+                if (labelRows.all { abs(it - row) >= labelHeight + labelPadding }) {
+                    axisText(formatParam(guide), row)
+                    labelRows.add(row)
+                }
+            }
+        }
         var cursor = left + labelPadding * 2
         val titleTop = paneTop + labelPadding
         val title = textMeasurer.measure(item.config.label, labelStyle.copy(color = palette.Muted))

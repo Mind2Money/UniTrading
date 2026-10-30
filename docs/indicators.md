@@ -7,13 +7,14 @@
 - 点击图表工具条的“指标”打开设置对话框；已添加指标时，入口显示数量。
 - 对话框可反复添加同类或不同指标，上限 12 个；每个指标可单独设置参数、每条线的 `#RRGGBB` 颜色（可点色点用 RGB 滑块选色）、显示开关、上下顺序和移除。
 - 参数或颜色无效时该指标标红，保存按钮禁用；取消不改动已保存的指标。
+- RSI 的“水平参考值”可输入多个 0–100 的数值（最多两位小数），用逗号分隔，例如 `25.5, 50, 75.25`；也接受中文逗号和分号。默认 `30, 70`，留空关闭参考线，重复或无效数值会禁用保存。每个 RSI 单独配置，保存后重启保留；旧设置仍使用 30/70。
 - 保存写入本机 `indicators-v1`（与主题 `theme-v1` 同一存储），重启后恢复；这组指标对所有交易商、品种和周期生效，不按品种分别保存。
 - 保存内容损坏、含未知指标或非法参数时清空图表中的指标并提示，不覆盖原文件，不阻止登录。
 
 ## 绘制
 
 - 叠加型指标（MA、EXPMA、BOLL）画在 K 线图内，共用价格轴；自动价格范围包含可见区间内的指标值，因此布林带不会被裁出图外。手动缩放价格轴时不自动扩展。
-- 副图型指标（RSI、MACD、KDJ、ATR）在 K 线图与时间轴之间各占一个副图：每个副图占图表高度 20%，副图总高度不超过 50%，因此 3 个以上副图时每个会变矮。副图右侧显示当前上下界，RSI 画 30/70、KDJ 画 20/80、MACD 画 0 参考线。
+- 副图型指标（RSI、MACD、KDJ、ATR）在 K 线图与时间轴之间各占一个副图：每个副图占图表高度 20%，副图总高度不超过 50%，因此 3 个以上副图时每个会变矮。副图右侧显示当前上下界，RSI 按配置绘制水平虚线（默认 30/70）及右轴数值；空间不足时省略相互重叠的参考值标签，线条仍保留。KDJ 画 20/80、MACD 画 0 参考线。
 - 图例在 OHLC 下方逐行显示叠加指标名称和当前值；副图标题行显示该指标的值。十字线移动时两者都显示所指 K 线的值，否则显示最新 K 线；十字线横线落在副图内时，右轴标注该位置对应的指标值。
 - 收起图例时，OHLC 读数和指标列表一起隐藏。收起/展开状态写入本机 `chart-v1`（与周期收藏同一份设置），切换手机页面、品种、周期和重启后保持；从未切换过时沿用布局默认值：手机横屏等短屏默认收起，其他展开。
 - 副图区域横向拖动平移时间，不缩放价格；时间轴缩放手势仍在最底部的时间刻度上。
@@ -45,8 +46,9 @@
 - `IndicatorsTest`：MA/EXPMA 起算、布林带总体标准差、RSI Wilder 平滑与边界值、线性序列 MACD 常量、KDJ 起始值与边界、ATR 起算、参数/颜色校验（含周期 1000 接受、1001 拒绝）、2000 根 K 线上周期 1000 的全部指标预热与有值区间、标签格式、副图范围与数值格式。
 - `ChartHistoryDepthTest`：Tradovate `md/getChart` 请求 `asMuchAsElements` 为 2000，收到 2500 根后保留最新 2000 根且时间连续。服务器对 2000 根请求的实际返回数量未用真实账户实测。
 - `IndicatorSettingsTest`：重启后恢复、重复 ID / 超量 / 非法参数拒绝、磁盘失败保留旧配置、损坏或未知指标回退且不覆盖原文件。
+- RSI 参考线回归：`IndicatorsTest` 校验范围、重复值与默认线；`IndicatorDraftTest` 覆盖小数、分隔符、留空、非法输入及多 RSI 独立配置；`IndicatorSettingsTest` 覆盖旧设置兼容、自定义和空列表持久化；`IndicatorUiTest` 覆盖修改、禁用保存、取消、清空与重新打开。
 - `IndicatorUiTest`：添加 EXPMA/BOLL/RSI，修改周期与颜色，无效参数禁用保存，保存后图例与副图出现并持久化；副图下方时间轴缩放和副图区域平移；取消不改动配置；隐藏指标移除副图；预存 MACD/KDJ/MA 随图表加载并可移除。截图输出到 `artifacts/chart-indicators.png`。
 
 ```powershell
-./gradlew.bat :composeApp:desktopTest --tests "com.unitrading.chart.IndicatorsTest" --tests "com.unitrading.app.IndicatorSettingsTest" --tests "com.unitrading.ui.IndicatorUiTest" :tradovate-broker:desktopTest --tests "com.unitrading.tradovate.ChartHistoryDepthTest"
+./gradlew.bat :composeApp:desktopTest --tests "com.unitrading.chart.IndicatorsTest" --tests "com.unitrading.app.IndicatorSettingsTest" --tests "com.unitrading.ui.IndicatorDraftTest" --tests "com.unitrading.ui.IndicatorUiTest" :tradovate-broker:desktopTest --tests "com.unitrading.tradovate.ChartHistoryDepthTest"
 ```

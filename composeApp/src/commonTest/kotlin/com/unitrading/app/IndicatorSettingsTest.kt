@@ -10,7 +10,8 @@ class IndicatorSettingsTest {
     private val custom = IndicatorSettings(listOf(
         IndicatorConfig("1", IndicatorKind.EXPMA, mapOf("period" to 30.0), mapOf("EXPMA" to "#FF0000")),
         IndicatorConfig("2", IndicatorKind.BOLL, mapOf("period" to 20.0, "width" to 2.5)),
-        IndicatorConfig("3", IndicatorKind.RSI, visible = false),
+        IndicatorConfig("3", IndicatorKind.RSI, visible = false, referenceLevels = listOf(25.5, 50.0, 75.25)),
+        IndicatorConfig("4", IndicatorKind.RSI, referenceLevels = emptyList()),
     ))
 
     @Test fun savedIndicatorsSurviveRuntimeRestartIndependentlyOfTheme() = runTest {
@@ -23,6 +24,21 @@ class IndicatorSettingsTest {
         assertEquals(ThemeSettings(), reopened.theme.settings.value)
         assertNull(store.read("atlas-demo"))
         assertEquals(custom, Json.decodeFromString<IndicatorSettings>(store.read("indicators-v1")!!))
+    }
+
+    @Test fun oldSettingsKeepDefaultGuidesAndEmptyLevelsStayDisabledAfterRestart() = runTest {
+        val original = """{"indicators":[{"id":"rsi","kind":"RSI"},{"id":"kdj","kind":"KDJ"}]}"""
+        val store = MemorySnapshotStore().apply { write("indicators-v1", original) }
+        val controller = IndicatorController(store)
+        assertNull(controller.error.value)
+        assertEquals(listOf(30.0, 70.0), controller.settings.value.indicators[0].guides)
+        assertEquals(listOf(20.0, 80.0), controller.settings.value.indicators[1].guides)
+        assertEquals(original, store.read("indicators-v1"))
+        val edited = controller.settings.value.indicators.map { if (it.kind == IndicatorKind.RSI) it.copy(referenceLevels = emptyList()) else it }
+        assertTrue(controller.apply(IndicatorSettings(edited)))
+        val reopened = IndicatorController(store)
+        assertEquals(emptyList(), reopened.settings.value.indicators[0].guides)
+        assertEquals(listOf(20.0, 80.0), reopened.settings.value.indicators[1].guides)
     }
 
     @Test fun invalidStacksAndDiskFailureKeepTheSavedStack() = runTest {

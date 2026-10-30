@@ -30,6 +30,7 @@ internal data class IndicatorDraft(
     val params: Map<String, String>,
     val colors: Map<String, String>,
     val visible: Boolean = true,
+    val referenceLevels: String = "",
 ) {
     fun parse(spec: IndicatorParam): Double? {
         val text = params[spec.key]?.trim() ?: return null
@@ -37,9 +38,18 @@ internal data class IndicatorDraft(
         return value?.takeIf { it >= spec.min && it <= spec.max }
     }
     fun colorValid(line: String): Boolean = colors[line]?.matches(Regex("#[0-9a-fA-F]{6}")) == true
+    fun parseReferenceLevels(): List<Double>? {
+        if (referenceLevels.isBlank()) return emptyList()
+        val values = referenceLevels.split(',', '，', ';', '；').map { text ->
+            val value = parseFixed(text.trim(), 2)?.let { it / 100.0 } ?: return null
+            value.takeIf { it in 0.0..100.0 } ?: return null
+        }
+        return values.takeIf { it.distinct().size == it.size }?.sorted()
+    }
     fun toConfig(): IndicatorConfig? {
         val values = kind.params.associate { it.key to (parse(it) ?: return null) }
-        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible)
+        val levels = if (kind == IndicatorKind.RSI) parseReferenceLevels() ?: return null else null
+        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels)
         return config.takeIf { runCatching { it.validate() }.isSuccess }
     }
     companion object {
@@ -48,6 +58,7 @@ internal data class IndicatorDraft(
             config.kind.params.associate { it.key to formatParam(config.param(it.key)) },
             config.kind.lines.withIndex().filterNot { it.value.histogram }.associate { (index, line) -> line.name to config.color(index) },
             config.visible,
+            if (config.kind == IndicatorKind.RSI) config.guides.joinToString(", ", transform = ::formatParam) else "",
         )
         fun new(kind: IndicatorKind) = from(IndicatorConfig(Random.nextLong().toULong().toString(16), kind))
     }
@@ -153,8 +164,15 @@ private fun IndicatorEditor(
                     })
             }
         }
+        if (draft.kind == IndicatorKind.RSI) {
+            OutlinedTextField(draft.referenceLevels, { onChange(draft.copy(referenceLevels = it)) },
+                Modifier.fillMaxWidth().testTag("indicator-reference-levels-$index"),
+                label = { Text("水平参考值", fontSize = 11.sp) }, placeholder = { Text("30, 50, 70") }, singleLine = true,
+                isError = draft.parseReferenceLevels() == null,
+                supportingText = { Text("0–100，最多两位小数，用逗号分隔且不重复；留空关闭参考线。", fontSize = 10.sp) })
+        }
         if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", fontSize = 10.sp, color = colors.Muted)
-        if (config == null) Text("参数或颜色无效，请修改后保存。", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+        if (config == null) Text("参数、颜色或参考值无效，请修改后保存。", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton({ onMove(-1) }, enabled = index > 0) { Text("上移", fontSize = 11.sp) }
             TextButton({ onMove(1) }, enabled = index < total - 1) { Text("下移", fontSize = 11.sp) }

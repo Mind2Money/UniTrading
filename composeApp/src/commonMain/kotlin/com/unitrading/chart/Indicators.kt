@@ -67,9 +67,12 @@ data class IndicatorConfig(
     val params: Map<String, Double> = emptyMap(),
     val colors: Map<String, String> = emptyMap(),
     val visible: Boolean = true,
+    /** Null keeps the built-in guides for old settings; an empty list hides all RSI reference lines. */
+    val referenceLevels: List<Double>? = null,
 ) {
     fun param(key: String): Double = params[key] ?: kind.param(key).default
     fun color(line: Int): String = colors[kind.lines[line].name] ?: indicatorPalette[line % indicatorPalette.size]
+    val guides: List<Double> get() = referenceLevels ?: kind.guides
     /** `EXPMA(20)`, `BOLL(20,2)`, `MACD(12,26,9)` */
     val label: String get() = kind.label + "(" + kind.params.joinToString(",") { formatParam(param(it.key)) } + ")"
 
@@ -83,6 +86,11 @@ data class IndicatorConfig(
         colors.forEach { (line, value) ->
             require(kind.lines.any { it.name == line && !it.histogram }) { "${kind.label} 没有可配色的线 $line" }
             require(value.matches(Regex("#[0-9a-fA-F]{6}"))) { "颜色须为 #RRGGBB" }
+        }
+        referenceLevels?.let { levels ->
+            require(kind == IndicatorKind.RSI) { "仅 RSI 支持自定义水平参考线" }
+            require(levels.all { it.isFinite() && it in 0.0..100.0 }) { "RSI 水平参考值须在 0–100" }
+            require(levels.distinct().size == levels.size) { "RSI 水平参考值不能重复" }
         }
         if (kind == IndicatorKind.MACD) require(param("fast") < param("slow")) { "MACD 快线周期须小于慢线" }
     }

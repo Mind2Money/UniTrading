@@ -117,6 +117,24 @@ class IndicatorsTest {
         assertEquals("0.1", formatParam(0.1))
     }
 
+    @Test fun rsiReferenceLevelsReplaceDefaultsWithoutChangingOtherIndicators() {
+        val rsi = IndicatorConfig("rsi", IndicatorKind.RSI)
+        assertEquals(listOf(30.0, 70.0), rsi.guides)
+        val custom = rsi.copy(referenceLevels = listOf(0.0, 25.5, 50.0, 75.25, 100.0))
+        custom.validate()
+        assertEquals(custom.referenceLevels, custom.guides)
+        val hidden = rsi.copy(referenceLevels = emptyList())
+        hidden.validate()
+        assertEquals(emptyList(), hidden.guides)
+        assertEquals(listOf(30.0, 70.0), rsi.guides)
+        assertEquals(listOf(20.0, 80.0), IndicatorConfig("kdj", IndicatorKind.KDJ).guides)
+        assertEquals(listOf(0.0), IndicatorConfig("macd", IndicatorKind.MACD).guides)
+        for (levels in listOf(listOf(-0.01), listOf(100.01), listOf(nan), listOf(Double.POSITIVE_INFINITY), listOf(30.0, 30.0))) {
+            assertFailsWith<IllegalArgumentException> { rsi.copy(referenceLevels = levels).validate() }
+        }
+        assertFailsWith<IllegalArgumentException> { custom.copy(kind = IndicatorKind.MA).validate() }
+    }
+
     @Test fun computedSeriesPaneRangesAndFormatting() {
         val candles = (0 until 40).map { i -> Candle(i * 60_000L, 100_000_000L + i, 105_000_000L + i, 95_000_000L + i, 102_000_000L + i) }
         val boll = computeIndicator(IndicatorConfig("x", IndicatorKind.BOLL), candles)
