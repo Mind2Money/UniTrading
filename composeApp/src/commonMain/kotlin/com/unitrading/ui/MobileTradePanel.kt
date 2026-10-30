@@ -3,9 +3,6 @@ package com.unitrading.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -14,7 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -25,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.chart.Chevron
+import kotlinx.coroutines.launch
 
 internal enum class MobileOrderPanelState { CLOSED, EDITING, MINIMIZED }
 
@@ -32,7 +29,6 @@ internal enum class MobileOrderPanelState { CLOSED, EDITING, MINIMIZED }
 internal class MobileOrderSession(instrument: Instrument) {
     val draft = mutableStateOf(OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10"))
     val panelState = mutableStateOf(MobileOrderPanelState.CLOSED)
-    val expanded = mutableStateOf(false)
 }
 
 /** A single entry point leaves the chart usable until an order is started. */
@@ -102,43 +98,51 @@ internal fun MinimizedOrderBar(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun MobileOrderPanel(
+internal fun MobileOrderSheet(
     instrument: Instrument,
     accountName: String,
     environment: String,
-    handle: Boolean,
     onMinimize: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     busy: Boolean = false,
-    expanded: Boolean = false,
-    onExpand: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
-    Surface(modifier.testTag("order-panel"), shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        color = colors.Surface, shadowElevation = 8.dp) {
-        Column {
-            if (handle) PanelHandle(onMinimize)
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = if (handle) 0.dp else 8.dp, bottom = 8.dp),
+    // Open fully so the review action stays above the IME and short-screen fold.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    fun dismiss(onDismiss: () -> Unit) {
+        scope.launch {
+            sheetState.hide()
+            if (!sheetState.isVisible) onDismiss()
+        }
+    }
+    ModalBottomSheet(
+        onDismissRequest = onMinimize,
+        sheetState = sheetState,
+        containerColor = colors.Surface,
+        contentColor = colors.Ink,
+        modifier = modifier.testTag("order-panel"),
+    ) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text("新建订单", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Text("${instrument.symbol} · $accountName", fontSize = 11.sp, color = colors.Muted,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                PanelIconButton(close = false, onClick = onMinimize)
-                PanelIconButton(close = true, enabled = !busy, onClick = onClose)
+                PanelIconButton(close = false, onClick = { dismiss(onMinimize) })
+                PanelIconButton(close = true, enabled = !busy, onClick = { dismiss(onClose) })
             }
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Badge(environment)
                 Spacer(Modifier.width(8.dp))
                 Text("${instrument.currency} 结算", fontSize = 11.sp, color = colors.Muted)
                 Spacer(Modifier.weight(1f))
-                if (onExpand != null) TextButton(onExpand, Modifier.testTag("expand-order"), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text(if (expanded) "还原高度" else "展开更多", fontSize = 11.sp)
-                }
             }
             content()
         }
@@ -157,19 +161,5 @@ private fun PanelIconButton(close: Boolean, enabled: Boolean = true, onClick: ()
                 drawLine(color, Offset(size.width * .8f, size.height * .2f), Offset(size.width * .2f, size.height * .8f), stroke)
             } else drawLine(color, Offset(size.width * .15f, size.height * .65f), Offset(size.width * .85f, size.height * .65f), stroke)
         }
-    }
-}
-
-/** Downward gestures only minimize; discarding requires the explicit close button. */
-@Composable
-private fun PanelHandle(onMinimize: () -> Unit) {
-    val threshold = with(LocalDensity.current) { 24.dp.toPx() }
-    var travel by remember { mutableStateOf(0f) }
-    Box(Modifier.fillMaxWidth().height(24.dp)
-        .draggable(rememberDraggableState { travel += it }, Orientation.Vertical,
-            onDragStarted = { travel = 0f }, onDragStopped = { if (travel > threshold) onMinimize() })
-        .clickable(role = Role.Button, onClick = onMinimize)
-        .semantics { contentDescription = "最小化下单面板" }.testTag("order-panel-handle"), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(32.dp, 4.dp).background(TradingColors.Border, RoundedCornerShape(2.dp)))
     }
 }

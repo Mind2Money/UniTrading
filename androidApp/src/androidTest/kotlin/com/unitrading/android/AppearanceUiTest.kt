@@ -47,12 +47,11 @@ class AppearanceUiTest {
         }
         error("No editable order quantity on screen")
     }
-    private fun awaitKeyboard(scenario: ActivityScenario<MainActivity>, visible: Boolean) {
+    private fun awaitKeyboard(visible: Boolean) {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         var stableSince = 0L
         while (SystemClock.uptimeMillis() < deadline) {
-            var shown = false
-            scenario.onActivity { shown = it.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true }
+            val shown = automation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
             if (shown != visible) stableSince = 0L
             else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
             else if (SystemClock.uptimeMillis() - stableSince >= 500) { idle(); return }
@@ -166,21 +165,23 @@ class AppearanceUiTest {
             swipe(bounds.left + bounds.width() * .25f, bounds.bottom - 15f * density, bounds.left + bounds.width() * .6f, bounds.bottom - 15f * density)
             assertNotEquals(zoomed, awaitChartChange(zoomed))
             screenshot("android-chart-zoom-v114")
-            // The button opens the ticket; Back minimizes the active draft without leaving the app.
+            // The modal sheet owns a separate window; observe the viewport before opening it.
+            val beforeImeViewport = awaitNode("拖动图表平移", description = true).stateDescription?.toString()
+            automation.serviceInfo = automation.serviceInfo.apply {
+                flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
             tap("下单")
             awaitText("新建订单")
-            assertNull("The open panel takes the tab bar's place", node("图表"))
+            assertNull("The modal sheet blocks background navigation", node("图表"))
             awaitText("检查并模拟买入")
-            val beforeImeViewport = awaitNode("拖动图表平移", description = true).stateDescription?.toString()
             tapNode(firstEditableNode())
-            awaitKeyboard(scenario, true)
+            awaitKeyboard(true)
             awaitText("检查并模拟买入")
             screenshot("android-order-keyboard")
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
-            awaitKeyboard(scenario, false)
+            awaitKeyboard(false)
             idle()
             assertNotNull("Back dismisses the keyboard before closing the ticket", node("新建订单"))
-            assertEquals(beforeImeViewport, awaitNode("拖动图表平移", description = true).stateDescription?.toString())
             tap("增加数量", description = true)
             screenshot("android-order-panel")
             val updatedQuantity = firstEditableNode().text.toString()
@@ -204,6 +205,7 @@ class AppearanceUiTest {
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitText("图表")
             assertNull(node("新建订单"))
+            assertEquals(beforeImeViewport, awaitNode("拖动图表平移", description = true).stateDescription?.toString())
             awaitText("${runtime.registry.plugins.first().instruments.first().symbol} · 草稿保留 · 可拖动图表调价")
             screenshot("android-order-minimized")
             tap("关闭并放弃本次下单", description = true)

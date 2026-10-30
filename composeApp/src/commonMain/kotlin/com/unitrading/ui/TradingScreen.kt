@@ -1,11 +1,5 @@
 package com.unitrading.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -16,13 +10,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -146,7 +138,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var orderPanelState by orderSession.panelState
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
-        var orderExpanded by orderSession.expanded
         var busy by remember { mutableStateOf(false) }
         var notice by remember { mutableStateOf<TradingNotice?>(null) }
         var nextNoticeId by remember { mutableLongStateOf(0) }
@@ -302,20 +293,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
                 val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
-                // Phones are chart-first: on the chart tab the chart's own toolbar row replaces the app header, and the open
-                // order panel takes the tab bar's place while editing; minimizing restores navigation.
+                // The modal order sheet overlays the chart without changing its layout or viewport.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
                 fun minimizeOrder() { focusManager.clearFocus(); orderPanelState = MobileOrderPanelState.MINIMIZED }
                 fun closeOrder() {
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
-                    orderExpanded = false
                     showDraft = false
                     draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                     if (confirmation is Confirmation.Place) confirmation = null
                 }
-                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = panelOpen && !keyboardOpen, onBackCompleted = { minimizeOrder() })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 val chart: @Composable (Modifier) -> Unit = { m ->
@@ -404,49 +392,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f))
-                            1 -> BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                                // Landscape phones dock the open ticket beside the chart; portrait phones stack it under the chart.
-                                val dock = maxWidth >= 600.dp && maxWidth > maxHeight && !keyboardOpen
-                                // Give fields space on phones, keep the chart usable, and reserve the whole remaining area for IME editing.
-                                val panelHeight = if (keyboardOpen) maxHeight else
-                                    (maxHeight * if (orderExpanded) .86f else .70f).coerceAtMost(if (orderExpanded) maxHeight else 600.dp)
-                                val bar: @Composable () -> Unit = {
-                                    if (orderActive) MinimizedOrderBar(instrument, draft, busy,
+                            1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
+                                chart(Modifier.weight(1f))
+                                Box(Modifier.fillMaxWidth().height(76.dp)) {
+                                    if (orderPanelState == MobileOrderPanelState.MINIMIZED) MinimizedOrderBar(instrument, draft, busy,
                                         onRestore = { orderPanelState = MobileOrderPanelState.EDITING }, onClose = { closeOrder() })
                                     else MobileTradeBar(account, onOpen = { orderPanelState = MobileOrderPanelState.EDITING },
                                         onPositions = { mobileTab = 2 })
-                                }
-                                val panel: @Composable (Modifier) -> Unit = { m ->
-                                    MobileOrderPanel(instrument, session.account.name, environmentLabel, handle = !dock && !keyboardOpen,
-                                        onMinimize = { minimizeOrder() }, onClose = { closeOrder() }, modifier = m, busy = busy, expanded = orderExpanded,
-                                        onExpand = if (dock || keyboardOpen) null else ({ orderExpanded = !orderExpanded })) {
-                                        MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, { request?.let { confirmation = Confirmation.Place(it) } },
-                                            Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
-                                    }
-                                }
-                                if (dock) Row(Modifier.fillMaxSize()) {
-                                    Column(Modifier.weight(1f).fillMaxHeight()) {
-                                        chart(Modifier.weight(1f))
-                                        if (!orderOpen) bar()
-                                    }
-                                    AnimatedVisibility(orderOpen,
-                                        enter = expandHorizontally(tween(280), expandFrom = Alignment.End),
-                                        exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.End)) {
-                                        Row {
-                                            VerticalDivider(color = colors.Border)
-                                            panel(Modifier.width(340.dp).fillMaxHeight())
-                                        }
-                                    }
-                                } else Column(Modifier.fillMaxSize()) {
-                                    // Keep the chart composed so opening the IME does not reset its viewport or layers.
-                                    chart(if (orderOpen && keyboardOpen) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics { } else Modifier.weight(1f))
-                                    val animatedHeight by animateDpAsState(
-                                        if (orderOpen) panelHeight else 76.dp,
-                                        animationSpec = tween(280), label = "order-panel-height")
-                                    Crossfade(orderOpen, Modifier.fillMaxWidth().height(animatedHeight).clipToBounds(),
-                                        animationSpec = tween(180), label = "order-panel-content") { editing ->
-                                        if (editing) panel(Modifier.fillMaxSize()) else bar()
-                                    }
                                 }
                             }
                             2 -> Column(Modifier.weight(1f)) {
@@ -469,10 +421,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                     if (compact) {
-                        if (!panelOpen) {
-                            DividerLine()
-                            MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
-                        }
+                        DividerLine()
+                        MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
                     } else {
                         DividerLine()
                         AccountStrip(account)
@@ -481,6 +431,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Spacer(Modifier.weight(1f))
                             Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   状态以服务器为准   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
                         }
+                    }
+                }
+                if (panelOpen) key(orderSession) {
+                    MobileOrderSheet(instrument, session.account.name, environmentLabel,
+                        onMinimize = { minimizeOrder() }, onClose = { closeOrder() }, busy = busy) {
+                        // Rejections must stay in the active modal window, where they can be read and dismissed.
+                        notice?.let { current ->
+                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
+                                .padding(horizontal = 14.dp, vertical = 6.dp)) {
+                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                            }
+                        }
+                        MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                            { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.weight(1f),
+                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
                     }
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
@@ -492,7 +457,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
                             title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
                     }
-                    notice?.let { current ->
+                    notice?.takeUnless { panelOpen }?.let { current ->
                         FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
                     }
                     loginMessage?.let { message -> key(message) {

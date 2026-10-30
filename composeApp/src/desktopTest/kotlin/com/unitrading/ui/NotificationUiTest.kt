@@ -122,6 +122,22 @@ class NotificationUiTest {
         capture("mobile-floating-notice")
     }
 
+    @Test fun phoneOrderRejectionIsVisibleInsideTheSheetAndKeepsTheDraft() {
+        val broker = Broker().apply { result = TradeResult(false, "服务器拒绝下单") }
+        render(broker, phone = true)
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("2")
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.onNodeWithTag("trade-notice").assertTextContains("服务器拒绝下单", substring = true)
+            .assert(hasAnyAncestor(hasTestTag("order-panel"))).assertIsDisplayed()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
+        assertEquals(1, broker.orderCalls)
+        compose.onNodeWithTag("dismiss-trade-notice").performClick()
+        compose.onNodeWithTag("trade-notice").assertDoesNotExist()
+        compose.onNodeWithTag("order-quantity").assertTextContains("2")
+    }
+
     @Test fun ordinaryNoticesExpireAndRepeatedMessagesRestartTheTimer() {
         var notice by mutableStateOf<TradingNotice?>(TradingNotice(1, "相同回执"))
         compose.setContent { TradingTheme { Box(Modifier.requiredSize(400.dp, 300.dp)) {

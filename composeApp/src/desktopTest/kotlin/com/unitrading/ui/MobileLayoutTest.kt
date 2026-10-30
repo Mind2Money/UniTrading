@@ -8,18 +8,14 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.navigationevent.DirectNavigationEventInput
-import androidx.navigationevent.NavigationEventDispatcher
-import androidx.navigationevent.NavigationEventDispatcherOwner
-import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import com.unitrading.app.ChartPreferencesController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.geometry.Offset
 import com.unitrading.broker.OrderKind
 import com.unitrading.broker.Side
@@ -28,15 +24,21 @@ import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.PriceScale
 import kotlinx.coroutines.runBlocking
-import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
 
-/** Phone layouts: the chart takes the screen, trading waits in the collapsible order panel, account figures sit on the trade and account tabs. */
+/** Phone layouts and the Material order sheet, using only synthetic broker data. */
+@OptIn(ExperimentalTestApi::class)
 class MobileLayoutTest {
-    @get:Rule val compose = createComposeRule()
+    private lateinit var compose: ComposeUiTest
+
+    private fun phoneTest(width: Int = 300, height: Int = 600, block: () -> Unit) =
+        runDesktopComposeUiTest(width = width, height = height) {
+            compose = this
+            block()
+        }
     private val store = MemorySnapshotStore()
     private val runtime = TradingRuntime(store, includeDemoBrokers = true).apply { paused.value = true }
     private val plugin = runtime.registry.plugins.first()
@@ -54,7 +56,7 @@ class MobileLayoutTest {
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
 
-    @Test fun portraitChartFillsTheScreenAndTradingWaitsInTheCollapsedPanel() {
+    @Test fun portraitChartFillsTheScreenAndTradingWaitsInTheCollapsedPanel() = phoneTest {
         render()
         val host = height("test-host")
         assertTrue(height("trading-chart") >= host * .66f, "chart ${height("trading-chart")} px of $host px")
@@ -71,9 +73,9 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-side-SELL").performClick()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNode(hasText(Side.SELL.label()) and isSelectable()).assertIsSelected()
-        compose.onNodeWithTag("mobile-navigation").assertDoesNotExist()
+        compose.onNodeWithTag("mobile-navigation").assertExists()
         compose.onNodeWithTag("chart-legend").assertDoesNotExist()
-        assertTrue(height("trading-chart") > host * .2f, "The chart stays visible above the open ticket")
+        assertTrue(height("trading-chart") >= host * .66f, "The sheet must overlay the chart without shrinking it")
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         compose.onNodeWithTag("order-quantity").assertIsDisplayed()
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsDisplayed().assertIsOff()
@@ -91,7 +93,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trade-terminal").assertExists()
     }
 
-    @Test fun draggingTheDraftEntryBringsBackTheLegendWithItsEstimate() {
+    @Test fun draggingTheDraftEntryBringsBackTheLegendWithItsEstimate() = phoneTest {
         render()
         val instrument = plugin.instruments.first()
         compose.onNodeWithTag("open-order").performClick()
@@ -100,6 +102,8 @@ class MobileLayoutTest {
         val entry = q.ask - 500
         compose.onNodeWithTag("order-entry").performTextReplacement(instrument.formatPrice(entry))
         compose.onNodeWithTag("chart-legend").assertDoesNotExist()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("legend-toggle").performClick()
         val position = session.state.value.positions.firstOrNull { it.symbol == instrument.symbol }
         val extras = listOfNotNull(q.bid, q.ask, position?.entryPrice, position?.stopLoss, position?.takeProfit, entry) +
             session.state.value.orders.filter { it.request.symbol == instrument.symbol }.mapNotNull { it.request.entryPrice }
@@ -110,18 +114,19 @@ class MobileLayoutTest {
         chart.performTouchInput { down(Offset(bounds.width * .55f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)) }
         compose.onNodeWithTag("chart-readout").assertTextContains("入场预览", substring = true)
         chart.performTouchInput { up() }
-        compose.onNodeWithTag("chart-legend").assertDoesNotExist()
+        compose.onNodeWithTag("chart-readout").assertDoesNotExist()
+        compose.onNodeWithTag("restore-order").performClick()
         compose.onNodeWithTag("order-entry").assertTextContains(instrument.formatPrice(scale.price(y + 24f, instrument.tickSize)))
     }
 
-    @Test fun legendFoldWithItsIndicatorListIsRememberedAcrossTabsAndRestarts() {
+    @Test fun legendFoldWithItsIndicatorListIsRememberedAcrossTabsAndRestarts() = phoneTest {
         runBlocking { assertTrue(runtime.indicators.apply(IndicatorSettings(listOf(IndicatorConfig("m", IndicatorKind.MA))))) }
         render()
         compose.onNodeWithTag("indicator-readout").assertExists()
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("chart-readout").assertDoesNotExist()
         compose.onNodeWithTag("indicator-readout").assertDoesNotExist()
-        compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.legendCollapsed == true }
+        compose.waitUntil(timeoutMillis = 5_000) { runtime.chartPreferences.preferences.value.legendCollapsed == true }
         // Leaving the chart tab drops the chart from composition; it comes back folded.
         compose.onNodeWithTag("nav-2").performClick()
         compose.onNodeWithTag("nav-1").performClick()
@@ -129,45 +134,41 @@ class MobileLayoutTest {
         assertEquals(true, ChartPreferencesController(store).preferences.value.legendCollapsed, "a restart reads the saved fold")
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("indicator-readout").assertExists()
-        compose.waitUntil(5_000) { ChartPreferencesController(store).preferences.value.legendCollapsed == false }
+        compose.waitUntil(timeoutMillis = 5_000) { ChartPreferencesController(store).preferences.value.legendCollapsed == false }
     }
 
-    @Test fun handleSwipesAndTapsToggleThePanel() {
+    @Test fun nativeSwipeAndDismissActionPreserveTheDraft() = phoneTest {
         render()
-        compose.onNodeWithTag("order-panel-handle").assertDoesNotExist()
         compose.onNodeWithTag("open-order").performClick()
-        compose.onNodeWithTag("order-panel").assertExists()
-        compose.onNodeWithTag("order-panel-handle").performTouchInput { swipeDown(startY = centerY, endY = centerY + 120f) }
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.23")
+        compose.onNodeWithTag("order-panel").performTouchInput {
+            swipe(Offset(centerX, 8f), Offset(centerX, height - 1f), durationMillis = 300)
+        }
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
-        compose.onNodeWithTag("minimized-order").assertExists()
         compose.onNodeWithTag("restore-order").performClick()
-        compose.onNodeWithTag("order-panel").assertExists()
-        compose.onNodeWithTag("order-panel-handle").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.23")
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss))
+            .performSemanticsAction(SemanticsActions.Dismiss) { it() }
         compose.onNodeWithTag("minimized-order").assertExists()
+        compose.onNodeWithTag("order-panel").assertDoesNotExist()
     }
 
-    @Test fun systemBackMinimizesWithoutDiscardingTheDraft() {
-        var fallbacks = 0
-        val dispatcher = NavigationEventDispatcher(onBackCompletedFallback = { fallbacks++ })
-        val back = DirectNavigationEventInput().also(dispatcher::addInput)
-        val owner = object : NavigationEventDispatcherOwner { override val navigationEventDispatcher = dispatcher }
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalNavigationEventDispatcherOwner provides owner) {
-            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(runtime) }
-        } }
+    @Test fun scrimDismissMinimizesWithoutDiscardingTheDraft() = phoneTest {
+        render()
         compose.onNodeWithTag("open-order").performClick()
-        compose.runOnIdle { back.backCompleted() }
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.23")
+        // Tap the native scrim above the sheet; Android Back/IME is covered by AppearanceUiTest.
+        compose.onAllNodes(isRoot()).onLast().performTouchInput { click(Offset(2f, 2f)) }
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
-        compose.onNodeWithTag("mobile-navigation").assertExists()
-        assertEquals(0, fallbacks)
         compose.onNodeWithTag("minimized-order").assertExists()
         compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.23")
         compose.onNodeWithTag("close-order").performClick()
-        // Only explicit closure discards the draft; Back is then handed to the platform.
-        compose.runOnIdle { back.backCompleted() }
-        assertEquals(1, fallbacks)
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
     }
 
-    @Test fun confirmedOrderClosesThePanel() {
+    @Test fun confirmedOrderClosesThePanel() = phoneTest {
         render()
         val before = session.state.value.positions.size
         compose.onNodeWithTag("open-order").performClick()
@@ -176,12 +177,12 @@ class MobileLayoutTest {
         compose.onNodeWithText("确认模拟下单").assertExists()
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNodeWithTag("confirm-action").performClick()
-        compose.waitUntil(5_000) { session.state.value.positions.size == before + 1 }
-        compose.waitUntil(5_000) { compose.onAllNodesWithTag("order-panel").fetchSemanticsNodes().isEmpty() }
+        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.positions.size == before + 1 }
+        compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodesWithTag("order-panel").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("mobile-navigation").assertExists()
     }
 
-    @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() {
+    @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() = phoneTest {
         render()
         val collapsedChartHeight = height("trading-chart")
         val instrument = plugin.instruments.first()
@@ -229,18 +230,16 @@ class MobileLayoutTest {
         assertEquals(before, session.state.value, "Draft lifecycle and chart edits must never send orders")
     }
 
-    @Test fun openingThePanelAnimatesItsHeight() {
+    @Test fun openingAndDismissingTheSheetDoesNotResizeTheChart() = phoneTest {
         render()
-        compose.mainClock.autoAdvance = false
+        val before = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("open-order").performClick()
-        compose.mainClock.advanceTimeBy(64)
-        val intermediate = height("order-panel")
-        compose.mainClock.advanceTimeBy(400)
-        assertTrue(height("order-panel") > intermediate, "The ticket grows during the opening animation")
-        compose.mainClock.autoAdvance = true
+        assertEquals(before, compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithTag("minimize-order").performClick()
+        assertEquals(before, compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot)
     }
 
-    @Test fun toolbarRowKeepsIntervalsIndicatorsAndLayers() {
+    @Test fun toolbarRowKeepsIntervalsIndicatorsAndLayers() = phoneTest {
         render()
         val instrument = plugin.instruments.first()
         compose.onNodeWithTag("interval-current").assertTextContains("5分钟").performClick()
@@ -255,14 +254,13 @@ class MobileLayoutTest {
         compose.onNodeWithTag("chart-toolbar").assertExists()
     }
 
-    @Test fun landscapeDocksTheOpenTicketBesideTheChart() {
+    @Test fun landscapeUsesTheSameModalSheetAndKeepsReviewVisible() = phoneTest(645, 300) {
         render(860.dp, 400.dp)
+        val before = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("open-order").performClick()
-        val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot
-        val panel = compose.onNodeWithTag("order-panel").fetchSemanticsNode().boundsInRoot
-        assertTrue(panel.left >= chart.right, "The ticket docks to the right of the chart")
-        assertTrue(chart.width > panel.width, "The chart keeps the wider side")
-        compose.onNodeWithTag("order-panel-handle").assertDoesNotExist()
+        assertEquals(before, compose.onNodeWithTag("trading-chart").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithTag("order-panel").assertExists()
+        compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).assertExists()
         compose.onNodeWithTag("order-quantity").assertExists()
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         capture("mobile-landscape-order")
@@ -270,7 +268,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trade-bar").assertExists()
     }
 
-    @Test fun quantityButtonsAndSideQuotesOnlyEditTheDraft() {
+    @Test fun quantityButtonsAndSideQuotesOnlyEditTheDraft() = phoneTest {
         render()
         val before = session.state.value
         compose.onNodeWithTag("open-order").performClick()
@@ -298,13 +296,10 @@ class MobileLayoutTest {
         assertEquals(before, session.state.value, "Opening, choosing a side and editing quantities must not submit an order")
     }
 
-    @Test fun smallPhoneKeepsReviewFixedWhileDetailsScrollAndPanelExpands() {
+    @Test fun smallPhoneKeepsReviewFixedWhileSheetDetailsScroll() = phoneTest(240, 480) {
         render(320.dp, 640.dp, fontScale = 1.3f)
         compose.onNodeWithTag("open-order").performClick()
-        val normalHeight = height("order-panel")
         compose.onNodeWithTag("review-order").assertIsDisplayed()
-        compose.onNodeWithTag("expand-order").performClick()
-        assertTrue(height("order-panel") > normalHeight)
         compose.onNodeWithTag("order-kind-LIMIT").performClick()
         compose.onNodeWithTag("order-entry").performScrollTo().assertIsDisplayed()
         val footer = compose.onNodeWithTag("review-order").fetchSemanticsNode().boundsInRoot
@@ -313,12 +308,10 @@ class MobileLayoutTest {
         compose.onNodeWithTag("review-order").assertIsDisplayed()
         assertEquals(footer, compose.onNodeWithTag("review-order").fetchSemanticsNode().boundsInRoot)
         capture("mobile-small-order-details")
-        compose.onNodeWithTag("expand-order").performClick()
-        assertEquals(normalHeight, height("order-panel"))
         compose.onNodeWithTag("review-order").assertIsDisplayed()
     }
 
-    @Test fun protectionTogglesKeepOnlyEnabledProtectionInTheConfirmedOrder() {
+    @Test fun protectionTogglesKeepOnlyEnabledProtectionInTheConfirmedOrder() = phoneTest {
         render()
         val instrument = plugin.instruments.first()
         compose.onNodeWithTag("open-order").performClick()
@@ -337,13 +330,13 @@ class MobileLayoutTest {
         val before = session.state.value.orders.size
         compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("confirm-action").performClick()
-        compose.waitUntil(5_000) { session.state.value.orders.size == before + 1 }
+        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.orders.size == before + 1 }
         val sent = session.state.value.orders.last().request
         assertNull(sent.stopLoss)
         assertEquals(instrument.parsePrice(target), sent.takeProfit)
     }
 
-    @Test fun quantitySliderDragsOnContractStepsAndTracksManualQuantity() {
+    @Test fun quantitySliderDragsOnContractStepsAndTracksManualQuantity() = phoneTest {
         render()
         val instrument = plugin.instruments.first()
         val before = session.state.value
