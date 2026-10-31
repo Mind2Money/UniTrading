@@ -56,8 +56,20 @@ if ($Background -and !$DryRun) {
     $info.WorkingDirectory = $repo
     foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($info)
-    Write-Host "Started PID $($process.Id). Results: $OutputDirectory"
-    if (!$NotifyThread) { Write-Host 'No Codex chat ID supplied; results will be saved without a callback.' }
+    Write-Host ''
+    Write-Host '  UniTrading  /  后台构建' -ForegroundColor Cyan
+    Write-Host ('  ' + '-' * 62)
+    Write-Host "  启动时间  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
+    Write-Host "  进程编号  $($process.Id)"
+    Write-Host "  进度日志  $OutputDirectory.console.log"
+    Write-Host "  完整日志  $(Join-Path $OutputDirectory 'build.log')"
+    Write-Host "  结果目录  $OutputDirectory"
+    if ($NotifyThread) {
+        Write-Host '  完成通知  结束后回调当前聊天一次' -ForegroundColor Green
+    } else {
+        Write-Host '  完成通知  未指定聊天，结果保存到本地' -ForegroundColor Yellow
+    }
+    Write-Host ''
 } else {
     & $python @arguments
     exit $LASTEXITCODE

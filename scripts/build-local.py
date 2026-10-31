@@ -7,15 +7,87 @@ import json
 import os
 from pathlib import Path
 import platform
+import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('broker-api', 'demo-broker', 'tradovate-broker', 'composeApp')
+STAGES = {'preflight': '环境检查', 'desktop': '桌面测试与打包', 'android': 'Android R8 编译',
+          'ios': 'iOS 构建与检查', 'sign-android': 'Android 签名', 'telegram': 'Telegram 发布'}
+
+
+def duration(seconds):
+    if seconds < 60:
+        return f'{seconds:.1f} 秒'
+    minutes, seconds = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return (f'{hours} 小时 ' if hours else '') + f'{minutes} 分 {seconds:02d} 秒'
+
+
+class Console:
+    """Compact live progress in a terminal; timestamped plain lines in log files."""
+    COLORS = {'RUN': '36', 'OK': '32', 'FAIL': '31', 'WAIT': '33', 'INFO': '90'}
+
+    def __init__(self):
+        self.stream = sys.stdout
+        self.terminal = self.stream.isatty() and os.environ.get('TERM') != 'dumb'
+        if self.terminal and os.name == 'nt':
+            # Enable ANSI handling for a native Windows console if necessary.
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.GetStdHandle.argtypes = [wintypes.DWORD]
+            kernel.GetStdHandle.restype = wintypes.HANDLE
+            kernel.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            handle = kernel.GetStdHandle(-11)
+            mode = wintypes.DWORD()
+            self.terminal = bool(kernel.GetConsoleMode(handle, ctypes.byref(mode)) and
+                                 kernel.SetConsoleMode(handle, mode.value | 4))
+        self.color = self.terminal and 'NO_COLOR' not in os.environ
+        self.live = False
+
+    def paint(self, text, code):
+        return f'\033[{code}m{text}\033[0m' if self.color else text
+
+    def clear(self):
+        if self.live:
+            print('\r\033[2K', end='', file=self.stream, flush=True)
+            self.live = False
+
+    def line(self, text='', status=None):
+        self.clear()
+        if status:
+            stamp = datetime.now().astimezone().strftime('%H:%M:%S')
+            text = f'{self.paint(stamp, "90")}  {self.paint(f"{status:<4}", self.COLORS[status])}  {text}'
+        print(text, file=self.stream, flush=True)
+
+    def progress(self, text):
+        if not self.terminal:
+            self.line(text, 'RUN')
+            return
+        self.clear()
+        # CJK characters take two terminal cells; avoid wrapping a live status line.
+        import unicodedata
+        limit = max(20, shutil.get_terminal_size().columns - 2)
+        line = datetime.now().astimezone().strftime('%H:%M:%S') + '  RUN   ' + text
+        clipped, width = '', 0
+        for char in line:
+            width += 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+            if width > limit - 3:
+                clipped += '...'
+                break
+            clipped += char
+        print('\r' + self.paint(clipped, '36'), end='', file=self.stream, flush=True)
+        self.live = True
 
 
 def parser():
@@ -44,26 +116,147 @@ class Build:
                         'stages': [], 'artifacts': {}}
         self.log = None
         self.gradle = str(ROOT / ('gradlew.bat' if os.name == 'nt' else 'gradlew'))
+        self.console = Console()
+        self.started = time.monotonic()
+        self.stage_count = 1 + len(set(args.targets)) + int(args.sign) + int(args.notify_telegram)
 
-    def run(self, command, *, capture=False, timeout=None, env=None):
+    def banner(self, preview=False):
+        self.console.line()
+        self.console.line(self.console.paint('  UniTrading  /  ' + ('构建计划' if preview else '本地构建'), '1;36'))
+        self.console.line('  ' + '-' * 62)
+        self.console.line(f'  开始时间  {datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")}')
+        names = {'desktop': '桌面应用', 'android': 'Android APK', 'ios': 'iOS 模拟器'}
+        self.console.line('  构建目标  ' + ' / '.join(names[t] for t in dict.fromkeys(self.args.targets)))
+        self.console.line(f'  执行选项  测试：{"跳过" if self.args.skip_tests else "开启"}  '
+                          f'签名：{"开启" if self.args.sign else "关闭"}  '
+                          f'Telegram：{"开启" if self.args.notify_telegram else "关闭"}')
+        self.console.line(f'  完整日志  {self.output / "build.log"}')
+        self.console.line('  ' + '-' * 62)
+
+    def show_result(self):
+        self.console.line()
+        passed = self.summary['status'] == 'passed'
+        self.console.line(f'{"构建完成" if passed else "构建失败"} · 总耗时 {duration(time.monotonic() - self.started)}',
+                          'OK' if passed else 'FAIL')
+        for item in self.summary['stages']:
+            self.console.line(f'  {STAGES.get(item["name"], item["name"])}  '
+                              f'{"通过" if item["status"] == "passed" else "失败"}  '
+                              f'{duration(item["duration_seconds"])}')
+        if self.summary.get('error'):
+            self.console.line('  失败原因  ' + self.summary['error'])
+        if self.summary.get('report_collection_error'):
+            self.console.line('  报告归档失败  ' + self.summary['report_collection_error'])
+        if self.summary['artifacts']:
+            self.console.line()
+            self.console.line('  已生成产物')
+            for name, relative in self.summary['artifacts'].items():
+                labels = {'desktop': '桌面应用', 'unsigned_apk': '未签名 APK', 'signed_apk': '已签名 APK',
+                          'mapping': 'R8 映射', 'resources': '资源压缩报告', 'ios': 'iOS 应用与日志'}
+                self.console.line(f'  {labels.get(name, name)}  {self.output / relative}')
+        self.console.line()
+        self.console.line(f'  完整日志  {self.output / "build.log"}')
+        self.console.line(f'  结果摘要  {self.output / "summary.json"}')
+        self.console.line()
+
+    def run(self, command, *, capture=False, timeout=None, env=None, label=None):
         # Never log environment variables: passwords/tokens are passed only that way.
         command = [str(x) for x in command]
         self.log.write('\n> ' + ' '.join(command) + '\n')
         self.log.flush()
-        result = subprocess.run(command, cwd=ROOT, env=env or self.env, timeout=timeout or self.args.command_timeout,
-                                stdout=subprocess.PIPE if capture else self.log,
-                                stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
         if capture:
+            result = subprocess.run(command, cwd=ROOT, env=env or self.env, timeout=timeout or self.args.command_timeout,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding='utf-8', errors='replace')
             self.log.write(result.stdout)
             self.log.flush()
-        if result.returncode:
-            raise RuntimeError(f'{Path(command[0]).name} exited {result.returncode}; see build.log')
-        return result.stdout if capture else None
+            if result.returncode:
+                raise RuntimeError(f'{Path(command[0]).name} 退出码 {result.returncode}；详见 build.log')
+            return result.stdout
+
+        label = label or Path(command[0]).name
+        self.console.line(label, 'RUN')
+        started = time.monotonic()
+        deadline = started + (timeout or self.args.command_timeout)
+        lines = queue.Queue()
+        # The pipe reader blocks on output; only this local UI emits a heartbeat.
+        # No Codex wakeup or model polling is involved.
+        with subprocess.Popen(command, cwd=ROOT, env=env or self.env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
+                              bufsize=1, start_new_session=os.name != 'nt') as process:
+            def read_output():
+                try:
+                    for line in process.stdout:
+                        lines.put(line)
+                finally:
+                    lines.put(None)
+
+            reader = threading.Thread(target=read_output, daemon=True)
+            reader.start()
+            next_update = started + 15
+            current_task = label
+            error_lines = 0
+            try:
+                while True:
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise subprocess.TimeoutExpired(command, timeout or self.args.command_timeout)
+                    try:
+                        line = lines.get(timeout=max(0, min(deadline, next_update) - now))
+                    except queue.Empty:
+                        self.console.progress(f'{current_task} · 已用 {duration(time.monotonic() - started)} · 仍在运行')
+                        next_update = time.monotonic() + 15
+                        continue
+                    if line is None:
+                        break
+                    self.log.write(line)
+                    self.log.flush()
+                    text = line.strip()
+                    if text.startswith('> Task ') and not text.endswith(('UP-TO-DATE', 'NO-SOURCE', 'SKIPPED')):
+                        current_task = text.removeprefix('> Task ')
+                        self.console.progress(f'{current_task} · 已用 {duration(time.monotonic() - started)}')
+                    elif text.startswith(('FAILURE:', '* What went wrong:', 'e: ')) or text.endswith(' FAILED'):
+                        error_lines = 8
+                        self.console.line(text, 'FAIL')
+                    elif error_lines and text:
+                        self.console.line(text, 'FAIL')
+                        error_lines -= 1
+                    elif text.startswith(('BUILD SUCCESSFUL', '** BUILD SUCCEEDED **')) or 'SELF_TEST PASS' in text:
+                        self.console.line(text, 'OK')
+                    if time.monotonic() >= next_update:
+                        self.console.progress(f'{current_task} · 已用 {duration(time.monotonic() - started)}')
+                        next_update = time.monotonic() + 15
+                code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+                if code:
+                    raise RuntimeError(f'{label}失败，退出码 {code}；详见 build.log')
+            except BaseException:
+                # A Gradle launcher can have Java children holding the output pipe.
+                # Stop the command tree before joining the reader on timeout/error.
+                if os.name == 'nt' and process.poll() is None:
+                    try:
+                        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                elif os.name != 'nt':
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.kill()
+                process.wait()
+                raise
+            finally:
+                self.console.clear()
+                reader.join(timeout=1)
+        self.console.line(f'{label}完成 · {duration(time.monotonic() - started)}', 'OK')
 
     def stage(self, name, action):
         item = {'name': name, 'status': 'running', 'started_at': datetime.now(timezone.utc).isoformat()}
         self.summary['stages'].append(item)
-        print(name, flush=True)
+        title = STAGES.get(name, name)
+        started = time.monotonic()
+        self.console.line()
+        self.console.line(f'[{len(self.summary["stages"])}/{self.stage_count}] {title}', 'RUN')
         try:
             action()
             item['status'] = 'passed'
@@ -72,6 +265,9 @@ class Build:
             raise
         finally:
             item['finished_at'] = datetime.now(timezone.utc).isoformat()
+            item['duration_seconds'] = round(time.monotonic() - started, 2)
+            self.console.line(f'{title} · {duration(item["duration_seconds"])}',
+                              'OK' if item['status'] == 'passed' else 'FAIL')
 
     def configure(self):
         if 'ios' in self.args.targets and (sys.platform != 'darwin' or platform.machine() != 'arm64'):
@@ -92,7 +288,9 @@ class Build:
             if not shutil.which('curl.exe' if os.name == 'nt' else 'curl'):
                 raise RuntimeError('curl is required for Telegram uploads')
         # Respect an explicitly chosen JDK. Gradle can also discover its JDK 21 toolchain.
-        self.run(['java', '-version'])
+        java_version = self.run(['java', '-version'], capture=True).splitlines()
+        if java_version:
+            self.console.line(java_version[0], 'INFO')
         sdk = self.env.get('ANDROID_HOME') or self.env.get('ANDROID_SDK_ROOT')
         local = ROOT / 'local.properties'
         if local.exists():
@@ -104,6 +302,7 @@ class Build:
         self.sdk = Path(sdk).resolve()
         self.env['ANDROID_HOME'] = str(self.sdk)
         self.env['ANDROID_SDK_ROOT'] = str(self.sdk)
+        self.console.line(f'Android SDK  {self.sdk}', 'INFO')
         self.summary['commit'] = self.run(['git', 'rev-parse', 'HEAD'], capture=True).strip()
         self.summary['dirty_worktree'] = bool(self.run(['git', 'status', '--porcelain'], capture=True).strip())
         self.summary['subject'] = self.run(['git', 'log', '-1', '--pretty=%s'], capture=True).strip()
@@ -111,18 +310,21 @@ class Build:
         tags = self.run(['git', 'tag', '--list', 'v*', '--sort=-creatordate'], capture=True).splitlines()
         revision = tags[0] + '..HEAD' if tags else 'HEAD'
         self.summary['commit_count'] = int(self.run(['git', 'rev-list', '--count', revision], capture=True))
+        self.console.line(f'{self.summary["ref"]} @ {self.summary["commit"][:7]}' +
+                          (' · 含未提交改动' if self.summary['dirty_worktree'] else ''), 'INFO')
 
-    def gradle_tasks(self, *tasks):
-        self.run([self.gradle, '--console=plain', '--stacktrace', *tasks])
+    def gradle_tasks(self, *tasks, label):
+        self.run([self.gradle, '--console=plain', '--stacktrace', *tasks], label=label)
 
     def desktop(self):
         if not self.args.skip_tests:
             # Rerun test tasks even if Gradle considers previous results current.
-            self.gradle_tasks(*[f':{m}:desktopTest' for m in MODULES], '--rerun-tasks')
-        self.gradle_tasks(':composeApp:createDistributable')
+            self.gradle_tasks(*[f':{m}:desktopTest' for m in MODULES], '--rerun-tasks', label='桌面回归测试（4 个模块）')
+        self.gradle_tasks(':composeApp:createDistributable', label='生成桌面应用')
         source = ROOT / 'composeApp/build/compose/binaries/main/app'
         if not source.is_dir():
             raise RuntimeError('Desktop distributable was not produced')
+        self.console.line('正在归档桌面应用…', 'INFO')
         shutil.copytree(source, self.output / 'desktop')
         self.summary['artifacts']['desktop'] = 'desktop'
 
@@ -136,9 +338,9 @@ class Build:
     def android(self):
         # Local outputs may belong to credentialStoreTest/instrumentation builds. Clean
         # this module so stale APK/maps cannot be mistaken for production artifacts.
-        self.gradle_tasks(':androidApp:clean')
+        self.gradle_tasks(':androidApp:clean', label='清理旧 Android 产物')
         self.gradle_tasks(':androidApp:assembleRelease', '-PcredentialStoreTest=false',
-                          '-PinstrumentationBuildType=debug')
+                          '-PinstrumentationBuildType=debug', label='编译 Release APK（R8 代码与资源压缩）')
         outputs = ROOT / 'androidApp/build/outputs'
         for name in ('mapping.txt', 'resources.txt'):
             source = outputs / 'mapping/release' / name
@@ -157,10 +359,11 @@ class Build:
         shutil.copy2(apk, self.unsigned)
         self.summary.update(version_name=version, version_code=code)
         self.summary['artifacts'].update(unsigned_apk=self.unsigned.name, mapping='mapping.txt', resources='resources.txt')
+        self.console.line(f'{self.unsigned.name} · {self.unsigned.stat().st_size / 1024 / 1024:.2f} MiB', 'INFO')
 
     def sign(self):
         self.signed = self.output / self.unsigned.name.replace('-unsigned.apk', '.apk')
-        self.run([self.android_tool('zipalign'), '-c', '4', self.unsigned])
+        self.run([self.android_tool('zipalign'), '-c', '4', self.unsigned], label='检查 APK 对齐')
         with tempfile.TemporaryDirectory(prefix='unitrading-sign-') as folder:
             keystore = Path(folder) / 'release.keystore'
             candidate = Path(folder) / 'signed.apk'
@@ -171,22 +374,22 @@ class Build:
                        '--v4-signing-enabled', 'false']
             if self.env.get('KEY_PASSWORD'):
                 command += ['--key-pass', 'env:KEY_PASSWORD']
-            self.run([*command, '--out', candidate, self.unsigned])
-            self.run([self.android_tool('apksigner'), 'verify', '--print-certs', candidate])
+            self.run([*command, '--out', candidate, self.unsigned], label='签名 APK')
+            self.run([self.android_tool('apksigner'), 'verify', '--print-certs', candidate], label='验证 APK 签名')
             # Only verified signatures receive the final distributable filename.
             shutil.copy2(candidate, self.signed)
         self.summary['artifacts']['signed_apk'] = self.signed.name
 
     def ios(self):
         if not self.args.skip_tests:
-            self.gradle_tasks(*[f':{m}:iosSimulatorArm64Test' for m in MODULES], '--rerun-tasks')
+            self.gradle_tasks(*[f':{m}:iosSimulatorArm64Test' for m in MODULES], '--rerun-tasks', label='Kotlin Native 模拟器测试')
             self.env['IOS_ARTIFACT_DIR'] = str(self.output / 'ios')
-            self.run(['bash', ROOT / 'scripts/test-ios.sh'])
+            self.run(['bash', ROOT / 'scripts/test-ios.sh'], label='Xcode 构建及原生平台/UI 自检')
         else:
             self.run(['xcodebuild', '-project', 'iosApp/iosApp.xcodeproj', '-scheme', 'iosApp',
                       '-sdk', 'iphonesimulator', '-configuration', 'Debug', '-destination',
                       'generic/platform=iOS Simulator', '-derivedDataPath', self.output / 'ios/ios-build',
-                      'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGNING_ALLOWED=NO', 'build'])
+                      'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGNING_ALLOWED=NO', 'build'], label='Xcode 模拟器应用构建')
         self.summary['artifacts']['ios'] = 'ios'
 
     def telegram(self):
@@ -222,6 +425,8 @@ class Build:
         if self.output.exists() and any(self.output.iterdir()):
             raise RuntimeError(f'Output must be empty to prevent stale artifacts: {self.output}')
         self.output.mkdir(parents=True, exist_ok=True)
+        self.started = time.monotonic()
+        self.banner()
         code = 1
         with (self.output / 'build.log').open('w', encoding='utf-8', buffering=1) as self.log:
             try:
@@ -237,8 +442,9 @@ class Build:
             except Exception as error:
                 self.summary['status'] = 'failed'
                 self.summary['error'] = str(error)
-                print(str(error), file=sys.stderr)
+                self.console.line(str(error), 'FAIL')
             finally:
+                self.console.line('正在保存测试报告和产物校验信息…', 'INFO')
                 try:
                     self.collect_reports()
                 except Exception as error:
@@ -246,6 +452,7 @@ class Build:
                     self.summary['status'] = 'failed'
                     code = 1
                 self.summary['finished_at'] = datetime.now(timezone.utc).isoformat()
+                self.summary['duration_seconds'] = round(time.monotonic() - self.started, 2)
                 self.summary['sha256'] = {}
                 for apk in self.output.glob('*.apk'):
                     digest = hashlib.sha256()
@@ -254,11 +461,14 @@ class Build:
                             digest.update(chunk)
                     self.summary['sha256'][apk.name] = digest.hexdigest()
                 (self.output / 'summary.json').write_text(json.dumps(self.summary, indent=2, ensure_ascii=False), encoding='utf-8')
-        print(f"{self.summary['status']}: {self.output}", flush=True)
+        self.show_result()
         return code
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     args = parser().parse_args()
     if args.command_timeout <= 0:
         parser().error('--command-timeout must be positive')
@@ -268,14 +478,21 @@ def main():
         sys.stdout = sys.stderr = args.console_log.open('w', encoding='utf-8', buffering=1)
     build = Build(args)
     if args.dry_run:
-        print(json.dumps({'targets': args.targets, 'tests': not args.skip_tests, 'sign': args.sign,
-                          'telegram': args.notify_telegram, 'output': str(build.output)}, indent=2))
+        build.banner(preview=True)
+        stages = ['preflight', *dict.fromkeys(args.targets)]
+        if args.sign:
+            stages.append('sign-android')
+        if args.notify_telegram:
+            stages.append('telegram')
+        for index, name in enumerate(stages, 1):
+            build.console.line(f'[{index}/{len(stages)}] {STAGES[name]}', 'INFO')
+        build.console.line('计划预览完成，未执行构建。', 'INFO')
         return 0
     code = 1
     try:
         code = build.execute()
     except Exception as error:
-        print(str(error), file=sys.stderr)
+        build.console.line(str(error), 'FAIL')
     finally:
         if args.notify_thread:
             # One completion event, no polling, retry loop, or scheduled wakeups.

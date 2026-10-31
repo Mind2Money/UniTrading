@@ -1,8 +1,11 @@
 """Failure-path checks for the local release runner; never access a real account."""
 import base64
 import importlib.util
+import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -99,6 +102,30 @@ class LocalBuildTests(unittest.TestCase):
             build = self.make_build(folder, '--notify-telegram')
             with self.assertRaisesRegex(RuntimeError, 'requires --sign'):
                 build.configure()
+
+    def test_streamed_failure_keeps_full_log_and_returns_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.make_build(folder)
+            build.console.stream = io.StringIO()
+            build.console.terminal = build.console.color = False
+            build.log = io.StringIO()
+            command = [sys.executable, '-u', '-c',
+                       "print('> Task :example:compile'); print('diagnostic detail'); "
+                       "print('FAILURE: compilation failed'); raise SystemExit(7)"]
+            with self.assertRaisesRegex(RuntimeError, '7'):
+                build.run(command, label='Compile smoke check')
+            self.assertIn('diagnostic detail', build.log.getvalue())
+            self.assertIn('compilation failed', build.console.stream.getvalue())
+            self.assertNotIn('\033[', build.console.stream.getvalue())
+
+    def test_silent_child_still_times_out_with_stream_reader(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.make_build(folder)
+            build.console.stream = io.StringIO()
+            build.console.terminal = build.console.color = False
+            build.log = io.StringIO()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                build.run([sys.executable, '-c', 'import time; time.sleep(30)'], timeout=0.2)
 
 
 if __name__ == '__main__':

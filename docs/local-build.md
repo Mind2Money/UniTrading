@@ -29,6 +29,12 @@ Windows 默认执行四个模块的 desktopTest 和桌面打包，以及 Android
 测试强制重新执行；Gradle 缓存和 daemon 可继续复用。脚本不运行登录诊断或连接真实交易账户。
 Android 原 CI 没有 instrumentation 测试，本脚本也不会自动在设备上安装测试应用。
 
+终端显示本地开始时间与时区、构建选项、阶段编号、当前 Gradle 任务、阶段耗时和总耗时。
+交互终端使用彩色状态与单行任务进度；每 15 秒更新一次仍在执行的命令及耗时。
+重定向到文件时输出普通文本，不写 ANSI 控制码；设置 `NO_COLOR` 可关闭终端颜色。
+失败时显示错误摘要、失败阶段和完整日志路径；结束时列出本次产物。
+后台模式的相同进度输出保存在结果目录旁的 `.console.log` 文件。
+
 默认产物在 `artifacts/local/<时间戳>/`，包含 `build.log`、`summary.json`、测试报告、
 桌面应用目录、`UniTrading-<版本>-<提交>-unsigned.apk`、`mapping.txt`、`resources.txt`。
 `summary.json` 记录源提交、工作区是否有未提交改动、各阶段结果及 APK SHA-256。
