@@ -60,6 +60,8 @@ enum class IndicatorKind(
 /** Default line colours by line index; a config overrides them per line with `#RRGGBB`. */
 val indicatorPalette = listOf("#F5B942", "#7FD1AE", "#C98BFF", "#4FC3F7", "#FF8A65", "#F06292")
 
+const val DEFAULT_INDICATOR_GUIDE_COLOR = "#94A3B8"
+
 @Serializable
 data class IndicatorConfig(
     val id: String,
@@ -69,10 +71,13 @@ data class IndicatorConfig(
     val visible: Boolean = true,
     /** Null keeps the built-in guides for old settings; an empty list hides all RSI reference lines. */
     val referenceLevels: List<Double>? = null,
+    /** RSI guide colours keyed by [formatParam]; missing entries retain the default guide colour. */
+    val referenceColors: Map<String, String> = emptyMap(),
 ) {
     fun param(key: String): Double = params[key] ?: kind.param(key).default
     fun color(line: Int): String = colors[kind.lines[line].name] ?: indicatorPalette[line % indicatorPalette.size]
     val guides: List<Double> get() = referenceLevels ?: kind.guides
+    fun guideColor(value: Double): String = referenceColors[formatParam(value)] ?: DEFAULT_INDICATOR_GUIDE_COLOR
     /** `EXPMA(20)`, `BOLL(20,2)`, `MACD(12,26,9)` */
     val label: String get() = kind.label + "(" + kind.params.joinToString(",") { formatParam(param(it.key)) } + ")"
 
@@ -90,7 +95,15 @@ data class IndicatorConfig(
         referenceLevels?.let { levels ->
             require(kind == IndicatorKind.RSI) { "仅 RSI 支持自定义水平参考线" }
             require(levels.all { it.isFinite() && it in 0.0..100.0 }) { "RSI 水平参考值须在 0–100" }
-            require(levels.distinct().size == levels.size) { "RSI 水平参考值不能重复" }
+            require(levels.distinctBy(::formatParam).size == levels.size) { "RSI 水平参考值不能重复" }
+        }
+        if (referenceColors.isNotEmpty()) {
+            require(kind == IndicatorKind.RSI) { "仅 RSI 支持自定义水平参考线颜色" }
+            val keys = guides.map(::formatParam).toSet()
+            referenceColors.forEach { (key, value) ->
+                require(key in keys) { "RSI 没有水平参考值 $key" }
+                require(value.matches(Regex("#[0-9a-fA-F]{6}"))) { "颜色须为 #RRGGBB" }
+            }
         }
         if (kind == IndicatorKind.MACD) require(param("fast") < param("slow")) { "MACD 快线周期须小于慢线" }
     }

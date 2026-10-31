@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,6 +14,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -23,6 +25,11 @@ import com.unitrading.chart.*
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
+internal data class ReferenceLevelDraft(val value: String = "", val color: String = DEFAULT_INDICATOR_GUIDE_COLOR) {
+    fun parse(): Double? = parseFixed(value.trim(), 2)?.let { it / 100.0 }?.takeIf { it in 0.0..100.0 }
+    fun colorValid(): Boolean = color.matches(Regex("#[0-9a-fA-F]{6}"))
+}
+
 /** Editable text form of one [IndicatorConfig]; it only becomes a config once every field parses and validates. */
 internal data class IndicatorDraft(
     val id: String,
@@ -30,7 +37,7 @@ internal data class IndicatorDraft(
     val params: Map<String, String>,
     val colors: Map<String, String>,
     val visible: Boolean = true,
-    val referenceLevels: String = "",
+    val referenceLevels: List<ReferenceLevelDraft> = emptyList(),
 ) {
     fun parse(spec: IndicatorParam): Double? {
         val text = params[spec.key]?.trim() ?: return null
@@ -39,17 +46,17 @@ internal data class IndicatorDraft(
     }
     fun colorValid(line: String): Boolean = colors[line]?.matches(Regex("#[0-9a-fA-F]{6}")) == true
     fun parseReferenceLevels(): List<Double>? {
-        if (referenceLevels.isBlank()) return emptyList()
-        val values = referenceLevels.split(',', '，', ';', '；').map { text ->
-            val value = parseFixed(text.trim(), 2)?.let { it / 100.0 } ?: return null
-            value.takeIf { it in 0.0..100.0 } ?: return null
-        }
+        val values = referenceLevels.map { it.parse() ?: return null }
         return values.takeIf { it.distinct().size == it.size }?.sorted()
     }
     fun toConfig(): IndicatorConfig? {
         val values = kind.params.associate { it.key to (parse(it) ?: return null) }
         val levels = if (kind == IndicatorKind.RSI) parseReferenceLevels() ?: return null else null
-        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels)
+        // Build keys from each row before sorting levels so colours stay with their values.
+        val guideColors = if (kind == IndicatorKind.RSI) referenceLevels.associate {
+            formatParam(it.parse() ?: return null) to it.color.uppercase()
+        } else emptyMap()
+        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels, guideColors)
         return config.takeIf { runCatching { it.validate() }.isSuccess }
     }
     companion object {
@@ -58,7 +65,7 @@ internal data class IndicatorDraft(
             config.kind.params.associate { it.key to formatParam(config.param(it.key)) },
             config.kind.lines.withIndex().filterNot { it.value.histogram }.associate { (index, line) -> line.name to config.color(index) },
             config.visible,
-            if (config.kind == IndicatorKind.RSI) config.guides.joinToString(", ", transform = ::formatParam) else "",
+            if (config.kind == IndicatorKind.RSI) config.guides.map { ReferenceLevelDraft(formatParam(it), config.guideColor(it)) } else emptyList(),
         )
         fun new(kind: IndicatorKind) = from(IndicatorConfig(Random.nextLong().toULong().toString(16), kind))
     }
@@ -78,6 +85,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var editingColor by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var editingReferenceColor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val settings = drafts.toSettings()
     val colors = TradingColors
     fun update(index: Int, value: IndicatorDraft) { drafts = drafts.mapIndexed { i, d -> if (i == index) value else d } }
@@ -102,7 +110,8 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
                             onChange = { update(index, it) },
                             onMove = { delta -> drafts = drafts.toMutableList().also { list -> list.add(index + delta, list.removeAt(index)) } },
                             onRemove = { drafts = drafts.filterIndexed { i, _ -> i != index } },
-                            onPickColor = { line -> editingColor = index to line })
+                            onPickColor = { line -> editingColor = index to line },
+                            onPickReferenceColor = { row -> editingReferenceColor = index to row })
                     }
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
@@ -120,6 +129,17 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
                 editingColor = null
             }
         }
+        editingReferenceColor?.let { (index, rowIndex) ->
+            val draft = drafts.getOrNull(index) ?: return@let
+            val row = draft.referenceLevels.getOrNull(rowIndex) ?: return@let
+            ColorPicker("RSI 参考线 ${rowIndex + 1} 颜色", parseHexColor(row.color) ?: parseHexColor(DEFAULT_INDICATOR_GUIDE_COLOR)!!,
+                { editingReferenceColor = null }) { value ->
+                update(index, draft.copy(referenceLevels = draft.referenceLevels.mapIndexed { i, level ->
+                    if (i == rowIndex) level.copy(color = colorHex(value)) else level
+                }))
+                editingReferenceColor = null
+            }
+        }
     }
 }
 
@@ -133,6 +153,7 @@ private fun IndicatorEditor(
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
     onPickColor: (String) -> Unit,
+    onPickReferenceColor: (Int) -> Unit,
 ) {
     val colors = TradingColors
     val config = draft.toConfig()
@@ -149,6 +170,7 @@ private fun IndicatorEditor(
             draft.kind.params.forEach { spec ->
                 OutlinedTextField(draft.params[spec.key] ?: "", { onChange(draft.copy(params = draft.params + (spec.key to it))) },
                     Modifier.width(150.dp).testTag("indicator-param-$index-${spec.key}"), label = { Text(spec.label, fontSize = 11.sp) }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = if (spec.integer) KeyboardType.Number else KeyboardType.Decimal),
                     isError = draft.parse(spec) == null, supportingText = { Text("${formatParam(spec.min)}–${formatParam(spec.max)}", fontSize = 10.sp) })
             }
         }
@@ -165,11 +187,39 @@ private fun IndicatorEditor(
             }
         }
         if (draft.kind == IndicatorKind.RSI) {
-            OutlinedTextField(draft.referenceLevels, { onChange(draft.copy(referenceLevels = it)) },
-                Modifier.fillMaxWidth().testTag("indicator-reference-levels-$index"),
-                label = { Text("水平参考值", fontSize = 11.sp) }, placeholder = { Text("30, 50, 70") }, singleLine = true,
-                isError = draft.parseReferenceLevels() == null,
-                supportingText = { Text("0–100，最多两位小数，用逗号分隔且不重复；留空关闭参考线。", fontSize = 10.sp) })
+            Text("水平参考线", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text("0–100，最多两位小数，不可重复；移除全部参考线即可关闭。", fontSize = 10.sp, color = colors.Muted)
+            val values = draft.referenceLevels.map { it.parse() }
+            draft.referenceLevels.forEachIndexed { rowIndex, row ->
+                fun updateRow(value: ReferenceLevelDraft) {
+                    onChange(draft.copy(referenceLevels = draft.referenceLevels.mapIndexed { i, level -> if (i == rowIndex) value else level }))
+                }
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(row.value, { updateRow(row.copy(value = it)) },
+                            Modifier.weight(1f).testTag("indicator-reference-value-$index-$rowIndex"),
+                            label = { Text("参考值 ${rowIndex + 1}", fontSize = 11.sp) }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            isError = values[rowIndex] == null || values.count { it == values[rowIndex] } > 1)
+                        TextButton({ onChange(draft.copy(referenceLevels = draft.referenceLevels.filterIndexed { i, _ -> i != rowIndex })) },
+                            Modifier.testTag("remove-indicator-reference-$index-$rowIndex").semantics { contentDescription = "移除参考线 ${rowIndex + 1}" },
+                            contentPadding = PaddingValues(horizontal = 8.dp)) { Text("移除", fontSize = 11.sp) }
+                    }
+                    OutlinedTextField(row.color, { updateRow(row.copy(color = it.uppercase())) },
+                        Modifier.fillMaxWidth().testTag("indicator-reference-color-$index-$rowIndex"),
+                        label = { Text("参考线 ${rowIndex + 1} 颜色", fontSize = 11.sp) }, singleLine = true,
+                        isError = !row.colorValid(), supportingText = { Text("#RRGGBB", fontSize = 10.sp) },
+                        leadingIcon = {
+                            IconButton({ onPickReferenceColor(rowIndex) },
+                                Modifier.testTag("pick-indicator-reference-color-$index-$rowIndex").semantics { contentDescription = "选择参考线 ${rowIndex + 1} 颜色" }) {
+                                Box(Modifier.size(22.dp).background(parseHexColor(row.color) ?: colors.Muted, CircleShape))
+                            }
+                        })
+                }
+            }
+            if (draft.referenceLevels.isEmpty()) Text("参考线已关闭。", fontSize = 11.sp, color = colors.Muted)
+            TextButton({ onChange(draft.copy(referenceLevels = draft.referenceLevels + ReferenceLevelDraft())) },
+                Modifier.testTag("add-indicator-reference-$index")) { Text("添加参考线", fontSize = 11.sp) }
         }
         if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", fontSize = 10.sp, color = colors.Muted)
         if (config == null) Text("参数、颜色或参考值无效，请修改后保存。", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)

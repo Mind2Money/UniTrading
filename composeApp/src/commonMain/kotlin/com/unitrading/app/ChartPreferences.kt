@@ -18,11 +18,13 @@ data class ChartPreferences(
     val favoriteMinutes: List<Int> = Timeframe.defaultFavorites.map { it.minutes },
     val customMinutes: List<Int> = emptyList(),
     val legendCollapsed: Boolean? = null,
+    val indicatorPaneFractions: Map<String, Float> = emptyMap(),
 ) {
     fun validate() {
         require((favoriteMinutes + customMinutes).all { it in 1..Timeframe.MAX_MINUTES }) { "周期超出范围" }
         require(favoriteMinutes.distinct() == favoriteMinutes && customMinutes.distinct() == customMinutes) { "周期重复" }
         require(favoriteMinutes.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
+        require(indicatorPaneFractions.all { (id, fraction) -> id.isNotBlank() && fraction.isFinite() && fraction > 0f && fraction <= .75f }) { "指标窗口比例超出范围" }
     }
     val favorites: List<Timeframe> get() = favoriteMinutes.map(::Timeframe)
     val custom: List<Timeframe> get() = customMinutes.map(::Timeframe)
@@ -65,4 +67,7 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean =
         preferences.value.legendCollapsed == collapsed || apply(preferences.value.copy(legendCollapsed = collapsed))
+
+    suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean =
+        preferences.value.indicatorPaneFractions == fractions || apply(preferences.value.copy(indicatorPaneFractions = fractions))
 }

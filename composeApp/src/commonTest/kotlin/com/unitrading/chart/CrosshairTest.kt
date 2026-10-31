@@ -18,16 +18,20 @@ class CrosshairTest {
     @Test fun paneValueFollowsThePaneScaleAndIgnoresRowsOutsideTheValueAreas() {
         val rsi = ComputedIndicator(IndicatorConfig("r", IndicatorKind.RSI), listOf(IndicatorSeries(IndicatorLine("RSI"), doubleArrayOf(50.0, 50.0, 50.0), "#FFFFFF")))
         val panes = listOf(rsi, rsi)
+        val layout = listOf(IndicatorPaneBounds("r", 100f, 100f), IndicatorPaneBounds("r2", 200f, 100f))
         // Panes start at row 100 and are 100 tall; with a 10 px label and 2 px padding, values occupy rows 116–196.
         // The RSI pane range is 0–100 padded by 6 %, so the bottom row reads -6 and the top row 106.
         assertEquals(116f to 196f, paneValueArea(100f, 100f, 10f, 2f))
-        assertEquals("-6.00", paneValueLabel(panes, 196f, 100f, 100f, 0..2, es, 10f, 2f))
-        assertEquals("106.00", paneValueLabel(panes, 116f, 100f, 100f, 0..2, es, 10f, 2f))
-        assertEquals("50.00", paneValueLabel(panes, 156f, 100f, 100f, 0..2, es, 10f, 2f))
-        assertEquals("50.00", paneValueLabel(panes, 256f, 100f, 100f, 0..2, es, 10f, 2f))
-        assertNull(paneValueLabel(panes, 105f, 100f, 100f, 0..2, es, 10f, 2f), "title row of the first pane")
-        assertNull(paneValueLabel(panes, 99f, 100f, 100f, 0..2, es, 10f, 2f), "above the panes")
-        assertNull(paneValueLabel(panes, 320f, 100f, 100f, 0..2, es, 10f, 2f), "below the last pane")
-        assertNull(paneValueLabel(emptyList(), 150f, 100f, 0f, 0..2, es, 10f, 2f), "no panes")
+        assertEquals("-6.00", paneValueLabel(panes, 196f, layout, 0..2, es, 10f, 2f))
+        assertEquals("106.00", paneValueLabel(panes, 116f, layout, 0..2, es, 10f, 2f))
+        assertEquals("50.00", paneValueLabel(panes, 156f, layout, 0..2, es, 10f, 2f))
+        assertEquals("50.00", paneValueLabel(panes, 256f, layout, 0..2, es, 10f, 2f))
+        assertNull(paneValueLabel(panes, 105f, layout, 0..2, es, 10f, 2f), "title row of the first pane")
+        assertNull(paneValueLabel(panes, 99f, layout, 0..2, es, 10f, 2f), "above the panes")
+        assertNull(paneValueLabel(panes, 320f, layout, 0..2, es, 10f, 2f), "below the last pane")
+        assertNull(paneValueLabel(emptyList(), 150f, emptyList(), 0..2, es, 10f, 2f), "no panes")
+        val resized = listOf(IndicatorPaneBounds("r", 100f, 150f), IndicatorPaneBounds("r2", 250f, 50f))
+        assertEquals("50.00", paneValueLabel(panes, 181f, resized, 0..2, es, 10f, 2f))
+        assertEquals("50.00", paneValueLabel(panes, 281f, resized, 0..2, es, 10f, 2f))
     }
 }

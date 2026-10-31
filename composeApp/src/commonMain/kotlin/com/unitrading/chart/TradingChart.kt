@@ -80,6 +80,8 @@ fun TradingChart(
     chrome: ChartChrome = ChartChrome(),
     indicators: List<IndicatorConfig> = emptyList(),
     onIndicators: (() -> Unit)? = null,
+    indicatorPaneFractions: Map<String, Float> = emptyMap(),
+    onIndicatorPaneFractions: (Map<String, Float>) -> Unit = {},
 ) {
     val colors = TradingColors
     val compact = chrome.compact
@@ -113,8 +115,11 @@ fun TradingChart(
     val computedIndicators = remember(candles, indicators) { computeIndicators(indicators, candles) }
     val overlays = computedIndicators.filter { it.overlay }
     val panes = computedIndicators.filterNot { it.overlay }
-    val paneHeight = if (panes.isEmpty()) 0f else paneAreaHeight(bottom - top, panes.size) / panes.size
-    val plotBottom = (bottom - paneHeight * panes.size).coerceAtLeast(top + 1)
+    var paneFractions by remember(indicatorPaneFractions) { mutableStateOf(indicatorPaneFractions) }
+    val minimumPaneHeight = with(density) { 56.dp.toPx() }
+    val paneLayout = indicatorPaneLayout(top, bottom, panes.map { it.config.id }, paneFractions, minimumPaneHeight)
+    val plotBottom = paneLayout.firstOrNull()?.top ?: bottom
+    val currentPlotBottom by rememberUpdatedState(plotBottom)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
     val extras = buildList {
         quote?.let { add(it.bid); add(it.ask) }
@@ -268,8 +273,8 @@ fun TradingChart(
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。订单线可拖动预览。"
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState"
+                            contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览。"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
                             awaitPointerEventScope {
@@ -310,10 +315,10 @@ fun TradingChart(
                                     val point = down.position
                                     crosshair = null
                                     mode = when {
-                                        point.x >= right && point.y < bottom -> ChartDragMode.PRICE
+                                        point.x >= right && point.y < currentPlotBottom -> ChartDragMode.PRICE
                                         point.y >= bottom && point.x < right -> ChartDragMode.TIME
-                                        point.x in left..right && point.y in top..plotBottom -> ChartDragMode.PLOT
-                                        point.x in left..right && point.y in plotBottom..bottom -> ChartDragMode.PANE
+                                        point.x in left..right && point.y in top..currentPlotBottom -> ChartDragMode.PLOT
+                                        point.x in left..right && point.y in currentPlotBottom..bottom -> ChartDragMode.PANE
                                         else -> ChartDragMode.NONE
                                     }
                                     val s = currentScale
@@ -488,7 +493,7 @@ fun TradingChart(
                         priceLine(line, color)
                     }
                     }
-                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, plotBottom, paneHeight, step,
+                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, paneLayout, step,
                         textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawLine(colors.Border, Offset(right, top), Offset(right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
@@ -536,7 +541,7 @@ fun TradingChart(
                         val y = crosshairY ?: return@let
                         val value = when {
                             y in top..plotBottom -> instrument.formatPrice(scale.price(y, instrument.tickSize))
-                            y in plotBottom..bottom -> paneValueLabel(panes, y, plotBottom, paneHeight, range, instrument, labelHeight, labelPadding)
+                            y in plotBottom..bottom -> paneValueLabel(panes, y, paneLayout, range, instrument, labelHeight, labelPadding)
                             else -> null
                         } ?: return@let
                         drawLine(line, Offset(left, y), Offset(right, y), 1f, pathEffect = dash)
@@ -553,7 +558,7 @@ fun TradingChart(
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
                 }
-                val navigationBottom = 38.dp + with(density) { (paneHeight * panes.size).toDp() }
+                val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
                 ChartNavigation(
                     onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
                     onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
@@ -565,6 +570,27 @@ fun TradingChart(
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
                     compact = compact,
                 )
+                paneLayout.forEachIndexed { index, pane ->
+                    key(pane.id) {
+                        val chartHeight = bottom - top
+                        val minimum = minimumPaneFraction(paneLayout.size, chartHeight, minimumPaneHeight)
+                        val maximum = (MAX_PANE_AREA_FRACTION - paneLayout.filter { it.id != pane.id }.sumOf { (it.height / chartHeight).toDouble() }.toFloat()).coerceAtLeast(minimum)
+                        IndicatorPaneResizeHandle(pane.id, panes[index].config.kind.label, pane.height / chartHeight,
+                            minimum, maximum, chartHeight,
+                            onChange = { fraction ->
+                                crosshair = null
+                                paneFractions = resizeIndicatorPane(paneLayout, pane.id, fraction, chartHeight, paneFractions, minimumPaneHeight)
+                            },
+                            onFinish = { onIndicatorPaneFractions(paneFractions) },
+                            onReset = {
+                                paneFractions = resizeIndicatorPane(paneLayout, pane.id, minOf(.2f, .5f / panes.size), chartHeight, paneFractions, minimumPaneHeight)
+                                onIndicatorPaneFractions(paneFractions)
+                            },
+                            modifier = Modifier.offset(x = with(density) { left.toDp() }, y = with(density) { pane.top.toDp() } - 6.dp)
+                                .width(with(density) { plotWidth.toDp() }),
+                        )
+                    }
+                }
             }
             selectedPosition?.protectionNote?.let { note ->
                 Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = colors.Muted)

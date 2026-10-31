@@ -5,6 +5,17 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun indicatorPaneSizesPersistAndLegacyPreferencesUseDefaultSizes() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
+        val controller = ChartPreferencesController(store)
+        assertEquals(emptyMap(), controller.preferences.value.indicatorPaneFractions)
+        assertTrue(controller.setIndicatorPaneFractions(mapOf("rsi" to .45f, "macd" to .15f)))
+        assertEquals(mapOf("rsi" to .45f, "macd" to .15f), ChartPreferencesController(store).preferences.value.indicatorPaneFractions)
+        assertEquals(listOf(5, 15), controller.preferences.value.favoriteMinutes)
+        for (invalid in listOf(0f, -.1f, .76f, Float.NaN, Float.POSITIVE_INFINITY)) {
+            assertFailsWith<IllegalArgumentException> { controller.setIndicatorPaneFractions(mapOf("rsi" to invalid)) }
+        }
+    }
     @Test fun favoritesAndCustomIntervalsPersistAcrossRestart() = runTest {
         val store = MemorySnapshotStore()
         val first = TradingRuntime(store)

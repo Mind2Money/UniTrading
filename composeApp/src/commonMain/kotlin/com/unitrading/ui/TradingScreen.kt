@@ -391,6 +391,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
                         m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
+                        indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
+                        onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
                         onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,

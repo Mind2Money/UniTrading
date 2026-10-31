@@ -135,6 +135,35 @@ class IndicatorsTest {
         assertFailsWith<IllegalArgumentException> { custom.copy(kind = IndicatorKind.MA).validate() }
     }
 
+    @Test fun guideColorsValidateCanonicalKeysAndOnlyCustomizeRsi() {
+        val rsi = IndicatorConfig("rsi", IndicatorKind.RSI)
+        assertEquals(DEFAULT_INDICATOR_GUIDE_COLOR, rsi.guideColor(30.0))
+        val defaults = rsi.copy(referenceColors = mapOf("30" to "#abcdef"))
+        defaults.validate()
+        assertEquals("#abcdef", defaults.guideColor(30.0))
+        assertEquals(DEFAULT_INDICATOR_GUIDE_COLOR, defaults.guideColor(70.0))
+        val custom = rsi.copy(referenceLevels = listOf(25.5, 75.25), referenceColors = mapOf("25.5" to "#123456", "75.25" to "#ABCDEF"))
+        custom.validate()
+        assertEquals("#123456", custom.guideColor(25.5))
+        assertEquals("#ABCDEF", custom.guideColor(75.25))
+        assertEquals(DEFAULT_INDICATOR_GUIDE_COLOR, custom.guideColor(30.0))
+        for (key in listOf("30", "25.50", "025.5", "NaN", "", "100")) {
+            assertFailsWith<IllegalArgumentException>(key) { custom.copy(referenceColors = mapOf(key to "#123456")).validate() }
+        }
+        for (color in listOf("", "red", "#FFF", "123456", "#12345G", "#12345678")) {
+            assertFailsWith<IllegalArgumentException>(color) { rsi.copy(referenceColors = mapOf("30" to color)).validate() }
+        }
+        assertFailsWith<IllegalArgumentException> { defaults.copy(referenceLevels = emptyList()).validate() }
+        assertFailsWith<IllegalArgumentException> { rsi.copy(referenceLevels = listOf(25.501, 25.502)).validate() }
+        for (kind in IndicatorKind.entries.filter { it != IndicatorKind.RSI }) {
+            val config = IndicatorConfig(kind.name, kind)
+            config.validate()
+            assertEquals(kind.guides, config.guides)
+            for (guide in config.guides) assertEquals(DEFAULT_INDICATOR_GUIDE_COLOR, config.guideColor(guide))
+            assertFailsWith<IllegalArgumentException> { config.copy(referenceColors = mapOf(formatParam(kind.guides.firstOrNull() ?: 30.0) to "#123456")).validate() }
+        }
+    }
+
     @Test fun computedSeriesPaneRangesAndFormatting() {
         val candles = (0 until 40).map { i -> Candle(i * 60_000L, 100_000_000L + i, 105_000_000L + i, 95_000_000L + i, 102_000_000L + i) }
         val boll = computeIndicator(IndicatorConfig("x", IndicatorKind.BOLL), candles)
