@@ -94,10 +94,10 @@ class DesktopWorkspaceTest {
         val handle = compose.onNodeWithTag("resize-sidebar")
         handle.performTouchInput { click() }
         handle.performKeyInput { keyDown(Key.DirectionRight); keyUp(Key.DirectionRight) }
-        assertEquals(224f, runtime.desktopLayout.preferences.value.sidebarWidth)
+        assertEquals(DesktopLayoutPreferences().sidebarWidth + 8f, runtime.desktopLayout.preferences.value.sidebarWidth)
         awaitSaved()
         handle.performTouchInput { doubleClick() }
-        assertEquals(216f, runtime.desktopLayout.preferences.value.sidebarWidth)
+        assertEquals(DesktopLayoutPreferences().sidebarWidth, runtime.desktopLayout.preferences.value.sidebarWidth)
         awaitSaved()
     }
 }

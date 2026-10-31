@@ -13,7 +13,7 @@ import kotlinx.serialization.json.Json
 /** Preferred panel dimensions in dp. Window constraints affect display, never overwrite these preferences. */
 @Serializable
 data class DesktopLayoutPreferences(
-    val sidebarWidth: Float = 216f,
+    val sidebarWidth: Float = 320f,
     val orderWidth: Float = 296f,
     val accountsHeight: Float = 260f,
     val terminalHeight: Float = 220f,

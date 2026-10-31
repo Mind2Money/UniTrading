@@ -14,6 +14,8 @@ interface BrokerPlugin {
     /** Best-effort live entry/protection notifications; never replays historical executions. */
     val tradeFills: Flow<TradeFill> get() = emptyFlow()
     suspend fun searchInstruments(query: String) {}
+    /** Subscribe an independent quote list without changing the chart or sending trade commands. */
+    fun watchQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     suspend fun resynchronize() {}
     fun disconnect() {}

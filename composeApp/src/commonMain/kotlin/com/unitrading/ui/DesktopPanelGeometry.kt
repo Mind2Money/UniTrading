@@ -18,7 +18,7 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
         return PanelDimension(value.coerceIn(min, max), min, max)
     }
     val dividers = if (wide) PANEL_DIVIDER * 2 else PANEL_DIVIDER
-    val sidebar = dimension(preferred.sidebarWidth, 180f, minOf(520f, width - dividers - 320f - if (wide) 260f else 0f))
+    val sidebar = dimension(preferred.sidebarWidth, 280f, minOf(520f, width - dividers - 320f - if (wide) 260f else 0f))
     val order = if (wide) dimension(preferred.orderWidth, 260f, minOf(560f, width - sidebar.value - dividers - 320f)) else PanelDimension(0f, 0f, 0f)
     val availableHeight = (height - PANEL_DIVIDER).coerceAtLeast(0f)
     val terminalMin = minOf(128f, availableHeight * .35f)

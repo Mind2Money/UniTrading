@@ -442,7 +442,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             accounts = {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                             },
-                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m) },
+                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch) },
                             chart = chart,
                             order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                 { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
@@ -456,7 +456,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             })
                     } else {
                         when (mobileTab) {
-                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f))
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch)
                             1 -> key(orderSession) {
                                 MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
                                     orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,

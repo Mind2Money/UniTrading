@@ -103,6 +103,8 @@ class TradovateBroker(
     private var balanceJob: Job? = null
     private var recoveryJob: Job? = null
     private var watching: Pair<String, Timeframe>? = null
+    private var quoteWatchSymbols = emptySet<String>()
+    private var quoteWatchJob: Job? = null
     private val results = mutableMapOf<String, Pair<String, TradeResult>>()
     private val unknownCommands = mutableSetOf<String>()
     private val awaiting = mutableMapOf<String, Awaiting>()
@@ -160,10 +162,14 @@ class TradovateBroker(
         }
         onProgress(status)
         watching?.let { watch(it.first, it.second) }
+        refreshQuoteWatch()
         maintenance?.cancel()
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
+                if (quoteWatchJob?.isActive != true && quoteWatchSymbols.any { symbol ->
+                    continuousRoutes[symbol]?.let { now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000) } == true
+                }) refreshQuoteWatch()
                 val selected = watching
                 val route = selected?.first?.let(continuousRoutes::get)
                 if (selected != null && route != null && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
@@ -314,7 +320,7 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             watchJob?.join()
             chartBackfillJob?.cancelAndJoin()
@@ -327,12 +333,65 @@ class TradovateBroker(
 
     override suspend fun searchInstruments(query: String) {
         if (!connected || query.trim().length !in 1..32) return
-        val text = query.trim().uppercase().removePrefix("@")
-        val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=15") as? JsonArray ?: return
+        val text = query.trim().uppercase().removePrefix("@").removeSuffix("1!")
+        if (text.isBlank()) return
+        // Discovery must not wait for daily-volume ranking. Aliases become visible as soon
+        // as their product metadata is hydrated; watch/chart selection resolves execution.
+        val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=100") as? JsonArray
+            ?: error("合约搜索返回无效")
         val contracts = data.mapNotNull { it as? JsonObject }
         lock.withLock { contracts.forEach { book.apply("contract", it) } }
         hydrateContracts(contracts.mapNotNull { it.long("id") })
-        if ("@$text" in continuousRoutes) refreshContinuous("@$text", force = true)
+    }
+
+    override fun watchQuotes(symbols: Set<String>) {
+        if (stopped || quoteWatchSymbols == symbols) return
+        quoteWatchSymbols = symbols.toSet()
+        refreshQuoteWatch()
+    }
+
+    private fun refreshQuoteWatch() {
+        quoteWatchJob?.cancel()
+        quoteWatchJob = scope.launch {
+            if (!marketReady) return@launch
+            // Restore saved symbols that are absent from the broker's login snapshot.
+            for (symbol in quoteWatchSymbols.toList()) if (instruments.none { it.symbol == symbol }) {
+                try { withTimeout(20_000) { searchInstruments(symbol) } }
+                catch (_: TimeoutCancellationException) { /* Retain the saved entry for a later retry. */ }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { /* Other symbols must still subscribe. */ }
+            }
+            suspend fun sync() = chartWatchLock.withLock {
+                marketSocket?.let { syncQuoteSubscriptions(it) }
+            }
+            try {
+                sync()
+                for (symbol in quoteWatchSymbols.toList()) if (symbol in continuousRoutes) {
+                    refreshContinuous(symbol)
+                    sync()
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { lock.withLock { problem = "部分自选行情订阅失败，请检查行情权限"; publish() } }
+        }
+    }
+
+    /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
+    private suspend fun syncQuoteSubscriptions(socket: TradovateSocket) {
+        val selected = watching?.first
+        val requested = quoteWatchSymbols + listOfNotNull(selected)
+        val wanted = (accountFlows.values.flatMap { flow ->
+            flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol }
+        } + instruments.filter { it.symbol in requested }.mapNotNull { it.executionSymbol }).toSet()
+        for (old in subscribedQuotes.toList() - wanted) {
+            socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
+            subscribedQuotes.remove(old)
+        }
+        for (name in wanted - subscribedQuotes) {
+            val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
+            val mode = response.str("mode")
+            if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
+            subscribedQuotes.add(name)
+        }
     }
 
     private suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
@@ -592,18 +651,7 @@ class TradovateBroker(
                         refreshContinuous(symbol)
                         if (watching == (symbol to timeframe) && before != continuousRoutes[symbol]?.spec?.tradeSymbol) watch(symbol, timeframe)
                     }
-                    val executionSymbol = continuousRoutes[symbol]?.spec?.tradeSymbol ?: symbol.takeUnless { it.startsWith("@") }
-                    val wanted = (accountFlows.values.flatMap { flow -> flow.value.positions.map(Position::symbol) + flow.value.orders.map { it.request.symbol } } + listOfNotNull(executionSymbol)).toSet()
-                    for (old in subscribedQuotes.toList() - wanted) {
-                        socket.request("md/unsubscribequote", buildJsonObject { put("symbol", old) })
-                        subscribedQuotes.remove(old)
-                    }
-                    for (name in wanted - subscribedQuotes) {
-                        val response = socket.request("md/subscribequote", buildJsonObject { put("symbol", name) })
-                        val mode = response.str("mode")
-                        if (mode != null && mode != "RealTime") throw TradovateRemoteException(403, "行情模式 $mode，不允许使用延迟报价下单")
-                        subscribedQuotes.add(name)
-                    }
+                    syncQuoteSubscriptions(socket)
                     if (lock.withLock { charts.values.any { it.page.let { page -> page.series == series &&
                             !page.load.failed && (page.load.complete || now() - page.startedAt < 30_000) } } }) return@launch
                     // Serialize both cancellation and binding so rapid switches cannot orphan IDs.

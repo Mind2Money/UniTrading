@@ -34,6 +34,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
     /** Desktop panel sizes are independent of chart preferences and broker/account state. */
     val desktopLayout: DesktopLayoutController by lazy { DesktopLayoutController(store) }
+    val marketWatch: MarketWatchPreferences by lazy { MarketWatchPreferences(store) }
     /** Chart indicator stack; also read lazily, when the first chart asks for it. */
     val indicators: IndicatorController by lazy { IndicatorController(store) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */

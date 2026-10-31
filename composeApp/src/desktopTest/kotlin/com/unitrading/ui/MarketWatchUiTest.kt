@@ -27,9 +27,14 @@ class MarketWatchUiTest {
     private val specs = listOf(spec, spec.copy(symbol = "XAUAUD", name = "Gold / Australian Dollar"),
         spec.copy(symbol = "Nikkei225", name = "Nikkei 225 Index"), spec.copy(symbol = "DJ30", name = "Dow Jones 30"))
     private val catalog = MutableStateFlow(BrokerCatalog(specs, demo.accounts))
+    private var remote = false
+    private val searches = mutableListOf<String>()
+    private var searchAction: suspend (String) -> Unit = {}
     private val plugin = object : BrokerPlugin by demo {
+        override val descriptor get() = demo.descriptor.copy(environment = if (remote) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LOCAL_DEMO)
         override val catalog = this@MarketWatchUiTest.catalog
         override val instruments get() = catalog.value.instruments
+        override suspend fun searchInstruments(query: String) { searches.add(query); searchAction(query) }
     }
     private val state = mutableStateOf(AccountSnapshot("A", 0, positions = listOf(
         Position("long", "XAUUSD", Side.BUY, 100, 388000, 0, marginMicros = 0),
@@ -89,9 +94,58 @@ class MarketWatchUiTest {
         compose.onNodeWithTag("market-marker-help").performClick()
         compose.onNodeWithText("行情标记").assertIsDisplayed()
         compose.onNodeWithText("知道了").performClick()
+        compose.onNodeWithTag("market-add").performClick()
         compose.onNodeWithTag("symbol-search").performTextReplacement("Gold")
+        compose.onNodeWithTag("search-XAUUSD").assertExists()
+        compose.onNodeWithTag("search-Nikkei225").assertDoesNotExist()
+        capture("add-symbol-light")
+    }
+
+    @Test fun addBrowseRemoveAndReorderDoNotChangeChartOrAccount() {
+        val before = state.value
+        render(320)
+        compose.onNodeWithTag("market-edit").performClick()
+        compose.onNodeWithTag("market-remove-XAUUSD").performClick()
+        compose.onNodeWithTag("market-edit-done").performClick()
+        compose.onNodeWithTag("symbol-XAUUSD").assertDoesNotExist()
+        compose.onNodeWithTag("market-add").performClick()
+        compose.onNodeWithTag("market-category-贵金属").performClick()
+        compose.onNodeWithTag("market-add-XAUUSD").performClick()
+        compose.onNodeWithContentDescription("已添加 XAUUSD").assertExists()
+        capture("add-symbol-category")
+        compose.onNodeWithTag("market-back").performClick()
         compose.onNodeWithTag("symbol-XAUUSD").assertExists()
-        compose.onNodeWithTag("symbol-Nikkei225").assertDoesNotExist()
+        compose.onNodeWithTag("market-edit").performClick()
+        compose.onNodeWithTag("market-up-XAUUSD").performClick()
+        capture("edit-watch-list")
+        compose.onNodeWithTag("market-edit-done").performClick()
+        assertTrue(compose.onNodeWithTag("symbol-XAUUSD").fetchSemanticsNode().boundsInRoot.top <
+            compose.onNodeWithTag("symbol-DJ30").fetchSemanticsNode().boundsInRoot.top)
+        compose.runOnIdle { assertNull(chosen); assertEquals(before, state.value) }
+    }
+
+    @Test fun desktopSidebarUsesCompactRows() {
+        render(320)
+        val row = compose.onNodeWithTag("symbol-XAUUSD").fetchSemanticsNode().boundsInRoot
+        assertTrue(row.height < 110f, "Quote rows should stay compact in a desktop sidebar")
+        capture("desktop-mt5-watch-list")
+    }
+
+    @Test fun remoteSearchFindsAndAddsAnUnloadedContinuousSymbolWithoutOpeningItsChart() {
+        remote = true
+        searchAction = { catalog.value = catalog.value.copy(instruments = specs +
+            spec.copy(symbol = "@ES", name = "E-mini S&P 500", isContinuous = true)) }
+        render(320)
+        compose.onNodeWithTag("market-add").performClick()
+        compose.onNodeWithTag("symbol-search").performTextReplacement("@ES")
+        compose.waitUntil(5_000) { searches == listOf("@ES") }
+        compose.onNodeWithTag("search-@ES").assertIsDisplayed()
+        compose.onNodeWithTag("market-search-progress").assertDoesNotExist()
+        compose.onNodeWithTag("market-add-@ES").performClick()
+        capture("continuous-search")
+        compose.onNodeWithTag("market-back").performClick()
+        compose.onNodeWithTag("symbol-@ES").assertIsDisplayed()
+        compose.runOnIdle { assertNull(chosen) }
     }
 
     @Test fun continuousAliasUsesItsDatedContractAndClearsWhenUnresolved() {
