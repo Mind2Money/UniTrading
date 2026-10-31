@@ -26,6 +26,8 @@ pwsh -File scripts/build-local.ps1
 ```
 
 Windows 默认执行四个模块的 desktopTest 和桌面打包，以及 Android R8 release 编译。
+仓库根目录存在 `local-build.json` 时自动读取其中的构建选项和凭据；命令行可覆盖构建选项。
+未配置文件时沿用上述默认行为，签名和 Telegram 均关闭。
 测试强制重新执行；Gradle 缓存和 daemon 可继续复用。脚本不运行登录诊断或连接真实交易账户。
 Android 原 CI 没有 instrumentation 测试，本脚本也不会自动在设备上安装测试应用。
 
@@ -47,8 +49,10 @@ Android 原 CI 没有 instrumentation 测试，本脚本也不会自动在设备
 pwsh -File scripts/build-local.ps1 -Targets android
 # 明确跳过测试（不会得到测试通过结论）
 pwsh -File scripts/build-local.ps1 -SkipTests
-# 查看执行选项，不运行 Gradle，不需要签名凭据
+# 查看配置合并后的执行选项，不运行 Gradle，不需要签名凭据
 pwsh -File scripts/build-local.ps1 -DryRun
+# 忽略本地配置，使用原有默认行为
+pwsh -File scripts/build-local.ps1 -NoConfig
 # 后台执行；退出后只调用一次 codex queue 唤醒当前聊天
 pwsh -File scripts/build-local.ps1 -Background
 ```
@@ -59,9 +63,22 @@ pwsh -File scripts/build-local.ps1 -Background
 
 ## 本地签名与 Telegram
 
-GitHub Secrets 的值无法从仓库读取，需自行在本机进程环境配置：
+先生成本机配置文件：
 
-| 环境变量 | 用途 |
+```powershell
+pwsh -File scripts/build-local.ps1 -InitConfig
+```
+
+这只创建仓库根目录的 `local-build.json`，不会构建或发送消息；文件已存在时拒绝覆盖。
+文件只保存在本机，不纳入 Git。`.gitignore` 已排除根目录的 `local-build.json`、
+`local-build.*.json` 和 `.local-build/`。脚本内仅有空模板，仓库不保存真实凭据。
+自定义配置建议放在 `.local-build/` 或仓库外。
+
+GitHub Secrets 的值无法从仓库或 GitHub API 反向读取，需将原有发布凭据填入本机文件的 `env` 对象。
+文件使用 UTF-8 JSON（支持 BOM），不能写注释或重复键；密码中的引号和反斜杠按 JSON 规则转义。
+`env` 的所有值都必须是字符串，包括 `TELEGRAM_CHAT_ID`。字段如下：
+
+| `env` 字段 / 同名环境变量 | 用途 |
 | --- | --- |
 | `SIGNING_KEY_BASE64` | 与现有 CI 相同的发布 keystore 的 Base64 |
 | `ALIAS` 或 `KEY_ALIAS` | 密钥别名（KEY_ALIAS 优先） |
@@ -69,17 +86,52 @@ GitHub Secrets 的值无法从仓库读取，需自行在本机进程环境配�
 | `KEY_PASSWORD` | 可选，独立的密钥密码 |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | 接收目标 |
+| `JAVA_HOME` | 可选，JDK 根目录；其 bin 会加入子进程 PATH |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` | 可选，Android SDK 路径；仍以 `local.properties` 的 `sdk.dir` 优先 |
+
+`SIGNING_KEY_BASE64` 填已有发布 keystore 的完整 Base64 内容。`KEY_PASSWORD` 未使用时保留空字符串。
+非空进程环境变量优先于文件；`KEY_ALIAS` / `ALIAS` 作为同一个字段处理，
+优先级为环境 KEY_ALIAS → 环境 ALIAS → 文件 KEY_ALIAS → 文件 ALIAS。
+文件中的 JDK/SDK 相对路径以配置文件所在目录为基准，不执行 shell 或环境变量插值。
+
+`build` 对象控制流程，命令行参数优先于文件，文件优先于脚本默认值：
+
+| `build` 字段 | 类型及含义 | 新生成文件的值 |
+| --- | --- | --- |
+| `targets` | 非空数组，可含 `desktop`、`android`、`ios` | Windows 为 desktop、android；Mac 另含 ios |
+| `skip_tests` | 布尔值，跳过本地回归测试 | `false` |
+| `sign` | 布尔值，签名并验证 Android APK | `true` |
+| `notify_telegram` | 布尔值，上传已签名 APK 到 Telegram | `true` |
+| `command_timeout` | 正整数，每个构建命令的超时秒数 | `2700` |
+
+**生成的配置默认启用签名和 Telegram 发布。填写凭据后，普通运行会按配置完成测试、编译、签名和发送。**
+签名要求目标包含 android，发送要求开启签名。缺少必要字段、Base64 无效或 token 格式错误时，
+脚本在启动 Gradle 之前失败，并将原因写入本次 `summary.json`。未知字段和类型错误也会报错。
 
 ```powershell
-# 默认仍先运行桌面测试、打包和 Android 编译
-pwsh -File scripts/build-local.ps1 -Sign
-# 明确发布到 Telegram；须已配置上述变量和 curl
-pwsh -File scripts/build-local.ps1 -Sign -NotifyTelegram
+# 填写 local-build.json 后，按配置发布；需要 curl
+pwsh -File scripts/build-local.ps1
+# 后台测试、构建、签名、发送；完成后只回调当前聊天一次
+pwsh -File scripts/build-local.ps1 -Background
+# 使用另一个本机配置文件
+pwsh -File scripts/build-local.ps1 -Config .local-build/release.json
+# 只编译 Android 并发布（不执行 desktop 回归测试）
+pwsh -File scripts/build-local.ps1 -Targets android
+# 覆盖配置，本次不签名、不发送；仍执行测试与编译
+pwsh -File scripts/build-local.ps1 -Sign:$false -NotifyTelegram:$false
+# 忽略文件，继续支持原有环境变量发布方式
+pwsh -File scripts/build-local.ps1 -NoConfig -Sign -NotifyTelegram
 ```
+
+Python 入口对应 `--init-config`、`--config <路径>`、`--no-config`、`--no-sign`、
+`--no-notify-telegram`、`--no-skip-tests` 和 `--command-timeout <秒>`。
+PowerShell 可用 `-SkipTests:$false` 恢复测试、`-CommandTimeout <秒>` 覆盖超时。
 
 签名前检查 zipalign，签名后运行 apksigner verify；禁用独立 v4 签名文件。
 临时 keystore 在签名步骤结束时删除。密码不写入命令参数或日志。
-Telegram 默认关闭，只上传本次签名且验证通过的 APK；API 失败使构建返回非零退出码。
+Telegram 只上传本次签名且验证通过的 APK；API 或 HTTP 失败使构建返回非零退出码。
+token 通过 curl 标准输入传入，不写命令参数或日志；服务端返回成功时摘要记录 `telegram.status: sent`，
+不保存 Telegram 原始响应。整个配置对象不写入构建摘要或日志。
 本地失败写入日志，不自动向 Telegram 发送失败消息。GitHub CI 仍保留原有失败通知。
 本地脚本不自动推送 Git、创建 GitHub Actions artifacts 或下载 GitHub Secrets。
 
@@ -108,3 +160,8 @@ Windows 显式指定 ios 会失败，不会跳过后报告全平台成功。
 此记录不覆盖后续其他会话的业务代码改动。iOS 与真实发布凭据、Telegram 发送未在本次验证中执行。
 本地签名另使用一次性测试证书通过 zipalign、apksigner sign/verify；测试证书和测试签名 APK
 已随临时目录删除，结果记录在 `artifacts/local-signing-verification.json`。6 项脚本失败路径测试通过。
+
+同日新增本地 JSON 配置后，20 项脚本测试通过，覆盖配置优先级、无效配置、缺失凭据、
+签名失败清理及模拟 Telegram 成功/失败响应。PowerShell 的配置加载、关闭开关和忽略配置预览已验证。
+空凭据的真实入口检查在编译前返回失败，记录在 `artifacts/local-config-preflight/summary.json`；
+此检查未运行 Gradle、真实签名或 Telegram 发送。根目录本机配置已通过 Git 忽略与未跟踪检查。

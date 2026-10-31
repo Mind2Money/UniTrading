@@ -6,6 +6,8 @@ Build and test locally; optionally detach and notify the current Codex chat once
 pwsh -File scripts/build-local.ps1 -Background
 .EXAMPLE
 pwsh -File scripts/build-local.ps1 -Targets android -Sign -NotifyTelegram
+.EXAMPLE
+pwsh -File scripts/build-local.ps1 -InitConfig
 #>
 [CmdletBinding()]
 param(
@@ -16,6 +18,10 @@ param(
     [switch]$NotifyTelegram,
     [switch]$DryRun,
     [switch]$Background,
+    [string]$Config,
+    [switch]$NoConfig,
+    [switch]$InitConfig,
+    [int]$CommandTimeout,
     [string]$OutputDirectory,
     [string]$NotifyThread
 )
@@ -25,14 +31,28 @@ $repo = Split-Path $PSScriptRoot -Parent
 $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $arguments = [Collections.Generic.List[string]]::new()
 $arguments.Add((Join-Path $PSScriptRoot 'build-local.py'))
+if ($Config) {
+    $arguments.Add('--config')
+    $arguments.Add([IO.Path]::GetFullPath($Config))
+}
+if ($NoConfig) { $arguments.Add('--no-config') }
+if ($InitConfig) { $arguments.Add('--init-config') }
+if ($PSBoundParameters.ContainsKey('CommandTimeout')) {
+    $arguments.Add('--command-timeout')
+    $arguments.Add([string]$CommandTimeout)
+}
 if ($Targets) {
     $arguments.Add('--targets')
     $arguments.AddRange($Targets)
 }
-foreach ($option in @(@($SkipTests, '--skip-tests'), @($Sign, '--sign'),
-                     @($NotifyTelegram, '--notify-telegram'), @($DryRun, '--dry-run'))) {
-    if ($option[0]) { $arguments.Add($option[1]) }
+foreach ($option in @(@('SkipTests', 'skip-tests'), @('Sign', 'sign'),
+                     @('NotifyTelegram', 'notify-telegram'))) {
+    if ($PSBoundParameters.ContainsKey($option[0])) {
+        $prefix = if ($PSBoundParameters[$option[0]]) { '--' } else { '--no-' }
+        $arguments.Add($prefix + $option[1])
+    }
 }
+if ($DryRun) { $arguments.Add('--dry-run') }
 if (!$OutputDirectory) {
     $OutputDirectory = Join-Path $repo ('artifacts/local/' + (Get-Date -Format 'yyyyMMdd-HHmmss-ffffff'))
 }
@@ -44,7 +64,7 @@ if ($NotifyThread) {
     $arguments.Add('--notify-thread')
     $arguments.Add($NotifyThread)
 }
-if ($Background -and !$DryRun) {
+if ($Background -and !$DryRun -and !$InitConfig) {
     $arguments.Add('--console-log')
     $arguments.Add($OutputDirectory + '.console.log')
     # ArgumentList preserves spaces/quotes without constructing shell code. This

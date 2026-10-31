@@ -22,6 +22,70 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('broker-api', 'demo-broker', 'tradovate-broker', 'composeApp')
 STAGES = {'preflight': '环境检查', 'desktop': '桌面测试与打包', 'android': 'Android R8 编译',
           'ios': 'iOS 构建与检查', 'sign-android': 'Android 签名', 'telegram': 'Telegram 发布'}
+DEFAULT_CONFIG = ROOT / 'local-build.json'
+BUILD_DEFAULTS = {
+    'targets': ['desktop', 'android'] + (['ios'] if sys.platform == 'darwin' else []),
+    'skip_tests': False, 'sign': False, 'notify_telegram': False, 'command_timeout': 2700,
+}
+CONFIG_ENV_KEYS = ('JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'SIGNING_KEY_BASE64',
+                   'ALIAS', 'KEY_ALIAS', 'KEY_STORE_PASSWORD', 'KEY_PASSWORD',
+                   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID')
+
+
+def load_config(path, disabled=False):
+    if disabled:
+        return {}, None
+    selected = (path or DEFAULT_CONFIG).resolve()
+    if path is None and not selected.exists():
+        return {}, None
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('Duplicate configuration key')
+            result[key] = value
+        return result
+
+    try:
+        config = json.loads(selected.read_text(encoding='utf-8-sig'), object_pairs_hook=unique_object)
+    except (OSError, ValueError):
+        # Do not include JSON input or decoding errors: they may contain secrets.
+        raise RuntimeError(f'Cannot read configuration as unique-key UTF-8 JSON: {selected}') from None
+    if not isinstance(config, dict) or config.keys() - {'build', 'env'}:
+        raise RuntimeError('Configuration must be an object containing only build and env')
+    options = config.get('build', {})
+    environment = config.get('env', {})
+    if not isinstance(options, dict) or options.keys() - BUILD_DEFAULTS.keys():
+        raise RuntimeError('Unknown build configuration option; see docs/local-build.md')
+    for name, value in options.items():
+        if name == 'targets':
+            valid = isinstance(value, list) and bool(value) and all(
+                isinstance(target, str) and target in ('desktop', 'android', 'ios') for target in value)
+        elif name == 'command_timeout':
+            valid = type(value) is int and value > 0
+        else:
+            valid = type(value) is bool
+        if not valid:
+            raise RuntimeError(f'Invalid type or value for build.{name}')
+    if not isinstance(environment, dict) or environment.keys() - set(CONFIG_ENV_KEYS):
+        raise RuntimeError('Unknown env configuration option; see docs/local-build.md')
+    if any(not isinstance(value, str) or '\0' in value for value in environment.values()):
+        raise RuntimeError('All env values must be strings without NUL characters')
+    return config, selected
+
+
+def init_config(path):
+    selected = (path or DEFAULT_CONFIG).resolve()
+    template = {'build': {**BUILD_DEFAULTS, 'sign': True, 'notify_telegram': True},
+                'env': dict.fromkeys(CONFIG_ENV_KEYS, '')}
+    # Exclusive creation preserves an existing credential file, even on repeated calls.
+    descriptor = os.open(selected, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+        json.dump(template, stream, indent=2, ensure_ascii=False)
+        stream.write('\n')
+    print(f'Created local release configuration: {selected}')
+    print('Fill in signing and Telegram credentials locally before building. Do not commit this file.')
 
 
 def duration(seconds):
@@ -92,15 +156,21 @@ class Console:
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--targets', nargs='+', choices=['desktop', 'android', 'ios'],
-                   default=['desktop', 'android'] + (['ios'] if sys.platform == 'darwin' else []))
-    p.add_argument('--skip-tests', action='store_true', help='Explicitly build without regression tests')
-    p.add_argument('--sign', action='store_true', help='Sign Android using local environment credentials')
-    p.add_argument('--notify-telegram', action='store_true', help='Explicitly upload the signed APK to Telegram')
+    config = p.add_mutually_exclusive_group()
+    config.add_argument('--config', type=Path, help='Configuration JSON; default <repo>/local-build.json if present')
+    config.add_argument('--no-config', action='store_true', help='Ignore the default configuration file')
+    p.add_argument('--init-config', action='store_true', help='Create a local release configuration without building')
+    p.add_argument('--targets', nargs='+', choices=['desktop', 'android', 'ios'])
+    p.add_argument('--skip-tests', action=argparse.BooleanOptionalAction, default=None,
+                   help='Explicitly build without regression tests')
+    p.add_argument('--sign', action=argparse.BooleanOptionalAction, default=None,
+                   help='Sign Android using configuration/environment credentials')
+    p.add_argument('--notify-telegram', action=argparse.BooleanOptionalAction, default=None,
+                   help='Upload the signed APK to Telegram')
     p.add_argument('--output', type=Path, help='New, empty output directory; default artifacts/local/<timestamp>')
     p.add_argument('--dry-run', action='store_true', help='Print stages without running commands or requiring secrets')
     p.add_argument('--notify-thread', help='Queue exactly one Codex message after completion, including failure')
-    p.add_argument('--command-timeout', type=int, default=2700, help='Maximum seconds per build command (default 2700)')
+    p.add_argument('--command-timeout', type=int, help='Maximum seconds per build command (default 2700)')
     p.add_argument('--console-log', type=Path, help=argparse.SUPPRESS)
     return p
 
@@ -109,6 +179,28 @@ class Build:
     def __init__(self, args):
         self.args = args
         self.env = os.environ.copy()
+        self.config_path = None
+        self.configuration_error = None
+        try:
+            config, self.config_path = load_config(args.config, args.no_config)
+        except RuntimeError as error:
+            # Record bad configuration as a preflight failure, including background callbacks.
+            self.configuration_error = str(error)
+            config = {}
+        for name, default in BUILD_DEFAULTS.items():
+            if getattr(args, name) is None:
+                setattr(args, name, config.get('build', {}).get(name, default))
+        configured_env = config.get('env', {})
+        for name, value in configured_env.items():
+            if value and not self.env.get(name):
+                if name in ('JAVA_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT'):
+                    value = str((self.config_path.parent / Path(value).expanduser()).resolve())
+                self.env[name] = value
+        # Treat ALIAS and KEY_ALIAS as one setting across sources, not two competing defaults.
+        self.env['KEY_ALIAS'] = (os.environ.get('KEY_ALIAS') or os.environ.get('ALIAS') or
+                                 configured_env.get('KEY_ALIAS') or configured_env.get('ALIAS', ''))
+        if self.env.get('JAVA_HOME'):
+            self.env['PATH'] = str(Path(self.env['JAVA_HOME']) / 'bin') + os.pathsep + self.env.get('PATH', '')
         self.output = (args.output or ROOT / 'artifacts' / 'local' /
                        datetime.now().strftime('%Y%m%d-%H%M%S-%f')).resolve()
         self.summary = {'status': 'running', 'started_at': datetime.now(timezone.utc).isoformat(),
@@ -130,6 +222,7 @@ class Build:
         self.console.line(f'  执行选项  测试：{"跳过" if self.args.skip_tests else "开启"}  '
                           f'签名：{"开启" if self.args.sign else "关闭"}  '
                           f'Telegram：{"开启" if self.args.notify_telegram else "关闭"}')
+        self.console.line(f'  配置文件  {self.config_path or "未加载（命令行 / 环境变量）"}')
         self.console.line(f'  完整日志  {self.output / "build.log"}')
         self.console.line('  ' + '-' * 62)
 
@@ -269,26 +362,46 @@ class Build:
             self.console.line(f'{title} · {duration(item["duration_seconds"])}',
                               'OK' if item['status'] == 'passed' else 'FAIL')
 
-    def configure(self):
+    def validate_options(self):
+        if self.configuration_error:
+            raise RuntimeError(self.configuration_error)
+        if self.args.command_timeout <= 0:
+            raise RuntimeError('--command-timeout must be positive')
         if 'ios' in self.args.targets and (sys.platform != 'darwin' or platform.machine() != 'arm64'):
             raise RuntimeError('iOS requires an Apple Silicon Mac with Xcode; it cannot be verified on Windows.')
         if self.args.sign and 'android' not in self.args.targets:
             raise RuntimeError('--sign requires the android target')
         if self.args.notify_telegram and not self.args.sign:
             raise RuntimeError('--notify-telegram requires --sign')
+
+    def configure(self):
+        self.validate_options()
+        required = []
         if self.args.sign:
             self.env['KEY_ALIAS'] = self.env.get('KEY_ALIAS') or self.env.get('ALIAS', '')
-            for name in ('SIGNING_KEY_BASE64', 'KEY_ALIAS', 'KEY_STORE_PASSWORD'):
-                if not self.env.get(name):
-                    raise RuntimeError(f'Missing signing environment variable: {name}')
+            required.extend(('SIGNING_KEY_BASE64', 'KEY_ALIAS', 'KEY_STORE_PASSWORD'))
         if self.args.notify_telegram:
-            for name in ('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'):
-                if not self.env.get(name):
-                    raise RuntimeError(f'Missing environment variable: {name}')
+            required.extend(('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'))
+        missing = [name for name in required if not self.env.get(name, '').strip()]
+        if missing:
+            raise RuntimeError('Missing release configuration (env in local-build.json or environment): ' +
+                               ', '.join(missing))
+        if self.args.sign:
+            try:
+                key = base64.b64decode(re.sub(r'\s+', '', self.env['SIGNING_KEY_BASE64']), validate=True)
+                if not key:
+                    raise ValueError()
+            except ValueError:
+                raise RuntimeError('SIGNING_KEY_BASE64 must contain a nonempty Base64 keystore') from None
+        if self.args.notify_telegram:
+            if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+', self.env['TELEGRAM_BOT_TOKEN']):
+                raise RuntimeError('Invalid Telegram token format')
             if not shutil.which('curl.exe' if os.name == 'nt' else 'curl'):
                 raise RuntimeError('curl is required for Telegram uploads')
         # Respect an explicitly chosen JDK. Gradle can also discover its JDK 21 toolchain.
-        java_version = self.run(['java', '-version'], capture=True).splitlines()
+        java = (Path(self.env['JAVA_HOME']) / 'bin' / ('java.exe' if os.name == 'nt' else 'java')
+                if self.env.get('JAVA_HOME') else 'java')
+        java_version = self.run([java, '-version'], capture=True).splitlines()
         if java_version:
             self.console.line(java_version[0], 'INFO')
         sdk = self.env.get('ANDROID_HOME') or self.env.get('ANDROID_SDK_ROOT')
@@ -409,10 +522,16 @@ class Build:
                    '--form', f'document=@"{self.signed.as_posix()}"',
                    '--form', f'caption=<"{caption_file.as_posix()}"']
         result = subprocess.run(command, input=f'url = "https://api.telegram.org/bot{token}/sendDocument"\n',
-                                text=True, encoding='utf-8', errors='replace', capture_output=True, timeout=200, cwd=ROOT)
+                                text=True, encoding='utf-8', errors='replace', capture_output=True, timeout=200,
+                                cwd=ROOT, env=self.env)
         # A response can contain chat information; keep only the acknowledgement.
-        if result.returncode or not json.loads(result.stdout).get('ok'):
+        try:
+            response = json.loads(result.stdout)
+        except ValueError:
+            response = None
+        if result.returncode or not isinstance(response, dict) or response.get('ok') is not True:
             raise RuntimeError('Telegram upload failed (response omitted to protect credentials/chat data)')
+        self.summary['telegram'] = {'status': 'sent'}
 
     def collect_reports(self):
         for module in MODULES:
@@ -470,14 +589,26 @@ def main():
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(encoding='utf-8', errors='replace')
     args = parser().parse_args()
-    if args.command_timeout <= 0:
-        parser().error('--command-timeout must be positive')
+    if args.init_config:
+        if args.no_config:
+            parser().error('--init-config cannot be used with --no-config')
+        try:
+            init_config(args.config)
+        except OSError:
+            print('Cannot create configuration: file already exists or path is not writable.', file=sys.stderr)
+            return 1
+        return 0
     if args.console_log:
         args.console_log.parent.mkdir(parents=True, exist_ok=True)
         # Detached Windows processes must not depend on a parent's console handles.
         sys.stdout = sys.stderr = args.console_log.open('w', encoding='utf-8', buffering=1)
     build = Build(args)
     if args.dry_run:
+        try:
+            build.validate_options()
+        except RuntimeError as error:
+            build.console.line(str(error), 'FAIL')
+            return 1
         build.banner(preview=True)
         stages = ['preflight', *dict.fromkeys(args.targets)]
         if args.sign:
