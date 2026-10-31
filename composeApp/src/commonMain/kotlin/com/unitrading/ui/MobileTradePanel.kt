@@ -1,5 +1,6 @@
 package com.unitrading.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -85,14 +88,15 @@ internal fun MobileOrderSheet(
     instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
     draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
     panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
-    onClose: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
+    onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean,
+    modifier: Modifier = Modifier, busy: Boolean = false,
     content: @Composable ColumnScope.() -> Unit, body: @Composable () -> Unit,
 ) {
     // The chart always occupies the same composition slot, including when the sheet is closed.
     Box(modifier) {
         body()
         if (panelState != MobileOrderPanelState.CLOSED) MobileOrderSheetSurface(
-            instrument, quote, capabilities, draft, onDraft, panelState, onStateChange, onClose,
+            instrument, quote, capabilities, draft, onDraft, panelState, onStateChange, onClose, onSubmit, canSubmit,
             Modifier.matchParentSize(), busy, content)
     }
 }
@@ -103,7 +107,7 @@ private fun MobileOrderSheetSurface(
     instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
     draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
     panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
-    onClose: () -> Unit, modifier: Modifier, busy: Boolean,
+    onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean, modifier: Modifier, busy: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
@@ -151,7 +155,7 @@ private fun MobileOrderSheetSurface(
             sheetContainerColor = colors.Surface, sheetContentColor = colors.Ink, containerColor = androidx.compose.ui.graphics.Color.Transparent,
             sheetDragHandle = {
                 Box(Modifier.fillMaxWidth().height(16.dp).testTag("order-sheet-handle"), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(32.dp, 4.dp).background(colors.Muted, RoundedCornerShape(2.dp)))
+                    Box(Modifier.size(24.dp, 3.dp).background(colors.Muted.copy(alpha = .45f), RoundedCornerShape(2.dp)))
                 }
             },
             sheetContent = {
@@ -168,7 +172,7 @@ private fun MobileOrderSheetSurface(
                         verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp))
                             .clickable(role = Role.Button) { onStateChange(MobileOrderPanelState.EDITING) }
-                            .testTag("restore-order"), verticalArrangement = Arrangement.Center) {
+                            .testTag("restore-order").semantics { contentDescription = "展开下单面板" }, verticalArrangement = Arrangement.Center) {
                             Text(instrument.symbol, color = colors.Accent, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(if (compact) "${draft.quantity} ${instrument.quantityUnit} · ${draft.side.label()}" else
@@ -178,21 +182,37 @@ private fun MobileOrderSheetSurface(
                         if (compact) {
                             listOf(true, false).forEach { stop ->
                                 val checked = if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
-                                val protectionColor = if (stop) colors.Down else colors.Up
-                                OutlinedIconToggleButton(checked = checked,
+                                val protectionColor = if (stop) colors.Stop else colors.Target
+                                // Keep the native 48dp touch target; only the visual badge is compact.
+                                IconToggleButton(checked = checked,
                                     onCheckedChange = { onDraft(draft.withProtectionEnabled(instrument, quote, stop, it)) },
-                                    enabled = !busy, modifier = Modifier.size(48.dp).padding(4.dp)
+                                    enabled = !busy, modifier = Modifier.size(48.dp)
                                         .testTag(if (stop) "compact-sl" else "compact-tp")
                                         .semantics { contentDescription = if (stop) "止损 SL" else "止盈 TP" },
-                                    colors = IconButtonDefaults.outlinedIconToggleButtonColors(
-                                        contentColor = colors.Muted, checkedContentColor = protectionColor,
-                                        checkedContainerColor = protectionColor.copy(alpha = .12f))) {
-                                    Text(if (stop) "SL" else "TP", fontSize = 12.sp)
+                                    colors = IconButtonDefaults.iconToggleButtonColors(
+                                        containerColor = Color.Transparent, checkedContainerColor = Color.Transparent)) {
+                                    Surface(Modifier.size(30.dp, 26.dp), shape = RoundedCornerShape(6.dp),
+                                        color = if (checked) protectionColor.copy(alpha = .12f) else colors.Raised.copy(alpha = .5f),
+                                        border = BorderStroke(1.dp, if (checked) protectionColor.copy(alpha = .45f) else colors.Border.copy(alpha = .65f))) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(if (stop) "SL" else "TP", fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                                                color = (if (checked) protectionColor else colors.Muted).copy(alpha = if (busy) .4f else 1f))
+                                        }
+                                    }
                                 }
                             }
-                            IconButton({ onStateChange(MobileOrderPanelState.EDITING) }, Modifier.size(48.dp)
-                                .testTag("expand-order").semantics { contentDescription = "展开下单面板" }) {
-                                Text("→", fontSize = 24.sp, color = colors.Accent)
+                            val submitEnabled = canSubmit && !busy
+                            val submitColor = if (submitEnabled) colors.Accent else colors.Muted.copy(alpha = .4f)
+                            IconButton({ focus.clearFocus(); onSubmit() }, Modifier.size(48.dp)
+                                .testTag("compact-submit-order").semantics { contentDescription = "检查并下单" },
+                                enabled = submitEnabled) {
+                                Canvas(Modifier.size(18.dp)) {
+                                    val stroke = 1.6.dp.toPx()
+                                    val tip = Offset(size.width * .8f, size.height * .5f)
+                                    drawLine(submitColor, Offset(size.width * .2f, size.height * .5f), tip, stroke, StrokeCap.Round)
+                                    drawLine(submitColor, Offset(size.width * .5f, size.height * .2f), tip, stroke, StrokeCap.Round)
+                                    drawLine(submitColor, tip, Offset(size.width * .5f, size.height * .8f), stroke, StrokeCap.Round)
+                                }
                             }
                         } else PanelIconButton(close = false, onClick = { onStateChange(MobileOrderPanelState.MINIMIZED) })
                         PanelIconButton(close = true, enabled = !busy, onClick = onClose)
@@ -258,11 +278,11 @@ private fun PanelIconButton(close: Boolean, enabled: Boolean = true, onClick: ()
     IconButton(onClick, Modifier.size(48.dp).testTag(if (close) "close-order" else "minimize-order")
         .semantics { contentDescription = if (close) "关闭并放弃本次下单" else "最小化下单面板" }, enabled = enabled) {
         Canvas(Modifier.size(18.dp)) {
-            val stroke = 1.8.dp.toPx()
+            val stroke = 1.6.dp.toPx()
             if (close) {
-                drawLine(color, Offset(size.width * .2f, size.height * .2f), Offset(size.width * .8f, size.height * .8f), stroke)
-                drawLine(color, Offset(size.width * .8f, size.height * .2f), Offset(size.width * .2f, size.height * .8f), stroke)
-            } else drawLine(color, Offset(size.width * .15f, size.height * .65f), Offset(size.width * .85f, size.height * .65f), stroke)
+                drawLine(color, Offset(size.width * .2f, size.height * .2f), Offset(size.width * .8f, size.height * .8f), stroke, StrokeCap.Round)
+                drawLine(color, Offset(size.width * .8f, size.height * .2f), Offset(size.width * .2f, size.height * .8f), stroke, StrokeCap.Round)
+            } else drawLine(color, Offset(size.width * .15f, size.height * .65f), Offset(size.width * .85f, size.height * .65f), stroke, StrokeCap.Round)
         }
     }
 }

@@ -167,7 +167,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("compact-sl").performClick().assertIsOn()
         compose.onNodeWithTag("order-kind-LIMIT-SELL").performClick().assertIsSelected()
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
-        compose.onNodeWithTag("expand-order").performClick()
+        compose.onNodeWithTag("restore-order").performClick()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.23")
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsOn()
         compose.onNodeWithTag("close-order").performClick()
@@ -187,6 +187,34 @@ class MobileLayoutTest {
         compose.waitUntil(timeoutMillis = 5_000) { session.state.value.positions.size == before + 1 }
         compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodesWithTag("order-panel").fetchSemanticsNodes().isEmpty() }
         compose.onNodeWithTag("mobile-navigation").assertExists()
+    }
+
+    @Test fun compactArrowConfirmsTheCurrentDraftWithoutExpandingTheEditor() = phoneTest {
+        render()
+        val before = session.state.value
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-kind-LIMIT-SELL").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.23")
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-submit-order").assertIsEnabled().performClick()
+        compose.onNodeWithText("确认模拟下单").assertExists()
+        compose.onNodeWithText("${plugin.instruments.first().symbol} · 卖出限价 · 0.23 手").assertExists()
+        assertEquals(before, session.state.value, "The arrow uses the existing confirmation flow")
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("minimized-order").assertIsDisplayed()
+        compose.onNodeWithTag("order-panel").assertDoesNotExist()
+        compose.onNodeWithTag("compact-sl").assertIsOn()
+        compose.onNodeWithTag("compact-submit-order").performClick()
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.orders.size == before.orders.size + 1 }
+        val sent = session.state.value.orders.last().request
+        assertEquals(Side.SELL, sent.side)
+        assertEquals(OrderKind.LIMIT, sent.kind)
+        assertEquals(23L, sent.lotsHundredths)
+        assertNotNull(sent.stopLoss)
+        compose.onNodeWithTag("minimized-order").assertDoesNotExist()
+        compose.onNodeWithTag("trade-bar").assertExists()
     }
 
     @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() = phoneTest {
@@ -328,6 +356,8 @@ class MobileLayoutTest {
         compose.onNodeWithTag("quantity-increase").assertIsNotEnabled()
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithTag("order-error").assertIsDisplayed()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-submit-order").assertIsNotEnabled()
         assertEquals(before, session.state.value, "Opening, choosing a side and editing quantities must not submit an order")
     }
 

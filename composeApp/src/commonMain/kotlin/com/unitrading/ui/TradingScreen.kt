@@ -296,6 +296,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // The persistent order sheet shares the chart surface and never dims it.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
+                fun reviewMobileOrder() {
+                    if (!busy && preview?.valid == true) request?.let { confirmation = Confirmation.Place(it) }
+                }
                 fun closeOrder() {
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
@@ -393,7 +396,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f))
                             1 -> key(orderSession) {
                                 MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
-                                    orderPanelState, { orderPanelState = it }, { closeOrder() },
+                                    orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
                                     Modifier.weight(1f).fillMaxWidth(), busy = busy,
                                     content = {
                                         notice?.let { current ->
@@ -403,7 +406,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             }
                                         }
                                         MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                            { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.weight(1f),
+                                            ::reviewMobileOrder, Modifier.weight(1f),
                                             environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
                                     },
                                     body = {
