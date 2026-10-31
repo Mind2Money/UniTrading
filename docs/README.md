@@ -7,6 +7,7 @@
 - [A1 至 A7 修复进度](remediation-progress.md)：当前持续修复任务、验证证据和未完成项。
 
 - [当前实现、构建与验证状态](current-status.md)：功能矩阵、代码入口、构建命令、CI 与验证边界，是查询当前状态的入口。
+- [本地构建与 CI](local-build.md)：本地测试、Windows/Android/iOS 构建、签名、Telegram 发布及后台完成回调。
 - [代码与文档核对](implementation-audit.md)：1.1.4 已确认的实现缺口、文档差异和可复现诊断。
 - [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
 - [连续合约](continuous-contracts.md)：连续图表与指标、上一完整交易日成交量主力、实际到期合约下单及换月处理。

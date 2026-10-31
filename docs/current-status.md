@@ -54,10 +54,10 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | 通知 | 对上述发布 push 调用 Telegram；构建失败时也报告，取消运行时停止；未配置 Telegram secrets 时跳过 |
 | 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
-| 测试门禁 | Windows 运行 broker-api、demo-broker、tradovate-broker、Compose desktop 测试并打包；Windows 与 Android release 构建均成功才签名；没有 Android instrumentation job |
-| iOS | macOS 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检；允许失败，不阻塞 Android 签名 |
+| 测试门禁 | 全部测试移到本地；运行 `pwsh -File scripts/build-local.ps1` 执行四模块 desktop 测试、桌面打包及 Android release 构建。CI 无测试门禁，签名只依赖 Android 编译；没有 Android instrumentation job |
+| iOS | 本地 Apple Silicon Mac 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检，见[本地构建](local-build.md)；不再启动 macOS hosted runner |
 | 并发 | 同一 PR 的新运行取消旧运行；push 和手动运行按 run ID 独立分组，旧运行不会串行阻塞后续构建 |
-| 超时 | Windows / Android 构建 35 分钟，iOS 45 分钟，签名 / 通知各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒 |
+| 超时 | Android 构建 35 分钟，签名 / 通知各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
 
 上述 job 超时从 runner 开始执行后计时，不能限制 GitHub 分配 runner 前的排队时间。各次 push 可并行执行，仍受账户 runner 并发额度限制，通知可能按完成顺序到达。
 

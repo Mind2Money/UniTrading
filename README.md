@@ -81,7 +81,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。1.1.4 常规套件为 127 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 另有 R8 release 构建、签名及 Telegram 通知配置，但尚无测试 job，见[构建与 CI](docs/current-status.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.1.4 常规套件为 127 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 仅执行 Android R8 release 编译、签名及 Telegram 通知，测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
 
 ### iOS（必须在 Mac 上）
 
