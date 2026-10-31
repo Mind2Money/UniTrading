@@ -3,25 +3,36 @@ package com.unitrading.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.broker.*
 import com.unitrading.chart.Chevron
-import kotlinx.coroutines.launch
 
 internal enum class MobileOrderPanelState { CLOSED, EDITING, MINIMIZED }
 
@@ -67,84 +78,176 @@ internal fun MobileTradeBar(
     }
 }
 
-/** The same draft session: chart edits continue while the form is minimized. */
+/** Official MD3 sheet with a compact peek and expanded editor; closing ends the sheet session. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun MinimizedOrderBar(
-    instrument: Instrument,
-    draft: OrderDraft,
-    busy: Boolean,
-    onRestore: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
+internal fun MobileOrderSheet(
+    instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
+    draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
+    panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
+    onClose: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit, body: @Composable () -> Unit,
 ) {
-    val colors = TradingColors
-    val sideColor = if (draft.side == Side.BUY) colors.Up else colors.Down
-    Surface(modifier.fillMaxWidth().testTag("minimized-order"), color = colors.Surface, tonalElevation = 3.dp) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(3.dp).height(36.dp).background(sideColor, RoundedCornerShape(2.dp)))
-            Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button, onClick = onRestore)
-                .testTag("restore-order").heightIn(min = 52.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("${draft.side.label()} · ${draft.kind.label()} · ${draft.quantity} ${instrument.quantityUnit}",
-                        color = sideColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${instrument.symbol} · ${if (busy) "提交中…" else "草稿保留 · 可拖动图表调价"}",
-                        color = colors.Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Spacer(Modifier.width(8.dp))
-                Chevron(down = false, colors.Accent)
-            }
-            PanelIconButton(close = true, enabled = !busy, onClick = onClose)
-        }
+    // The chart always occupies the same composition slot, including when the sheet is closed.
+    Box(modifier) {
+        body()
+        if (panelState != MobileOrderPanelState.CLOSED) MobileOrderSheetSurface(
+            instrument, quote, capabilities, draft, onDraft, panelState, onStateChange, onClose,
+            Modifier.matchParentSize(), busy, content)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun MobileOrderSheet(
-    instrument: Instrument,
-    accountName: String,
-    environment: String,
-    onMinimize: () -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-    busy: Boolean = false,
+private fun MobileOrderSheetSurface(
+    instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
+    draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
+    panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
+    onClose: () -> Unit, modifier: Modifier, busy: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
-    // Open fully so the review action stays above the IME and short-screen fold.
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-    fun dismiss(onDismiss: () -> Unit) {
-        scope.launch {
-            sheetState.hide()
-            if (!sheetState.isVisible) onDismiss()
-        }
+    val focus = LocalFocusManager.current
+    val latestState by rememberUpdatedState(panelState)
+    val latestChange by rememberUpdatedState(onStateChange)
+    val sheetState = rememberStandardBottomSheetState(
+        initialValue = panelState.sheetValue, skipHiddenState = true,
+    )
+    var applyingRequest by remember { mutableStateOf(false) }
+    LaunchedEffect(panelState) {
+        applyingRequest = true
+        try {
+            if (panelState != MobileOrderPanelState.EDITING) focus.clearFocus()
+            when (panelState) {
+                MobileOrderPanelState.CLOSED -> Unit
+                MobileOrderPanelState.MINIMIZED -> sheetState.partialExpand()
+                MobileOrderPanelState.EDITING -> sheetState.expand()
+            }
+        } finally { applyingRequest = false }
     }
-    ModalBottomSheet(
-        onDismissRequest = onMinimize,
-        sheetState = sheetState,
-        containerColor = colors.Surface,
-        contentColor = colors.Ink,
-        modifier = modifier.testTag("order-panel"),
-    ) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("新建订单", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text("${instrument.symbol} · $accountName", fontSize = 11.sp, color = colors.Muted,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+    LaunchedEffect(sheetState) {
+        snapshotFlow { Triple(sheetState.currentValue, sheetState.targetValue, applyingRequest) }
+            .collect { (current, target, applying) ->
+                if (!applying && current == target && current != latestState.sheetValue) {
+                    if (current != SheetValue.Expanded) focus.clearFocus()
+                    latestChange(current.panelValue)
                 }
-                PanelIconButton(close = false, onClick = { dismiss(onMinimize) })
-                PanelIconButton(close = true, enabled = !busy, onClick = { dismiss(onClose) })
             }
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Badge(environment)
-                Spacer(Modifier.width(8.dp))
-                Text("${instrument.currency} 结算", fontSize = 11.sp, color = colors.Muted)
-                Spacer(Modifier.weight(1f))
+    }
+    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+        isBackEnabled = panelState != MobileOrderPanelState.CLOSED && !keyboardOpen,
+        onBackCompleted = {
+            if (panelState == MobileOrderPanelState.EDITING) onStateChange(MobileOrderPanelState.MINIMIZED)
+            else if (!busy) onClose()
+        })
+    BoxWithConstraints(modifier.imePadding().clipToBounds()) {
+        val expandedHeight = if (keyboardOpen || maxHeight < 550.dp) maxHeight else maxHeight * .56f
+        val compact = sheetState.targetValue != SheetValue.Expanded
+        BottomSheetScaffold(
+            scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState),
+            sheetPeekHeight = MobileOrderPeekHeight,
+            sheetMaxWidth = androidx.compose.ui.unit.Dp.Unspecified,
+            sheetContainerColor = colors.Surface, sheetContentColor = colors.Ink, containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            sheetDragHandle = {
+                Box(Modifier.fillMaxWidth().height(16.dp).testTag("order-sheet-handle"), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(32.dp, 4.dp).background(colors.Muted, RoundedCornerShape(2.dp)))
+                }
+            },
+            sheetContent = {
+                Column(Modifier.fillMaxWidth().height((expandedHeight - 16.dp).coerceAtLeast(MobileOrderPeekHeight))
+                    .testTag("order-sheet").semantics {
+                        stateDescription = when (panelState) {
+                            MobileOrderPanelState.CLOSED -> "已关闭"
+                            MobileOrderPanelState.MINIMIZED -> "已最小化"
+                            MobileOrderPanelState.EDITING -> "已展开"
+                        }
+                    }) {
+                    Row(Modifier.fillMaxWidth().height(48.dp).padding(start = 12.dp, end = 4.dp)
+                        .then(if (compact) Modifier.testTag("minimized-order") else Modifier),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp))
+                            .clickable(role = Role.Button) { onStateChange(MobileOrderPanelState.EDITING) }
+                            .testTag("restore-order"), verticalArrangement = Arrangement.Center) {
+                            Text(instrument.symbol, color = colors.Accent, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (compact) "${draft.quantity} ${instrument.quantityUnit} · ${draft.side.label()}" else
+                                quote?.let { "${instrument.formatPrice(it.bid)} / ${instrument.formatPrice(it.ask)}" } ?: "—",
+                                fontSize = 10.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (compact) {
+                            listOf(true, false).forEach { stop ->
+                                val checked = if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
+                                val protectionColor = if (stop) colors.Down else colors.Up
+                                OutlinedIconToggleButton(checked = checked,
+                                    onCheckedChange = { onDraft(draft.withProtectionEnabled(instrument, quote, stop, it)) },
+                                    enabled = !busy, modifier = Modifier.size(48.dp).padding(4.dp)
+                                        .testTag(if (stop) "compact-sl" else "compact-tp")
+                                        .semantics { contentDescription = if (stop) "止损 SL" else "止盈 TP" },
+                                    colors = IconButtonDefaults.outlinedIconToggleButtonColors(
+                                        contentColor = colors.Muted, checkedContentColor = protectionColor,
+                                        checkedContainerColor = protectionColor.copy(alpha = .12f))) {
+                                    Text(if (stop) "SL" else "TP", fontSize = 12.sp)
+                                }
+                            }
+                            IconButton({ onStateChange(MobileOrderPanelState.EDITING) }, Modifier.size(48.dp)
+                                .testTag("expand-order").semantics { contentDescription = "展开下单面板" }) {
+                                Text("→", fontSize = 24.sp, color = colors.Accent)
+                            }
+                        } else PanelIconButton(close = false, onClick = { onStateChange(MobileOrderPanelState.MINIMIZED) })
+                        PanelIconButton(close = true, enabled = !busy, onClick = onClose)
+                    }
+                    MobileOrderTypes(instrument, quote, capabilities, draft, onDraft, !busy)
+                    // Keep scroll/input state across minimization, but hide offscreen accessibility actions.
+                    Column(Modifier.weight(1f).then(if (compact) Modifier.clearAndSetSemantics { } else Modifier.testTag("order-panel"))) {
+                        if (panelState != MobileOrderPanelState.CLOSED) content()
+                    }
+                }
+            },
+        ) { /* Chart is composed once by MobileOrderSheet, beneath this transparent scaffold. */ }
+    }
+}
+
+internal val MobileOrderPeekHeight = 112.dp
+
+@OptIn(ExperimentalMaterial3Api::class)
+private val MobileOrderPanelState.sheetValue: SheetValue get() = when (this) {
+    MobileOrderPanelState.CLOSED -> SheetValue.Hidden
+    MobileOrderPanelState.MINIMIZED -> SheetValue.PartiallyExpanded
+    MobileOrderPanelState.EDITING -> SheetValue.Expanded
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+private val SheetValue.panelValue: MobileOrderPanelState get() = when (this) {
+    SheetValue.Hidden -> MobileOrderPanelState.CLOSED
+    SheetValue.PartiallyExpanded -> MobileOrderPanelState.MINIMIZED
+    SheetValue.Expanded -> MobileOrderPanelState.EDITING
+}
+
+/** Type and direction stay available in the peek region, matching the reference video. */
+@Composable
+private fun MobileOrderTypes(instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
+    draft: OrderDraft, onDraft: (OrderDraft) -> Unit, enabled: Boolean) {
+    Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState()).selectableGroup()
+        .testTag("order-type-strip")) {
+        OrderKind.entries.filter { it in capabilities.orderKinds }.forEach { kind ->
+            val sides = if (kind == OrderKind.MARKET) listOf<Side?>(null) else listOf(Side.BUY, Side.SELL)
+            sides.forEach { side ->
+                val selected = draft.kind == kind && (side == null || draft.side == side)
+                val label = if (side == null) "市场执行" else side.label() + if (kind == OrderKind.LIMIT) "限价" else "止损"
+                Box(Modifier.fillMaxHeight().selectable(selected, enabled, Role.Tab) {
+                    val sided = if (side == null) draft else draft.withSide(side, instrument, quote)
+                    val next = if (side != null && side != draft.side && kind == draft.kind)
+                        sided.copy(kind = OrderKind.MARKET).withKind(instrument, quote, kind)
+                    else sided.withKind(instrument, quote, kind)
+                    onDraft(next)
+                }.testTag(if (side == null || side == Side.BUY) "order-kind-${kind.name}" else "order-kind-${kind.name}-SELL")
+                    .padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                    val color = if ((side ?: draft.side) == Side.BUY) TradingColors.Up else TradingColors.Down
+                    Text(label, fontSize = 12.sp, color = if (selected) color else TradingColors.Muted,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                }
             }
-            content()
         }
     }
 }

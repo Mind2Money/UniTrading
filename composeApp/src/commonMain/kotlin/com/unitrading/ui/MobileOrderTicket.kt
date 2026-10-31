@@ -56,17 +56,6 @@ internal fun MobileOrderTicket(
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("order-fields")
             .padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = colors.Accent, fontSize = 11.sp)
-            Row(Modifier.fillMaxWidth().selectableGroup().background(colors.Raised, RoundedCornerShape(8.dp)).padding(3.dp)) {
-                OrderKind.entries.filter { it in capabilities.orderKinds }.forEach { kind ->
-                    val selected = kind == draft.kind
-                    Box(Modifier.weight(1f).heightIn(min = 42.dp).clip(RoundedCornerShape(6.dp))
-                        .background(if (selected) colors.Surface else Color.Transparent)
-                        .selectable(selected, enabled = !busy, role = Role.Tab) { onDraft(draft.withKind(instrument, quote, kind)) }
-                        .testTag("order-kind-${kind.name}").padding(8.dp), contentAlignment = Alignment.Center) {
-                        Text(kind.label(), color = if (selected) colors.Accent else colors.Muted, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
             Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 listOf(Side.SELL, Side.BUY).forEach { side ->
                     MobileQuoteButton(side, quote?.let { instrument.formatPrice(if (side == Side.SELL) it.bid else it.ask) } ?: "—",

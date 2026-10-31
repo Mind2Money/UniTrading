@@ -42,7 +42,7 @@ class AppearanceUiTest {
         automation.rootInActiveWindow?.let(queue::add)
         while (queue.isNotEmpty()) {
             val item = queue.removeFirst()
-            if (item.isEditable) return item
+            if (item.isEditable && item.isVisibleToUser) return item
             for (i in 0 until item.childCount) item.getChild(i)?.let(queue::add)
         }
         error("No editable order quantity on screen")
@@ -88,13 +88,21 @@ class AppearanceUiTest {
         automation.rootInActiveWindow?.let(queue::add)
         while (queue.isNotEmpty()) {
             val item = queue.removeFirst()
-            if (if (description) item.contentDescription?.toString()?.contains(text) == true else item.text?.toString() == text) {
+            if (item.isVisibleToUser && (if (description) item.contentDescription?.toString()?.contains(text) == true else item.text?.toString() == text)) {
                 if (!last) return item
                 match = item
             }
             for (i in 0 until item.childCount) item.getChild(i)?.let(queue::add)
         }
         return match
+    }
+    private fun scrollTicketTo(text: String) {
+        repeat(6) {
+            if (node(text) != null) return
+            val screen = Rect().also { automation.rootInActiveWindow.getBoundsInScreen(it) }
+            swipe(screen.exactCenterX(), screen.height() * .76f, screen.exactCenterX(), screen.height() * .56f)
+        }
+        awaitText(text)
     }
     private fun tap(text: String, last: Boolean = false, description: Boolean = false) {
         val item = awaitNode(text, last = last, description = description)
@@ -165,14 +173,13 @@ class AppearanceUiTest {
             swipe(bounds.left + bounds.width() * .25f, bounds.bottom - 15f * density, bounds.left + bounds.width() * .6f, bounds.bottom - 15f * density)
             assertNotEquals(zoomed, awaitChartChange(zoomed))
             screenshot("android-chart-zoom-v114")
-            // The modal sheet owns a separate window; observe the viewport before opening it.
-            val beforeImeViewport = awaitNode("拖动图表平移", description = true).stateDescription?.toString()
+            // Standard sheet shares the chart window; IME must not dismiss the editor.
             automation.serviceInfo = automation.serviceInfo.apply {
                 flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             }
             tap("下单")
-            awaitText("新建订单")
-            assertNull("The modal sheet blocks background navigation", node("图表"))
+            awaitNode("最小化下单面板", description = true)
+            assertNull("The active ticket replaces bottom navigation", node("图表"))
             awaitText("检查并模拟买入")
             tapNode(firstEditableNode())
             awaitKeyboard(true)
@@ -181,7 +188,7 @@ class AppearanceUiTest {
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitKeyboard(false)
             idle()
-            assertNotNull("Back dismisses the keyboard before closing the ticket", node("新建订单"))
+            assertNotNull("Back dismisses the keyboard before minimizing the ticket", node("最小化下单面板", description = true))
             tap("增加数量", description = true)
             screenshot("android-order-panel")
             val updatedQuantity = firstEditableNode().text.toString()
@@ -195,6 +202,7 @@ class AppearanceUiTest {
             val quantityArgs = android.os.Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0.10") }
             check(firstEditableNode().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, quantityArgs))
             idle()
+            scrollTicketTo("止损 SL")
             tap("止损 SL")
             tap("止盈 TP")
             awaitText("价格")
@@ -203,10 +211,11 @@ class AppearanceUiTest {
             tap("止盈 TP")
             assertNull("Unchecked protections hide their price inputs", node("价格"))
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
-            awaitText("图表")
-            assertNull(node("新建订单"))
-            assertEquals(beforeImeViewport, awaitNode("拖动图表平移", description = true).stateDescription?.toString())
-            awaitText("${runtime.registry.plugins.first().instruments.first().symbol} · 草稿保留 · 可拖动图表调价")
+            awaitNode("展开下单面板", description = true)
+            assertNull(node("检查并模拟买入"))
+            assertNotNull(node("SL")); assertNotNull(node("TP"))
+            assertNotNull(node("市场执行"))
+            assertNotNull(node("拖动图表平移", description = true))
             screenshot("android-order-minimized")
             tap("关闭并放弃本次下单", description = true)
             val beforeNotice = Rect().also(awaitNode("拖动图表平移", description = true)::getBoundsInScreen)
@@ -222,7 +231,7 @@ class AppearanceUiTest {
             tap("关闭操作提示", description = true)
             assertNull(node("操作提示"))
             tap("设置", last = true)
-            awaitText("交易商与账户")
+            awaitText("账户与连接")
             if (node("外观与主题") == null) {
                 val screen = Rect().also { automation.rootInActiveWindow.getBoundsInScreen(it) }
                 swipe(screen.exactCenterX(), screen.height() * .7f, screen.exactCenterX(), screen.height() * .35f)

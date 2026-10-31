@@ -293,10 +293,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
                 val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
-                // The modal order sheet overlays the chart without changing its layout or viewport.
+                // The persistent order sheet shares the chart surface and never dims it.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
-                fun minimizeOrder() { focusManager.clearFocus(); orderPanelState = MobileOrderPanelState.MINIMIZED }
                 fun closeOrder() {
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
@@ -392,14 +391,31 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f))
-                            1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
-                                chart(Modifier.weight(1f))
-                                Box(Modifier.fillMaxWidth().height(76.dp)) {
-                                    if (orderPanelState == MobileOrderPanelState.MINIMIZED) MinimizedOrderBar(instrument, draft, busy,
-                                        onRestore = { orderPanelState = MobileOrderPanelState.EDITING }, onClose = { closeOrder() })
-                                    else MobileTradeBar(account, onOpen = { orderPanelState = MobileOrderPanelState.EDITING },
-                                        onPositions = { mobileTab = 2 })
-                                }
+                            1 -> key(orderSession) {
+                                MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
+                                    orderPanelState, { orderPanelState = it }, { closeOrder() },
+                                    Modifier.weight(1f).fillMaxWidth(), busy = busy,
+                                    content = {
+                                        notice?.let { current ->
+                                            Box(Modifier.fillMaxWidth().heightIn(max = 100.dp).verticalScroll(rememberScrollState())
+                                                .padding(horizontal = 14.dp, vertical = 6.dp)) {
+                                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                                            }
+                                        }
+                                        MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                            { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.weight(1f),
+                                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
+                                    },
+                                    body = {
+                                        Column(Modifier.fillMaxSize()) {
+                                            chart(Modifier.weight(1f))
+                                            if (orderActive) Spacer(Modifier.height(MobileOrderPeekHeight))
+                                            else Box(Modifier.fillMaxWidth().height(76.dp)) {
+                                                MobileTradeBar(account, onOpen = { orderPanelState = MobileOrderPanelState.EDITING },
+                                                    onPositions = { mobileTab = 2 })
+                                            }
+                                        }
+                                    })
                             }
                             2 -> Column(Modifier.weight(1f)) {
                                 AccountStrip(account)
@@ -420,10 +436,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 modifier = Modifier.weight(1f).fillMaxWidth())
                         }
                     }
-                    if (compact) {
+                    if (compact && !(chartFirst && orderActive)) {
                         DividerLine()
                         MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
-                    } else {
+                    } else if (desktop) {
                         DividerLine()
                         AccountStrip(account)
                         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
@@ -431,21 +447,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Spacer(Modifier.weight(1f))
                             Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   状态以服务器为准   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
                         }
-                    }
-                }
-                if (panelOpen) key(orderSession) {
-                    MobileOrderSheet(instrument, session.account.name, environmentLabel,
-                        onMinimize = { minimizeOrder() }, onClose = { closeOrder() }, busy = busy) {
-                        // Rejections must stay in the active modal window, where they can be read and dismissed.
-                        notice?.let { current ->
-                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
-                                .padding(horizontal = 14.dp, vertical = 6.dp)) {
-                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
-                            }
-                        }
-                        MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                            { request?.let { confirmation = Confirmation.Place(it) } }, Modifier.weight(1f),
-                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
                     }
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
