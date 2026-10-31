@@ -1,5 +1,9 @@
 package com.unitrading.ui
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -10,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -331,7 +336,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
                     showDraft = false
-                    draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                     if (confirmation is Confirmation.Place) confirmation = null
                 }
                 fun executeTrade(action: Confirmation) {
@@ -365,7 +369,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     else confirmation = action
                 }
                 fun reviewMobileOrder() {
-                    if (!busy && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
+                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -393,7 +397,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
-                        onSide = { side -> changeDraft(draft.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
+                        onSide = { side ->
+                            val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
+                                OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
+                            changeDraft(base.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
@@ -458,9 +465,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch)
                             1 -> key(orderSession) {
+                                // The sheet keeps a full-height host while the chart dock changes continuously.
+                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else 157.dp,
+                                    animationSpec = tween(250), label = "chart-order-dock")
                                 MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
                                     orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
                                     Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
+                                    onHidden = {
+                                        if (orderPanelState == MobileOrderPanelState.CLOSED)
+                                            draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                    },
                                     content = {
                                         notice?.let { current ->
                                             Box(Modifier.fillMaxWidth().heightIn(max = 100.dp).verticalScroll(rememberScrollState())
@@ -475,10 +489,19 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     body = {
                                         Column(Modifier.fillMaxSize()) {
                                             chart(Modifier.weight(1f))
-                                            if (orderActive) Spacer(Modifier.height(MobileOrderPeekHeight))
-                                            else Box(Modifier.fillMaxWidth().height(76.dp)) {
-                                                MobileTradeBar(account, onOpen = { orderPanelState = MobileOrderPanelState.EDITING },
-                                                    onPositions = { mobileTab = 2 })
+                                            Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
+                                                androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
+                                                    Column(Modifier.fillMaxWidth().requiredHeight(157.dp)) {
+                                                        Box(Modifier.height(76.dp)) {
+                                                            MobileTradeBar(account, onOpen = {
+                                                                draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                                                orderPanelState = MobileOrderPanelState.EDITING
+                                                            }, onPositions = { mobileTab = 2 })
+                                                        }
+                                                        DividerLine()
+                                                        MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
+                                                    }
+                                                }
                                             }
                                         }
                                     })
@@ -502,7 +525,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 modifier = Modifier.weight(1f).fillMaxWidth())
                         }
                     }
-                    if (compact && !(chartFirst && orderActive)) {
+                    if (compact && !chartFirst) {
                         DividerLine()
                         MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
                     } else if (desktop) {
