@@ -65,6 +65,9 @@ class TradovateBroker(
     private val continuousLock = Mutex()
     private var continuousJob: Job? = null
     private val volumeCharts = mutableMapOf<String, DailyVolumeHistory>()
+    private data class DailyEvidence(val source: String, val day: Long, val collector: DailyVolumeHistory,
+        val socket: TradovateSocket, val ids: List<JsonPrimitive>)
+    private val dailyEvidence = mutableMapOf<String, DailyEvidence>()
     private val discardedCharts = mutableSetOf<String>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
@@ -307,7 +310,7 @@ class TradovateBroker(
                     pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
                     charts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
-                    volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
+                    volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear(); dailyEvidence.clear()
                     connect()
                     return@launch
                 } catch (cancel: CancellationException) { throw cancel }
@@ -394,7 +397,9 @@ class TradovateBroker(
         }
     }
 
-    private suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
+    /** Read-only resolution entry point; valid routes and monitored daily evidence are reused. */
+    suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
+        if (!connected || stopped) return@withLock
         val route = continuousRoutes[symbol] ?: return@withLock
         if (!force && now() < route.validUntil && route.checkedAt?.let { now() >= it } == true) return@withLock
         if (!force && route.validUntil == 0L && route.checkedAt?.let { now() - it in 0 until 60_000 } == true) return@withLock
@@ -405,21 +410,35 @@ class TradovateBroker(
         var target: Instrument? = null
         var validUntil = 0L
         var reason = ""
+        val comparedSymbols = mutableSetOf<String>()
+        var requireMonitoredEvidence = false
         try {
             val leader = withTimeout(180_000) { selectVolumeLeader(route.productId, symbol.removePrefix("@"), now(),
                 read = { path -> rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效") },
-                volume = ::completedDailyVolume) }
+                volume = { name, session ->
+                    lock.withLock { comparedSymbols.add(name) }
+                    completedDailyVolume(name, session, symbol)
+                }) }
             require(now() < leader.session.validUntil) { "查询期间交易日已切换，请重新查询" }
+            requireMonitoredEvidence = leader.session.verifyLatestDailyBar
             lock.withLock { book.apply("contractMaturity", leader.maturity); book.apply("contract", leader.contract) }
             val id = requireNotNull(leader.contract.long("id"))
             hydrateContracts(listOf(id))
             target = lock.withLock { contractSpecs[id] }
             require(target != null) { "主力合约规格尚未加载" }
-            validUntil = leader.session.validUntil
+            validUntil = if (leader.session.verifyLatestDailyBar) minOf(leader.session.validUntil, now() + CALENDAR_TAIL_REFRESH_MS)
+                else leader.session.validUntil
         } catch (_: TimeoutCancellationException) { reason = "日成交量查询超时" }
         catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) { reason = safeMessage(e.message ?: "日成交量不可用") }
         lock.withLock {
+            if (target != null && (now() >= validUntil || requireMonitoredEvidence &&
+                    (!marketReady || comparedSymbols.any { dailyEvidence[it]?.let { item ->
+                        !item.collector.invalidated && item.socket === marketSocket
+                    } != true }))) {
+                target = null; validUntil = 0
+                reason = "查询期间日线已更新，请重新查询"
+            }
             val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true, tradeSymbol = target?.symbol,
                 tradeSymbolStatus = if (target == null) "主力无法确认：$reason" else null)
             continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = validUntil))
@@ -429,31 +448,69 @@ class TradovateBroker(
         }
     }
 
-    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long {
+    private suspend fun retireDailyEvidence(symbol: String) {
+        val evidence = lock.withLock {
+            dailyEvidence.remove(symbol)?.also { item ->
+                item.ids.mapNotNull(::chartSubscriptionKey).forEach { volumeCharts.remove(it); discardedCharts.add(it) }
+                continuousRoutes[item.source]?.takeIf { it.spec.tradeSymbol != null }?.let { route ->
+                    continuousRoutes = continuousRoutes + (item.source to route.copy(validUntil = 0, checkedAt = null,
+                        spec = route.spec.copy(tradeSymbol = null, tradeSymbolStatus = "日线证据已释放，正在重新核实主力")))
+                    rebuild()
+                }
+            }
+        } ?: return
+        withContext(NonCancellable) {
+            for (id in evidence.ids) withTimeoutOrNull(2_000) {
+                runCatching { evidence.socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) }) }
+            }
+        }
+    }
+
+    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession, source: String): Long {
         val socket = checkNotNull(marketSocket) { "行情连接不可用" }
         check(marketReady) { "行情尚未就绪" }
+        val cached = lock.withLock { dailyEvidence[symbol]?.takeIf {
+            session.verifyLatestDailyBar && it.day == session.day && it.socket === socket && !it.collector.invalidated
+        } }
+        if (cached != null) return cached.collector.result.await()
+        retireDailyEvidence(symbol)
+        // Bounded across products as well as within a single ranking.
+        lock.withLock { dailyEvidence.keys.firstOrNull().takeIf { dailyEvidence.size >= 200 } }?.let { retireDailyEvidence(it) }
         val overflow = lock.withLock { earlyChartOverflow }
-        val response = socket.request("md/getChart", buildJsonObject {
+        val body = buildJsonObject {
             put("symbol", symbol)
             put("chartDescription", chartDescription(Timeframe(1440)))
             put("timeRange", dailyVolumeRange(session))
-        })
+        }
+        val response = requestMarketChart(socket, body)
         val ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
+        var retained = false
         try {
             require(response.str("mode") == null || response.str("mode") == "RealTime") { "日成交量行情权限或模式不可用" }
+            require(!session.verifyLatestDailyBar || response.str("mode") == "RealTime") { "核实交易日历末尾需要实时日线权限" }
             val collector = DailyVolumeHistory(session.day, allowEmpty = response.str("mode") == "RealTime")
             val key = requireNotNull(chartSubscriptionKey(response["historicalId"])) { "日成交量历史通道缺失" }
             lock.withLock {
                 require(overflow == earlyChartOverflow) { "日成交量历史包丢失，请重试" }
                 ids.mapNotNull(::chartSubscriptionKey).forEach(discardedCharts::remove)
                 volumeCharts[key] = collector
-                chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let(discardedCharts::add)
+                chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let {
+                    if (session.verifyLatestDailyBar) volumeCharts[it] = collector else discardedCharts.add(it)
+                }
+                if (session.verifyLatestDailyBar) {
+                    requireNotNull(chartSubscriptionKey(response["realtimeId"])) { "核实交易日历末尾需要实时日线通道" }
+                    dailyEvidence[symbol] = DailyEvidence(source, session.day, collector, socket, ids)
+                }
                 drainEarlyCharts()
             }
-            return withTimeout(15_000) { collector.result.await() }
+            val count = withTimeout(15_000) { collector.result.await() }
+            require(!collector.invalidated) { "日线交易日或成交量已更新，请重新查询" }
+            retained = session.verifyLatestDailyBar
+            return count
         } finally {
-            withContext(NonCancellable) {
+            if (!retained) withContext(NonCancellable) {
                 lock.withLock {
+                    dailyEvidence.remove(symbol)
                     ids.mapNotNull(::chartSubscriptionKey).forEach { volumeCharts.remove(it); discardedCharts.add(it) }
                     if (discardedCharts.size > 1024) discardedCharts.clear()
                 }
@@ -475,6 +532,21 @@ class TradovateBroker(
             (priority + book.list("position").filter { (it.long("netPos") ?: 0) != 0L }.mapNotNull { it.long("contractId") } +
                 book.list("order").filter(::activeOrder).mapNotNull { it.long("contractId") } +
                 book.list("contract").mapNotNull { it.long("id") }).distinct().filter { it !in contractSpecs }.take(100)
+        }
+        // A root search returns many dated contracts. Fetch their missing maturities
+        // in batches instead of spending one paced REST round trip on each month.
+        val missingMaturities = lock.withLock {
+            ids.mapNotNull { book.item("contract", it)?.long("contractMaturityId") }
+                .distinct().filter { book.item("contractMaturity", it) == null }
+        }
+        if (missingMaturities.size > 1) for (chunk in missingMaturities.chunked(50)) {
+            try {
+                val rows = (rest("GET", "contractMaturity/items?ids=${chunk.joinToString(",")}") as? JsonArray)
+                    ?.map { it.jsonObject } ?: error("合约月份批量查询返回无效")
+                require(rows.all { it.long("id") in chunk && (it.long("productId") ?: 0) > 0 }) { "合约月份批量查询不匹配" }
+                lock.withLock { rows.forEach { book.apply("contractMaturity", it) } }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* Missing rows still use the validated per-item path below. */ }
         }
         // Different contracts can share maturity/product/currency rows. Serialize only those
         // cache misses, never the entire network load, so each shared row is fetched once.
@@ -675,11 +747,25 @@ class TradovateBroker(
         }
     }
 
+    /** Both continuous history and volume history share the server's chart request budget. */
+    private suspend fun requestMarketChart(socket: TradovateSocket, body: JsonObject): JsonObject {
+        var response = socket.request("md/getChart", body)
+        response.str("p-ticket")?.let { ticket ->
+            require(response.bool("p-captcha") != true) { "历史行情查询限流，需要稍后在官方应用重试" }
+            val seconds = requireNotNull(response.long("p-time")?.takeIf { it in 0..30 }) { "历史行情查询限流，等待服务端恢复" }
+            delay(seconds * 1_000)
+            response = socket.request("md/getChart", JsonObject(body + ("p-ticket" to JsonPrimitive(ticket))))
+        }
+        require(response.str("p-ticket") == null) { "历史行情查询仍受限，请稍后重试" }
+        require(chartSubscriptionKey(response["historicalId"]) != null || chartSubscriptionKey(response["realtimeId"]) != null) { "历史行情通道缺失" }
+        return response
+    }
+
     /** Called under chartWatchLock and NonCancellable, including response-to-ID registration. */
     private suspend fun requestChart(socket: TradovateSocket, page: ChartPage, range: JsonObject) {
         val overflow = lock.withLock { earlyChartOverflow }
         val response = try {
-            socket.request("md/getChart", buildJsonObject {
+            requestMarketChart(socket, buildJsonObject {
                 put("symbol", page.series.first)
                 put("chartDescription", chartDescription(page.series.second))
                 put("timeRange", range)
@@ -819,7 +905,16 @@ class TradovateBroker(
     private fun chartEvent(chart: JsonObject) {
         val subscription = chartSubscriptionKey(chart["id"])
         if (subscription in cancelledChartIds) return
-        volumeCharts[subscription]?.let { it.accept(chart); return }
+        volumeCharts[subscription]?.let { collector ->
+            collector.accept(chart)
+            if (collector.invalidated) dailyEvidence.values.firstOrNull { it.collector === collector }?.let { evidence ->
+                continuousRoutes[evidence.source]?.let { route ->
+                    continuousRoutes = continuousRoutes + (evidence.source to route.copy(validUntil = 0, checkedAt = null,
+                        spec = route.spec.copy(tradeSymbol = null, tradeSymbolStatus = "日线已更新，正在重新核实主力")))
+                }
+            }
+            return
+        }
         if (subscription in discardedCharts) return
         val channel = subscription?.let { charts[it] }
         if (channel == null) {

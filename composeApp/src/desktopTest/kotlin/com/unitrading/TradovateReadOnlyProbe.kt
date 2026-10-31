@@ -4,6 +4,7 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Explicit diagnostics only. Trading writes are always refused, including when dryrun is enabled. */
 internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false) : TradovateWire {
@@ -18,6 +19,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
         private set
     var implicitSuccessResponses = 0
         private set
+    val dailyVolumeRequests = AtomicInteger()
     val chartKeys = mutableSetOf<String>()
     val timestampKinds = mutableSetOf<String>()
     val timestampShapes = mutableSetOf<String>()
@@ -54,7 +56,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         check(environment == TradovateEnvironment.DEMO)
         val endpoint = path.substringBefore('?')
-        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contract/ldeps", "contractMaturity/item", "contractMaturity/deps", "tradingSession/ldeps", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
+        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contract/ldeps", "contractMaturity/item", "contractMaturity/items", "contractMaturity/deps", "tradingSession/ldeps", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
             method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot" ||
             allowCapacityChecks && (method == "POST" && endpoint == "order/dryrun" || method == "GET" && endpoint == "order/list")
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
@@ -74,6 +76,11 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
                 val route = text.substringBefore('\n')
                 if (route !in setOf("[]", "authorize", "user/syncrequest", "md/subscribequote", "md/unsubscribequote", "md/getChart", "md/cancelChart")) {
                     refusedWrites++; error("Read-only diagnostic rejected a non-read socket request")
+                }
+                if (route == "md/getChart") {
+                    val body = Json.parseToJsonElement(text.substringAfter("\n\n")).jsonObject
+                    if ((body["timeRange"] as? JsonObject)?.get("asMuchAsElements")?.jsonPrimitive?.intOrNull == 1)
+                        dailyVolumeRequests.incrementAndGet()
                 }
                 socket.send(text)
             }
@@ -129,15 +136,58 @@ fun main(args: Array<String>) = runBlocking {
             verified = true
             for (root in listOf("MES", "MNQ", "MGC")) {
                 phase = "continuous-$root"
+                val initialStarted = System.nanoTime()
                 withTimeout(210_000) { broker.searchInstruments(root) }
+                val discoveryMs = (System.nanoTime() - initialStarted) / 1_000_000
+                val resolutionStarted = System.nanoTime()
+                withTimeout(210_000) { broker.refreshContinuous("@$root") }
+                val resolutionMs = (System.nanoTime() - resolutionStarted) / 1_000_000
+                val initialMs = (System.nanoTime() - initialStarted) / 1_000_000
+                val alias = "@$root"
+                broker.watch(alias, Timeframe.M5)
+                withTimeoutOrNull(25_000) {
+                    while (broker.instruments.singleOrNull { it.symbol == alias }?.executionSymbol?.let {
+                        broker.market.value.quotes[it]
+                    } == null || broker.history(alias, Timeframe.M5).isEmpty()) delay(250)
+                }
+                // Repeat while the continuous chart is subscribed: exercise daily-volume
+                // channel cleanup/registration without ever calling an order endpoint.
+                val refreshMs = mutableListOf<Long>()
+                val initialTarget = broker.instruments.singleOrNull { it.symbol == alias }?.executionSymbol
+                val initialRequests = wire.dailyVolumeRequests.get()
+                val cacheMs = (1..10).map {
+                    val started = System.nanoTime()
+                    broker.refreshContinuous(alias)
+                    (System.nanoTime() - started) / 1_000_000
+                }
+                val cachedRequests = wire.dailyVolumeRequests.get() - initialRequests
+                val repeatedTargets = (1..5).map {
+                    val started = System.nanoTime()
+                    withTimeout(210_000) { broker.refreshContinuous(alias, force = true) }
+                    refreshMs.add((System.nanoTime() - started) / 1_000_000)
+                    broker.instruments.singleOrNull { it.symbol == alias }?.executionSymbol
+                }
                 val instrument = broker.instruments.singleOrNull { it.symbol == "@$root" }
                 val resolved = instrument?.executionSymbol != null
-                verified = verified && resolved && wire.refusedWrites == 0
+                val quoteAvailable = instrument?.executionSymbol?.let { broker.market.value.quotes[it] } != null
+                val historyBars = broker.history(alias, Timeframe.M5).size
+                val repeatedResolution = resolved && initialTarget == instrument?.executionSymbol && repeatedTargets.all { it == initialTarget }
+                verified = verified && repeatedResolution && cachedRequests == 0 && quoteAvailable && historyBars > 0 && wire.refusedWrites == 0
                 println("CONTINUOUS_READ_ONLY_RESULT " + asciiJson(buildJsonObject {
                     put("symbol", "@$root")
                     put("resolved", resolved)
                     put("tradeSymbol", instrument?.executionSymbol)
                     put("status", instrument?.tradeSymbolStatus)
+                    put("repeatedResolution", repeatedResolution)
+                    put("quoteAvailable", quoteAvailable)
+                    put("historyBars", historyBars)
+                    put("initialResolutionMs", initialMs)
+                    put("discoveryMs", discoveryMs)
+                    put("resolutionMs", resolutionMs)
+                    putJsonArray("refreshMs") { refreshMs.forEach { add(it) } }
+                    putJsonArray("cachedResolutionMs") { cacheMs.forEach { add(it) } }
+                    put("cachedDailyRequests", cachedRequests)
+                    put("refreshDailyRequests", wire.dailyVolumeRequests.get() - initialRequests)
                     put("refusedWriteRequests", wire.refusedWrites)
                     put("sentOrderRequests", 0)
                 }))

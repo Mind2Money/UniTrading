@@ -2,11 +2,23 @@ package com.unitrading.tradovate
 
 import com.unitrading.broker.checkedAdd
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 import kotlin.time.Instant
 
-internal data class CompletedSession(val day: Long, val start: Long, val end: Long, val validUntil: Long)
+internal data class CompletedSession(
+    val day: Long, val start: Long, val end: Long, val validUntil: Long,
+    val verifyLatestDailyBar: Boolean = false,
+)
 internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObject, val session: CompletedSession, val volume: Long)
+
+// Publication gaps are allowed only with fresh daily-history evidence, and never indefinitely.
+private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L
+internal const val CALENDAR_TAIL_REFRESH_MS = 60_000L
 
 /** Exchange calendar, including overnight/holiday sessions; device calendar and isFront are irrelevant. */
 internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long): CompletedSession {
@@ -23,8 +35,17 @@ internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long)
         Session(year * 10_000 + month * 100 + day, start, end)
     }
     require(sessions.map { it.day }.distinct().size == sessions.size) { "交易日时段不唯一" }
+    require(sessions.sortedBy { it.end }.zipWithNext().all { (a, b) -> b.day > a.day && b.start >= a.end }) { "交易日时段重叠" }
     val previous = requireNotNull(sessions.filter { it.end <= now }.maxByOrNull { it.end }) { "缺少上一完整交易日" }
-    val next = requireNotNull(sessions.filter { it.end > now }.minByOrNull { it.end }) { "交易日历未覆盖当前或后续交易日" }
+    val next = sessions.filter { it.end > now }.minByOrNull { it.end }
+    if (next == null) {
+        // Live calendars may end on Friday without publishing Monday yet. The last
+        // completed session still supplies a trade date, but cannot supply a cache
+        // deadline. The caller must check the latest history and refresh promptly.
+        val deadline = checkedAdd(previous.end, MAX_CALENDAR_TAIL_AGE_MS)
+        require(now < deadline) { "交易日历末尾已超过72小时，等待更新" }
+        return CompletedSession(previous.day, previous.start, previous.end, deadline, verifyLatestDailyBar = true)
+    }
     require(next.day > previous.day && next.start >= previous.end) { "交易日时段重叠" }
     return CompletedSession(previous.day, previous.start, previous.end, next.end)
 }
@@ -52,13 +73,15 @@ internal suspend fun selectVolumeLeader(productId: Long, root: String, now: Long
     val rows = ids.chunked(50).flatMap { chunk -> read("tradingSession/ldeps?masterids=${chunk.joinToString(",")}").map { it.jsonObject } }
     val sessions = ids.associateWith { completedSession(rows, it, now) }
     require(sessions.values.map { it.day }.distinct().size == 1) { "候选合约的完整交易日不一致" }
-    val ranked = contracts.map { contract ->
+    val verifyLatest = sessions.values.any { it.verifyLatestDailyBar }
+    val slots = Semaphore(3)
+    val ranked = coroutineScope { contracts.map { contract -> async { slots.withPermit {
         val maturity = byId.getValue(contract.long("contractMaturityId")!!)
-        val session = sessions.getValue(maturity.long("id")!!)
+        val session = sessions.getValue(maturity.long("id")!!).copy(verifyLatestDailyBar = verifyLatest)
         val count = volume(contract.str("name")!!, session)
         require(count >= 0) { "日成交量无效" }
         VolumeLeader(contract, maturity, session, count)
-    }
+    } } }.awaitAll() }
     val maximum = ranked.maxOf { it.volume }
     require(maximum > 0) { "上一完整交易日没有有效成交量" }
     val leader = requireNotNull(ranked.singleOrNull { it.volume == maximum }) { "上一完整交易日成交量并列，无法唯一确定主力" }
@@ -76,16 +99,21 @@ internal fun dailyBarTimestamp(day: Long): Long {
 internal fun dailyVolumeRange(session: CompletedSession) = buildJsonObject {
     val start = dailyBarTimestamp(session.day)
     put("asFarAsTimestamp", Instant.fromEpochMilliseconds(start).toString())
-    put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
+    // Without a future calendar row, a bounded query could hide a newer trade day.
+    // Ask for the latest bar from this date onward, including overnight date labels.
+    if (!session.verifyLatestDailyBar) put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
     put("asMuchAsElements", 1)
 }
 
 /** Only a successful RealTime subscription may treat an empty, explicitly ended history as zero. */
 internal class DailyVolumeHistory(private val day: Long, private val allowEmpty: Boolean = false) {
     val result = CompletableDeferred<Long>()
+    var invalidated = false
+        private set
+    private var confirmedVolume: Long? = null
     private val bars = mutableMapOf<Long, Long>()
     fun accept(packet: JsonObject) {
-        if (result.isCompleted) return
+        if (invalidated) return
         try {
             val values = packet["bars"]
             require(values == null || values is JsonArray) { "日线数据格式无效" }
@@ -107,10 +135,17 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
                 }
                 bars[time] = checkedAdd(count("upVolume"), count("downVolume"))
             }
-            if (packet.bool("eoh") == true) {
-                if (bars.isEmpty() && allowEmpty) result.complete(0)
-                else result.complete(requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" })
+            if (result.isCompleted) {
+                // Keep monitoring the retained realtime channel. A new trade date or
+                // correction invalidates the cached ranking instead of silently reusing it.
+                if (bars.isNotEmpty()) require(bars.values.singleOrNull() == confirmedVolume) { "已完成日线发生更新" }
+                return
             }
-        } catch (e: Exception) { result.completeExceptionally(e) }
+            if (packet.bool("eoh") == true) {
+                confirmedVolume = if (bars.isEmpty() && allowEmpty) 0
+                    else requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" }
+                result.complete(confirmedVolume!!)
+            }
+        } catch (e: Exception) { invalidated = true; result.completeExceptionally(e) }
     }
 }
