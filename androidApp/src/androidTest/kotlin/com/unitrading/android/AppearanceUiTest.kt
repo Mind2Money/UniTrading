@@ -243,6 +243,22 @@ class AppearanceUiTest {
             }
             awaitText("外观与主题")
             screenshot("android-account-v114")
+            tap("跳过交易确认")
+            assertTrue(runtime.tradingPreferences.preferences.value.skipConfirmation)
+            screenshot("android-skip-confirmation")
+            val directSession = runtime.registry.plugins.first().openSession(runtime.registry.plugins.first().accounts.first().id)
+            val beforeDirectOrder = directSession.state.value.positions.size
+            tap("图表", last = true)
+            tap("下单")
+            awaitText("模拟买入")
+            tap("最小化下单面板", description = true)
+            tap("立即下单", description = true)
+            awaitText("下单")
+            assertNull(node("确认模拟下单"))
+            assertEquals(beforeDirectOrder + 1, directSession.state.value.positions.size)
+            tap("设置", last = true)
+            tap("跳过交易确认")
+            assertFalse(runtime.tradingPreferences.preferences.value.skipConfirmation)
         }
         // Reopen the actual Activity to verify the persisted theme can be loaded after teardown.
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->

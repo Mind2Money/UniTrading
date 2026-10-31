@@ -46,6 +46,7 @@ internal fun MobileOrderTicket(
     environment: BrokerEnvironment = BrokerEnvironment.LOCAL_DEMO,
     capacity: QuantityCapacityState = QuantityCapacityState(instrument.maxLotsHundredths),
     onRefreshCapacity: (() -> Unit)? = null,
+    skipConfirmation: Boolean = false,
 ) {
     val colors = TradingColors
     val focus = LocalFocusManager.current
@@ -122,7 +123,7 @@ internal fun MobileOrderTicket(
             }
             Button({ focus.clearFocus(); onSubmit() }, Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("review-order"),
                 enabled = preview?.valid == true && !busy, shape = RoundedCornerShape(10.dp)) {
-                Text(if (busy) "处理中…" else if (environment == BrokerEnvironment.LOCAL_DEMO) "检查并模拟${draft.side.label()}" else "检查并${draft.side.label()}", fontSize = 15.sp)
+                Text(if (busy) "处理中…" else (if (skipConfirmation) "" else "检查并") + (if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else "") + draft.side.label(), fontSize = 15.sp)
             }
         }
     }

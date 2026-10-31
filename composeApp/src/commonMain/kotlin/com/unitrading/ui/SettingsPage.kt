@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,6 +28,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 
@@ -53,6 +55,10 @@ internal fun SettingsPage(
 ) {
     val colors = TradingColors
     val theme by runtime.theme.settings.collectAsState()
+    val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
+    val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
+    val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
+    val preferenceScope = rememberCoroutineScope()
     val indicators by runtime.indicators.settings.collectAsState()
     val notificationsAvailable by runtime.livePnl.available.collectAsState()
     val paused by runtime.paused.collectAsState()
@@ -102,6 +108,26 @@ internal fun SettingsPage(
                 }
                 SettingsDivider()
                 SettingsActionRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", SettingsGlyph.Add, "settings-connect", onConnect)
+            }
+
+            SettingsSection("交易操作") {
+                Row(Modifier.fillMaxWidth().toggleable(tradingPreferences.skipConfirmation,
+                    enabled = !savingTradingPreferences, role = Role.Switch,
+                    onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSkipConfirmation(enabled) } })
+                    .testTag("settings-skip-confirmation").padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SettingsIconTile(SettingsGlyph.Chart)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("跳过交易确认", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效。",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = colors.Muted)
+                    }
+                    Switch(tradingPreferences.skipConfirmation, onCheckedChange = null, enabled = !savingTradingPreferences)
+                }
+                tradingPreferencesError?.let {
+                    Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                        .testTag("trading-preferences-error"), color = colors.Loss, fontSize = 12.sp)
+                }
             }
 
             SettingsSection("外观与图表") {

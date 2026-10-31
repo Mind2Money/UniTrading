@@ -155,6 +155,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 finally { busy = false }
             }
         }
+        val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
+        val skipConfirmation = tradingPreferences.skipConfirmation
         val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
         val intervals = IntervalOptions(chartPreferences.favorites, chartPreferences.custom,
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
@@ -225,10 +227,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 } finally { busy = false }
             }
         }
-        fun editProtection(position: Position, sl: Long? = position.stopLoss, tp: Long? = position.takeProfit) {
+        fun editProtection(position: Position, sl: Long? = position.stopLoss, tp: Long? = position.takeProfit, fromChart: Boolean = false) {
             if (!plugin.capabilities.modifyProtection || !position.protectionEditable || busy) return
             val spec = plugin.instruments.firstOrNull { it.symbol == position.symbol }
                 ?: run { showNotice("品种或账户已切换，请重新选择仓位", attention = true); return }
+            if (fromChart && skipConfirmation) {
+                val current = session.state.value.positions.firstOrNull { it.id == position.id }
+                val error = when {
+                    current == null || current.version != position.version || current.stopLoss != position.stopLoss || current.takeProfit != position.takeProfit -> "仓位或保护价已更新，请重新选择"
+                    listOfNotNull(sl, tp).any { it <= 0 || it % spec.tickSize != 0L } -> "价格须大于零并符合最小变动单位"
+                    else -> protectionEditError(plugin.capabilities, current, sl, tp)
+                }
+                if (error != null) { showNotice(error, attention = true); return }
+                perform { session.modifyProtection(requestId(), position.id, position.version, sl, tp) }
+                return
+            }
             if (position.symbol != executionSymbol) chosenSymbol = position.symbol
             selectedPositionId = position.id
             pendingProtection = null
@@ -236,15 +249,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
 
         /** Opens the confirmation for a pending entry's stop loss / take profit, prefilled with [sl] and [tp]. */
-        fun editPendingProtection(order: PendingOrder, sl: Long? = order.request.stopLoss, tp: Long? = order.request.takeProfit) {
+        fun editPendingProtection(order: PendingOrder, sl: Long? = order.request.stopLoss, tp: Long? = order.request.takeProfit, fromChart: Boolean = false) {
             if (busy) return
-            val current = account.orders.firstOrNull { it.id == order.id }
+            val current = session.state.value.orders.firstOrNull { it.id == order.id }
             if (current == null || current.version != order.version || current.request != order.request || current.role != OrderRole.ENTRY ||
                 !current.editable || !current.protectionEditable || !plugin.capabilities.modifyPendingProtection) {
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
+            if (fromChart && skipConfirmation) {
+                val error = pendingProtectionEditError(plugin.capabilities, current, sl, tp)
+                    ?: if (listOfNotNull(sl, tp).any { it <= 0 || it % spec.tickSize != 0L }) "价格须大于零并符合最小变动单位"
+                    else session.previewOrderProtection(current.id, sl, tp).errors.firstOrNull()
+                if (error != null) { showNotice(error, attention = true); return }
+                perform { session.modifyOrderProtection(requestId(), current.id, current.version, sl, tp) }
+                return
+            }
             if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
             protection = null
             pendingEdit = null
@@ -252,30 +273,40 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             pendingProtection = PendingProtectionEdit(current, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
         }
 
-        fun editPending(order: PendingOrder, price: Long = order.request.entryPrice!!) {
+        fun editPending(order: PendingOrder, price: Long = order.request.entryPrice!!, fromChart: Boolean = false) {
             if (busy) return
-            val current = account.orders.firstOrNull { it.id == order.id }
-            // A bracket of an unfilled entry is repriced through that entry's stop loss / take profit.
-            val bracket = current?.takeIf { it.isProtection && it.positionId == null }
-            val entry = bracket?.let { b -> account.orders.firstOrNull { it.role == OrderRole.ENTRY && b.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) } }
-            if (bracket != null && entry != null) {
-                editPendingProtection(entry, if (bracket.role == OrderRole.STOP_LOSS) price else entry.request.stopLoss,
-                    if (bracket.role == OrderRole.TAKE_PROFIT) price else entry.request.takeProfit)
+            val current = session.state.value.orders.firstOrNull { it.id == order.id }
+            if (current == null || current.version != order.version || current.role != order.role || current.request != order.request) {
+                showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
-            if (current == null || current.version != order.version || current.role != order.role || !current.editable) {
+            // A bracket of an unfilled entry is repriced through that entry's stop loss / take profit.
+            val bracket = current.takeIf { it.isProtection && it.positionId == null }
+            val entry = bracket?.let { b -> session.state.value.orders.firstOrNull { it.role == OrderRole.ENTRY && b.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) } }
+            if (bracket != null && entry != null) {
+                editPendingProtection(entry, if (bracket.role == OrderRole.STOP_LOSS) price else entry.request.stopLoss,
+                    if (bracket.role == OrderRole.TAKE_PROFIT) price else entry.request.takeProfit, fromChart)
+                return
+            }
+            if (!current.editable) {
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
             if (current.isProtection) {
-                val position = account.positions.firstOrNull { it.id == current.positionId && it.protectionEditable }
+                val position = session.state.value.positions.firstOrNull { it.id == current.positionId && it.protectionEditable }
                 if (position == null) { showNotice("保护单尚未唯一关联到当前仓位", attention = true); return }
                 pendingEdit = null
                 editProtection(position, if (current.role == OrderRole.STOP_LOSS) price else position.stopLoss,
-                    if (current.role == OrderRole.TAKE_PROFIT) price else position.takeProfit)
+                    if (current.role == OrderRole.TAKE_PROFIT) price else position.takeProfit, fromChart)
                 return
             }
             if (current.role != OrderRole.ENTRY || !plugin.capabilities.modifyPendingOrders) return
+            if (fromChart && skipConfirmation) {
+                val estimate = session.previewOrderModification(current.id, price)
+                if (!estimate.valid) { showNotice(estimate.errors.firstOrNull() ?: "改单价格无效", attention = true); return }
+                perform { session.modifyOrder(requestId(), current.id, current.version, price) }
+                return
+            }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
             if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
             protection = null
@@ -296,15 +327,45 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // The persistent order sheet shares the chart surface and never dims it.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
-                fun reviewMobileOrder() {
-                    if (!busy && preview?.valid == true) request?.let { confirmation = Confirmation.Place(it) }
-                }
                 fun closeOrder() {
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
                     showDraft = false
                     draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                     if (confirmation is Confirmation.Place) confirmation = null
+                }
+                fun executeTrade(action: Confirmation) {
+                    if (busy) return
+                    when (action) {
+                        is Confirmation.Place -> {
+                            val checked = session.preview(action.request).withCapacity(action.request, capacity)
+                            if (!checked.valid) { showNotice(checked.errors.firstOrNull() ?: "订单参数无效", attention = true); return }
+                            perform({ if (compact) closeOrder() }) { session.placeOrder(requestId(), action.request) }
+                        }
+                        is Confirmation.Close -> {
+                            val current = session.state.value.positions.firstOrNull { it.id == action.position.id }
+                            if (current == null || current.version != action.position.version) {
+                                showNotice("仓位已关闭或已更新，请重新选择", attention = true); return
+                            }
+                            perform { session.closePosition(requestId(), current.id) }
+                        }
+                        is Confirmation.Cancel -> {
+                            val current = session.state.value.orders.firstOrNull { it.id == action.order.id }
+                            if (current == null || current.version != action.order.version || current.request != action.order.request) {
+                                showNotice("挂单已成交、已撤销或已更新，请重新选择", attention = true); return
+                            }
+                            perform { session.cancelOrder(requestId(), current.id) }
+                        }
+                        Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
+                    }
+                }
+                fun reviewTrade(action: Confirmation) {
+                    if (busy) return
+                    if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
+                    else confirmation = action
+                }
+                fun reviewMobileOrder() {
+                    if (!busy && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -320,11 +381,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         },
                         editPending = plugin.capabilities.modifyPendingOrders,
                         estimatePending = session::previewOrderModification,
-                        onPendingEntry = { order, price -> editPending(order, price) },
+                        onPendingEntry = { order, price -> editPending(order, price, fromChart = true) },
                         editPendingProtection = plugin.capabilities.modifyPendingProtection,
                         estimatePendingProtection = session::previewOrderProtection,
-                        onPendingProtection = { order, sl, tp -> editPendingProtection(order, sl, tp) },
-                        onProtection = { p, sl, tp -> editProtection(p, sl, tp) },
+                        onPendingProtection = { order, sl, tp -> editPendingProtection(order, sl, tp, fromChart = true) },
+                        onProtection = { p, sl, tp -> editProtection(p, sl, tp, fromChart = true) },
                     )
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
@@ -382,13 +443,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m) },
                             chart = chart,
                             order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { confirmation = Confirmation.Place(it) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
-                                capacity = capacity, onRefreshCapacity = refreshCapacity) },
+                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
+                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
                                     onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
-                                    onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
+                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             })
                     } else {
@@ -397,7 +458,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             1 -> key(orderSession) {
                                 MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
                                     orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
-                                    Modifier.weight(1f).fillMaxWidth(), busy = busy,
+                                    Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
                                     content = {
                                         notice?.let { current ->
                                             Box(Modifier.fillMaxWidth().heightIn(max = 100.dp).verticalScroll(rememberScrollState())
@@ -407,7 +468,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         }
                                         MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                             ::reviewMobileOrder, Modifier.weight(1f),
-                                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
+                                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
                                     },
                                     body = {
                                         Column(Modifier.fillMaxSize()) {
@@ -426,7 +487,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
                                     onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
                                     onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
-                                    onClose = { confirmation = Confirmation.Close(it) }, onProtect = { editProtection(it) }, onCancel = { confirmation = Confirmation.Cancel(it) }, onEditOrder = { editPending(it) }, busy = busy,
+                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
                             else -> if (showActivity) {
@@ -489,8 +550,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Column(Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding()) {
                                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) { TextButton({ showOrder = false }) { Text("返回图表") } }
                                 OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
-                                    request?.let { confirmation = Confirmation.Place(it); showOrder = false }
-                                }, Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity)
+                                    request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
+                                }, Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
                             }
                         }
                     }
@@ -544,13 +605,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         } },
                         confirmButton = { Button({
                             confirmation = null
-                            val id = requestId()
-                            when (action) {
-                                is Confirmation.Place -> perform({ if (compact) closeOrder() }) { session.placeOrder(id, action.request) }
-                                is Confirmation.Close -> perform { session.closePosition(id, action.position.id) }
-                                is Confirmation.Cancel -> perform { session.cancelOrder(id, action.order.id) }
-                                Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
-                            }
+                            executeTrade(action)
                         }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action")) { Text("确认") } },
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
@@ -582,7 +637,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val newPrice = price ?: return@Button
                             pendingEdit = null
                             perform { session.modifyOrder(requestId(), order.id, order.version, newPrice) }
-                        }, Modifier.testTag("confirm-pending-entry"), enabled = !busy && validVersion && estimate?.valid == true) { Text("确认改价") } },
+                        }, Modifier.testTag("confirm-pending-entry"), enabled = !busy && validVersion && estimate?.valid == true) { Text(if (skipConfirmation) "应用改价" else "确认改价") } },
                         dismissButton = { TextButton({ pendingEdit = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
@@ -594,7 +649,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             pendingProtection = null
                             perform { session.modifyOrderProtection(requestId(), edit.order.id, edit.order.version, sl, tp) }
                         },
-                        onDismiss = { if (!busy) pendingProtection = null })
+                        onDismiss = { if (!busy) pendingProtection = null }, skipConfirmation = skipConfirmation)
                 }
                 protection?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.position.symbol } }?.let { edit ->
                     val p = edit.position
@@ -628,7 +683,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         confirmButton = { Button({
                             protection = null
                             perform { session.modifyProtection(requestId(), p.id, p.version, sl, tp) }
-                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && !busy) { Text("确认修改") } },
+                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
                         dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
                     )
                 }

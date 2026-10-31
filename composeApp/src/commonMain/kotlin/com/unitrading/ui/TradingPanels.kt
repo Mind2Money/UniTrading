@@ -84,6 +84,7 @@ internal fun OrderTicket(
     showTitle: Boolean = true,
     capacity: QuantityCapacityState = QuantityCapacityState(instrument.maxLotsHundredths),
     onRefreshCapacity: (() -> Unit)? = null,
+    skipConfirmation: Boolean = false,
 ) {
     // Without the title the host (the phone order panel) names the order, account and environment itself.
     Column(modifier.verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 18.dp, top = if (showTitle) 18.dp else 8.dp, bottom = 18.dp),
@@ -133,7 +134,7 @@ internal fun OrderTicket(
         preview?.warnings?.forEach { Text(it, color = TradingColors.Muted, fontSize = 10.sp) }
         preview?.errors?.forEach { Text(it, color = TradingColors.Loss, fontSize = 11.sp) }
         Button(onSubmit, Modifier.fillMaxWidth().height(46.dp).testTag("review-order"), enabled = preview?.valid == true && !busy) {
-            Text(if (busy) "处理中…" else if (environment == BrokerEnvironment.LOCAL_DEMO) "检查并模拟${draft.side.label()}" else "检查并${draft.side.label()}")
+            Text(if (busy) "处理中…" else (if (skipConfirmation) "" else "检查并") + (if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else "") + draft.side.label())
         }
         Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "订单只提交给当前模拟交易商。" else "订单将发送至当前 Tradovate ${environment.label} 账户。", color = TradingColors.Muted, fontSize = 10.sp)
     }

@@ -89,7 +89,7 @@ internal fun MobileOrderSheet(
     draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
     panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
     onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean,
-    modifier: Modifier = Modifier, busy: Boolean = false,
+    modifier: Modifier = Modifier, busy: Boolean = false, skipConfirmation: Boolean = false,
     content: @Composable ColumnScope.() -> Unit, body: @Composable () -> Unit,
 ) {
     // The chart always occupies the same composition slot, including when the sheet is closed.
@@ -97,7 +97,7 @@ internal fun MobileOrderSheet(
         body()
         if (panelState != MobileOrderPanelState.CLOSED) MobileOrderSheetSurface(
             instrument, quote, capabilities, draft, onDraft, panelState, onStateChange, onClose, onSubmit, canSubmit,
-            Modifier.matchParentSize(), busy, content)
+            Modifier.matchParentSize(), busy, skipConfirmation, content)
     }
 }
 
@@ -107,7 +107,7 @@ private fun MobileOrderSheetSurface(
     instrument: Instrument, quote: Quote?, capabilities: BrokerCapabilities,
     draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
     panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
-    onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean, modifier: Modifier, busy: Boolean,
+    onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean, modifier: Modifier, busy: Boolean, skipConfirmation: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
@@ -204,7 +204,7 @@ private fun MobileOrderSheetSurface(
                             val submitEnabled = canSubmit && !busy
                             val submitColor = if (submitEnabled) colors.Accent else colors.Muted.copy(alpha = .4f)
                             IconButton({ focus.clearFocus(); onSubmit() }, Modifier.size(48.dp)
-                                .testTag("compact-submit-order").semantics { contentDescription = "检查并下单" },
+                                .testTag("compact-submit-order").semantics { contentDescription = if (skipConfirmation) "立即下单" else "检查并下单" },
                                 enabled = submitEnabled) {
                                 Canvas(Modifier.size(18.dp)) {
                                     val stroke = 1.6.dp.toPx()

@@ -36,6 +36,65 @@ class TradingScreenTest {
         }
         compose.waitForIdle()
     }
+    private fun skipConfirmations() = runBlocking { assertTrue(runtime.tradingPreferences.setSkipConfirmation(true)) }
+
+    @Test fun directOrderCloseAndCancelExecuteWithoutConfirmation() {
+        skipConfirmations()
+        render()
+        val before = session.state.value.positions.size
+        compose.onNodeWithTag("review-order").performScrollTo().assertTextContains("模拟买入").performClick()
+        compose.waitUntil(5_000) { session.state.value.positions.size == before + 1 }
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        compose.onAllNodesWithText("平仓").onFirst().performClick()
+        compose.waitUntil(5_000) { session.state.value.positions.size == before }
+        compose.onNodeWithText("确认平仓").assertDoesNotExist()
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        runBlocking { assertTrue(session.placeOrder("direct-cancel-fixture", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, q.ask - 500)).accepted) }
+        val order = session.state.value.orders.single()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-${order.id}")
+        compose.onNodeWithText("撤单").performClick()
+        compose.waitUntil(5_000) { session.state.value.orders.isEmpty() }
+        compose.onNodeWithText("确认撤单").assertDoesNotExist()
+    }
+
+    @Test fun directPendingEntryAndProtectionDropsApplyWithoutEditors() {
+        skipConfirmations()
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        runBlocking { assertTrue(session.placeOrder("direct-pending-fixture", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry, entry - 400, entry + 800)).accepted) }
+        render()
+        val updated = dragLine(entry, 1)
+        compose.waitUntil(5_000) { session.state.value.orders.single().version == 2L }
+        assertEquals(updated, session.state.value.orders.single().request.entryPrice)
+        compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
+        val stop = dragLine(entry - 400, 1)
+        compose.waitUntil(5_000) { session.state.value.orders.single().version == 3L }
+        assertEquals(stop, session.state.value.orders.single().request.stopLoss)
+        compose.onNodeWithTag("pending-protection-dialog").assertDoesNotExist()
+        // Manual editing still needs an input form; merely opening it must not submit.
+        val order = session.state.value.orders.single()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-${order.id}")
+        compose.onNodeWithTag("edit-order-${order.id}").performClick()
+        compose.onNodeWithTag("pending-entry-dialog").assertExists()
+        assertEquals(order, session.state.value.orders.single())
+    }
+
+    @Test fun directPositionProtectionDropAppliesOnceReleased() {
+        skipConfirmations()
+        val p = session.state.value.positions.first { it.symbol == instrument.symbol }
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val sl = if (p.side == Side.BUY) q.bid - 400 * instrument.tickSize else q.ask + 400 * instrument.tickSize
+        runBlocking { assertTrue(session.modifyProtection("direct-position-fixture", p.id, p.version, sl, p.takeProfit).accepted) }
+        val before = session.state.value.positions.first { it.id == p.id }
+        render()
+        val updated = dragLine(sl, if (p.side == Side.BUY) 1 else -1, release = false)
+        assertEquals(before.version, session.state.value.positions.first { it.id == p.id }.version)
+        compose.onNodeWithTag("trading-chart").performTouchInput { up() }
+        compose.waitUntil(5_000) { session.state.value.positions.first { it.id == p.id }.version > before.version }
+        assertEquals(updated, session.state.value.positions.first { it.id == p.id }.stopLoss)
+        compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
+    }
+
     @Test fun orderPreviewConfirmationAndOhlcTable() {
         render()
         val before = session.state.value.positions.size

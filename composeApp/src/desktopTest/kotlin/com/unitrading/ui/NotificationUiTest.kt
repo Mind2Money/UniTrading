@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -37,6 +38,7 @@ class NotificationUiTest {
             tradingReady = true, statusMessage = "已连接：服务器行情 · 净额持仓"))
         var syncCalls = 0
         var orderCalls = 0
+        var placeGate: CompletableDeferred<Unit>? = null
         var failSync = false
         var result = TradeResult(true, "Tradovate 已受理，最终结果以服务器订单/成交更新为准")
         override suspend fun resynchronize() { syncCalls++; if (failSync) error("offline") }
@@ -49,7 +51,7 @@ class NotificationUiTest {
             override val state = MutableStateFlow(AccountSnapshot(accountId, 25_000_000_000))
             override fun preview(request: OrderRequest) = OrderPreview(5_500_250_000)
             override fun previewOrderModification(orderId: String, entryPrice: Long) = OrderPreview(entryPrice)
-            override suspend fun placeOrder(requestId: String, request: OrderRequest): TradeResult { orderCalls++; return result }
+            override suspend fun placeOrder(requestId: String, request: OrderRequest): TradeResult { orderCalls++; placeGate?.await(); return result }
             override suspend fun closePosition(requestId: String, positionId: String) = result
             override suspend fun cancelOrder(requestId: String, orderId: String) = result
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = result
@@ -57,9 +59,9 @@ class NotificationUiTest {
         }
     }
 
-    private fun render(broker: Broker, phone: Boolean = false) {
+    private fun render(broker: Broker, phone: Boolean = false, skipConfirmation: Boolean = false) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker))
-        runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.TRADINGV)) }
+        runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.TRADINGV)); runtime.tradingPreferences.setSkipConfirmation(skipConfirmation) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.7f)) {
             Box(Modifier.requiredSize(if (phone) 400.dp else 1400.dp, if (phone) 800.dp else 900.dp)) { TradingScreen(runtime) }
         } }
@@ -136,6 +138,26 @@ class NotificationUiTest {
         compose.onNodeWithTag("dismiss-trade-notice").performClick()
         compose.onNodeWithTag("trade-notice").assertDoesNotExist()
         compose.onNodeWithTag("order-quantity").assertTextContains("2")
+    }
+
+    @Test fun directCompactSubmitBlocksDuplicatesAndKeepsRejectedDraft() {
+        val gate = CompletableDeferred<Unit>()
+        val broker = Broker().apply { placeGate = gate; result = TradeResult(false, "服务器拒绝下单") }
+        render(broker, phone = true, skipConfirmation = true)
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("2")
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-submit-order").performClick()
+        compose.waitUntil(5_000) { broker.orderCalls == 1 }
+        compose.onNodeWithTag("compact-submit-order").assertIsNotEnabled().performClick()
+        assertEquals(1, broker.orderCalls)
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        compose.runOnIdle { gate.complete(Unit) }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("trade-notice").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("trade-notice").assertTextContains("服务器拒绝下单", substring = true)
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("2")
+        assertEquals(1, broker.orderCalls)
     }
 
     @Test fun ordinaryNoticesExpireAndRepeatedMessagesRestartTheTimer() {

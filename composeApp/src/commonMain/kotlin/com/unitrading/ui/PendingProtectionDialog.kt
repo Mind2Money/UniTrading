@@ -30,6 +30,7 @@ internal fun PendingProtectionDialog(
     onEdit: (PendingProtectionEdit) -> Unit,
     onConfirm: (stopLoss: Long?, takeProfit: Long?) -> Unit,
     onDismiss: () -> Unit,
+    skipConfirmation: Boolean = false,
 ) {
     val colors = TradingColors
     val request = edit.order.request
@@ -65,7 +66,7 @@ internal fun PendingProtectionDialog(
             preview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
         } },
         confirmButton = { Button({ onConfirm(sl, tp) }, Modifier.testTag("confirm-pending-protection"),
-            enabled = validInput && validVersion && capabilityError == null && preview?.valid == true && !busy) { Text("确认修改") } },
+            enabled = validInput && validVersion && capabilityError == null && preview?.valid == true && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
         dismissButton = { TextButton(onDismiss, enabled = !busy) { Text("取消") } },
     )
 }

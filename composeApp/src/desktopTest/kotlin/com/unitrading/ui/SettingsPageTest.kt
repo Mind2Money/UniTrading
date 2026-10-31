@@ -84,6 +84,24 @@ class SettingsPageTest {
         compose.onNodeWithTag("trading-chart").assertExists()
     }
 
+    @Test fun skipConfirmationSwitchAppliesImmediatelyAndResetStillRequiresConfirmation() {
+        val runtime = render()
+        compose.onNodeWithTag("nav-3").performClick()
+        compose.onNodeWithTag("settings-skip-confirmation").performScrollTo().assertIsOff().performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.skipConfirmation }
+        compose.onNodeWithTag("settings-skip-confirmation").assertIsOn()
+        capture("settings-skip-confirmation")
+        compose.onNodeWithTag("settings-reset-demo").performScrollTo().performClick()
+        compose.onNodeWithText("重置全部模拟数据？").assertExists()
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("settings-skip-confirmation").performScrollTo().performClick()
+        compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.skipConfirmation }
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithText("确认模拟下单").assertExists()
+    }
+
     @Test fun damagedSavedLoginsCanStillBeClearedOnlyAfterConfirmation() {
         var clears = 0
         var forgotten = false

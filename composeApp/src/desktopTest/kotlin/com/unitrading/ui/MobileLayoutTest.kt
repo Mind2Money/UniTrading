@@ -189,6 +189,24 @@ class MobileLayoutTest {
         compose.onNodeWithTag("mobile-navigation").assertExists()
     }
 
+    @Test fun compactArrowSubmitsImmediatelyWhenConfirmationIsSkipped() = phoneTest {
+        runBlocking { runtime.tradingPreferences.setSkipConfirmation(true) }
+        render()
+        val before = session.state.value.positions.size
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("review-order").assertTextContains("模拟买入")
+        compose.onNodeWithTag("order-quantity").performTextReplacement("wrong")
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-submit-order").assertIsNotEnabled()
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.10")
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-submit-order").assertContentDescriptionEquals("立即下单").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.positions.size == before + 1 }
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        compose.onNodeWithTag("trade-bar").assertExists()
+    }
+
     @Test fun compactArrowConfirmsTheCurrentDraftWithoutExpandingTheEditor() = phoneTest {
         render()
         val before = session.state.value
