@@ -338,6 +338,11 @@ class TradovateBroker(
     private suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
         val route = continuousRoutes[symbol] ?: return@withLock
         if (!force && now() < route.validUntil && route.checkedAt?.let { now() >= it } == true) return@withLock
+        if (!force && route.validUntil == 0L && route.checkedAt?.let { now() - it in 0 until 60_000 } == true) return@withLock
+        lock.withLock {
+            continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, tradeSymbolStatus = "正在核实主力")))
+            rebuild()
+        }
         var target: Instrument? = null
         var validUntil = 0L
         var reason = ""
@@ -356,7 +361,8 @@ class TradovateBroker(
         catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) { reason = safeMessage(e.message ?: "日成交量不可用") }
         lock.withLock {
-            val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true, tradeSymbol = target?.symbol)
+            val spec = (target ?: route.spec).copy(symbol = symbol, category = "连续合约", isContinuous = true, tradeSymbol = target?.symbol,
+                tradeSymbolStatus = if (target == null) "主力无法确认：$reason" else null)
             continuousRoutes = continuousRoutes + (symbol to route.copy(spec = spec, checkedAt = now(), validUntil = validUntil))
             if (target == null) problem = "$symbol 主力无法确认：$reason；连续合约下单已暂停"
             else if (problem.startsWith("$symbol 主力无法确认")) problem = "$symbol 成交量主力已确认：${target?.symbol}"
@@ -367,20 +373,19 @@ class TradovateBroker(
     private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long {
         val socket = checkNotNull(marketSocket) { "行情连接不可用" }
         check(marketReady) { "行情尚未就绪" }
-        val collector = DailyVolumeHistory(session.day)
+        val overflow = lock.withLock { earlyChartOverflow }
         val response = socket.request("md/getChart", buildJsonObject {
             put("symbol", symbol)
             put("chartDescription", chartDescription(Timeframe(1440)))
-            putJsonObject("timeRange") {
-                put("asFarAsTimestamp", kotlin.time.Instant.fromEpochMilliseconds(session.start).toString())
-                put("closestTimestamp", kotlin.time.Instant.fromEpochMilliseconds(session.end - 1).toString())
-                put("asMuchAsElements", 1)
-            }
+            put("timeRange", dailyVolumeRange(session))
         })
         val ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
         try {
+            require(response.str("mode") == null || response.str("mode") == "RealTime") { "日成交量行情权限或模式不可用" }
+            val collector = DailyVolumeHistory(session.day, allowEmpty = response.str("mode") == "RealTime")
             val key = requireNotNull(chartSubscriptionKey(response["historicalId"])) { "日成交量历史通道缺失" }
             lock.withLock {
+                require(overflow == earlyChartOverflow) { "日成交量历史包丢失，请重试" }
                 ids.mapNotNull(::chartSubscriptionKey).forEach(discardedCharts::remove)
                 volumeCharts[key] = collector
                 chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let(discardedCharts::add)

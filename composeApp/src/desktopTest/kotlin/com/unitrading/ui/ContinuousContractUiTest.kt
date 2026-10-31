@@ -53,8 +53,9 @@ class ContinuousContractUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithText("图表 / 指标 @TEST → 下单 ${dated.symbol}").assertExists()
         compose.runOnIdle {
-            changes.value = changes.value.copy(instruments = listOf(alias.copy(tradeSymbol = null)) + demo.instruments)
+            changes.value = changes.value.copy(instruments = listOf(alias.copy(tradeSymbol = null, tradeSymbolStatus = "主力无法确认：日成交量查询超时")) + demo.instruments)
         }
+        compose.onNodeWithTag("continuous-route").assertTextContains("主力无法确认：日成交量查询超时", substring = true)
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.runOnIdle { assertNull(submitted) }

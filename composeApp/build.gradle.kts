@@ -70,7 +70,7 @@ tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
     dependsOn("desktopTestClasses", stageTradovateLoginHost)
     classpath = files(desktopTestCompilation.output.allOutputs, desktopTestCompilation.runtimeDependencyFiles)
     mainClass.set("com.unitrading.TradovateReadOnlyProbeKt")
-    args("--demo-read-only")
+    args(if (providers.gradleProperty("probeSavedContinuous").orNull == "true") "--demo-continuous-read-only" else "--demo-read-only")
     systemProperty("file.encoding", "UTF-8")
     systemProperty("sun.stdout.encoding", "UTF-8")
     systemProperty("sun.stderr.encoding", "UTF-8")

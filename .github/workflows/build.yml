@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Replace obsolete PR checks, but give every push its own group. A slow iOS
-  # check or notification must not serialize subsequent builds on the branch.
+  # Replace obsolete PR checks, but give every push its own group.
+  # Release signing and notification must finish for every push.
   # Published runs still finish signing and notifying without being cancelled.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -24,106 +24,8 @@ env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false
 
 jobs:
-  test-desktop:
-    name: Windows regression and application
-    runs-on: windows-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - run: sdkmanager --install "platforms;android-37.0"
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Run shared, broker, and Compose tests
-        run: ./gradlew.bat :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest :composeApp:createDistributable
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: windows-test-reports
-          path: |
-            **/build/reports/tests/
-            **/build/test-results/
-
-  test-ios:
-    name: iOS ARM64 framework, app, and platform checks
-    runs-on: macos-15
-    timeout-minutes: 45
-    # Informational until iOS is a release target: a failure here neither blocks signing nor fails the push.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - run: sdkmanager --install "platforms;android-37.0"
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Run Kotlin Native tests
-        run: ./gradlew :broker-api:iosSimulatorArm64Test :demo-broker:iosSimulatorArm64Test :tradovate-broker:iosSimulatorArm64Test :composeApp:iosSimulatorArm64Test
-      - name: Build and test iOS platform integration
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
-          xcrun simctl boot "$device" || true
-          xcrun simctl bootstatus "$device" -b
-          # Simulator-only Keychain group; never use it for device distribution. Xcode
-          # links simulator entitlements into the executable's __entitlements section and
-          # signs ad hoc without them. Restricted entitlements inside an ad hoc signature
-          # make the simulator refuse to launch the app.
-          entitlements="$PWD/artifacts/ios-ci.entitlements"
-          python3 - "$entitlements" <<'PY'
-          import plistlib, sys
-          from pathlib import Path
-          Path(sys.argv[1]).write_bytes(plistlib.dumps({'keychain-access-groups': ['CI.com.unitrading.demo']}))
-          PY
-          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug -destination "id=$device" -derivedDataPath artifacts/ios-build ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS="$entitlements" build
-          app=artifacts/ios-build/Build/Products/Debug-iphonesimulator/UniTrading.app
-          if ! otool -l "$app/UniTrading" | grep 'sectname __entitlements'; then
-            echo "::error::Simulator entitlements were not linked into the app executable"
-            exit 1
-          fi
-          codesign --verify --deep --strict "$app"
-          xcrun simctl install "$device" "$app"
-          python3 - "$device" <<'PY'
-          import subprocess, sys
-          from pathlib import Path
-          for flag, marker, filename in [('--native-platform-self-test', 'NATIVE_PLATFORM_SELF_TEST PASS', 'ios-platform-test.log'), ('--native-ui-self-test', 'NATIVE_UI_SELF_TEST PASS', 'ios-ui-test.log')]:
-              try:
-                  result = subprocess.run(['xcrun', 'simctl', 'launch', '--console', sys.argv[1], 'com.unitrading.demo', flag], text=True, capture_output=True, timeout=90)
-              except subprocess.TimeoutExpired as error:
-                  Path('artifacts', filename).write_text(f'{flag} timed out; check DEBUG build configuration.')
-                  subprocess.run(['xcrun', 'simctl', 'terminate', sys.argv[1], 'com.unitrading.demo'], check=False)
-                  raise SystemExit(str(error))
-              log = result.stdout + result.stderr
-              Path('artifacts', filename).write_text(log)
-              print(log)
-              if result.returncode != 0 or marker not in log:
-                  raise SystemExit(f'Native self-test did not pass: {flag}')
-          PY
-          grep -q 'NATIVE_PLATFORM_SELF_TEST PASS' artifacts/ios-platform-test.log
-          grep -q 'NATIVE_UI_SELF_TEST PASS' artifacts/ios-ui-test.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: ios-test-reports
-          path: |
-            **/build/test-results/
-            artifacts/ios-platform-test.log
-            artifacts/ios-ui-test.log
-            artifacts/ios-build/Logs/
-            composeApp/build/bin/iosSimulatorArm64/debugFramework/UniTrading.framework/Headers/
-
+  # Desktop and iOS compilation/tests run locally via scripts/build-local.ps1.
+  # Hosted runners only produce the Android release and deliver it.
   # ─── Android ────────────────────────────────────────────────────────────────
   # Every branch and pull request builds the R8-minified release APK; only
   # main/master and v* tag pushes go on to signing and Telegram.
@@ -233,8 +135,8 @@ jobs:
   # environment and the keystore file is deleted before the step ends.
   sign-android:
     name: 签名 Android Release
-    # iOS is not a release target: its job must not hold back the Android package.
-    needs: [build-android, test-desktop]
+    # Local regression tests must pass before pushing; no hosted test jobs.
+    needs: [build-android]
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||

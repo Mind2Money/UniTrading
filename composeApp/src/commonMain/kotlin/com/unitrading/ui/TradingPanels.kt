@@ -94,7 +94,7 @@ internal fun OrderTicket(
                 Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment == BrokerEnvironment.LIVE) "Live 实盘" else "Demo")
             }
             Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, fontSize = 11.sp)
-            if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionSymbol ?: "主力待确认"}", color = TradingColors.Accent, fontSize = 11.sp)
+            if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = TradingColors.Accent, fontSize = 11.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Side.entries.forEach { side ->

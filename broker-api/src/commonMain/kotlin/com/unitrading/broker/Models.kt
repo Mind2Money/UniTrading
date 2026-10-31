@@ -54,8 +54,11 @@ data class Instrument(
     /** Continuous series are chart symbols; orders must name their resolved dated contract. */
     val isContinuous: Boolean = false,
     val tradeSymbol: String? = null,
+    /** Per-symbol resolution progress/failure, independent of connection notifications. */
+    val tradeSymbolStatus: String? = null,
 ) {
     val executionSymbol: String? get() = if (isContinuous) tradeSymbol else symbol
+    val executionLabel: String get() = executionSymbol ?: tradeSymbolStatus ?: "主力待确认"
     fun formatPrice(price: Long): String {
         val full = formatFixed(price, priceDecimals)
         if (displayPriceDecimals >= priceDecimals) return full

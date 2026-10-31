@@ -54,7 +54,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
     override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         check(environment == TradovateEnvironment.DEMO)
         val endpoint = path.substringBefore('?')
-        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contractMaturity/item", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
+        val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contract/ldeps", "contractMaturity/item", "contractMaturity/deps", "tradingSession/ldeps", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
             method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot" ||
             allowCapacityChecks && (method == "POST" && endpoint == "order/dryrun" || method == "GET" && endpoint == "order/list")
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
@@ -104,19 +104,45 @@ private fun asciiJson(value: JsonObject): String = buildString {
 }
 
 fun main(args: Array<String>) = runBlocking {
-    require(args.contentEquals(arrayOf("--demo-read-only")))
+    val continuous = args.contentEquals(arrayOf("--demo-continuous-read-only"))
+    require(continuous || args.contentEquals(arrayOf("--demo-read-only")))
     val wire = ReadOnlyProbeWire()
     var broker: TradovateBroker? = null
     var phase = "opening-browser"
     var verified = false
     try {
         println("READ_ONLY_PROBE: Demo only; no order endpoints; credentials remain in memory.")
-        val session = withTimeout(180_000) {
+        val session = if (continuous) {
+            phase = "saved-demo-session"
+            val saved = requireNotNull(DesktopCredentialStore().read()) { "No saved login" }
+            val json = Json { ignoreUnknownKeys = true }
+            requireNotNull(json.parseToJsonElement(saved).jsonObject["sessions"]?.jsonArray?.map {
+                json.decodeFromJsonElement(TradovateSession.serializer(), it)
+            }?.firstOrNull { it.environment == TradovateEnvironment.DEMO }) { "No saved Demo login" }
+        } else withTimeout(180_000) {
             DesktopTradovateLogin().signIn(TradovateEnvironment.DEMO) { status -> phase = phaseCode(status); println("STATUS $phase") }
         }
         println("LOGIN_HANDOFF_OK: environment=demo, userIdPresent=true, separateMarketTokenPresent=${session.mdAccessToken != null}")
         broker = TradovateBroker(session, wire)
         withTimeout(90_000) { broker.connect { status -> phase = phaseCode(status); println("STATUS $phase") } }
+        if (continuous) {
+            verified = true
+            for (root in listOf("MES", "MNQ", "MGC")) {
+                phase = "continuous-$root"
+                withTimeout(210_000) { broker.searchInstruments(root) }
+                val instrument = broker.instruments.singleOrNull { it.symbol == "@$root" }
+                val resolved = instrument?.executionSymbol != null
+                verified = verified && resolved && wire.refusedWrites == 0
+                println("CONTINUOUS_READ_ONLY_RESULT " + asciiJson(buildJsonObject {
+                    put("symbol", "@$root")
+                    put("resolved", resolved)
+                    put("tradeSymbol", instrument?.executionSymbol)
+                    put("status", instrument?.tradeSymbolStatus)
+                    put("refusedWriteRequests", wire.refusedWrites)
+                    put("sentOrderRequests", 0)
+                }))
+            }
+        } else {
         val symbol = broker.accounts.firstOrNull()?.let { broker.openSession(it.id).state.value.positions.firstOrNull()?.symbol }
             ?: broker.instruments.firstOrNull()?.symbol
         if (symbol != null) {
@@ -146,6 +172,7 @@ fun main(args: Array<String>) = runBlocking {
             put("refusedWriteRequests", wire.refusedWrites)
             put("sentOrderRequests", 0)
         }))
+        }
     } catch (error: Exception) {
         println("READ_ONLY_RESULT " + asciiJson(buildJsonObject {
             put("connected", false)

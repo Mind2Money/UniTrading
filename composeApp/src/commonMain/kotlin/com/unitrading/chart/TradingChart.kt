@@ -231,7 +231,7 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionSymbol ?: "主力待确认"}",
+        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
             Modifier.padding(horizontal = 12.dp, vertical = 3.dp).testTag("continuous-route"), fontSize = 11.sp, color = colors.Accent)
         if (compact) {
             toolbar(Modifier.fillMaxWidth())

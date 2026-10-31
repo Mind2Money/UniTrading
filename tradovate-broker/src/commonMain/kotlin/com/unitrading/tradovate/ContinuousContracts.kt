@@ -16,10 +16,10 @@ internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long)
         val year = requireNotNull(date.long("year")); val month = requireNotNull(date.long("month")); val day = requireNotNull(date.long("day"))
         Instant.parse("$year-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T00:00:00Z")
         val start = requireNotNull(row.str("startTime")?.let(::timestamp))
-        val open = requireNotNull(row.str("openTime")?.let(::timestamp))
-        val close = requireNotNull(row.str("closeTime")?.let(::timestamp))
         val end = requireNotNull(row.str("endTime")?.let(::timestamp))
-        require(start <= open && open < close && close <= end) { "交易时段无效" }
+        // start/end delimit trading. Tradovate's open/close may surround that interval
+        // (MES: open 21:30, start 22:00, end next day 21:00, close 21:29).
+        require(start < end) { "交易时段无效" }
         Session(year * 10_000 + month * 100 + day, start, end)
     }
     require(sessions.map { it.day }.distinct().size == sessions.size) { "交易日时段不唯一" }
@@ -66,16 +66,40 @@ internal suspend fun selectVolumeLeader(productId: Long, root: String, now: Long
     return leader.copy(session = leader.session.copy(validUntil = deadline))
 }
 
-/** A one-day DailyBar response, isolated from visible charts. Wait for EOH and require server trade-date evidence. */
-internal class DailyVolumeHistory(private val day: Long) {
+/** DailyBar timestamps label the trade date at UTC midnight, independently of session hours. */
+internal fun dailyBarTimestamp(day: Long): Long {
+    val text = day.toString()
+    require(text.length == 8) { "日线交易日期无效" }
+    return Instant.parse("${text.take(4)}-${text.substring(4, 6)}-${text.takeLast(2)}T00:00:00Z").toEpochMilliseconds()
+}
+
+internal fun dailyVolumeRange(session: CompletedSession) = buildJsonObject {
+    val start = dailyBarTimestamp(session.day)
+    put("asFarAsTimestamp", Instant.fromEpochMilliseconds(start).toString())
+    put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
+    put("asMuchAsElements", 1)
+}
+
+/** Only a successful RealTime subscription may treat an empty, explicitly ended history as zero. */
+internal class DailyVolumeHistory(private val day: Long, private val allowEmpty: Boolean = false) {
     val result = CompletableDeferred<Long>()
     private val bars = mutableMapOf<Long, Long>()
     fun accept(packet: JsonObject) {
         if (result.isCompleted) return
         try {
-            for (bar in packet.array("bars")) {
-                require((bar.long("td") ?: packet.long("td")) == day) { "日线交易日期不匹配或缺失" }
+            val values = packet["bars"]
+            require(values == null || values is JsonArray) { "日线数据格式无效" }
+            for (value in (values as? JsonArray).orEmpty()) {
+                val bar = requireNotNull(value as? JsonObject) { "日线数据格式无效" }
                 val time = requireNotNull(bar.str("timestamp")?.let(::timestamp))
+                for (row in listOf(packet, bar)) if ("td" in row) {
+                    require(row.long("td") == day) { "日线交易日期不匹配或无效" }
+                }
+                // Real DailyBar packets omit td; do not infer their date from the device
+                // calendar or accept an arbitrary intraday timestamp as daily evidence.
+                if ("td" !in packet && "td" !in bar) {
+                    require(time == dailyBarTimestamp(day)) { "日线交易日期不匹配或缺失" }
+                }
                 fun count(key: String): Long {
                     val value = requireNotNull(decimalUnits(bar.str(key), 6)) { "日成交量缺失" }
                     require(value >= 0 && value % 1_000_000 == 0L) { "日成交量无效" }
@@ -83,7 +107,10 @@ internal class DailyVolumeHistory(private val day: Long) {
                 }
                 bars[time] = checkedAdd(count("upVolume"), count("downVolume"))
             }
-            if (packet.bool("eoh") == true) result.complete(requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" })
+            if (packet.bool("eoh") == true) {
+                if (bars.isEmpty() && allowEmpty) result.complete(0)
+                else result.complete(requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" })
+            }
         } catch (e: Exception) { result.completeExceptionally(e) }
     }
 }

@@ -15,17 +15,22 @@ class ContinuousContractsTest {
         var leader = "MESZ6"
         var failMapping = false
         var missingVolume = false
+        var emptySymbols = emptySet<String>()
+        var dailyMode: String? = "RealTime"
+        var endHistory = true
+        var mappingRequests = 0
         private var channelId = 1000
         val dailyRequests = mutableListOf<JsonObject>()
         val maturities get() = listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
         val contracts get() = listOf(json("""{"id":200,"name":"MESZ6","contractMaturityId":300}"""),
             json("""{"id":201,"name":"MESH7","contractMaturityId":301}"""))
         val sessions get() = listOf(300L, 301L).flatMap { id -> (28..31).map { day ->
-            json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30:00Z","openTime":"2026-12-${day-1}T23:30:00Z","closeTime":"2026-12-${day}T23:00:00Z","endTime":"2026-12-${day}T23:00:00Z"}""")
+            json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30Z","openTime":"2026-12-${day-1}T23:00Z","closeTime":"2026-12-${day}T23:29Z","endTime":"2026-12-${day}T23:00Z"}""")
         } }
         init { delegate.snapshot = JsonObject(delegate.snapshot + mapOf("contractMaturities" to JsonArray(maturities), "contracts" to JsonArray(contracts))) }
         override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
             path.startsWith("contractMaturity/deps") -> {
+                mappingRequests++
                 if (failMapping) error("offline")
                 JsonArray(maturities)
             }
@@ -45,12 +50,18 @@ class ContinuousContractsTest {
                     dailyRequests.add(body)
                     val id = ++channelId
                     val end = (body["timeRange"] as JsonObject).str("closestTimestamp")!!
-                    val day = end.take(10).replace("-", "").toLong()
                     val volume = if (body.str("symbol") == leader) 1000 else 10
                     // Deliver data before the response to exercise subscription registration races.
-                    val bars = if (missingVolume) "[]" else """[{"timestamp":"${end.take(10)}T00:00:00Z","upVolume":$volume,"downVolume":0}]"""
-                    delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"td":$day,"bars":$bars},{"id":$id,"eoh":true}]}}]""")
-                    delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"historicalId":$id,"realtimeId":${id + 10000}}}]""")
+                    val bars = when {
+                        body.str("symbol") in emptySymbols -> "[]"
+                        missingVolume -> """[{"timestamp":"${end.take(10)}T00:00Z","upVolume":$volume}]"""
+                        else -> """[{"timestamp":"${end.take(10)}T00:00Z","upVolume":$volume,"downVolume":0}]"""
+                    }
+                    // Live DailyBar packets have no td, and use the same historical/realtime ID.
+                    val ending = if (endHistory) ",{\"id\":$id,\"eoh\":true}" else ""
+                    delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"db","bars":$bars}$ending]}}]""")
+                    val mode = dailyMode?.let { ",\"mode\":\"$it\"" }.orEmpty()
+                    delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"historicalId":$id,"realtimeId":$id$mode}}]""")
                 }
             }
         }
@@ -112,9 +123,25 @@ class ContinuousContractsTest {
         val wire = Wire().apply { failMapping = true }
         val broker = ready(wire)
         assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertEquals("主力无法确认：offline", broker.instruments.single { it.symbol == "@MES" }.executionLabel)
         assertEquals(1, broker.history("@MES", Timeframe.M5).size)
         assertFalse(broker.openSession("100").placeOrder("unresolved", request()).accepted)
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun failedResolutionSurvivesStatusUpdatesAndRepeatedWatchRespectsRetryDelay() = runTest {
+        val wire = Wire().apply { failMapping = true }
+        val broker = ready(wire)
+        repeat(3) { broker.watch("@MES", Timeframe.M5); advanceTimeBy(100); runCurrent() }
+        assertEquals(1, wire.mappingRequests)
+        broker.resynchronize()
+        assertEquals(2, wire.mappingRequests, "Explicit synchronization still retries immediately")
+        assertEquals("主力无法确认：offline", broker.instruments.single { it.symbol == "@MES" }.executionLabel)
+        wire.failMapping = false
+        wire.clock += 60_000
+        advanceTimeBy(5_000); runCurrent()
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionLabel)
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.tradeSymbolStatus)
     }
 
     @Test fun mappingFailureAtSubmitDoesNotReuseCachedTarget() = runTest {
@@ -170,6 +197,74 @@ class ContinuousContractsTest {
         val missing = DailyVolumeHistory(20261229)
         missing.accept(json("""{"td":20261229,"bars":[{"timestamp":"2026-12-29T00:00:00Z","upVolume":100}]}"""))
         assertFailsWith<IllegalArgumentException> { missing.result.await() }
+    }
+
+    @Test fun liveDailyBarWithoutTdUsesExactUtcDateAndStillRejectsContradictions() = runTest {
+        val packet = json("""{"s":"db","bars":[{"timestamp":"2026-10-29T00:00Z","upVolume":721725,"downVolume":716336}],"eoh":true}""")
+        val collector = DailyVolumeHistory(20261029)
+        collector.accept(packet)
+        assertEquals(1_438_061, collector.result.await())
+        for (bad in listOf(
+            packet.toString().replace("2026-10-29T00:00Z", "2026-10-28T00:00Z"),
+            packet.toString().replace("2026-10-29T00:00Z", "2026-10-29T01:00Z"),
+            packet.toString().replace("\"s\":\"db\"", "\"td\":20261028"),
+            packet.toString().replace("\"s\":\"db\"", "\"td\":null"),
+        )) {
+            val invalid = DailyVolumeHistory(20261029, allowEmpty = true)
+            invalid.accept(json(bad))
+            assertFailsWith<IllegalArgumentException> { invalid.result.await() }
+        }
+    }
+
+    @Test fun completedEmptyHistoryIsZeroOnlyWithPermissionAndNeverHidesInvalidBars() = runTest {
+        val allowed = DailyVolumeHistory(20261029, allowEmpty = true)
+        allowed.accept(json("""{"bars":[]}"""))
+        assertFalse(allowed.result.isCompleted)
+        allowed.accept(json("""{"eoh":true}"""))
+        assertEquals(0, allowed.result.await())
+        for (packet in listOf("""{"eoh":true}""", """{"bars":[null],"eoh":true}""", """{"bars":{},"eoh":true}""")) {
+            val invalid = DailyVolumeHistory(20261029, allowEmpty = packet.contains("bars"))
+            invalid.accept(json(packet))
+            assertFailsWith<IllegalArgumentException> { invalid.result.await() }
+        }
+    }
+
+    @Test fun realProtocolResolvesLeaderDespiteEmptyFarMonthAndCancelsSharedSubscriptions() = runTest {
+        val wire = Wire().apply { emptySymbols = setOf("MESH7") }
+        val broker = ready(wire)
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertEquals(2, wire.dailyRequests.size)
+        for (body in wire.dailyRequests) {
+            val range = body["timeRange"]!!.jsonObject
+            assertEquals("2026-12-29T00:00:00Z", range.str("asFarAsTimestamp"))
+            assertEquals("2026-12-29T23:59:59.999Z", range.str("closestTimestamp"))
+        }
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun emptyHistoryWithoutRealtimeModeOrEndMarkerCannotResolveLeader() = runTest {
+        for (mode in listOf(null, "Delayed")) {
+            val wire = Wire().apply { emptySymbols = setOf("MESH7"); dailyMode = mode }
+            assertNull(ready(wire).instruments.single { it.symbol == "@MES" }.executionSymbol)
+        }
+        val wire = Wire().apply { emptySymbols = setOf("MESH7"); endHistory = false }
+        val broker = ready(wire)
+        advanceTimeBy(20_000); runCurrent()
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertTrue(broker.market.value.statusMessage.contains("超时"))
+    }
+
+    @Test fun dailyRangeUsesExchangeTradeDateEvenWhenMidnightFallsOutsideSessionHours() {
+        val session = CompletedSession(20261029, timestamp("2026-10-29T01:00Z")!!, timestamp("2026-10-29T09:00Z")!!, Long.MAX_VALUE)
+        assertEquals("2026-10-29T00:00:00Z", dailyVolumeRange(session).str("asFarAsTimestamp"))
+    }
+
+    @Test fun actualMesSessionHoursAcceptPreOpenAndPostCloseButRejectReversedTrading() {
+        val rows = (29..30).map { day -> json("""{"contractMaturityId":63452,"tradeDate":{"year":2026,"month":10,"day":$day},"startTime":"2026-10-${day-1}T22:00Z","openTime":"2026-10-${day-1}T21:30Z","endTime":"2026-10-${day}T21:00Z","closeTime":"2026-10-${day}T21:29Z"}""") }
+        assertEquals(20261029, completedSession(rows, 63452, timestamp("2026-10-30T18:00Z")!!).day)
+        assertFailsWith<IllegalArgumentException> {
+            completedSession(rows.map { JsonObject(it + ("endTime" to it.getValue("startTime"))) }, 63452, timestamp("2026-10-30T18:00Z")!!)
+        }
     }
 
     @Test fun sessionCalendarHandlesWeekendAndEarlyCloseWithoutDeviceDateGuesses() {

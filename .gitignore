@@ -8,6 +8,7 @@ local.properties
 *.log
 .claude/
 artifacts/
+__pycache__/
 iosApp/Pods/
 iosApp/**/xcuserdata/
 iosApp/DerivedData/

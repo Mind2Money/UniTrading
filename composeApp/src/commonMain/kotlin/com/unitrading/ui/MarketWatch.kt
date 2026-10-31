@@ -145,7 +145,7 @@ internal fun MarketQuoteRow(
             }
             val symbol: @Composable (Modifier) -> Unit = { m -> Column(m, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(instrument.symbol, color = colors.Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (instrument.isContinuous) "连续 · ${instrument.executionSymbol ?: "主力待确认"}" else instrument.name,
+                Text(if (instrument.isContinuous) "连续 · ${instrument.executionLabel}" else instrument.name,
                     color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
             val quotes: @Composable (Modifier) -> Unit = { m -> Row(m, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
