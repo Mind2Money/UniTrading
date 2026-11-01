@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,7 +50,6 @@ internal fun MarketWatch(
     var editing by remember(plugin) { mutableStateOf(false) }
     var query by remember(plugin) { mutableStateOf("") }
     var category by remember(plugin) { mutableStateOf<String?>(null) }
-    var showLegend by remember { mutableStateOf(false) }
     var searching by remember(plugin) { mutableStateOf(false) }
     var searchError by remember(plugin) { mutableStateOf<String?>(null) }
     var retry by remember(plugin) { mutableIntStateOf(0) }
@@ -143,7 +140,7 @@ internal fun MarketWatch(
                             Column(Modifier.weight(1f)) {
                                 Text(instrument.symbol, color = colors.Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 Text(instrument.name, color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (instrument.isContinuous) Text("连续 · ${instrument.executionLabel}", color = colors.Muted, fontSize = 10.sp,
+                                if (instrument.isContinuous) Text(watchSubtitle(instrument), color = colors.Muted, fontSize = 10.sp,
                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                             WatchAction(if (included) "✓" else "⊕", if (included) "已添加 ${instrument.symbol}" else "添加 ${instrument.symbol}",
@@ -176,33 +173,29 @@ internal fun MarketWatch(
                             WatchAction("−", "移除 $symbol", "market-remove-$symbol") { update(symbols - symbol) }
                         }
                     } else if (instrument != null) {
-                        key(plugin, instrument.executionSymbol, account.accountId) {
-                            MarketQuoteRow(instrument, market.quotes[instrument.executionSymbol],
-                                activity[instrument.executionSymbol] ?: MarketActivity(), symbol == selected,
+                        // An unconfirmed continuous row keeps its last confirmed contract's prices; orders still wait.
+                        key(plugin, instrument.priceSymbol, account.accountId) {
+                            MarketQuoteRow(instrument, market.quotes[instrument.priceSymbol],
+                                activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
                                 connected = market.connected, onClick = { onSymbol(symbol) })
                         }
                     } else Text("$symbol · 等待合约加载", Modifier.padding(12.dp), color = colors.Muted, fontSize = 12.sp)
                 }
             }
-            HorizontalDivider(color = colors.Border, thickness = .5.dp)
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("${symbols.size} 个品种 · UTC", color = colors.Muted, fontSize = 10.sp)
-                    if (!market.connected) Text("连接已断开", color = colors.Loss, fontSize = 10.sp)
-                }
-                WatchAction("ⓘ", "标记说明", "market-marker-help") { showLegend = true }
-            }
         }
         saveError?.let { Text(it, Modifier.padding(8.dp), color = colors.Loss, fontSize = 11.sp) }
     }
-    if (showLegend) AlertDialog(onDismissRequest = { showLegend = false }, title = { Text("行情标记") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("每行左上角显示当前账户在该合约上的状态，数字为笔数。")
-            Text("多 / 空：多头、空头持仓\n挂：入场挂单\nSL / TP：独立止损、止盈单\n待：订单关联待确认")
-            Text("多种状态可同时出现。附在入场请求或持仓上的保护价格不重复计为独立挂单。")
-            Text("左侧 Bid 卖出，右侧 Ask 买入。蓝色表示该侧报价上升，红色表示下降；点差以最小跳动（tick）计。时间为最近报价的 UTC 时间。")
-            Text("连续合约的买卖价来自已确认的实际交易合约。主力核实期间显示等待状态。行情未提供日涨跌与日高低时不展示这些字段。")
-        } }, confirmButton = { TextButton({ showLegend = false }) { Text("知道了") } })
+}
+
+/** Continuous rows name the dated contract behind their prices and mark it until the volume check confirms it. */
+internal fun watchSubtitle(instrument: Instrument): String {
+    if (!instrument.isContinuous) return instrument.name
+    val contract = instrument.executionSymbol ?: instrument.quoteSymbol ?: return "连续 · ${instrument.executionLabel}"
+    return "连续 · $contract" + when {
+        instrument.executionSymbol != null -> ""
+        instrument.tradeSymbolStatus?.startsWith("正在核实主力") == true -> " · 核实中"
+        else -> " · 待确认"
+    }
 }
 
 @Composable
@@ -228,9 +221,9 @@ internal fun MarketQuoteRow(
         ActivityMarker("TP", activity.targets, colors.Target),
         ActivityMarker("待", activity.unresolved, colors.Muted),
     ).filter { it.count > 0 }
-    var previous by remember(instrument.executionSymbol, connected) { mutableStateOf<Quote?>(null) }
-    var lastBidDirection by remember(instrument.executionSymbol, connected) { mutableIntStateOf(0) }
-    var lastAskDirection by remember(instrument.executionSymbol, connected) { mutableIntStateOf(0) }
+    var previous by remember(instrument.priceSymbol, connected) { mutableStateOf<Quote?>(null) }
+    var lastBidDirection by remember(instrument.priceSymbol, connected) { mutableIntStateOf(0) }
+    var lastAskDirection by remember(instrument.priceSymbol, connected) { mutableIntStateOf(0) }
     val comparable = previous?.takeIf { quote != null && quote.timeMs >= it.timeMs }
     val bidDirection = if (quote == null) 0 else comparable?.let { quote.bid.compareTo(it.bid) }?.takeIf { it != 0 } ?: lastBidDirection
     val askDirection = if (quote == null) 0 else comparable?.let { quote.ask.compareTo(it.ask) }?.takeIf { it != 0 } ?: lastAskDirection
@@ -266,8 +259,7 @@ internal fun MarketQuoteRow(
             }
             val symbol: @Composable (Modifier) -> Unit = { m -> Column(m, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(instrument.symbol, color = colors.Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (instrument.isContinuous) "连续 · ${instrument.executionLabel}" else instrument.name,
-                    color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(watchSubtitle(instrument), color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
             val quotes: @Composable (Modifier) -> Unit = { m -> Row(m, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 QuotePrice("Bid 卖出", quote?.let { instrument.formatPrice(it.bid) }, quoteColor(bidDirection), Modifier.weight(1f), stacked)

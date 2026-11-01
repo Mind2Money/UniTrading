@@ -1,12 +1,16 @@
 package com.unitrading.tradovate
 
 import com.unitrading.broker.checkedAdd
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import kotlin.time.Instant
 
@@ -18,7 +22,64 @@ internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObj
 
 // Publication gaps are allowed only with fresh daily-history evidence, and never indefinitely.
 private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L
-internal const val CALENDAR_TAIL_REFRESH_MS = 60_000L
+// A newer session cannot both start and complete between two checks this far apart.
+internal const val CALENDAR_TAIL_REFRESH_MS = 15 * 60_000L
+private const val MAX_CACHED_VOLUMES = 2_000
+private const val CACHED_VOLUME_AGE_MS = 14 * 86_400_000L
+
+@Serializable
+private data class StoredEvidence(val version: Int = 1, val volumes: Map<String, Long> = emptyMap(), val leaders: Map<String, String> = emptyMap())
+
+/**
+ * A completed trade date's volume does not change, so re-verification reads it here instead of
+ * opening one daily chart per month again. The last confirmed leader only seeds displayed quotes.
+ * Not thread-safe: the broker reads and writes it under its state lock.
+ */
+internal class ContinuousEvidence(private val store: CandleCacheStore?, private val key: String) {
+    private val volumes = mutableMapOf<String, Long>()
+    private val leaders = mutableMapOf<String, String>()
+    private var loaded = false
+
+    /** Called before any route exists; a damaged or old cache only costs fresh queries. */
+    suspend fun load(now: Long) {
+        if (loaded) return
+        loaded = true
+        try {
+            val stored = store?.read(key)?.let { Json.decodeFromString<StoredEvidence>(it) } ?: return
+            if (stored.version != 1) return
+            volumes.putAll(stored.volumes.filter { (entry, volume) ->
+                val day = entry.substringAfterLast('/').toLongOrNull()
+                volume >= 0 && day != null && runCatching { now - dailyBarTimestamp(day) in 0..CACHED_VOLUME_AGE_MS }.getOrDefault(false)
+            })
+            leaders.putAll(stored.leaders.filter { (symbol, contract) -> symbol.startsWith("@") && contract.isNotBlank() })
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { volumes.clear(); leaders.clear() }
+    }
+
+    fun volume(contract: String, day: Long): Long? = volumes["$contract/$day"]
+
+    fun remember(contract: String, day: Long, volume: Long) {
+        volumes["$contract/$day"] = volume
+        if (volumes.size > MAX_CACHED_VOLUMES) volumes.keys.sortedBy { it.substringAfterLast('/') }
+            .take(volumes.size - MAX_CACHED_VOLUMES).forEach(volumes::remove)
+    }
+
+    /** Drops one product's cached volumes for a trade date, e.g. after a completed-volume correction. */
+    fun forget(root: String, day: Long) {
+        val month = Regex(Regex.escape(root) + "[FGHJKMNQUVXZ][0-9]{1,4}")
+        volumes.keys.removeAll { it.endsWith("/$day") && month.matches(it.substringBeforeLast('/')) }
+    }
+
+    fun leader(symbol: String): String? = leaders[symbol]
+    fun lead(symbol: String, contract: String) { leaders[symbol] = contract }
+    fun snapshot(): String = Json.encodeToString(StoredEvidence(volumes = volumes.toMap(), leaders = leaders.toMap()))
+
+    suspend fun save(snapshot: String) {
+        try { store?.write(key, snapshot) }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Disposable cache failure must not interrupt resolution. */ }
+    }
+}
 
 /** Exchange calendar, including overnight/holiday sessions; device calendar and isFront are irrelevant. */
 internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long): CompletedSession {
@@ -54,6 +115,7 @@ internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long)
 internal suspend fun selectVolumeLeader(productId: Long, root: String, now: Long,
     read: suspend (String) -> JsonArray,
     volume: suspend (String, CompletedSession) -> Long,
+    progress: suspend (done: Int, total: Int) -> Unit = { _, _ -> },
 ): VolumeLeader {
     val all = read("contractMaturity/deps?masterid=$productId").map { it.jsonObject }
     require(all.all { it.long("productId") == productId }) { "合约月份品种不匹配" }
@@ -75,11 +137,14 @@ internal suspend fun selectVolumeLeader(productId: Long, root: String, now: Long
     require(sessions.values.map { it.day }.distinct().size == 1) { "候选合约的完整交易日不一致" }
     val verifyLatest = sessions.values.any { it.verifyLatestDailyBar }
     val slots = Semaphore(3)
+    val counted = Mutex()
+    var done = 0
     val ranked = coroutineScope { contracts.map { contract -> async { slots.withPermit {
         val maturity = byId.getValue(contract.long("contractMaturityId")!!)
         val session = sessions.getValue(maturity.long("id")!!).copy(verifyLatestDailyBar = verifyLatest)
         val count = volume(contract.str("name")!!, session)
         require(count >= 0) { "日成交量无效" }
+        counted.withLock { progress(++done, contracts.size) }
         VolumeLeader(contract, maturity, session, count)
     } } }.awaitAll() }
     val maximum = ranked.maxOf { it.volume }
@@ -120,14 +185,22 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
             for (value in (values as? JsonArray).orEmpty()) {
                 val bar = requireNotNull(value as? JsonObject) { "日线数据格式无效" }
                 val time = requireNotNull(bar.str("timestamp")?.let(::timestamp))
-                for (row in listOf(packet, bar)) if ("td" in row) {
-                    require(row.long("td") == day) { "日线交易日期不匹配或无效" }
-                }
+                val labels = listOf(packet, bar).filter { "td" in it }.map { requireNotNull(it.long("td")) { "日线交易日期不匹配或无效" } }
+                require(labels.distinct().size <= 1) { "日线交易日期不匹配或无效" }
+                // A labelled bar stamped at another date's UTC midnight contradicts itself.
+                labels.singleOrNull()?.let { td -> require(time % 86_400_000 != 0L || time == dailyBarTimestamp(td)) { "日线交易日期不匹配或无效" } }
+                // A month that did not trade on the date gets its latest older bar back
+                // (live GCN7: 2026-10-28 for 2026-10-30), i.e. no volume on the date itself.
+                if (labels.singleOrNull()?.let { it < day } ?: (time < dailyBarTimestamp(day))) continue
+                // A later date means trading continued past the calendar (live: MBT weekend bars).
+                val later = (labels.singleOrNull()?.takeIf { it > day }?.let(::dailyBarTimestamp)
+                    ?: time.takeIf { labels.isEmpty() && it > dailyBarTimestamp(day) && (it - dailyBarTimestamp(day)) % 86_400_000 == 0L })
+                    ?.let { Instant.fromEpochMilliseconds(it).toString().take(10) }
+                require(later == null) { "交易日历尚未包含 $later 的日线，暂无法确认主力" }
+                labels.singleOrNull()?.let { require(it == day) { "日线交易日期不匹配或无效" } }
                 // Real DailyBar packets omit td; do not infer their date from the device
                 // calendar or accept an arbitrary intraday timestamp as daily evidence.
-                if ("td" !in packet && "td" !in bar) {
-                    require(time == dailyBarTimestamp(day)) { "日线交易日期不匹配或缺失" }
-                }
+                if (labels.isEmpty()) require(time == dailyBarTimestamp(day)) { "日线交易日期不匹配或缺失" }
                 fun count(key: String): Long {
                     val value = requireNotNull(decimalUnits(bar.str(key), 6)) { "日成交量缺失" }
                     require(value >= 0 && value % 1_000_000 == 0L) { "日成交量无效" }
@@ -136,8 +209,8 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
                 bars[time] = checkedAdd(count("upVolume"), count("downVolume"))
             }
             if (result.isCompleted) {
-                // Keep monitoring the retained realtime channel. A new trade date or
-                // correction invalidates the cached ranking instead of silently reusing it.
+                // Packets can still arrive before the chart is cancelled. A new trade date or
+                // correction invalidates the result instead of silently reusing it.
                 if (bars.isNotEmpty()) require(bars.values.singleOrNull() == confirmedVolume) { "已完成日线发生更新" }
                 return
             }

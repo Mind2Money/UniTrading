@@ -56,9 +56,13 @@ data class Instrument(
     val tradeSymbol: String? = null,
     /** Per-symbol resolution progress/failure, independent of connection notifications. */
     val tradeSymbolStatus: String? = null,
+    /** Last volume-confirmed dated contract, kept for Bid/Ask display while unconfirmed; never an order symbol. */
+    val quoteSymbol: String? = null,
 ) {
     val executionSymbol: String? get() = if (isContinuous) tradeSymbol else symbol
     val executionLabel: String get() = executionSymbol ?: tradeSymbolStatus ?: "主力待确认"
+    /** Contract whose quotes a watch list shows; equals [executionSymbol] whenever the mapping is confirmed. */
+    val priceSymbol: String? get() = executionSymbol ?: quoteSymbol?.takeIf { isContinuous }
     fun formatPrice(price: Long): String {
         val full = formatFixed(price, priceDecimals)
         if (displayPriceDecimals >= priceDecimals) return full

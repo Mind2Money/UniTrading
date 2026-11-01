@@ -78,11 +78,19 @@ class MarketWatchUiTest {
         compose.onNodeWithTag("symbol-XAUUSD").assert(SemanticsMatcher.expectValue(
             androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "无持仓或挂单"))
         compose.runOnIdle { market.value = MarketSnapshot(connected = false) }
-        compose.onNodeWithText("连接已断开").assertIsDisplayed()
         compose.onAllNodesWithContentDescription("Bid 卖出 暂无报价", useUnmergedTree = true).assertCountEquals(4)
     }
 
-    @Test fun smallScreenLargeTypeKeepsBothWholePricesAndLegendAccessible() {
+    @Test fun quoteListHasNoFooterCountOrLegendButton() {
+        render()
+        compose.onNodeWithText("4 个品种", substring = true).assertDoesNotExist()
+        compose.onNodeWithTag("market-marker-help").assertDoesNotExist()
+        compose.runOnIdle { market.value = MarketSnapshot(connected = false) }
+        // The top bar's connection control reports disconnection; the list does not repeat it.
+        compose.onNodeWithText("连接已断开").assertDoesNotExist()
+    }
+
+    @Test fun smallScreenLargeTypeKeepsBothWholePrices() {
         render(320, 1.3f, ThemePreset.LIGHT)
         val bid = compose.onNodeWithContentDescription("Bid 卖出 3879.96", useUnmergedTree = true)
         val ask = compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true)
@@ -91,9 +99,6 @@ class MarketWatchUiTest {
         val askBounds = ask.fetchSemanticsNode().boundsInRoot
         assertTrue(bidBounds.right <= askBounds.left)
         capture("phone-small-light")
-        compose.onNodeWithTag("market-marker-help").performClick()
-        compose.onNodeWithText("行情标记").assertIsDisplayed()
-        compose.onNodeWithText("知道了").performClick()
         compose.onNodeWithTag("market-add").performClick()
         compose.onNodeWithTag("symbol-search").performTextReplacement("Gold")
         compose.onNodeWithTag("search-XAUUSD").assertExists()
@@ -157,5 +162,19 @@ class MarketWatchUiTest {
         compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(spec.copy(symbol = "@GC", isContinuous = true))) }
         compose.onNodeWithTag("market-corner-@GC", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Ask 买入 暂无报价", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun unconfirmedContinuousRowKeepsLastContractPricesAndMarksThem() {
+        val pending = spec.copy(symbol = "@GC", isContinuous = true, quoteSymbol = "XAUUSD", tradeSymbolStatus = "正在核实主力 2/5")
+        catalog.value = catalog.value.copy(instruments = listOf(pending))
+        render(320)
+        compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("连续 · XAUUSD · 核实中").assertIsDisplayed()
+        capture("continuous-checking")
+        compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(pending.copy(tradeSymbolStatus = "主力无法确认：日成交量查询超时"))) }
+        compose.onNodeWithText("连续 · XAUUSD · 待确认").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Bid 卖出 3879.96", useUnmergedTree = true).assertIsDisplayed()
+        compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(pending.copy(tradeSymbol = "XAUUSD", tradeSymbolStatus = null))) }
+        compose.onNodeWithText("连续 · XAUUSD").assertIsDisplayed()
     }
 }

@@ -23,7 +23,11 @@ class ContinuousContractsTest {
         var penalty: JsonObject? = null
         var chartPenalty = false
         var chartPenaltyRetries = 0
-        val dailyChannels = mutableMapOf<String, Int>()
+        var chartLimitRejections = 0
+        var refusedQuotes = emptySet<String>()
+        var olderBarSymbols = emptySet<String>()
+        val dailyIds = mutableListOf<Long>()
+        val cancelledCharts = mutableListOf<Long>()
         var mappingRequests = 0
         var maturityBatchRequests = 0
         private var channelId = 1000
@@ -52,6 +56,13 @@ class ContinuousContractsTest {
             return object : TradovateWireSocket by socket {
                 override suspend fun send(text: String) {
                     val parts = text.split('\n')
+                    when (parts.first()) {
+                        "md/cancelChart" -> json(text.substringAfter("\n\n")).long("subscriptionId")?.let(cancelledCharts::add)
+                        "md/subscribequote" -> if (json(text.substringAfter("\n\n")).str("symbol") in refusedQuotes) {
+                            delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"errorText":"No market entitlement"}}]""")
+                            return
+                        }
+                    }
                     if (parts.first() != "md/getChart") { socket.send(text); return }
                     val body = json(text.substringAfter("\n\n"))
                     if ((body["timeRange"] as? JsonObject)?.long("asMuchAsElements") != 1L) {
@@ -68,11 +79,18 @@ class ContinuousContractsTest {
                         delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":$penalty}]""")
                         return
                     }
+                    if (chartLimitRejections > 0) {
+                        chartLimitRejections--
+                        delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"errorText":"Limit for a number of simultaneous chart requests reached"}}]""")
+                        return
+                    }
                     val id = ++channelId
-                    dailyChannels[body.str("symbol")!!] = id
+                    dailyIds.add(id.toLong())
                     val range = body["timeRange"] as JsonObject
                     val end = range.str("closestTimestamp") ?: range.str("asFarAsTimestamp")!!
-                    val barTime = if (newerDailyBar && range.str("closestTimestamp") == null)
+                    val barTime = if (body.str("symbol") in olderBarSymbols)
+                        kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! - 2 * 86_400_000).toString()
+                    else if (newerDailyBar && range.str("closestTimestamp") == null)
                         kotlin.time.Instant.fromEpochMilliseconds(timestamp(end)!! + 86_400_000).toString()
                     else "${end.take(10)}T00:00Z"
                     val volume = if (body.str("symbol") == leader) 1000 else 10
@@ -90,14 +108,19 @@ class ContinuousContractsTest {
                 }
             }
         }
-        suspend fun dailyUpdate(symbol: String, time: String, volume: Long) {
-            val id = dailyChannels.getValue(symbol)
-            delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"bars":[{"timestamp":"$time","upVolume":$volume,"downVolume":0}]}]}}]""")
-        }
     }
-    private suspend fun TestScope.ready(wire: Wire): TradovateBroker {
+    private class MemoryCache : CandleCacheStore {
+        val values = mutableMapOf<String, String>()
+        override suspend fun read(key: String) = values[key]
+        override suspend fun write(key: String, value: String) { values[key] = value }
+    }
+    private fun TestScope.broker(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
         val token = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe.encode("{\"sub\":42,\"exp\":4102444800}".encodeToByteArray()).trimEnd('=') + ".test-signature-only"
-        val broker = TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, token, token, 42, "test", 4_102_444_800_000), wire, backgroundScope, now = { wire.clock })
+        return TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, token, token, 42, "test", 4_102_444_800_000), wire, backgroundScope,
+            now = { wire.clock }, candleCacheStore = cache)
+    }
+    private suspend fun TestScope.ready(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
+        val broker = broker(wire, cache)
         broker.connect()
         broker.watch("@MES", Timeframe.M5)
         advanceTimeBy(5_000)
@@ -198,23 +221,23 @@ class ContinuousContractsTest {
         assertEquals("MESZ6", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
     }
 
-    @Test fun calendarTailRefreshesAfterOneMinuteAndRejectsAChangedLeader() = runTest {
+    @Test fun calendarTailRefreshesAfterFifteenMinutesAndRejectsACorrectedLeader() = runTest {
         val wire = Wire().apply { omitFutureSessions = true }
         val broker = ready(wire)
         val session = broker.openSession("100")
         assertTrue(session.preview(request()).valid)
         wire.leader = "MESH7"
-        wire.clock += 59_999
+        wire.clock += CALENDAR_TAIL_REFRESH_MS - 1
         broker.watch("@MES", Timeframe.M5); runCurrent()
         assertEquals(1, wire.mappingRequests)
         wire.clock++
-        wire.dailyUpdate("MESZ6", "2026-12-29T00:00Z", 10)
-        wire.dailyUpdate("MESH7", "2026-12-29T00:00Z", 1000)
-        runCurrent()
         val result = session.placeOrder("calendar-tail-roll", request())
         assertFalse(result.accepted)
         assertTrue(result.message.contains("换月"), result.message)
-        assertEquals(2, wire.mappingRequests)
+        // Cached ranking, the leader's fresh check exposing the correction, then a full fresh ranking.
+        assertEquals(3, wire.mappingRequests)
+        assertEquals(2 + 1 + 2, wire.dailyRequests.size)
+        assertEquals("MESH7", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
         assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
@@ -244,13 +267,11 @@ class ContinuousContractsTest {
             val broker = ready(wire)
             wire.newerDailyBar = !offline
             wire.failMapping = offline
-            wire.clock += 60_000
-            if (!offline) {
-                wire.dailyUpdate("MESZ6", "2026-12-30T00:00Z", 1000)
-                runCurrent()
-            }
+            wire.clock += CALENDAR_TAIL_REFRESH_MS
             assertFalse(broker.openSession("100").placeOrder("stale-tail", request()).accepted)
-            assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+            val instrument = broker.instruments.single { it.symbol == "@MES" }
+            assertNull(instrument.executionSymbol)
+            assertEquals("MESZ6", instrument.priceSymbol, "The last confirmed contract still supplies displayed quotes")
             assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
         }
     }
@@ -286,18 +307,79 @@ class ContinuousContractsTest {
         }
     }
 
-    @Test fun forcedCalendarRefreshReusesMonitoredDailyVolumesAndNewDateRevokesRouteImmediately() = runTest {
+    @Test fun forcedCalendarRefreshReusesCachedVolumesAndChecksOnlyTheLeaderForANewerDate() = runTest {
         val wire = Wire().apply { omitFutureSessions = true }
         val broker = ready(wire)
         repeat(5) { broker.refreshContinuous("@MES", force = true) }
         assertEquals(6, wire.mappingRequests)
-        assertEquals(2, wire.dailyRequests.size, "Refreshing the calendar must not repeatedly consume historical-query quota")
+        assertEquals(2 + 5, wire.dailyRequests.size, "Each calendar refresh may query only the leader's latest bar")
+        assertTrue(wire.dailyRequests.drop(2).all { it.str("symbol") == "MESZ6" && it["timeRange"]!!.jsonObject["closestTimestamp"] == null })
         assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
-        wire.dailyUpdate("MESH7", "2026-12-30T00:00Z", 1)
-        runCurrent()
-        assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol,
-            "Even a non-leading candidate's next-day update revokes the route without waiting for the minute timer")
+        wire.newerDailyBar = true
+        broker.refreshContinuous("@MES", force = true)
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
         assertFalse(broker.openSession("100").preview(request()).valid)
+    }
+
+    @Test fun rankingsReleaseEveryDailyChartSoManySymbolsFitTheServerLimit() = runTest {
+        for (tail in listOf(false, true)) {
+            val wire = Wire().apply { omitFutureSessions = tail }
+            ready(wire)
+            assertEquals(2, wire.dailyIds.size)
+            assertTrue(wire.dailyIds.all { it in wire.cancelledCharts }, "tail=$tail: no daily chart stays subscribed")
+        }
+    }
+
+    @Test fun simultaneousChartLimitIsRetriedInsteadOfFailingTheRanking() = runTest {
+        val wire = Wire().apply { omitFutureSessions = true; chartLimitRejections = 2 }
+        val broker = ready(wire)
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertEquals(4, wire.dailyRequests.size)
+    }
+
+    @Test fun restartReusesCompletedVolumesAndShowsTheRememberedContractFirst() = runTest {
+        for (tail in listOf(false, true)) {
+            val cache = MemoryCache()
+            ready(Wire().apply { omitFutureSessions = tail }, cache)
+            val wire = Wire().apply { omitFutureSessions = tail }
+            val broker = broker(wire, cache)
+            broker.connect()
+            val pending = broker.instruments.single { it.symbol == "@MES" }
+            assertNull(pending.executionSymbol)
+            assertEquals("MESZ6", pending.priceSymbol)
+            broker.refreshContinuous("@MES")
+            assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+            // Same trade date: no month is queried again; a calendar tail checks only the leader's latest bar.
+            assertEquals(if (tail) listOf("MESZ6") else emptyList(), wire.dailyRequests.map { it.str("symbol") })
+        }
+    }
+
+    @Test fun failedCheckKeepsRememberedQuotesButBlocksOrders() = runTest {
+        val cache = MemoryCache()
+        ready(Wire(), cache)
+        val wire = Wire().apply { failMapping = true }
+        val broker = broker(wire, cache)
+        broker.connect()
+        broker.watchQuotes(setOf("@MES"))
+        advanceTimeBy(1_000); runCurrent()
+        val instrument = broker.instruments.single { it.symbol == "@MES" }
+        assertNull(instrument.executionSymbol)
+        assertEquals("MESZ6", instrument.priceSymbol)
+        assertEquals("MESZ6", json(wire.delegate.market.bodies.getValue("md/subscribequote")).str("symbol"))
+        assertNotNull(broker.market.value.quotes["MESZ6"])
+        assertFalse(broker.openSession("100").placeOrder("unconfirmed", request()).accepted)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun oneRefusedQuoteDoesNotBlockTheOtherWatchListSymbols() = runTest {
+        val wire = Wire().apply { refusedQuotes = setOf("MESH7") }
+        val broker = broker(wire)
+        broker.connect()
+        broker.watchQuotes(setOf("MESH7", "MESZ6"))
+        advanceTimeBy(1_000); runCurrent()
+        assertEquals("MESZ6", json(wire.delegate.market.bodies.getValue("md/subscribequote")).str("symbol"))
+        assertNotNull(broker.market.value.quotes["MESZ6"])
+        assertTrue(broker.market.value.statusMessage.contains("部分自选行情订阅失败"))
     }
 
     @Test fun dailyHistoryTimePenaltyRetriesWithTicketButNeverRetriesCaptcha() = runTest {
@@ -377,8 +459,11 @@ class ContinuousContractsTest {
         assertFalse(data.result.isCompleted)
         data.accept(json("""{"eoh":true}"""))
         assertEquals(105, data.result.await())
+        // An older trade date is not the requested date's volume; without RealTime completeness it cannot become zero.
         val wrong = DailyVolumeHistory(20261230)
         wrong.accept(bar)
+        assertFalse(wrong.result.isCompleted)
+        wrong.accept(json("""{"eoh":true}"""))
         assertFailsWith<IllegalArgumentException> { wrong.result.await() }
         val missing = DailyVolumeHistory(20261229)
         missing.accept(json("""{"td":20261229,"bars":[{"timestamp":"2026-12-29T00:00:00Z","upVolume":100}]}"""))
@@ -391,8 +476,9 @@ class ContinuousContractsTest {
         collector.accept(packet)
         assertEquals(1_438_061, collector.result.await())
         for (bad in listOf(
-            packet.toString().replace("2026-10-29T00:00Z", "2026-10-28T00:00Z"),
             packet.toString().replace("2026-10-29T00:00Z", "2026-10-29T01:00Z"),
+            packet.toString().replace("2026-10-29T00:00Z", "2026-10-30T00:00Z"),
+            packet.toString().replace("\"s\":\"db\"", "\"td\":20261030"),
             packet.toString().replace("\"s\":\"db\"", "\"td\":20261028"),
             packet.toString().replace("\"s\":\"db\"", "\"td\":null"),
         )) {
@@ -400,6 +486,37 @@ class ContinuousContractsTest {
             invalid.accept(json(bad))
             assertFailsWith<IllegalArgumentException> { invalid.result.await() }
         }
+    }
+
+    @Test fun olderBarFromAMonthThatDidNotTradeCountsAsZeroOnlyWithRealtimeCompleteness() = runTest {
+        // Live GCN7 for trade date 2026-10-30 returned only its last bar, 2026-10-28, then eoh.
+        val packet = json("""{"s":"s","bars":[{"timestamp":"2026-10-28T00:00Z","upVolume":1,"downVolume":1}],"eoh":true}""")
+        val realtime = DailyVolumeHistory(20261030, allowEmpty = true)
+        realtime.accept(packet)
+        assertEquals(0, realtime.result.await())
+        val labelled = DailyVolumeHistory(20261030, allowEmpty = true)
+        labelled.accept(json("""{"td":20261028,"bars":[{"timestamp":"2026-10-28T00:00Z","upVolume":1,"downVolume":1}],"eoh":true}"""))
+        assertEquals(0, labelled.result.await())
+        val withoutPermission = DailyVolumeHistory(20261030)
+        withoutPermission.accept(packet)
+        assertFailsWith<IllegalArgumentException> { withoutPermission.result.await() }
+        val unfinished = DailyVolumeHistory(20261030, allowEmpty = true)
+        unfinished.accept(json("""{"bars":[{"timestamp":"2026-10-28T00:00Z","upVolume":1,"downVolume":1}]}"""))
+        assertFalse(unfinished.result.isCompleted)
+    }
+
+    @Test fun laterBarNamesTheDateMissingFromTheCalendar() = runTest {
+        // Live MBTX6 on Sunday 2026-11-01: weekend bars beyond a calendar that ends on 2026-10-30.
+        val collector = DailyVolumeHistory(20261030, allowEmpty = true)
+        collector.accept(json("""{"s":"db","bars":[{"timestamp":"2026-11-01T00:00Z","upVolume":797,"downVolume":852}]}"""))
+        val error = assertFailsWith<IllegalArgumentException> { collector.result.await() }
+        assertEquals("交易日历尚未包含 2026-11-01 的日线，暂无法确认主力", error.message)
+    }
+
+    @Test fun farMonthWithOnlyAnOlderBarDoesNotAbortTheRanking() = runTest {
+        val wire = Wire().apply { omitFutureSessions = true; olderBarSymbols = setOf("MESH7") }
+        val broker = ready(wire)
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
     }
 
     @Test fun completedEmptyHistoryIsZeroOnlyWithPermissionAndNeverHidesInvalidBars() = runTest {
