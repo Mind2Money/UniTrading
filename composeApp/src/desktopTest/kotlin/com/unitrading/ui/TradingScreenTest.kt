@@ -318,6 +318,34 @@ class TradingScreenTest {
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("chart-readout").assertExists()
     }
+    @Test fun chartReopensLastSymbolAndIntervalAndPicksFromTheWatchList() {
+        val store = MemorySnapshotStore()
+        val demo = TradingRuntime(store, includeDemoBrokers = true).registry.plugins.first()
+        val (watchedFirst, unwatched, watchedLast) = demo.instruments.take(3)
+        store.write("market-watch-v1", """{"${demo.descriptor.id}":["${watchedLast.symbol}","${watchedFirst.symbol}"]}""")
+        store.write("chart-v1", """{"lastSymbols":{"${demo.descriptor.id}":"${watchedLast.symbol}"},"lastTimeframeMinutes":15}""")
+        val reopened = TradingRuntime(store, includeDemoBrokers = true).apply { paused.value = true }
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(.6f)) { Box(Modifier.fillMaxSize()) { TradingScreen(reopened) } }
+        }
+        compose.onNodeWithText("${watchedLast.name} · 15分钟 · ${watchedLast.category}").assertExists()
+        compose.onNodeWithTag("chart-symbol").performClick()
+        val last = compose.onNodeWithTag("symbol-option-${watchedLast.symbol}").fetchSemanticsNode().boundsInRoot
+        val first = compose.onNodeWithTag("symbol-option-${watchedFirst.symbol}").fetchSemanticsNode().boundsInRoot
+        assertTrue(last.top < first.top, "the menu keeps the watch list's order")
+        compose.onNodeWithTag("symbol-option-${unwatched.symbol}").assertDoesNotExist()
+        compose.onNodeWithTag("symbol-option-${watchedFirst.symbol}").performClick()
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-option-60").performClick()
+        compose.waitUntil(5_000) {
+            reopened.chartPreferences.preferences.value.let { it.lastSymbols[demo.descriptor.id] == watchedFirst.symbol && it.lastTimeframeMinutes == 60 }
+        }
+        // Stored immediately, so even an abrupt exit reopens here.
+        val saved = TradingRuntime(store).chartPreferences.preferences.value
+        assertEquals(watchedFirst.symbol, saved.lastSymbols[demo.descriptor.id])
+        assertEquals(Timeframe(60), saved.lastTimeframe)
+    }
+
     @Test fun intervalMenuOffersPresetsFavouritesCustomIntervalsAndSymbols() {
         render()
         compose.onNodeWithTag("interval-menu").performClick()

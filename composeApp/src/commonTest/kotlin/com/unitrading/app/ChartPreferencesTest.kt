@@ -16,6 +16,20 @@ class ChartPreferencesTest {
             assertFailsWith<IllegalArgumentException> { controller.setIndicatorPaneFractions(mapOf("rsi" to invalid)) }
         }
     }
+    @Test fun lastChartSymbolPerBrokerAndIntervalPersistAcrossRestart() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
+        val first = ChartPreferencesController(store)
+        assertNull(first.preferences.value.lastTimeframe, "older files open with the default interval")
+        assertTrue(first.setLastChart("tradovate-demo-1", "@GC", Timeframe(60)))
+        assertTrue(first.setLastChart("atlas-demo", "XAUUSD", Timeframe.M15))
+        assertTrue(first.setLastChart("tradovate-demo-1", null, Timeframe(240)), "a pending restore keeps the saved symbol")
+        val reopened = ChartPreferencesController(store).preferences.value
+        assertEquals(mapOf("tradovate-demo-1" to "@GC", "atlas-demo" to "XAUUSD"), reopened.lastSymbols)
+        assertEquals(Timeframe(240), reopened.lastTimeframe)
+        assertEquals(listOf(5, 15), reopened.favoriteMinutes)
+        assertFailsWith<IllegalArgumentException> { first.setLastChart("tradovate-demo-1", "", Timeframe(60)) }
+        assertFailsWith<IllegalArgumentException> { first.apply(ChartPreferences(lastTimeframeMinutes = 0)) }
+    }
     @Test fun favoritesAndCustomIntervalsPersistAcrossRestart() = runTest {
         val store = MemorySnapshotStore()
         val first = TradingRuntime(store)

@@ -176,7 +176,7 @@ private fun LayerMenu(layers: List<ChartToggle>) {
     }
 }
 
-/** Current symbol with a TradingView-style search menu over the broker's instruments. */
+/** Current symbol with a TradingView-style menu over the market page's watch list, in its order. */
 @Composable
 private fun SymbolPill(instrument: Instrument, instruments: List<Instrument>, onSymbol: (String) -> Unit) {
     val colors = TradingColors
@@ -194,9 +194,9 @@ private fun SymbolPill(instrument: Instrument, instruments: List<Instrument>, on
             }
         }
         DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 240.dp, max = 320.dp)) {
-            MenuTextField(query, { query = it }, "搜索品种代码或名称", "symbol-filter", Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp))
+            MenuTextField(query, { query = it }, "筛选自选品种", "symbol-filter", Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp))
             val matches = instruments.filter { it.symbol.contains(query, true) || it.name.contains(query, true) }
-            if (matches.isEmpty()) Text("未找到品种", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 11.sp, color = colors.Muted)
+            if (matches.isEmpty()) Text("自选中没有该品种，请在行情页添加", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 11.sp, color = colors.Muted)
             matches.take(40).forEach { candidate ->
                 DropdownMenuItem(
                     text = {

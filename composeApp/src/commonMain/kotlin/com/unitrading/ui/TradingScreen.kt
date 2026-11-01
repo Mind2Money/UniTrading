@@ -37,6 +37,7 @@ import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
@@ -117,13 +118,19 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
         val accountKey = "$brokerId/$accountId/${plugin.hashCode()}"
-        var chosenSymbol by remember(plugin) { mutableStateOf(catalog.instruments.first().symbol) }
+        val savedChart = remember(plugin) { runtime.chartPreferences.preferences.value }
+        // The last chart symbol can load after the first catalog snapshot; keep it pending until it loads or the user picks one.
+        var restoring by remember(plugin) { mutableStateOf(savedChart.lastSymbols[plugin.descriptor.id]) }
+        var chosenSymbol by remember(plugin) { mutableStateOf(restoring?.takeIf { saved -> catalog.instruments.any { it.symbol == saved } } ?: catalog.instruments.first().symbol) }
         val instrument = catalog.instruments.firstOrNull { it.symbol == chosenSymbol } ?: catalog.instruments.first()
         val symbol = instrument.symbol
         val executionSymbol = instrument.executionSymbol
         var previousExecutionSymbol by remember(accountKey, symbol) { mutableStateOf(executionSymbol) }
         val quote = market.quotes[executionSymbol]
-        var timeframe by remember { mutableStateOf(Timeframe.M5) }
+        var timeframe by remember { mutableStateOf(savedChart.lastTimeframe ?: Timeframe.M5) }
+        // The chart's symbol menu lists the market page's watch list, in its order.
+        val watchLists by runtime.marketWatch.lists.collectAsState()
+        val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
         val orderSession = remember(accountKey, symbol, executionSymbol) { orderSessions.getOrPut("$symbol/$executionSymbol") { MobileOrderSession(instrument) } }
         var draft by orderSession.draft
@@ -189,14 +196,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         LaunchedEffect(accountKey) { showOrder = false; notice = null }
         LaunchedEffect(plugin, catalog.instruments.map { it.symbol }) {
-            if (chosenSymbol != symbol) {
-                chosenSymbol = symbol
+            val saved = restoring
+            val target = if (saved != null && catalog.instruments.any { it.symbol == saved }) saved.also { restoring = null } else symbol
+            if (chosenSymbol != target) {
+                chosenSymbol = target
                 selectedPositionId = null; focusedTrade = null; focusedExecution = null; protection = null; pendingEdit = null; pendingProtection = null; confirmation = null
             }
         }
+        LaunchedEffect(plugin, catalog.instruments.isEmpty()) { runtime.marketWatch.initialize(plugin.descriptor.id, catalog.instruments, symbol) }
+        // A saved remote symbol may need a server search; give up once the search cannot find it.
+        LaunchedEffect(plugin, restoring, market.connected) {
+            val saved = restoring ?: return@LaunchedEffect
+            if (!market.connected || catalog.instruments.any { it.symbol == saved }) return@LaunchedEffect
+            try { withTimeoutOrNull(20_000) { plugin.searchInstruments(saved) } }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* Still missing: fall through. */ }
+            if (catalog.instruments.none { it.symbol == saved }) restoring = null
+        }
+        // Saved on every change, so the chart reopens where the user left it however the app exits.
+        LaunchedEffect(plugin, symbol, timeframe, restoring) {
+            runtime.chartPreferences.setLastChart(plugin.descriptor.id, symbol.takeIf { restoring == null }, timeframe)
+        }
 
-        fun chooseSymbol(value: String) {
+        fun showSymbol(value: String) {
             chosenSymbol = value
+            restoring = null
+        }
+        fun chooseSymbol(value: String) {
+            showSymbol(value)
             focusedTrade = null
             focusedExecution = null
             selectedPositionId = null
@@ -247,7 +274,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 perform { session.modifyProtection(requestId(), position.id, position.version, sl, tp) }
                 return
             }
-            if (position.symbol != executionSymbol) chosenSymbol = position.symbol
+            if (position.symbol != executionSymbol) showSymbol(position.symbol)
             selectedPositionId = position.id
             pendingProtection = null
             protection = ProtectionEdit(position, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
@@ -271,7 +298,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 perform { session.modifyOrderProtection(requestId(), current.id, current.version, sl, tp) }
                 return
             }
-            if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
+            if (current.request.symbol != executionSymbol) showSymbol(current.request.symbol)
             protection = null
             pendingEdit = null
             showDraft = false
@@ -313,7 +340,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 return
             }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
-            if (current.request.symbol != executionSymbol) chosenSymbol = current.request.symbol
+            if (current.request.symbol != executionSymbol) showSymbol(current.request.symbol)
             protection = null
             pendingProtection = null
             showDraft = false
@@ -394,7 +421,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
                         m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
-                        instruments = catalog.instruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
+                        instruments = watchInstruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
                         onSide = { side ->
@@ -456,8 +483,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; selectedPositionId = null },
+                                    onSelectPosition = { p -> focusedExecution = null; showSymbol(p.symbol); selectedPositionId = p.id; focusedTrade = null },
+                                    onSelectTrade = { t -> focusedExecution = null; showSymbol(t.symbol); focusedTrade = t; selectedPositionId = null },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             })
@@ -510,8 +537,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 AccountStrip(account)
                                 DividerLine()
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                    onSelectPosition = { p -> focusedExecution = null; chosenSymbol = p.symbol; selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                    onSelectTrade = { t -> focusedExecution = null; chosenSymbol = t.symbol; focusedTrade = t; mobileTab = 1 },
+                                    onSelectPosition = { p -> focusedExecution = null; showSymbol(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                    onSelectTrade = { t -> focusedExecution = null; showSymbol(t.symbol); focusedTrade = t; mobileTab = 1 },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
