@@ -11,7 +11,6 @@
 - [代码与文档核对](implementation-audit.md)：1.1.4 已确认的实现缺口、文档差异和可复现诊断。
 - [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
 - [连续合约](continuous-contracts.md)：连续图表与指标、上一完整交易日成交量主力、实际到期合约下单及换月处理。
-- [主力合约方法抽离](main-contract-extraction.md)：输入 Tradovate token、自动查询全部可见 Futures 品种的独立工具及移植说明。
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
 - [手机布局](mobile-layout.md)：参考 MT5 的图表优先布局，单行图表工具条，下单收进可折叠面板，资金行移至交易/账户页。
