@@ -141,6 +141,7 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 ## 文档
 
 - [文档索引](docs/README.md)
+- [独立主力合约查询工具](tradovate-main-contracts/README.md)：输入 Tradovate token，查询全部可见 Futures 品种的主力合约名，附移植文档。
 - [当前实现与验证状态](docs/current-status.md)
 - [代码与文档核对](docs/implementation-audit.md)
 - [实施计划](docs/implementation-plan.md)
