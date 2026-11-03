@@ -484,7 +484,7 @@ class TradovateBroker(
         return rank(cached = false)
     }
 
-    /** One daily bar per request, always cancelled afterwards: rankings never hold server chart slots. */
+    /** One trade date per request, always cancelled afterwards: rankings never hold server chart slots. */
     private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long {
         val socket = checkNotNull(marketSocket) { "行情连接不可用" }
         check(marketReady) { "行情尚未就绪" }

@@ -20,6 +20,7 @@ class ContinuousContractsTest {
         var endHistory = true
         var omitFutureSessions = false
         var currentDailyBar = false
+        var currentOnlySymbols = emptySet<String>()
         var quoteAtClock = false
         var sessionRows: List<JsonObject>? = null
         var penalty: JsonObject? = null
@@ -76,7 +77,12 @@ class ContinuousContractsTest {
                     }
                     if (parts.first() != "md/getChart") { socket.send(text); return }
                     val body = json(text.substringAfter("\n\n"))
-                    if ((body["timeRange"] as? JsonObject)?.long("asMuchAsElements") != 1L) {
+                    val description = body["chartDescription"] as? JsonObject
+                    val range = requireNotNull(body["timeRange"] as? JsonObject)
+                    val dailyVolume = description?.str("underlyingType") == "DailyBar" &&
+                        description.long("elementSize") == 1L && body.str("symbol")?.startsWith("@") == false &&
+                        range.str("asFarAsTimestamp") != null && range.str("closestTimestamp") != null
+                    if (!dailyVolume) {
                         if (chartPenalty && body.str("p-ticket") == null) {
                             delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"p-ticket":"chart-ticket","p-time":1}}]""")
                         } else {
@@ -97,19 +103,22 @@ class ContinuousContractsTest {
                     }
                     val id = ++channelId
                     dailyIds.add(id.toLong())
-                    val range = body["timeRange"] as JsonObject
                     val end = range.str("closestTimestamp") ?: range.str("asFarAsTimestamp")!!
                     val barTime = if (body.str("symbol") in olderBarSymbols)
                         kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! - 2 * 86_400_000).toString()
                     else "${end.take(10)}T00:00Z"
                     val volume = if (body.str("symbol") == leader) 1000 else 10
+                    val nextDate = kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! + 86_400_000).toString()
                     val currentBar = if (currentDailyBar) {
-                        val time = kotlin.time.Instant.fromEpochMilliseconds(timestamp(range.str("asFarAsTimestamp")!!)!! + 86_400_000).toString()
                         val currentVolume = if (body.str("symbol") == leader) 1 else 100_000
-                        """,{"timestamp":"$time","upVolume":$currentVolume,"downVolume":0}"""
+                        """,{"timestamp":"$nextDate","upVolume":$currentVolume,"downVolume":0}"""
                     } else ""
                     // Deliver data before the response to exercise subscription registration races.
                     val bars = when {
+                        // The API treats a count limit as a different time-range strategy.
+                        // Mixing it with bounds may return only the current, unfinished bar.
+                        range.long("asMuchAsElements") != null -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":0}]"""
+                        body.str("symbol") in currentOnlySymbols -> """[{"timestamp":"$nextDate","upVolume":100000,"downVolume":100000}]"""
                         body.str("symbol") in emptySymbols -> "[]"
                         missingVolume -> """[{"timestamp":"$barTime","upVolume":$volume}]"""
                         else -> """[{"timestamp":"$barTime","upVolume":$volume,"downVolume":0}$currentBar]"""
@@ -128,6 +137,57 @@ class ContinuousContractsTest {
         override suspend fun read(key: String) = values[key]
         override suspend fun write(key: String, value: String) { values[key] = value }
     }
+
+    @Test fun legacyEvidenceDropsVolumesButRetainsDisplayOnlyLeaders() = runTest {
+        val key = "continuous-evidence-migration"
+        val now = timestamp("2026-11-03T06:11Z")!!
+        for (version in listOf("", "\"version\":1,")) {
+            val cache = MemoryCache().apply {
+                values[key] = """{$version"volumes":{"MESZ6/20261102":1000,"MESH7/20261102":0},"leaders":{"@MES":"MESZ6"}}"""
+            }
+            val evidence = ContinuousEvidence(cache, key)
+            evidence.load(now)
+            assertNull(evidence.volume("MESZ6", 20261102))
+            assertNull(evidence.volume("MESH7", 20261102))
+            assertEquals("MESZ6", evidence.leader("@MES"))
+            val migrated = json(evidence.snapshot())
+            assertEquals(2L, migrated.long("version"))
+            assertTrue((migrated["volumes"] as? JsonObject).orEmpty().isEmpty())
+        }
+    }
+
+    @Test fun currentEvidenceRoundTripPersistsVersionAndCompletedVolumes() = runTest {
+        val key = "continuous-evidence-roundtrip"
+        val now = timestamp("2026-11-03T06:11Z")!!
+        val cache = MemoryCache()
+        val evidence = ContinuousEvidence(cache, key)
+        evidence.load(now)
+        evidence.remember("MESZ6", 20261102, 1000)
+        evidence.remember("MESH7", 20261102, 0)
+        evidence.lead("@MES", "MESZ6")
+        val snapshot = evidence.snapshot()
+        assertEquals(2L, json(snapshot).long("version"))
+        evidence.save(snapshot)
+        val restored = ContinuousEvidence(cache, key)
+        restored.load(now)
+        assertEquals(1000L, restored.volume("MESZ6", 20261102))
+        assertEquals(0L, restored.volume("MESH7", 20261102))
+        assertEquals("MESZ6", restored.leader("@MES"))
+    }
+
+    @Test fun unknownEvidenceVersionsCannotSupplyVolumesOrLeaders() = runTest {
+        val key = "continuous-evidence-unknown-version"
+        for (version in listOf(0, 3)) {
+            val cache = MemoryCache().apply {
+                values[key] = """{"version":$version,"volumes":{"MESZ6/20261102":1000},"leaders":{"@MES":"MESZ6"}}"""
+            }
+            val evidence = ContinuousEvidence(cache, key)
+            evidence.load(timestamp("2026-11-03T06:11Z")!!)
+            assertNull(evidence.volume("MESZ6", 20261102))
+            assertNull(evidence.leader("@MES"))
+        }
+    }
+
     private fun TestScope.broker(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
         val token = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe.encode("{\"sub\":42,\"exp\":4102444800}".encodeToByteArray()).trimEnd('=') + ".test-signature-only"
         return TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, token, token, 42, "test", 4_102_444_800_000), wire, backgroundScope,
@@ -157,6 +217,21 @@ class ContinuousContractsTest {
         assertTrue(session.preview(request()).valid)
         assertTrue(session.placeOrder("continuous", request()).accepted)
         assertEquals("MESZ6", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
+    }
+
+    @Test fun continuousDailyChartIsSeparateFromCompletedDailyVolumeRequests() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        val volumeRequests = wire.dailyRequests.size
+        val chartRequests = wire.delegate.market.sent.count { it == "md/getChart" }
+        broker.watch("@MES", Timeframe(1440))
+        runCurrent()
+        val chart = json(wire.delegate.market.bodies.getValue("md/getChart"))
+        assertEquals("@MES", chart.str("symbol"))
+        assertEquals("DailyBar", chart["chartDescription"]!!.jsonObject.str("underlyingType"))
+        assertEquals(1L, chart["chartDescription"]!!.jsonObject.long("elementSize"))
+        assertEquals(volumeRequests, wire.dailyRequests.size)
+        assertEquals(chartRequests + 1, wire.delegate.market.sent.count { it == "md/getChart" })
     }
 
     @Test fun bracketUsesDatedContractAndNeverSendsContinuousMetadata() = runTest {
@@ -541,7 +616,6 @@ class ContinuousContractsTest {
         assertEquals(1_438_061, collector.result.await())
         for (bad in listOf(
             packet.toString().replace("2026-10-29T00:00Z", "2026-10-29T01:00Z"),
-            packet.toString().replace("2026-10-29T00:00Z", "2026-10-30T00:00Z"),
             packet.toString().replace("\"s\":\"db\"", "\"td\":20261030"),
             packet.toString().replace("\"s\":\"db\"", "\"td\":20261028"),
             packet.toString().replace("\"s\":\"db\"", "\"td\":null"),
@@ -582,14 +656,35 @@ class ContinuousContractsTest {
         }
     }
 
-    @Test fun currentBarAloneCannotSupplyOrImplyTheCompletedDaysVolume() = runTest {
+    @Test fun currentBarOnlyHistoryConfirmsZeroOnlyWithRealtimePermissionAndEndMarker() = runTest {
         for (allowEmpty in listOf(false, true)) {
             val collector = DailyVolumeHistory(20261102, allowEmpty = allowEmpty)
-            collector.accept(json("""{"bars":[{"timestamp":"2026-11-03T00:00Z","upVolume":100000,"downVolume":100000}]}"""))
+            collector.accept(json("""{"s":"db","bars":[{"timestamp":"2026-11-03T00:00Z","upVolume":100000,"downVolume":100000}]}"""))
             assertFalse(collector.result.isCompleted)
             collector.accept(json("""{"eoh":true}"""))
-            assertFailsWith<IllegalArgumentException> { collector.result.await() }
+            if (allowEmpty) assertEquals(0, collector.result.await())
+            else assertFailsWith<IllegalArgumentException> { collector.result.await() }
         }
+    }
+
+    @Test fun currentOnlyFarMonthDoesNotAbortCompletedDayRanking() = runTest {
+        val wire = Wire().apply {
+            clock = timestamp("2026-11-03T06:11Z")!!
+            sessionRows = listOf(300L, 301L).map { id ->
+                json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":11,"day":2},"startTime":"2026-11-01T23:00Z","endTime":"2026-11-02T22:00Z"}""")
+            }
+            currentOnlySymbols = setOf("MESH7")
+        }
+        val broker = ready(wire)
+        // Live MGCQ8 returned only today's bar followed by eoh for yesterday's bounded
+        // history request. Its large current volume must not enter yesterday's ranking.
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.executionSymbol)
+        assertNull(broker.instruments.single { it.symbol == "@MES" }.tradeSymbolStatus)
+        assertEquals(2, wire.dailyRequests.size)
+        assertTrue(wire.dailyRequests.all {
+            it["timeRange"]!!.jsonObject.keys == setOf("asFarAsTimestamp", "closestTimestamp")
+        })
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/") })
     }
 
     @Test fun explicitEmptyCompletedHistoryStaysZeroWhenCurrentRealtimeBarArrives() = runTest {
@@ -669,6 +764,16 @@ class ContinuousContractsTest {
     @Test fun dailyRangeUsesExchangeTradeDateEvenWhenMidnightFallsOutsideSessionHours() {
         val session = CompletedSession(20261029, timestamp("2026-10-29T01:00Z")!!, timestamp("2026-10-29T09:00Z")!!, Long.MAX_VALUE)
         assertEquals("2026-10-29T00:00:00Z", dailyVolumeRange(session).str("asFarAsTimestamp"))
+    }
+
+    @Test fun completedDailyRangeUsesOnlyTimestampBoundsForBothCalendarModes() {
+        val session = CompletedSession(20261102, timestamp("2026-11-01T23:00Z")!!, timestamp("2026-11-02T22:00Z")!!, Long.MAX_VALUE)
+        for (refresh in listOf(false, true)) {
+            val range = dailyVolumeRange(session.copy(refreshCompletedVolume = refresh))
+            assertEquals(setOf("asFarAsTimestamp", "closestTimestamp"), range.keys)
+            assertEquals("2026-11-02T00:00:00Z", range.str("asFarAsTimestamp"))
+            assertEquals("2026-11-02T23:59:59.999Z", range.str("closestTimestamp"))
+        }
     }
 
     @Test fun actualMesSessionHoursAcceptPreOpenAndPostCloseButRejectReversedTrading() {

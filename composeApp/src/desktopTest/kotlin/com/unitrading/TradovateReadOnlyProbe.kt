@@ -5,10 +5,16 @@ import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 
 /** Explicit diagnostics only. Trading writes are always refused, including when dryrun is enabled. */
-internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false) : TradovateWire {
+internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false, private val captureDailyEvidence: Boolean = false) : TradovateWire {
     private val delegate = KtorTradovateWire()
+    private fun evidence(event: String, data: JsonElement) {
+        if (captureDailyEvidence) println("DAILY_DIAGNOSTIC_EVIDENCE " + asciiJson(buildJsonObject {
+            put("event", event); put("data", data)
+        }))
+    }
     var refusedWrites = 0
         private set
     var chartMessages = 0
@@ -61,6 +67,9 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
             allowCapacityChecks && (method == "POST" && endpoint == "order/dryrun" || method == "GET" && endpoint == "order/list")
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
         return delegate.request(environment, token, method, path, body).also { response ->
+            if (captureDailyEvidence && method == "GET" && endpoint in setOf("contract/suggest", "contract/ldeps", "contractMaturity/deps", "tradingSession/ldeps")) {
+                evidence("public-metadata", buildJsonObject { put("path", path); put("response", response) })
+            }
             if (endpoint == "order/dryrun") {
                 capacityChecks++
                 val data = response as? JsonObject
@@ -71,6 +80,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
     override suspend fun socket(url: String): TradovateWireSocket {
         check(url in setOf(TradovateEnvironment.DEMO.socketUrl, TradovateEnvironment.DEMO.marketUrl))
         val socket = delegate.socket(url)
+        val dailyRequests = ConcurrentHashMap<String, JsonObject>()
         return object : TradovateWireSocket {
             override suspend fun send(text: String) {
                 val route = text.substringBefore('\n')
@@ -79,12 +89,46 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
                 }
                 if (route == "md/getChart") {
                     val body = Json.parseToJsonElement(text.substringAfter("\n\n")).jsonObject
-                    if ((body["timeRange"] as? JsonObject)?.get("asMuchAsElements")?.jsonPrimitive?.intOrNull == 1)
+                    val description = body["chartDescription"] as? JsonObject
+                    if (description?.get("underlyingType")?.jsonPrimitive?.content == "DailyBar" && description["elementSize"]?.jsonPrimitive?.intOrNull == 1) {
                         dailyVolumeRequests.incrementAndGet()
+                        if (captureDailyEvidence) {
+                            val requestId = text.substringAfter('\n').substringBefore('\n')
+                            val safe = JsonObject(body.filterKeys { it in setOf("symbol", "chartDescription", "timeRange") })
+                            dailyRequests[requestId] = safe
+                            evidence("daily-request", buildJsonObject { put("requestId", requestId); put("body", safe) })
+                        }
+                    }
                 }
                 socket.send(text)
             }
-            override suspend fun receive() = socket.receive().also(::inspectShape)
+            override suspend fun receive() = socket.receive().also { text ->
+                inspectShape(text)
+                if (captureDailyEvidence && text?.startsWith("a") == true) {
+                    val frames = runCatching { Json.parseToJsonElement(text.drop(1)).jsonArray }.getOrNull()
+                    for (item in frames.orEmpty()) {
+                        val frame = item as? JsonObject ?: continue
+                        val requestId = (frame["i"] as? JsonPrimitive)?.content
+                        val request = requestId?.let(dailyRequests::remove)
+                        if (request != null) evidence("daily-response", buildJsonObject {
+                            put("requestId", requestId); put("request", request)
+                            put("status", frame["s"] ?: JsonNull)
+                            put("response", JsonObject((frame["d"] as? JsonObject).orEmpty().filterKeys { it in setOf("mode", "historicalId", "realtimeId", "errorText", "p-time", "p-message") }))
+                        })
+                        if ((frame["e"] as? JsonPrimitive)?.content == "chart") {
+                            for (chart in ((frame["d"] as? JsonObject)?.get("charts") as? JsonArray).orEmpty()) {
+                                val packet = chart as? JsonObject ?: continue
+                                evidence("daily-packet", buildJsonObject {
+                                    packet.filterKeys { it in setOf("id", "s", "eoh", "td") }.forEach { (key, value) -> put(key, value) }
+                                    (packet["bars"] as? JsonArray)?.let { bars -> put("bars", JsonArray(bars.map { bar ->
+                                        (bar as? JsonObject)?.let { JsonObject(it.filterKeys { key -> key in setOf("timestamp", "td", "upVolume", "downVolume") }) } ?: JsonNull
+                                    })) }
+                                })
+                            }
+                        }
+                    }
+                }
+            }
             override suspend fun close() = socket.close()
         }
     }
@@ -110,7 +154,51 @@ private fun asciiJson(value: JsonObject): String = buildString {
     }
 }
 
+private suspend fun dailyDiagnostic(): Boolean {
+    val wire = ReadOnlyProbeWire(captureDailyEvidence = true)
+    var broker: TradovateBroker? = null
+    var phase = "opening-browser"
+    var resolved = false
+    try {
+        withTimeout(300_000) {
+            println("DAILY_DIAGNOSTIC: Interactive Demo login; all order endpoints including dryrun are blocked.")
+            val session = DesktopTradovateLogin().signIn(TradovateEnvironment.DEMO) { status ->
+                phase = phaseCode(status); println("STATUS $phase")
+            }
+            val connected = TradovateBroker(session, wire)
+            broker = connected
+            phase = "connect"
+            connected.connect { status -> phase = phaseCode(status); println("STATUS $phase") }
+            phase = "discover-MGC"
+            connected.searchInstruments("MGC")
+            phase = "rank-MGC-fixed-date"
+            connected.refreshContinuous("@MGC", force = true)
+            val instrument = connected.instruments.singleOrNull { it.symbol == "@MGC" }
+            resolved = instrument?.executionSymbol != null
+            println("DAILY_DIAGNOSTIC_RESULT " + asciiJson(buildJsonObject {
+                put("variant", "fixed-date"); put("symbol", "@MGC"); put("resolved", resolved)
+                put("tradeSymbol", instrument?.executionSymbol); put("status", instrument?.tradeSymbolStatus)
+                put("dailyRequests", wire.dailyVolumeRequests.get()); put("refusedWriteRequests", wire.refusedWrites)
+                put("sentOrderRequests", 0)
+            }))
+        }
+    } catch (error: Exception) {
+        println("DAILY_DIAGNOSTIC_ERROR " + asciiJson(buildJsonObject {
+            put("phase", phase); put("errorType", error.javaClass.simpleName); put("sentOrderRequests", 0)
+        }))
+    } finally {
+        broker?.disconnect()
+        if (broker == null) wire.close()
+        delay(200)
+    }
+    return resolved && wire.refusedWrites == 0
+}
+
 fun main(args: Array<String>) = runBlocking {
+    if (args.contentEquals(arrayOf("--demo-daily-diagnostic-read-only"))) {
+        if (!dailyDiagnostic()) kotlin.system.exitProcess(2)
+        return@runBlocking
+    }
     val continuous = args.contentEquals(arrayOf("--demo-continuous-read-only"))
     require(continuous || args.contentEquals(arrayOf("--demo-read-only")))
     val wire = ReadOnlyProbeWire()

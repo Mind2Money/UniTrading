@@ -26,6 +26,7 @@ private const val MAX_CALENDAR_TAIL_AGE_MS = 72 * 60 * 60 * 1000L
 internal const val CALENDAR_TAIL_REFRESH_MS = 15 * 60_000L
 private const val MAX_CACHED_VOLUMES = 2_000
 private const val CACHED_VOLUME_AGE_MS = 14 * 86_400_000L
+private const val VOLUME_EVIDENCE_VERSION = 2
 
 @Serializable
 private data class StoredEvidence(val version: Int = 1, val volumes: Map<String, Long> = emptyMap(), val leaders: Map<String, String> = emptyMap())
@@ -46,8 +47,10 @@ internal class ContinuousEvidence(private val store: CandleCacheStore?, private 
         loaded = true
         try {
             val stored = store?.read(key)?.let { Json.decodeFromString<StoredEvidence>(it) } ?: return
-            if (stored.version != 1) return
-            volumes.putAll(stored.volumes.filter { (entry, volume) ->
+            if (stored.version !in 1..VOLUME_EVIDENCE_VERSION) return
+            // Version 1 combined a last-N limit with timestamp bounds. Re-read all
+            // completed volumes using a complete fixed window; keep display-only leaders.
+            if (stored.version == VOLUME_EVIDENCE_VERSION) volumes.putAll(stored.volumes.filter { (entry, volume) ->
                 val day = entry.substringAfterLast('/').toLongOrNull()
                 volume >= 0 && day != null && runCatching { now - dailyBarTimestamp(day) in 0..CACHED_VOLUME_AGE_MS }.getOrDefault(false)
             })
@@ -72,7 +75,7 @@ internal class ContinuousEvidence(private val store: CandleCacheStore?, private 
 
     fun leader(symbol: String): String? = leaders[symbol]
     fun lead(symbol: String, contract: String) { leaders[symbol] = contract }
-    fun snapshot(): String = Json.encodeToString(StoredEvidence(volumes = volumes.toMap(), leaders = leaders.toMap()))
+    fun snapshot(): String = Json.encodeToString(StoredEvidence(version = VOLUME_EVIDENCE_VERSION, volumes = volumes.toMap(), leaders = leaders.toMap()))
 
     suspend fun save(snapshot: String) {
         try { store?.write(key, snapshot) }
@@ -167,17 +170,16 @@ internal fun dailyVolumeRange(session: CompletedSession) = buildJsonObject {
     // A newer daily bar may still be forming. Always request the completed trade date,
     // including when the calendar has not published the current or next session yet.
     put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
-    put("asMuchAsElements", 1)
+    // Fixed timestamp ranges and last-N queries are mutually exclusive API modes.
+    // A last-N limit can replace this window with the still-forming current bar.
 }
 
-/** Only a successful RealTime subscription may treat an empty, explicitly ended history as zero. */
+/** Collects a fixed-date history. Only RealTime with explicit history end may imply zero volume. */
 internal class DailyVolumeHistory(private val day: Long, private val allowEmpty: Boolean = false) {
     val result = CompletableDeferred<Long>()
     var invalidated = false
         private set
     private var confirmedVolume: Long? = null
-    private var sawOlderBar = false
-    private var sawLaterBar = false
     private val bars = mutableMapOf<Long, Long>()
     fun accept(packet: JsonObject) {
         if (invalidated) return
@@ -196,10 +198,10 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
                 if (labels.isEmpty()) require(time % 86_400_000 == 0L) { "日线交易日期不匹配或缺失" }
                 val date = labels.singleOrNull()?.let(::dailyBarTimestamp) ?: time
                 // A month that did not trade on the date can return its latest older bar.
-                if (date < dailyBarTimestamp(day)) { sawOlderBar = true; continue }
+                if (date < dailyBarTimestamp(day)) continue
                 // Shared history/realtime channels can deliver the still-forming daily bar.
                 // Its presence and volume say nothing about the completed date's ranking.
-                if (date > dailyBarTimestamp(day)) { sawLaterBar = true; continue }
+                if (date > dailyBarTimestamp(day)) continue
                 fun count(key: String): Long {
                     val value = requireNotNull(decimalUnits(bar.str(key), 6)) { "日成交量缺失" }
                     require(value >= 0 && value % 1_000_000 == 0L) { "日成交量无效" }
@@ -213,8 +215,9 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
                 return
             }
             if (packet.bool("eoh") == true) {
-                // Only a newer bar is not proof of an empty history for the requested date.
-                confirmedVolume = if (bars.isEmpty() && allowEmpty && (!sawLaterBar || sawOlderBar)) 0
+                // A complete fixed-date response may include newer bars even when this
+                // month did not trade on the target date. Their volume never counts.
+                confirmedVolume = if (bars.isEmpty() && allowEmpty) 0
                     else requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" }
                 result.complete(confirmedVolume!!)
             }
