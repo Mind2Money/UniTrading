@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tradovate-main-contracts"
-version = "1.0.0"
+version = "1.0.1"
 description = "Resolve Tradovate futures volume leaders for every visible product"
 readme = "README.md"
 requires-python = ">=3.11"

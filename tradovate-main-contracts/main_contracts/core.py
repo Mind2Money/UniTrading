@@ -187,7 +187,7 @@ def _volume_value(value: Any) -> int:
 
 
 class DailyVolumeHistory:
-    """Collect one completed day; an explicit eoh is required, including zero-volume days."""
+    """Collect a fixed-date history; only RealTime and eoh may imply zero volume."""
 
     def __init__(self, day: int, allow_empty: bool = False):
         self.day = day
@@ -196,8 +196,6 @@ class DailyVolumeHistory:
         self.done = False
         self.volume: int | None = None
         self.invalidated = False
-        self._saw_older = False
-        self._saw_later = False
         self._bars: dict[int, int] = {}
 
     def accept(self, packet: dict) -> None:
@@ -230,10 +228,8 @@ class DailyVolumeHistory:
                 _require(time % _DAY_MS == 0, "invalid_trade_date", "无交易日期的日线必须使用UTC零点时间戳")
                 date = time
             if date < self._target:
-                self._saw_older = True
                 continue
             if date > self._target:
-                self._saw_later = True
                 continue
             count = _volume_value(bar.get("upVolume")) + _volume_value(bar.get("downVolume"))
             _require(count <= _MAX_VOLUME, "invalid_volume", "日成交量总和超出支持范围")
@@ -243,7 +239,9 @@ class DailyVolumeHistory:
                      "volume_corrected", "已完成日线发生更新，请重新查询")
             return
         if packet.get("eoh") is True:
-            if not self._bars and self.allow_empty and (not self._saw_later or self._saw_older):
+            # A complete fixed-date history can include a newer, forming bar even
+            # when the requested date did not trade. That newer volume never ranks.
+            if not self._bars and self.allow_empty:
                 self.volume = 0
             else:
                 _require(len(self._bars) == 1, "missing_daily_history", "完整交易日日线缺失或不唯一")

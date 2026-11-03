@@ -236,8 +236,8 @@ class CoreTests(unittest.TestCase):
                     invalid.accept({"bars": [bar(), current], "eoh": True})
                 self.assertTrue(invalid.invalidated)
 
-    def test_collector_zero_requires_realtime_and_ended_empty_or_older_evidence(self):
-        for values in [[], [bar(1)], [bar(1), bar(3)]]:
+    def test_collector_zero_requires_realtime_and_complete_fixed_date_history(self):
+        for values in [[], [bar(1)], [bar(1), bar(3)], [bar(3, up=100000, down=100000)]]:
             with self.subTest(values=values):
                 history = DailyVolumeHistory(20261102, allow_empty=True)
                 history.accept({"bars": values})
@@ -246,8 +246,36 @@ class CoreTests(unittest.TestCase):
                 self.assertEqual(0, history.volume)
                 with self.assertRaises(ResolutionError):
                     DailyVolumeHistory(20261102).accept({"bars": values, "eoh": True})
-        with self.assertRaises(ResolutionError):
-            DailyVolumeHistory(20261102, allow_empty=True).accept({"bars": [bar(3)], "eoh": True})
+
+    def test_current_only_far_month_does_not_abort_completed_day_ranking(self):
+        for tail in (False, True):
+            with self.subTest(calendar_tail=tail):
+                self.calendar = [session(identifier, day) for identifier in (300, 301)
+                                 for day in ((2,) if tail else (2, 3))]
+
+                def count(symbol, session):
+                    history = DailyVolumeHistory(session.day, allow_empty=True)
+                    history.accept({"bars": [bar(up=1000, down=0)] if symbol == "MESZ6"
+                                    else [bar(3, up=100000, down=100000)]})
+                    history.accept({"eoh": True})
+                    return history.volume
+
+                result = self.resolve(count)
+                self.assertEqual("MESZ6", result["contract_name"])
+                self.assertEqual("2026-11-02", result["trade_date"])
+                self.assertEqual(tail, result["calendar_tail"])
+                self.assertEqual({"MESZ6": 1000, "MESH7": 0},
+                                 {row["contract_name"]: row["volume"] for row in result["candidates"]})
+
+    def test_current_only_zero_is_invalidated_by_late_target_volume_correction(self):
+        history = DailyVolumeHistory(20261102, allow_empty=True)
+        history.accept({"bars": [bar(3, up=100000)], "eoh": True})
+        self.assertEqual(0, history.volume)
+        history.accept({"bars": [bar(3, up=200000)]})
+        self.assertFalse(history.invalidated)
+        with self.assertRaises(ResolutionError) as error:
+            history.accept({"bars": [bar(up=1, down=0)]})
+        self.assertEqual("volume_corrected", error.exception.code)
 
     def test_collector_dates_and_required_volume_fields_are_strict(self):
         invalid_bars = [bar(timestamp="2026-11-02T01:00Z"), bar(td=None), bar(td=20261103),

@@ -165,6 +165,73 @@ class ClientTests(unittest.TestCase):
         self.socket.chart_handler = chart
         self.assertEqual(0, self.client.daily_volume("MESZ6", SESSION))
 
+    def test_only_newer_high_volume_bar_with_realtime_eoh_counts_zero(self):
+        def chart(request_id, body):
+            self.socket.chart(bars=[{
+                "timestamp": "2026-11-03T00:00:00Z", "upVolume": 9_000_000, "downVolume": 1_000_000,
+            }])
+            self.socket.ack(request_id, {"historicalId": 101, "realtimeId": 102, "mode": "RealTime"})
+        self.socket.chart_handler = chart
+        for session in (SESSION, TAIL_SESSION):
+            with self.subTest(calendar_tail=session.refresh_completed_volume):
+                before = len(self.socket.requests("md/cancelChart"))
+                try:
+                    self.assertEqual(0, self.client.daily_volume("MESZ6", session))
+                finally:
+                    self.assertEqual([{"subscriptionId": 101}, {"subscriptionId": 102}],
+                                     self.socket.requests("md/cancelChart")[before:])
+
+    def test_only_newer_bar_without_realtime_mode_cannot_count_zero(self):
+        def chart(request_id, body):
+            self.socket.chart(bars=[{
+                "timestamp": "2026-11-03T00:00:00Z", "upVolume": 10_000_000, "downVolume": 0,
+            }])
+            self.socket.ack(request_id, {"historicalId": 101, "realtimeId": 102})
+        self.socket.chart_handler = chart
+        self.assert_code("missing_daily_history", lambda: self.client.daily_volume("MESZ6", SESSION))
+        self.assertEqual([{"subscriptionId": 101}, {"subscriptionId": 102}],
+                         self.socket.requests("md/cancelChart"))
+
+    def test_only_newer_realtime_bar_without_eoh_times_out_instead_of_counting_zero(self):
+        def chart(request_id, body):
+            self.socket.chart(eoh=False, bars=[{
+                "timestamp": "2026-11-03T00:00:00Z", "upVolume": 10_000_000, "downVolume": 0,
+            }])
+            self.socket.ack(request_id, {"historicalId": 101, "realtimeId": 102, "mode": "RealTime"})
+        self.socket.chart_handler = chart
+        self.assert_code("TIMEOUT", lambda: self.client.daily_volume("MESZ6", SESSION))
+        self.assertEqual([{"subscriptionId": 101}, {"subscriptionId": 102}],
+                         self.socket.requests("md/cancelChart"))
+
+    def test_target_bar_missing_direction_volume_is_not_hidden_by_newer_bar(self):
+        def chart(request_id, body):
+            self.socket.chart(bars=[
+                {"timestamp": "2026-11-03T00:00:00Z", "upVolume": 10_000_000, "downVolume": 0},
+                {"timestamp": "2026-11-02T00:00:00Z", "upVolume": 42},
+            ])
+            self.socket.ack(request_id, {"historicalId": 101, "realtimeId": 102, "mode": "RealTime"})
+        self.socket.chart_handler = chart
+        self.assert_code("invalid_volume", lambda: self.client.daily_volume("MESZ6", SESSION))
+        self.assertEqual([{"subscriptionId": 101}, {"subscriptionId": 102}],
+                         self.socket.requests("md/cancelChart"))
+
+    def test_fixed_timestamp_window_avoids_server_last_n_daily_mode(self):
+        def chart(request_id, body):
+            # A count-based request can switch the server to its newest daily
+            # bar, even when the caller also supplies the completed-day range.
+            last_n = "asMuchAsElements" in body["timeRange"]
+            self.socket.chart(bars=[{
+                "timestamp": "2026-11-03T00:00:00Z" if last_n else "2026-11-02T00:00:00Z",
+                "upVolume": 10_000_000 if last_n else 42, "downVolume": 0,
+            }])
+            self.socket.ack(request_id, {"historicalId": 101, "realtimeId": 101, "mode": "RealTime"})
+        self.socket.chart_handler = chart
+        self.assertEqual(42, self.client.daily_volume("MESZ6", SESSION))
+        self.assertEqual({"asFarAsTimestamp": "2026-11-02T00:00:00Z",
+                          "closestTimestamp": "2026-11-02T23:59:59.999Z"},
+                         self.socket.requests("md/getChart")[0]["timeRange"])
+        self.assertEqual([{"subscriptionId": 101}], self.socket.requests("md/cancelChart"))
+
     def test_ended_empty_without_realtime_mode_is_not_zero(self):
         def chart(request_id, body):
             self.socket.chart(bars=[])
