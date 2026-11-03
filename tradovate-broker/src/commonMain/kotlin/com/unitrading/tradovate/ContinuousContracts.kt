@@ -16,7 +16,7 @@ import kotlin.time.Instant
 
 internal data class CompletedSession(
     val day: Long, val start: Long, val end: Long, val validUntil: Long,
-    val verifyLatestDailyBar: Boolean = false,
+    val refreshCompletedVolume: Boolean = false,
 )
 internal data class VolumeLeader(val contract: JsonObject, val maturity: JsonObject, val session: CompletedSession, val volume: Long)
 
@@ -102,10 +102,10 @@ internal fun completedSession(rows: List<JsonObject>, maturity: Long, now: Long)
     if (next == null) {
         // Live calendars may end on Friday without publishing Monday yet. The last
         // completed session still supplies a trade date, but cannot supply a cache
-        // deadline. The caller must check the latest history and refresh promptly.
+        // deadline. The caller must refresh the calendar and completed volume promptly.
         val deadline = checkedAdd(previous.end, MAX_CALENDAR_TAIL_AGE_MS)
         require(now < deadline) { "交易日历末尾已超过72小时，等待更新" }
-        return CompletedSession(previous.day, previous.start, previous.end, deadline, verifyLatestDailyBar = true)
+        return CompletedSession(previous.day, previous.start, previous.end, deadline, refreshCompletedVolume = true)
     }
     require(next.day > previous.day && next.start >= previous.end) { "交易日时段重叠" }
     return CompletedSession(previous.day, previous.start, previous.end, next.end)
@@ -135,13 +135,13 @@ internal suspend fun selectVolumeLeader(productId: Long, root: String, now: Long
     val rows = ids.chunked(50).flatMap { chunk -> read("tradingSession/ldeps?masterids=${chunk.joinToString(",")}").map { it.jsonObject } }
     val sessions = ids.associateWith { completedSession(rows, it, now) }
     require(sessions.values.map { it.day }.distinct().size == 1) { "候选合约的完整交易日不一致" }
-    val verifyLatest = sessions.values.any { it.verifyLatestDailyBar }
+    val refreshCompleted = sessions.values.any { it.refreshCompletedVolume }
     val slots = Semaphore(3)
     val counted = Mutex()
     var done = 0
     val ranked = coroutineScope { contracts.map { contract -> async { slots.withPermit {
         val maturity = byId.getValue(contract.long("contractMaturityId")!!)
-        val session = sessions.getValue(maturity.long("id")!!).copy(verifyLatestDailyBar = verifyLatest)
+        val session = sessions.getValue(maturity.long("id")!!).copy(refreshCompletedVolume = refreshCompleted)
         val count = volume(contract.str("name")!!, session)
         require(count >= 0) { "日成交量无效" }
         counted.withLock { progress(++done, contracts.size) }
@@ -164,9 +164,9 @@ internal fun dailyBarTimestamp(day: Long): Long {
 internal fun dailyVolumeRange(session: CompletedSession) = buildJsonObject {
     val start = dailyBarTimestamp(session.day)
     put("asFarAsTimestamp", Instant.fromEpochMilliseconds(start).toString())
-    // Without a future calendar row, a bounded query could hide a newer trade day.
-    // Ask for the latest bar from this date onward, including overnight date labels.
-    if (!session.verifyLatestDailyBar) put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
+    // A newer daily bar may still be forming. Always request the completed trade date,
+    // including when the calendar has not published the current or next session yet.
+    put("closestTimestamp", Instant.fromEpochMilliseconds(start + 86_400_000 - 1).toString())
     put("asMuchAsElements", 1)
 }
 
@@ -176,6 +176,8 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
     var invalidated = false
         private set
     private var confirmedVolume: Long? = null
+    private var sawOlderBar = false
+    private var sawLaterBar = false
     private val bars = mutableMapOf<Long, Long>()
     fun accept(packet: JsonObject) {
         if (invalidated) return
@@ -185,22 +187,19 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
             for (value in (values as? JsonArray).orEmpty()) {
                 val bar = requireNotNull(value as? JsonObject) { "日线数据格式无效" }
                 val time = requireNotNull(bar.str("timestamp")?.let(::timestamp))
-                val labels = listOf(packet, bar).filter { "td" in it }.map { requireNotNull(it.long("td")) { "日线交易日期不匹配或无效" } }
-                require(labels.distinct().size <= 1) { "日线交易日期不匹配或无效" }
+                val labels = listOf(packet, bar).filter { "td" in it }.map { requireNotNull(it.long("td")) { "日线交易日期不匹配或无效" } }.distinct()
+                require(labels.size <= 1) { "日线交易日期不匹配或无效" }
                 // A labelled bar stamped at another date's UTC midnight contradicts itself.
                 labels.singleOrNull()?.let { td -> require(time % 86_400_000 != 0L || time == dailyBarTimestamp(td)) { "日线交易日期不匹配或无效" } }
-                // A month that did not trade on the date gets its latest older bar back
-                // (live GCN7: 2026-10-28 for 2026-10-30), i.e. no volume on the date itself.
-                if (labels.singleOrNull()?.let { it < day } ?: (time < dailyBarTimestamp(day))) continue
-                // A later date means trading continued past the calendar (live: MBT weekend bars).
-                val later = (labels.singleOrNull()?.takeIf { it > day }?.let(::dailyBarTimestamp)
-                    ?: time.takeIf { labels.isEmpty() && it > dailyBarTimestamp(day) && (it - dailyBarTimestamp(day)) % 86_400_000 == 0L })
-                    ?.let { Instant.fromEpochMilliseconds(it).toString().take(10) }
-                require(later == null) { "交易日历尚未包含 $later 的日线，暂无法确认主力" }
-                labels.singleOrNull()?.let { require(it == day) { "日线交易日期不匹配或无效" } }
                 // Real DailyBar packets omit td; do not infer their date from the device
                 // calendar or accept an arbitrary intraday timestamp as daily evidence.
-                if (labels.isEmpty()) require(time == dailyBarTimestamp(day)) { "日线交易日期不匹配或缺失" }
+                if (labels.isEmpty()) require(time % 86_400_000 == 0L) { "日线交易日期不匹配或缺失" }
+                val date = labels.singleOrNull()?.let(::dailyBarTimestamp) ?: time
+                // A month that did not trade on the date can return its latest older bar.
+                if (date < dailyBarTimestamp(day)) { sawOlderBar = true; continue }
+                // Shared history/realtime channels can deliver the still-forming daily bar.
+                // Its presence and volume say nothing about the completed date's ranking.
+                if (date > dailyBarTimestamp(day)) { sawLaterBar = true; continue }
                 fun count(key: String): Long {
                     val value = requireNotNull(decimalUnits(bar.str(key), 6)) { "日成交量缺失" }
                     require(value >= 0 && value % 1_000_000 == 0L) { "日成交量无效" }
@@ -209,13 +208,13 @@ internal class DailyVolumeHistory(private val day: Long, private val allowEmpty:
                 bars[time] = checkedAdd(count("upVolume"), count("downVolume"))
             }
             if (result.isCompleted) {
-                // Packets can still arrive before the chart is cancelled. A new trade date or
-                // correction invalidates the result instead of silently reusing it.
+                // Target-date corrections before cancellation still invalidate the result.
                 if (bars.isNotEmpty()) require(bars.values.singleOrNull() == confirmedVolume) { "已完成日线发生更新" }
                 return
             }
             if (packet.bool("eoh") == true) {
-                confirmedVolume = if (bars.isEmpty() && allowEmpty) 0
+                // Only a newer bar is not proof of an empty history for the requested date.
+                confirmedVolume = if (bars.isEmpty() && allowEmpty && (!sawLaterBar || sawOlderBar)) 0
                     else requireNotNull(bars.values.singleOrNull()) { "完整交易日日线缺失或不唯一" }
                 result.complete(confirmedVolume!!)
             }

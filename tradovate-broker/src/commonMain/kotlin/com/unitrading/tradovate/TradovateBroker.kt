@@ -430,7 +430,7 @@ class TradovateBroker(
             hydrateContracts(listOf(id))
             target = lock.withLock { contractSpecs[id] }
             require(target != null) { "主力合约规格尚未加载" }
-            validUntil = if (leader.session.verifyLatestDailyBar) minOf(leader.session.validUntil, now() + CALENDAR_TAIL_REFRESH_MS)
+            validUntil = if (leader.session.refreshCompletedVolume) minOf(leader.session.validUntil, now() + CALENDAR_TAIL_REFRESH_MS)
                 else leader.session.validUntil
         } catch (_: TimeoutCancellationException) { reason = "日成交量查询超时" }
         catch (cancel: CancellationException) {
@@ -461,23 +461,23 @@ class TradovateBroker(
 
     /**
      * Queries only months without a cached volume for the trade date. Cached values cannot show a
-     * newer session, so a calendar tail adds one fresh latest-bar query on the leader itself.
+     * volume correction, so a calendar tail freshly rechecks the leader on that same completed date.
      */
     private suspend fun rankContinuous(productId: Long, symbol: String, progress: suspend (Int, Int) -> Unit): VolumeLeader {
         val root = symbol.removePrefix("@")
-        val latestChecked = mutableSetOf<String>()
+        val completedChecked = mutableSetOf<String>()
         suspend fun rank(cached: Boolean) = selectVolumeLeader(productId, root, now(),
             read = { path -> rest("GET", path) as? JsonArray ?: error("合约或交易时段返回无效") },
             volume = { name, session ->
                 (if (cached) lock.withLock { continuousEvidence.volume(name, session.day) } else null)
                     ?: completedDailyVolume(name, session).also { count -> lock.withLock {
                         continuousEvidence.remember(name, session.day, count)
-                        if (session.verifyLatestDailyBar) latestChecked.add(name)
+                        if (session.refreshCompletedVolume) completedChecked.add(name)
                     } }
             }, progress = progress)
         val leader = rank(cached = true)
         val name = requireNotNull(leader.contract.str("name"))
-        if (!leader.session.verifyLatestDailyBar || lock.withLock { name in latestChecked }) return leader
+        if (!leader.session.refreshCompletedVolume || lock.withLock { name in completedChecked }) return leader
         if (completedDailyVolume(name, leader.session) == leader.volume) return leader
         // A corrected completed volume makes this product's cached values for the date suspect.
         lock.withLock { continuousEvidence.forget(root, leader.session.day) }
@@ -498,18 +498,18 @@ class TradovateBroker(
         val ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
         try {
             require(response.str("mode") == null || response.str("mode") == "RealTime") { "日成交量行情权限或模式不可用" }
-            require(!session.verifyLatestDailyBar || response.str("mode") == "RealTime") { "核实交易日历末尾需要实时日线权限" }
+            require(!session.refreshCompletedVolume || response.str("mode") == "RealTime") { "核实交易日历末尾需要实时日线权限" }
             val collector = DailyVolumeHistory(session.day, allowEmpty = response.str("mode") == "RealTime")
             val key = requireNotNull(chartSubscriptionKey(response["historicalId"])) { "日成交量历史通道缺失" }
             lock.withLock {
                 require(overflow == earlyChartOverflow) { "日成交量历史包丢失，请重试" }
                 ids.mapNotNull(::chartSubscriptionKey).forEach(discardedCharts::remove)
                 volumeCharts[key] = collector
-                // A calendar tail also reads the realtime channel, so a newer bar arriving meanwhile is rejected.
+                // Also observe target-date corrections before cancellation; newer dates do not enter the ranking.
                 chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let {
-                    if (session.verifyLatestDailyBar) volumeCharts[it] = collector else discardedCharts.add(it)
+                    if (session.refreshCompletedVolume) volumeCharts[it] = collector else discardedCharts.add(it)
                 }
-                if (session.verifyLatestDailyBar) requireNotNull(chartSubscriptionKey(response["realtimeId"])) { "核实交易日历末尾需要实时日线通道" }
+                if (session.refreshCompletedVolume) requireNotNull(chartSubscriptionKey(response["realtimeId"])) { "核实交易日历末尾需要实时日线通道" }
                 drainEarlyCharts()
             }
             val count = withTimeout(15_000) { collector.result.await() }
