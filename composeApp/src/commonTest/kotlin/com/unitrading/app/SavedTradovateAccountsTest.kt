@@ -3,6 +3,9 @@ package com.unitrading.app
 import com.unitrading.broker.*
 import com.unitrading.demo.DemoBroker
 import com.unitrading.demo.DemoConfigs
+import com.unitrading.rithmic.RithmicCredentials
+import com.unitrading.rithmic.RithmicEnvironment
+import com.unitrading.rithmic.RithmicRemoteException
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
@@ -36,6 +39,56 @@ class SavedTradovateAccountsTest {
         override val descriptor = BrokerDescriptor(session.brokerId, "Saved test", "", true, BrokerEnvironment.REMOTE_DEMO)
     }
     private fun manager(registry: BrokerRegistry, store: Store) = SavedTradovateAccounts(registry, store, { now }) { s, _, _ -> plugin(s) }
+    private fun rithmic(user: String = "trader@example.com", environment: RithmicEnvironment = RithmicEnvironment.TEST) =
+        RithmicCredentials(environment, "wss://rituz00100.rithmic.com:443", environment.defaultSystemName, user, "secret-password-1")
+    private fun rithmicPlugin(credentials: RithmicCredentials): BrokerPlugin = object : BrokerPlugin by DemoBroker(DemoConfigs.all.first()) {
+        override val descriptor = BrokerDescriptor(credentials.brokerId, "Rithmic test", "", true, BrokerEnvironment.RITHMIC_TEST)
+    }
+    private fun managerWithRithmic(registry: BrokerRegistry, store: Store, connect: suspend (RithmicCredentials) -> BrokerPlugin = ::rithmicPlugin) =
+        SavedTradovateAccounts(registry, store, { now }, connect = { s, _, _ -> plugin(s) }, connectRithmic = { c, _ -> connect(c) })
+
+    @Test fun rithmicPasswordIsStoredOnlyWhenRememberIsChosenAndRestoresWithoutABrowser() = runTest {
+        val store = Store()
+        val brokers = registry()
+        val accounts = managerWithRithmic(brokers, store)
+        val credentials = rithmic()
+        assertEquals(credentials.brokerId, accounts.signInRithmic(credentials, remember = false) {})
+        assertTrue(brokers.plugins.any { it.descriptor.id == credentials.brokerId })
+        assertEquals(0, accounts.savedCount.value)
+        assertFalse(store.value.orEmpty().contains("secret-password-1"))
+        accounts.signInRithmic(credentials, remember = true) {}
+        assertEquals(1, accounts.savedCount.value)
+        accounts.select(credentials.brokerId, "ACC1")
+        val connected = mutableListOf<RithmicCredentials>()
+        val reopened = registry()
+        val restored = managerWithRithmic(reopened, store) { c -> connected += c; rithmicPlugin(c) }
+        restored.restore()
+        assertEquals(listOf(credentials.brokerId), connected.map { it.brokerId })
+        assertEquals("secret-password-1", connected.single().password)
+        assertEquals(credentials.brokerId, restored.restoredBrokerId.value)
+        assertEquals("ACC1", restored.selectedAccount(credentials.brokerId))
+        assertTrue(reopened.plugins.any { it.descriptor.id == credentials.brokerId })
+        assertTrue(restored.forgetAll())
+        assertFalse(reopened.plugins.any { it.descriptor.id == credentials.brokerId })
+        assertNull(store.value)
+    }
+
+    @Test fun rithmicLoginFailureIsNotSavedAndARefusedRestoreKeepsOtherLogins() = runTest {
+        val store = Store()
+        val accounts = managerWithRithmic(registry(), store) { throw RithmicRemoteException("7", "bad password") }
+        assertFailsWith<RithmicRemoteException> { accounts.signInRithmic(rithmic(), remember = true) {} }
+        assertEquals(0, accounts.savedCount.value)
+        val saved = managerWithRithmic(registry(), store)
+        saved.signInRithmic(rithmic(), remember = true) {}
+        saved.signIn(session()) {}
+        val reopened = registry()
+        val restored = managerWithRithmic(reopened, store) { throw RithmicRemoteException("7", "bad password") }
+        restored.restore()
+        assertTrue(restored.message.value!!.contains("bad password"))
+        assertEquals(2, restored.savedCount.value)
+        assertTrue(reopened.plugins.any { it.descriptor.id == session().brokerId })
+        assertFalse(reopened.plugins.any { it.descriptor.id == rithmic().brokerId })
+    }
 
     @Test fun restartRestoresAllUsersAndEnvironmentsAndSelectedAccount() = runTest {
         val store = Store()

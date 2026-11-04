@@ -49,6 +49,7 @@ class RithmicBroker(
     private val commandLock = Mutex()
     private val connectLock = Mutex()
     private val chartLock = Mutex()
+    private val quoteSyncLock = Mutex()
     private val specLocks = mutableMapOf<String, Mutex>()
     private val specSlots = Semaphore(4)
     private var ticker: RithmicPlant? = null
@@ -184,11 +185,11 @@ class RithmicBroker(
     catch (_: Exception) { emptyList() }
 
     private suspend fun loadLoginInfo(order: RithmicPlant) {
-        val info = order.request(Rt.REQUEST_LOGIN_INFO) {}.lastOrNull { it.has(Rf.FCM_ID) || it.has(Rf.IB_ID) }
-            ?: throw RithmicRemoteException("login-info", "Rithmic 没有返回登录信息（FCM/IB）")
-        fcmId = info.str(Rf.FCM_ID)?.trim() ?: ""
-        ibId = info.str(Rf.IB_ID)?.trim() ?: ""
-        userType = info.int(Rf.USER_TYPE)?.takeIf { it in 1..3 } ?: RithmicEnums.USER_TYPE_TRADER
+        // An FCM/IB-less reply still logs in; account-scoped requests then go out unscoped, as the public clients do.
+        val info = order.request(Rt.REQUEST_LOGIN_INFO) {}.lastOrNull { it.has(Rf.FCM_ID) || it.has(Rf.IB_ID) || it.has(Rf.USER_TYPE) }
+        fcmId = info?.str(Rf.FCM_ID)?.trim() ?: ""
+        ibId = info?.str(Rf.IB_ID)?.trim() ?: ""
+        userType = info?.int(Rf.USER_TYPE)?.takeIf { it in 1..3 } ?: RithmicEnums.USER_TYPE_TRADER
     }
 
     private suspend fun loadAccounts(order: RithmicPlant) {
@@ -356,11 +357,18 @@ class RithmicBroker(
                 val next = parseOrderNotification(message, previous, now()) ?: return@withLock
                 if (previous != null && previous.sequence != null && next.sequence != null && next.sequence < previous.sequence && next.timeMs < previous.timeMs) return@withLock
                 orders[basket] = next
+                val rejected = message.int(Rf.NOTIFY_TYPE) == RithmicEnums.NOTIFY_REJECT && message.templateId == Rt.EXCHANGE_ORDER_NOTIFICATION ||
+                    next.status.trim().equals("rejected", ignoreCase = true) && !previous?.status.equals("rejected", ignoreCase = true)
+                if (rejected && !synchronizing && message.bool(Rf.IS_SNAPSHOT) != true) {
+                    val reason = listOfNotNull(message.str(Rf.REPORT_TEXT), message.str(Rf.TEXT)).firstOrNull { it.isNotBlank() } ?: "服务器拒绝"
+                    localEvents[next.accountId] = ((localEvents[next.accountId] ?: emptyList()) +
+                        ActivityEvent(now(), "订单 ${next.basketId}（${next.symbol}）被拒绝：${safeRithmicMessage(reason)}")).takeLast(200)
+                }
                 if (message.templateId == Rt.EXCHANGE_ORDER_NOTIFICATION && message.int(Rf.NOTIFY_TYPE) == RithmicEnums.NOTIFY_FILL) {
                     parseFill(message, now())?.let { fill ->
                         if (fill.id !in fills) {
                             fills[fill.id] = fill
-                            if (!synchronizing && message.bool(Rf.IS_SNAPSHOT) != true && now() - liveSince > 0 && fill.id !in notifiedFills) {
+                            if (!synchronizing && message.bool(Rf.IS_SNAPSHOT) != true && now() >= liveSince && fill.id !in notifiedFills) {
                                 notifiedFills.add(fill.id)
                                 val role = when {
                                     next.isBracketChild && next.priceType in setOf(RithmicEnums.PRICE_STOP_MARKET, RithmicEnums.PRICE_STOP_LIMIT) -> OrderRole.STOP_LOSS
@@ -381,6 +389,7 @@ class RithmicBroker(
                 brackets[id] = BracketLevels(
                     message.long(Rf.STOP_TICKS) ?: previous.stopTicks, message.long(Rf.STOP_QUANTITY) ?: previous.stopQuantity,
                     message.long(Rf.TARGET_TICKS) ?: previous.targetTicks, message.long(Rf.TARGET_QUANTITY) ?: previous.targetQuantity)
+                reconcile()
                 rebuild()
             }
             Rt.TRADE_ROUTE -> lock.withLock { tradeRoutes = routesFrom(listOf(message), tradeRoutes) }
@@ -394,7 +403,9 @@ class RithmicBroker(
     private suspend fun pnlEvent(message: ProtoMessage) {
         when (message.templateId) {
             Rt.INSTRUMENT_PNL_UPDATE -> {
-                val position = parsePosition(message, now()) ?: return
+                val account = message.str(Rf.ACCOUNT_ID)?.trim() ?: return
+                val symbol = message.str(Rf.SYMBOL)?.trim() ?: return
+                val position = lock.withLock { parsePosition(message, positions[account to symbol], now()) } ?: return
                 lock.withLock {
                     positions[position.accountId to position.symbol] = position
                     reconcile()
@@ -417,17 +428,21 @@ class RithmicBroker(
                 val symbol = message.str(Rf.SYMBOL)?.trim() ?: return@withLock
                 val spec = specs[symbol] ?: return@withLock
                 val presence = message.long(Rf.PRESENCE_BITS) ?: 0
+                val cleared = message.long(Rf.CLEAR_BITS) ?: 0
                 val time = message.timeMs() ?: now()
                 val previous = quoteSides[symbol]
                 if (previous != null && previous.time > time + 60_000) return@withLock
-                val bid = if (presence and RithmicEnums.PRESENCE_BID.toLong() != 0L || message.has(Rf.BID_PRICE)) message.double(Rf.BID_PRICE)?.let(spec.scale::units) else previous?.bid
-                val ask = if (presence and RithmicEnums.PRESENCE_ASK.toLong() != 0L || message.has(Rf.ASK_PRICE)) message.double(Rf.ASK_PRICE)?.let(spec.scale::units) else previous?.ask
+                val bidCleared = cleared and RithmicEnums.PRESENCE_BID.toLong() != 0L
+                val askCleared = cleared and RithmicEnums.PRESENCE_ASK.toLong() != 0L
+                val bid = if (bidCleared) null else if (presence and RithmicEnums.PRESENCE_BID.toLong() != 0L || message.has(Rf.BID_PRICE)) message.double(Rf.BID_PRICE)?.let(spec.scale::units) ?: previous?.bid else previous?.bid
+                val ask = if (askCleared) null else if (presence and RithmicEnums.PRESENCE_ASK.toLong() != 0L || message.has(Rf.ASK_PRICE)) message.double(Rf.ASK_PRICE)?.let(spec.scale::units) ?: previous?.ask else previous?.ask
                 if (listOfNotNull(bid, ask).any { it <= 0 || it % spec.instrument.tickSize != 0L }) return@withLock
-                val next = QuoteSides(bid ?: previous?.bid, ask ?: previous?.ask, time)
+                val next = QuoteSides(bid, ask, time)
                 quoteSides[symbol] = next
-                val b = next.bid ?: return@withLock
-                val a = next.ask ?: return@withLock
-                if (a < b) return@withLock
+                val b = next.bid
+                val a = next.ask
+                // One side gone (cleared or never seen) means no tradable quote; stale prices never linger.
+                if (b == null || a == null || a < b) { if (symbol in quotes) { quotes = quotes - symbol; publish() }; return@withLock }
                 quotes = quotes + (symbol to Quote(b, a, time))
                 publish()
             }
@@ -440,7 +455,8 @@ class RithmicBroker(
                 val time = message.timeMs() ?: now()
                 if (price <= 0) return@withLock
                 val series = barSubscription ?: return@withLock
-                if (series.first != symbol) return@withLock
+                // Daily bars follow the exchange trading date, not the UTC calendar day; only the server closes them.
+                if (series.first != symbol || series.second.minutes % 1440 == 0) return@withLock
                 applyTrade(series, price, size, time)
             }
             Rt.FORCED_LOGOUT -> { marketReady = false; problem = "Rithmic 服务器强制登出了行情连接"; publish() }
@@ -575,8 +591,8 @@ class RithmicBroker(
         }
     }
 
-    private suspend fun syncQuoteSubscriptions() {
-        val plant = ticker ?: return
+    private suspend fun syncQuoteSubscriptions() = quoteSyncLock.withLock {
+        val plant = ticker ?: return@withLock
         val wanted = lock.withLock {
             val fromAccounts = positions.values.filter { it.net != 0L }.map { it.symbol } + orders.values.filter { it.active }.map { it.symbol }
             val fromWatch = (quoteWatchSymbols + listOfNotNull(watching?.first)).mapNotNull { executionSymbol(it) }
@@ -598,6 +614,7 @@ class RithmicBroker(
             catch (error: Exception) { if (failure == null) failure = error }
         }
         failure?.let { lock.withLock { problem = "部分行情订阅失败：${safeRithmicMessage(it.message ?: "请检查行情权限")}"; publish() } }
+        Unit
     }
 
     private fun ProtoWriter.marketData(symbol: String, exchange: String, request: Int) {
@@ -664,7 +681,8 @@ class RithmicBroker(
         val daily = timeframe.minutes % 1440 == 0
         val end = now()
         val span = timeframe.minutes * 60_000L
-        val start = cached.lastOrNull()?.timeMs?.takeIf { end - it < span * RITHMIC_CHART_BARS * 2 } ?: (end - span * RITHMIC_CHART_BARS * 3 / 2)
+        // Four chart-widths of wall time cover weekends and holidays while staying under Rithmic's 10,000-bar reply cap.
+        val start = cached.lastOrNull()?.timeMs?.takeIf { end - it < span * RITHMIC_CHART_BARS * 4 } ?: (end - span * RITHMIC_CHART_BARS * 4)
         val bars = mutableListOf<Candle>()
         var from = start
         for (page in 0 until 6) {
@@ -936,13 +954,15 @@ class RithmicBroker(
                     val current = lock.withLock { brackets[orderId] }?.let { if (stop) it.stopTicks else it.targetTicks } ?: errorArgument("括号保护的当前档位未知，请先同步账户")
                     val ticks = abs(price - entry) / spec.instrument.tickSize
                     require(ticks in 1..1_000_000) { "保护价距离入场价至少一个最小变动单位" }
-                    sendWrite(accountId, requestId, "bracket", orderId, if (stop) Rt.REQUEST_UPDATE_STOP_LEVEL else Rt.REQUEST_UPDATE_TARGET_LEVEL, order.request.symbol, price) {
+                    // The level acknowledgement is the confirmation for this request type; the bracket update frame only echoes it.
+                    sendWrite(accountId, requestId, if (stop) "bracket-stop" else "bracket-target", orderId,
+                        if (stop) Rt.REQUEST_UPDATE_STOP_LEVEL else Rt.REQUEST_UPDATE_TARGET_LEVEL, order.request.symbol, ticks) {
                         string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId); string(Rf.BASKET_ID, orderId)
                         int32(Rf.LEVEL, current.toInt()); int32(if (stop) Rf.STOP_TICKS else Rf.TARGET_TICKS, ticks.toInt())
                     }.also { result -> if (result.accepted) lock.withLock {
                         val levels = brackets[orderId] ?: BracketLevels()
                         brackets[orderId] = if (stop) levels.copy(stopTicks = ticks) else levels.copy(targetTicks = ticks)
-                        rebuild()
+                        reconcile(); rebuild()
                     } }
                 }
             override suspend fun cancelOrder(requestId: String, orderId: String) = command(accountId, requestId, "cancel:$orderId") {
@@ -1060,7 +1080,8 @@ class RithmicBroker(
             lock.withLock {
                 if (kind == "place") {
                     if (basket == null) throw RithmicRemoteException("basket", "缺少订单回执 ID，无法确认结果")
-                    awaiting[key] = awaiting.getValue(key).copy(entity = basket)
+                    // The order notification can beat this reply and settle the wait by its client tag already.
+                    awaiting[key]?.let { awaiting[key] = it.copy(entity = basket) }
                 }
                 reconcile(); publish()
             }
@@ -1069,7 +1090,7 @@ class RithmicBroker(
             withContext(NonCancellable) { lock.withLock { unknownCommands.add(key); publish() } }
             throw cancel
         } catch (error: RithmicRemoteException) {
-            val certainRejection = error.code != "closed" && error.code != "empty" && error.code != "basket"
+            val certainRejection = error.code !in setOf("closed", "empty", "basket", "timeout")
             lock.withLock { if (certainRejection) awaiting.remove(key) else unknownCommands.add(key); publish() }
             if (certainRejection) TradeResult(false, "Rithmic 拒绝：${safeRithmicMessage(error.message ?: "请求被拒绝")}")
             else TradeResult(false, "交易结果未知，未自动重试。请在 R | Trader 核对，当前会话已暂停发送交易指令。", outcome = CommandOutcome.UNKNOWN)
@@ -1089,7 +1110,8 @@ class RithmicBroker(
                     !order.active || (order.sequence != null && order.sequence != wait.baselineSequence) ||
                         (wait.expectedPrice != null && price != null && specs[order.symbol]?.scale?.units(price) == wait.expectedPrice)
                 } ?: fullSnapshot
-                "bracket" -> fullSnapshot || orders[wait.entity]?.active == false
+                "bracket-stop" -> fullSnapshot || orders[wait.entity]?.active == false || brackets[wait.entity]?.stopTicks == wait.expectedPrice
+                "bracket-target" -> fullSnapshot || orders[wait.entity]?.active == false || brackets[wait.entity]?.targetTicks == wait.expectedPrice
                 "cancel" -> orders[wait.entity]?.let { !it.active } ?: fullSnapshot
                 "close" -> positions[wait.account to wait.entity]?.let { it.net == 0L } ?: fullSnapshot
                 else -> false

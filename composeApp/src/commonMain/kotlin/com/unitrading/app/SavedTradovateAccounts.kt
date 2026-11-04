@@ -42,13 +42,13 @@ class SavedTradovateAccounts(
     private val store: CredentialStore?,
     private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     candleCacheStore: CandleCacheStore? = null,
-    private val connect: suspend (TradovateSession, suspend (TradovateSession) -> Unit, (String) -> Unit) -> BrokerPlugin = { session, renewed, progress ->
-        val broker = TradovateBroker(session, onSessionRenewed = renewed, candleCacheStore = candleCacheStore)
+    private val connectRithmic: suspend (RithmicCredentials, (String) -> Unit) -> BrokerPlugin = { credentials, progress ->
+        val broker = RithmicBroker(credentials, candleCacheStore = candleCacheStore)
         try { broker.connect(progress); broker }
         catch (error: Exception) { broker.disconnect(); throw error }
     },
-    private val connectRithmic: suspend (RithmicCredentials, (String) -> Unit) -> BrokerPlugin = { credentials, progress ->
-        val broker = RithmicBroker(credentials, candleCacheStore = candleCacheStore)
+    private val connect: suspend (TradovateSession, suspend (TradovateSession) -> Unit, (String) -> Unit) -> BrokerPlugin = { session, renewed, progress ->
+        val broker = TradovateBroker(session, onSessionRenewed = renewed, candleCacheStore = candleCacheStore)
         try { broker.connect(progress); broker }
         catch (error: Exception) { broker.disconnect(); throw error }
     },

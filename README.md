@@ -1,12 +1,12 @@
 # UniTrading
 
-UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 登录连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
+UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic R | Protocol API 连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
 
 **Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.1.4。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
 ## 功能
 
-- 首次启动显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录，并可恢复本机加密保存的会话。
+- 首次启动显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录和 Rithmic Test / Paper Trading / Live 登录，并可恢复本机加密保存的会话。Rithmic 接入尚未连接真实系统验证，见 [Rithmic 接入](docs/rithmic.md)。
 - Android 底部使用带图标的 Material 3 导航。手机图表页参考 MT5 的布局，图表占据主要空间，下单面板折叠在图表下方，见 [手机布局](docs/mobile-layout.md)。桌面使用多栏工作台。
 - 实时盈亏通知显示当前账户的浮动盈亏、净值和持仓数，可在账户页关闭。Android 使用常驻通知，Android 16 起支持 Live Update / HyperOS 超级岛，状态栏显示盈亏，前台服务负责后台刷新；iOS 使用灵动岛 / 锁屏 Live Activity。详见 [实时盈亏通知](docs/live-pnl-notifications.md)。
 - 今日盈亏使用 Tradovate 返回的账户总盈亏快照，按券商交易日展示，附更新时间；桌面资金栏、手机交易/账户页及图表摘要均可查看，见 [今日盈亏](docs/daily-pnl.md)。
@@ -32,6 +32,7 @@ UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 
 broker-api/    共享模型、定点计算、BrokerPlugin / AccountSession
 demo-broker/   模拟报价、K线聚合、撮合、账户账本和快照
 tradovate-broker/  登录会话、REST/WS 协议、净额期货账户与服务器订单
+rithmic-broker/    R | Protocol API（protobuf over WebSocket）登录、行情、历史与订单
 native-auth/   Windows WebView2 登录 host 与安全策略测试
 composeApp/    Compose 共享界面、图表、桌面/iOS 入口
 androidApp/    Android Activity 和应用配置
@@ -39,7 +40,7 @@ iosApp/        SwiftUI 容器、Xcode 工程
 docs/          计划、插件接入与验证记录
 ```
 
-依赖关系：应用入口 → composeApp → broker-api / tradovate-broker / demo-broker；两个 broker 模块依赖 broker-api。demo-broker 默认不注册，但仍是编译依赖。界面不直接修改交易账本。
+依赖关系：应用入口 → composeApp → broker-api / tradovate-broker / rithmic-broker / demo-broker；各 broker 模块依赖 broker-api。demo-broker 默认不注册，但仍是编译依赖。界面不直接修改交易账本。
 
 ## 构建要求
 
@@ -78,7 +79,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ### 测试
 
 ```bash
-./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
+./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :rithmic-broker:desktopTest :composeApp:desktopTest
 ```
 
 包含领域测试、图表坐标测试与 Compose UI 交互测试。1.1.4 常规套件为 127 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 仅执行 Android R8 release 编译、签名及 Telegram 通知，测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
@@ -117,6 +118,15 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 详细边界和证据见 [Tradovate 使用与验证](docs/tradovate.md)；网页登录后卡住的修复及只读实测见 [登录交接修复](docs/tradovate-login-fix.md)。
 
+## Rithmic 登录
+
+1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 网关由 Rithmic 在 conformance 通过后提供。
+2. 网关只接受 `wss://*.rithmic.com`。可先“查询”系统列表确认系统名称，再输入 Rithmic 登录 ID 和密码。
+3. 勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同加密保存并在启动时自动恢复；不勾选则只在本次运行内有效。
+4. 账户、交易路由、合约规格、Bid/Ask、历史 K 线、订单、成交和持仓均来自 R | Protocol 四个 plant。带 SL/TP 的新订单使用服务器静态括号单。
+
+**限制**：接入只用离线假服务器验证过协议与状态机，未连接真实 Rithmic 系统；生产系统需通过 Rithmic conformance。详见 [Rithmic 接入与验证](docs/rithmic.md)。
+
 ## 外观与图表
 
 - 登录页或账户页打开“外观与主题”，桌面也可使用顶栏“主题”。选择深色、浅色、跟随系统或 TradingV（TradingView 黑色配色：页面 `#000000`、图表 `#0F0F0F`、强调 `#2962FF`、K 线 `#089981` / `#F23645`）；点击颜色圆点使用 RGB 滑块，或直接输入 `#RRGGBB`。保存应用，取消丢弃本次编辑。
@@ -151,3 +161,4 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 - [实时盈亏通知](docs/live-pnl-notifications.md)
 - [Tradovate 接入计划](docs/tradovate-integration-plan.md)
 - [Tradovate 使用与验证](docs/tradovate.md)
+- [Rithmic 接入与验证](docs/rithmic.md)

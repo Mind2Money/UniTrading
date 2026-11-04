@@ -269,4 +269,6 @@ internal fun ProtoMessage.failureMessage(): String {
     return safeRithmicMessage(codes.drop(1).joinToString(" ").ifBlank { "Rithmic 返回码 ${codes.firstOrNull() ?: "?"}" })
 }
 
-internal fun safeRithmicMessage(value: String): String = value.replace(Regex("(?i)password\\S*"), "[redacted]").take(300)
+/** Server text is shown as-is apart from control characters and length; credentials are redacted where they are known. */
+internal fun safeRithmicMessage(value: String): String = value.replace(Regex("[\\p{Cntrl}]"), " ").trim().take(300)
+internal fun redactSecret(value: String, secret: String): String = if (secret.length < 4) value else value.replace(secret, "[redacted]")

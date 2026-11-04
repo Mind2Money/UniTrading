@@ -138,7 +138,7 @@ internal fun parseFill(data: ProtoMessage, fallbackTime: Long): RithmicFill? {
     val basket = data.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val account = data.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val symbol = data.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val side = when (data.int(Rf.TRANSACTION_TYPE)) { RithmicEnums.BUY -> Side.BUY; RithmicEnums.SELL -> Side.SELL; else -> when (data.str(Rf.TRANSACTION_TYPE)?.trim()?.lowercase()) { "buy", "1" -> Side.BUY; "sell", "2" -> Side.SELL; else -> null } } ?: return null
+    val side = when (data.int(Rf.TRANSACTION_TYPE)) { RithmicEnums.BUY -> Side.BUY; RithmicEnums.SELL -> Side.SELL; else -> when (data.str(Rf.TRANSACTION_TYPE)?.trim()?.lowercase()) { "buy", "b", "1" -> Side.BUY; "sell", "s", "ss", "2" -> Side.SELL; else -> null } } ?: return null
     val size = data.long(Rf.FILL_SIZE)?.takeIf { it > 0 } ?: return null
     val price = data.double(Rf.FILL_PRICE)?.takeIf { it.isFinite() && it > 0 } ?: return null
     return RithmicFill(id, basket, account, symbol, side, size, price, data.timeMs() ?: fallbackTime)
@@ -147,13 +147,20 @@ internal fun parseFill(data: ProtoMessage, fallbackTime: Long): RithmicFill? {
 /** Net position per account and contract from InstrumentPnLPositionUpdate (450). */
 internal data class RithmicPosition(val accountId: String, val symbol: String, val exchange: String, val net: Long, val avgPrice: Double?, val openPnlMicros: Long?, val timeMs: Long)
 
-internal fun parsePosition(data: ProtoMessage, fallbackTime: Long): RithmicPosition? {
+/** proto3 drops zero quantities, so a record with no quantity field at all keeps the previous net rather than flattening it. */
+internal fun parsePosition(data: ProtoMessage, previous: RithmicPosition?, fallbackTime: Long): RithmicPosition? {
     val account = data.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val symbol = data.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val exchange = data.str(Rf.EXCHANGE)?.trim() ?: ""
-    val net = data.long(Rf.NET_QUANTITY) ?: ((data.long(Rf.BUY_QTY) ?: 0) - (data.long(Rf.SELL_QTY) ?: 0))
-    return RithmicPosition(account, symbol, exchange, net, data.double(Rf.AVG_OPEN_FILL_PRICE)?.takeIf { it.isFinite() && it > 0 },
-        moneyMicros(data.str(Rf.OPEN_POSITION_PNL)), data.timeMs() ?: fallbackTime)
+    val exchange = data.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.exchange ?: ""
+    val quantityFields = listOf(Rf.NET_QUANTITY, Rf.OPEN_POSITION_QUANTITY, Rf.FILL_BUY_QTY, Rf.FILL_SELL_QTY, Rf.BUY_QTY, Rf.SELL_QTY)
+    val net = when {
+        data.has(Rf.NET_QUANTITY) -> data.long(Rf.NET_QUANTITY) ?: 0
+        data.bool(Rf.IS_SNAPSHOT) == true || quantityFields.any(data::has) || previous == null -> 0
+        else -> previous.net
+    }
+    val avg = data.double(Rf.AVG_OPEN_FILL_PRICE)?.takeIf { it.isFinite() && it > 0 } ?: previous?.avgPrice?.takeIf { net != 0L && net == previous.net }
+    return RithmicPosition(account, symbol, exchange, net, avg,
+        if (data.has(Rf.OPEN_POSITION_PNL)) moneyMicros(data.str(Rf.OPEN_POSITION_PNL)) else previous?.openPnlMicros, data.timeMs() ?: fallbackTime)
 }
 
 /** Account money fields from AccountPnLPositionUpdate (451); every value stays unknown unless the server sent it. */

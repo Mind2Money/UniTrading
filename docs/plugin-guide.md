@@ -9,7 +9,7 @@
 - UI 只读状态并提交请求；不得在插件外直接增加余额、订单或仓位。
 - 交易商 ID 全局唯一，账户 ID 在交易商内唯一；同名品种不代表同一市场。
 
-默认注册表为空，登录成功后注册 `tradovate-broker`。本地 Demo 实现保留为编译依赖与离线测试引擎，需显式启用 `includeDemoBrokers = true`。Tradovate 通过官方网页登录，账户状态以服务器为准；代码/协议测试不等于真实交易联调，边界见 [Tradovate 使用与验证](tradovate.md)。
+默认注册表为空，登录成功后注册 `tradovate-broker` 或 `rithmic-broker`（R | Protocol 直连，见 [Rithmic 接入](rithmic.md)）。本地 Demo 实现保留为编译依赖与离线测试引擎，需显式启用 `includeDemoBrokers = true`。Tradovate 通过官方网页登录，账户状态以服务器为准；代码/协议测试不等于真实交易联调，边界见 [Tradovate 使用与验证](tradovate.md)。
 
 ## 注册
 

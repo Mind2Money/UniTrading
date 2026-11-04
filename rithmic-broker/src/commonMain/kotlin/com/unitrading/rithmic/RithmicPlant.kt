@@ -85,7 +85,8 @@ internal class RithmicPlant(
         try {
             val payload = ProtoWriter().int32(Rf.TEMPLATE_ID, templateId).string(Rf.USER_MSG, id).apply(build).toByteArray()
             sendLock.withLock { wire.send(frameMessage(payload)) }
-            val parts = withTimeout(timeoutMs) { entry.waiter.await() }
+            val parts = try { withTimeout(timeoutMs) { entry.waiter.await() } }
+                catch (_: TimeoutCancellationException) { throw RithmicRemoteException("timeout", "Rithmic $name 请求超时，结果未知") }
             return parts.filter { it.templateId != Rt.REJECT }
         } finally { lock.withLock { pending.remove(id) } }
     }
@@ -97,7 +98,7 @@ internal class RithmicPlant(
     }
 
     suspend fun login(credentials: RithmicCredentials, infraType: Int, aggregatedQuotes: Boolean? = null): ProtoMessage {
-        val reply = request(Rt.REQUEST_LOGIN, 20_000) {
+        val reply = try { request(Rt.REQUEST_LOGIN, 20_000) {
             string(Rf.TEMPLATE_VERSION, TEMPLATE_VERSION)
             string(Rf.USER, credentials.user.trim())
             string(Rf.PASSWORD, credentials.password)
@@ -106,11 +107,16 @@ internal class RithmicPlant(
             string(Rf.SYSTEM_NAME, credentials.systemName.trim())
             int32(Rf.INFRA_TYPE, infraType)
             aggregatedQuotes?.let { bool(Rf.AGGREGATED_QUOTES, it) }
-        }.lastOrNull() ?: throw RithmicRemoteException("login", "Rithmic 登录没有返回结果")
-        val interval = reply.double(Rf.HEARTBEAT_INTERVAL)?.takeIf { it.isFinite() && it >= 1.0 } ?: 30.0
+        } } catch (error: RithmicRemoteException) {
+            throw RithmicRemoteException(error.code, redactSecret(error.message ?: "", credentials.password))
+        }
+        val last = reply.lastOrNull() ?: throw RithmicRemoteException("login", "Rithmic 登录没有返回结果")
+        // "7" means "no data" on list replies but is a refusal on a login.
+        if (last.rpCode().firstOrNull() != "0") throw RithmicRemoteException(last.rpCode().firstOrNull() ?: "login", "Rithmic 登录被拒绝：${redactSecret(last.failureMessage(), credentials.password)}")
+        val interval = last.double(Rf.HEARTBEAT_INTERVAL)?.takeIf { it.isFinite() && it >= 1.0 } ?: 30.0
         heartbeatIntervalMs = (interval * 1_000).toLong()
         startHeartbeat()
-        return reply
+        return last
     }
 
     private fun startHeartbeat() {

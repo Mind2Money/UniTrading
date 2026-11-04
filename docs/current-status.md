@@ -25,6 +25,7 @@
 | 实时盈亏通知 | 已实现；Android 设备测试在 CI 运行，iOS 未构建验证 | `LivePnlController`、`LivePnlNotifier` + `LivePnlService` dataSync 前台服务（Android 16+ 在系统允许时提升为 Live Update / 超级岛，更早版本常驻通知）、`AppleLivePnl` + `UniTradingWidgets` 扩展（iOS 16.2+ Live Activity / 灵动岛）；仅进程存活时刷新，90 秒无刷新自动过期，见[实时盈亏通知](live-pnl-notifications.md) |
 | 十字线、图层及时间缺口 | 部分实现 | 悬停、点击或长按显示虚线十字线：底轴标注所指 K 线时间（UTC），右轴标注所指价格，横线落在副图内时标注该指标值；方向键移动时只保留竖线。保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
 | iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |
+| Rithmic R \| Protocol 接入 | 已实现，仅离线假服务器验证 | `rithmic-broker`、`RithmicConnectionDialog`、`SavedTradovateAccounts.signInRithmic`；四个 plant、静态括号单、净额持仓；未连接任何真实 Rithmic 系统，见[Rithmic 接入](rithmic.md) |
 | 本地 Demo | 保留实现，默认关闭 | `demo-broker` 仍是 `composeApp` 的编译依赖，未从产物完全移除；离线测试显式启用 `includeDemoBrokers = true` |
 
 主要源目录：[应用运行时](../composeApp/src/commonMain/kotlin/com/unitrading/app/)、[共享 UI](../composeApp/src/commonMain/kotlin/com/unitrading/ui/)、[图表](../composeApp/src/commonMain/kotlin/com/unitrading/chart/)、[Tradovate 插件](../tradovate-broker/src/commonMain/kotlin/com/unitrading/tradovate/)。

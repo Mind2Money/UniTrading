@@ -10,6 +10,7 @@
 - [本地构建与 CI](local-build.md)：本地测试、Windows/Android/iOS 构建、签名、Telegram 发布及后台完成回调。
 - [代码与文档核对](implementation-audit.md)：1.1.4 已确认的实现缺口、文档差异和可复现诊断。
 - [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
+- [Rithmic 接入与验证](rithmic.md)：R | Protocol API 直连登录、四个 plant、交易边界与未实测项。
 - [连续合约](continuous-contracts.md)：连续图表与指标、上一完整交易日成交量主力、实际到期合约下单及换月处理。
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
