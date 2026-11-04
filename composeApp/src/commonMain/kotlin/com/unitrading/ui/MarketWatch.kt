@@ -59,9 +59,6 @@ internal fun MarketWatch(
     LaunchedEffect(preferences, broker, catalog.instruments.isEmpty()) {
         preferences.initialize(broker, catalog.instruments, selected)
     }
-    // Subscription belongs to the saved list, including while the add screen is open.
-    LaunchedEffect(plugin, symbols) { plugin.watchQuotes(symbols.toSet()) }
-    DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
     LaunchedEffect(plugin, adding, query, market.connected, retry) {
         searching = false
         searchError = null

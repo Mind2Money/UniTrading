@@ -130,6 +130,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var timeframe by remember { mutableStateOf(savedChart.lastTimeframe ?: Timeframe.M5) }
         // The chart's symbol menu lists the market page's watch list, in its order.
         val watchLists by runtime.marketWatch.lists.collectAsState()
+        val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
+        // Keep loading and verifying the saved list while mobile navigation shows another page.
+        LaunchedEffect(plugin, watchSymbols) { plugin.watchQuotes(watchSymbols) }
+        DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
         val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
         val orderSession = remember(accountKey, symbol, executionSymbol) { orderSessions.getOrPut("$symbol/$executionSymbol") { MobileOrderSession(instrument) } }

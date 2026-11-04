@@ -45,7 +45,11 @@ class TradovateBroker(
     private val book = EntityBook()
     private var authorizedAccounts = emptySet<Long>()
     private val lock = Mutex()
-    private val metadataLock = Mutex()
+    private val metadataEntityLocks = mutableMapOf<Pair<String, Long>, Mutex>()
+    private val metadataContractLocks = mutableMapOf<Long, Mutex>()
+    private data class InstrumentSearch(val fetchedAt: Long, val ids: List<Long>)
+    private val instrumentSearchLocks = mutableMapOf<String, Mutex>()
+    private val instrumentSearches = mutableMapOf<String, InstrumentSearch>()
     private val commandLock = Mutex()
     private val capacityLock = Mutex()
     private val capacityChecks = mutableListOf<Long>()
@@ -62,7 +66,10 @@ class TradovateBroker(
     private val contractSpecs = mutableMapOf<Long, Instrument>()
     private data class ContinuousRoute(val productId: Long, val spec: Instrument, val checkedAt: Long? = null, val validUntil: Long = 0)
     private var continuousRoutes = emptyMap<String, ContinuousRoute>()
-    private val continuousLock = Mutex()
+    private val continuousLocks = mutableMapOf<String, Mutex>()
+    private val continuousResolutionSlots = Semaphore(2)
+    private val volumeSlots = Semaphore(3)
+    private val continuousEvidenceSaveLock = Mutex()
     private var continuousJob: Job? = null
     private val volumeCharts = mutableMapOf<String, DailyVolumeHistory>()
     private val continuousEvidence = ContinuousEvidence(candleCacheStore, "continuous-v1-${credentials.environment.wire}-${credentials.userId}")
@@ -106,6 +113,8 @@ class TradovateBroker(
     private var watching: Pair<String, Timeframe>? = null
     private var quoteWatchSymbols = emptySet<String>()
     private var quoteWatchJob: Job? = null
+    private val quoteWatchJobs = mutableMapOf<String, Job>()
+    private val quoteDiscoverySlots = Semaphore(3)
     private val results = mutableMapOf<String, Pair<String, TradeResult>>()
     private val unknownCommands = mutableSetOf<String>()
     private val awaiting = mutableMapOf<String, Awaiting>()
@@ -169,9 +178,11 @@ class TradovateBroker(
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
-                if (quoteWatchJob?.isActive != true && quoteWatchSymbols.any { symbol ->
-                    continuousRoutes[symbol]?.let { now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000) } == true
-                }) refreshQuoteWatch()
+                if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
+                    quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
+                        now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
+                    } == true
+                } }) refreshQuoteWatch()
                 val selected = watching
                 val route = selected?.first?.let(continuousRoutes::get)
                 if (selected != null && route != null && now() >= route.validUntil && (route.checkedAt == null || now() - route.checkedAt >= 60_000) && continuousJob?.isActive != true) {
@@ -303,6 +314,12 @@ class TradovateBroker(
                 if (stopped) return@launch
                 try {
                     marketReady = false
+                    maintenance?.cancelAndJoin()
+                    quoteWatchJob?.cancelAndJoin()
+                    val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
+                    pendingQuotes.forEach { it.cancel() }
+                    pendingQuotes.joinAll()
+                    continuousJob?.cancelAndJoin()
                     watchJob?.cancelAndJoin()
                     chartBackfillJob?.cancelAndJoin()
                     cancelledChartIds.clear()
@@ -324,6 +341,9 @@ class TradovateBroker(
         publish()
         maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
+            val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
+            pendingQuotes.forEach { it.cancel() }
+            pendingQuotes.joinAll()
             watchJob?.join()
             chartBackfillJob?.cancelAndJoin()
             runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }
@@ -339,11 +359,25 @@ class TradovateBroker(
         if (text.isBlank()) return
         // Discovery must not wait for daily-volume ranking. Aliases become visible as soon
         // as their product metadata is hydrated; watch/chart selection resolves execution.
-        val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=100") as? JsonArray
-            ?: error("合约搜索返回无效")
-        val contracts = data.mapNotNull { it as? JsonObject }
-        lock.withLock { contracts.forEach { book.apply("contract", it) } }
-        hydrateContracts(contracts.mapNotNull { it.long("id") })
+        val searchLock = lock.withLock { instrumentSearchLocks.getOrPut(text) { Mutex() } }
+        val ids = searchLock.withLock {
+            lock.withLock { instrumentSearches[text]?.takeIf { now() - it.fetchedAt in 0 until 30_000 } }
+                ?.let { return@withLock it.ids }
+            val data = rest("GET", "contract/suggest?t=${text.encodeURLParameter()}&l=100") as? JsonArray
+                ?: error("合约搜索返回无效")
+            val contracts = data.map { it as? JsonObject ?: error("合约搜索返回无效") }
+            require(contracts.all { (it.long("id") ?: 0) > 0 && (it.long("contractMaturityId") ?: 0) > 0 && !it.str("name").isNullOrBlank() }) {
+                "合约搜索返回无效"
+            }
+            val found = contracts.map { requireNotNull(it.long("id")) }.distinct()
+            lock.withLock {
+                contracts.forEach { book.apply("contract", it) }
+                instrumentSearches[text] = InstrumentSearch(now(), found)
+            }
+            found
+        }
+        // Cached discovery still retries any specification that failed to hydrate.
+        hydrateContracts(ids)
     }
 
     override fun watchQuotes(symbols: Set<String>) {
@@ -355,28 +389,38 @@ class TradovateBroker(
     private fun refreshQuoteWatch() {
         quoteWatchJob?.cancel()
         quoteWatchJob = scope.launch {
+            // Reconcile ownership, keeping retained symbols' in-flight discovery/ranking.
+            // Adding or reordering a row must not throw away the other rows' progress.
+            lock.withLock {
+                (quoteWatchJobs.keys - quoteWatchSymbols).forEach { quoteWatchJobs.remove(it)?.cancel() }
+            }
             if (!marketReady) return@launch
-            var failed = false
-            // Subscribe whatever is known after each step, so rows fill in while later symbols still load.
-            suspend fun sync() = try {
-                chartWatchLock.withLock { marketSocket?.let { syncQuoteSubscriptions(it) } }
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { failed = true }
-            sync()
-            // Restore saved symbols that are absent from the broker's login snapshot.
-            for (symbol in quoteWatchSymbols.toList()) if (instruments.none { it.symbol == symbol }) {
-                try { withTimeout(20_000) { searchInstruments(symbol) } }
-                catch (_: TimeoutCancellationException) { /* Retain the saved entry for a later retry. */ }
-                catch (cancel: CancellationException) { throw cancel }
-                catch (_: Exception) { /* Other symbols must still subscribe. */ }
-                sync()
+            lock.withLock {
+                if (!marketReady || stopped) return@launch
+                for (symbol in quoteWatchSymbols) if (quoteWatchJobs[symbol]?.isActive != true) {
+                    // Each row advances as soon as its own metadata is ready. Slow searches
+                    // do not prevent already-loaded symbols from confirming their leader.
+                    quoteWatchJobs[symbol] = scope.launch {
+                        if (instruments.none { it.symbol == symbol }) {
+                            try { quoteDiscoverySlots.withPermit { withTimeout(20_000) { searchInstruments(symbol) } } }
+                            catch (_: TimeoutCancellationException) { /* Keep the saved entry available for retry. */ }
+                            catch (cancel: CancellationException) { throw cancel }
+                            catch (_: Exception) { /* Other rows still load and subscribe independently. */ }
+                        }
+                        syncWatchQuotes()
+                        if (symbol in continuousRoutes) refreshContinuous(symbol)
+                        syncWatchQuotes()
+                    }
+                }
             }
-            for (symbol in quoteWatchSymbols.toList()) if (symbol in continuousRoutes) {
-                refreshContinuous(symbol)
-                sync()
-            }
-            if (failed) lock.withLock { problem = "部分自选行情订阅失败，请检查行情权限"; publish() }
+            syncWatchQuotes()
         }
+    }
+
+    private suspend fun syncWatchQuotes() {
+        try { chartWatchLock.withLock { marketSocket?.let { syncQuoteSubscriptions(it) } } }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { lock.withLock { problem = "部分自选行情订阅失败，请检查行情权限"; publish() } }
     }
 
     /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
@@ -407,14 +451,34 @@ class TradovateBroker(
     }
 
     /** Read-only resolution entry point; valid routes and cached completed-day volumes are reused. */
-    suspend fun refreshContinuous(symbol: String, force: Boolean = false) = continuousLock.withLock {
-        if (!connected || stopped) return@withLock
-        val route = continuousRoutes[symbol] ?: return@withLock
-        if (!force && now() < route.validUntil && route.checkedAt?.let { now() >= it } == true) return@withLock
-        if (!force && route.validUntil == 0L && route.checkedAt?.let { now() - it in 0 until 60_000 } == true) return@withLock
+    suspend fun refreshContinuous(symbol: String, force: Boolean = false) {
+        val resolutionLock = lock.withLock { continuousLocks.getOrPut(symbol) { Mutex() } }
+        resolutionLock.withLock {
+            // Cached reads do not wait for unrelated products. Admission to the bounded
+            // ranking pipeline happens before the per-product network timeout starts.
+            if (!lock.withLock { needsContinuousCheck(symbol, force) }) return@withLock
+            continuousResolutionSlots.withPermit { resolveContinuous(symbol, force) }
+        }
+    }
+
+    private fun needsContinuousCheck(symbol: String, force: Boolean): Boolean {
+        if (!connected || !marketReady || stopped) return false
+        val route = continuousRoutes[symbol] ?: return false
+        val time = now()
+        if (!force && time < route.validUntil && route.checkedAt?.let { time >= it } == true) return false
+        if (!force && route.validUntil == 0L && route.checkedAt?.let { time - it in 0 until 60_000 } == true) return false
+        return true
+    }
+
+    /** Only callers for the same symbol wait on each other; daily chart capacity is shared globally. */
+    private suspend fun resolveContinuous(symbol: String, force: Boolean) {
+        if (!needsContinuousCheck(symbol, force)) return
+        val resolutionSocket = marketSocket ?: return
+        val route = continuousRoutes[symbol] ?: return
         // The last confirmed contract keeps its quotes on screen; orders still wait for this check.
         val shown = route.spec.tradeSymbol ?: route.spec.quoteSymbol
         suspend fun checking(status: String) = lock.withLock {
+            check(marketReady && marketSocket === resolutionSocket) { "行情连接已变化，请重新核实" }
             continuousRoutes = continuousRoutes + (symbol to route.copy(spec = route.spec.copy(tradeSymbol = null, quoteSymbol = shown, tradeSymbolStatus = status)))
             rebuild()
         }
@@ -435,11 +499,14 @@ class TradovateBroker(
         } catch (_: TimeoutCancellationException) { reason = "日成交量查询超时" }
         catch (cancel: CancellationException) {
             // Nothing was learned: keep the previous mapping and validity instead of a stuck "checking" state.
-            withContext(NonCancellable) { lock.withLock { continuousRoutes = continuousRoutes + (symbol to route); rebuild() } }
+            withContext(NonCancellable) { lock.withLock {
+                if (marketSocket === resolutionSocket) { continuousRoutes = continuousRoutes + (symbol to route); rebuild() }
+            } }
             throw cancel
         }
         catch (e: Exception) { reason = safeMessage(e.message ?: "日成交量不可用") }
-        val evidence = lock.withLock {
+        lock.withLock {
+            if (stopped || !marketReady || marketSocket !== resolutionSocket) return
             if (target != null && now() >= validUntil) {
                 target = null; validUntil = 0
                 reason = "查询期间交易日已切换，请重新查询"
@@ -454,9 +521,9 @@ class TradovateBroker(
                 continuousEvidence.lead(symbol, confirmed)
             }
             rebuild()
-            continuousEvidence.snapshot()
         }
-        continuousEvidence.save(evidence)
+        // Concurrent symbols must not persist an older snapshot over a newer result.
+        continuousEvidenceSaveLock.withLock { continuousEvidence.save(lock.withLock { continuousEvidence.snapshot() }) }
     }
 
     /**
@@ -485,7 +552,7 @@ class TradovateBroker(
     }
 
     /** One trade date per request, always cancelled afterwards: rankings never hold server chart slots. */
-    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long {
+    private suspend fun completedDailyVolume(symbol: String, session: CompletedSession): Long = volumeSlots.withPermit {
         val socket = checkNotNull(marketSocket) { "行情连接不可用" }
         check(marketReady) { "行情尚未就绪" }
         val overflow = lock.withLock { earlyChartOverflow }
@@ -514,7 +581,7 @@ class TradovateBroker(
             }
             val count = withTimeout(15_000) { collector.result.await() }
             require(!collector.invalidated) { "日线交易日或成交量已更新，请重新查询" }
-            return count
+            return@withPermit count
         } finally {
             withContext(NonCancellable) {
                 lock.withLock {
@@ -534,11 +601,11 @@ class TradovateBroker(
         require(route.spec.tradeSymbol == request.symbol) { "主力合约已换月，请检查新合约并重新确认订单" }
     }
 
-    private suspend fun hydrateContracts(priority: List<Long> = emptyList()) = metadataLock.withLock {
+    private suspend fun hydrateContracts(priority: List<Long>? = null) {
         val ids = lock.withLock {
-            (priority + book.list("position").filter { (it.long("netPos") ?: 0) != 0L }.mapNotNull { it.long("contractId") } +
+            (priority ?: (book.list("position").filter { (it.long("netPos") ?: 0) != 0L }.mapNotNull { it.long("contractId") } +
                 book.list("order").filter(::activeOrder).mapNotNull { it.long("contractId") } +
-                book.list("contract").mapNotNull { it.long("id") }).distinct().filter { it !in contractSpecs }.take(100)
+                book.list("contract").mapNotNull { it.long("id") })).distinct().filter { it !in contractSpecs }.take(100)
         }
         // A root search returns many dated contracts. Fetch their missing maturities
         // in batches instead of spending one paced REST round trip on each month.
@@ -548,48 +615,64 @@ class TradovateBroker(
         }
         if (missingMaturities.size > 1) for (chunk in missingMaturities.chunked(50)) {
             try {
-                val rows = (rest("GET", "contractMaturity/items?ids=${chunk.joinToString(",")}") as? JsonArray)
-                    ?.map { it.jsonObject } ?: error("合约月份批量查询返回无效")
-                require(rows.all { it.long("id") in chunk && (it.long("productId") ?: 0) > 0 }) { "合约月份批量查询不匹配" }
-                lock.withLock { rows.forEach { book.apply("contractMaturity", it) } }
+                // Batch and single-item requests share locks, including across concurrent searches.
+                // Consistent acquisition order prevents overlapping batches from deadlocking.
+                val batchLocks = lock.withLock { chunk.sorted().map { metadataEntityLocks.getOrPut("contractMaturity" to it) { Mutex() } } }
+                suspend fun loadBatch(index: Int) {
+                    if (index < batchLocks.size) return batchLocks[index].withLock { loadBatch(index + 1) }
+                    val missing = lock.withLock { chunk.filter { book.item("contractMaturity", it) == null } }
+                    if (missing.isEmpty()) return
+                    val rows = (rest("GET", "contractMaturity/items?ids=${missing.joinToString(",")}") as? JsonArray)
+                        ?.map { it.jsonObject } ?: error("合约月份批量查询返回无效")
+                    require(rows.all { it.long("id") in missing && (it.long("productId") ?: 0) > 0 } &&
+                        rows.map { it.long("id") }.distinct().size == rows.size) { "合约月份批量查询不匹配" }
+                    lock.withLock { rows.forEach { book.apply("contractMaturity", it) } }
+                }
+                loadBatch(0)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* Missing rows still use the validated per-item path below. */ }
         }
         // Different contracts can share maturity/product/currency rows. Serialize only those
         // cache misses, never the entire network load, so each shared row is fetched once.
-        val entityLocks = mutableMapOf<Pair<String, Long>, Mutex>()
         suspend fun entity(type: String, entityId: Long): JsonObject {
-            val entityLock = lock.withLock { entityLocks.getOrPut(type to entityId) { Mutex() } }
+            val entityLock = lock.withLock { metadataEntityLocks.getOrPut(type to entityId) { Mutex() } }
             return entityLock.withLock {
-                    lock.withLock { book.item(type, entityId) }?.let { return it }
-                    val item = rest("GET", "$type/item?id=$entityId").jsonObject
-                    lock.withLock { book.apply(type, item) }
-                    item
+                lock.withLock { book.item(type, entityId) }?.let { return it }
+                val item = rest("GET", "$type/item?id=$entityId").jsonObject
+                require(item.long("id") == entityId) { "合约元数据标识不匹配" }
+                lock.withLock { book.apply(type, item) }
+                item
             }
         }
         val slots = Semaphore(4)
-        coroutineScope { ids.map { id -> launch { slots.withPermit {
-            try {
-                val contract = entity("contract", id)
-                val maturity = entity("contractMaturity", contract.long("contractMaturityId") ?: return@withPermit)
-                val product = entity("product", maturity.long("productId") ?: return@withPermit)
-                val currency = entity("currency", product.long("currencyId") ?: return@withPermit).str("name") ?: return@withPermit
-                val spec = mapInstrument(contract, maturity, product, currency) ?: return@withPermit
-                lock.withLock {
-                    contractSpecs[id] = spec
-                    val root = product.str("name")
-                    if (root != null && Regex("[A-Z0-9]{1,16}").matches(root)) {
-                        val symbol = "@$root"
-                        // A remembered leader the server still lists shows quotes before this session's check.
-                        val remembered = continuousEvidence.leader(symbol)?.takeIf { name -> book.list("contract").any { it.str("name") == name } }
-                        if (symbol !in continuousRoutes) continuousRoutes = continuousRoutes + (symbol to ContinuousRoute(
-                            requireNotNull(product.long("id")), spec.copy(symbol = symbol, category = "连续合约", isContinuous = true, quoteSymbol = remembered)))
-                    }
-                    rebuild()
+        coroutineScope { ids.map { id -> launch {
+            val contractLock = lock.withLock { metadataContractLocks.getOrPut(id) { Mutex() } }
+            contractLock.withLock {
+                if (lock.withLock { id in contractSpecs }) return@withLock
+                slots.withPermit {
+                    try {
+                        val contract = entity("contract", id)
+                        val maturity = entity("contractMaturity", contract.long("contractMaturityId") ?: return@withPermit)
+                        val product = entity("product", maturity.long("productId") ?: return@withPermit)
+                        val currency = entity("currency", product.long("currencyId") ?: return@withPermit).str("name") ?: return@withPermit
+                        val spec = mapInstrument(contract, maturity, product, currency) ?: return@withPermit
+                        lock.withLock {
+                            contractSpecs[id] = spec
+                            val root = product.str("name")
+                            if (root != null && Regex("[A-Z0-9]{1,16}").matches(root)) {
+                                val symbol = "@$root"
+                                // A remembered leader the server still lists shows quotes before this session's check.
+                                val remembered = continuousEvidence.leader(symbol)?.takeIf { name -> book.list("contract").any { it.str("name") == name } }
+                                if (symbol !in continuousRoutes) continuousRoutes = continuousRoutes + (symbol to ContinuousRoute(
+                                    requireNotNull(product.long("id")), spec.copy(symbol = symbol, category = "连续合约", isContinuous = true, quoteSymbol = remembered)))
+                            }
+                            rebuild()
+                        }
+                    } catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
                 }
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
-        } } }.joinAll() }
+            }
+        } }.joinAll() }
         lock.withLock { rebuild() }
     }
 
