@@ -101,7 +101,7 @@ class RemoteWorkbenchTest {
         compose.waitUntil(5_000) { runtime.savedLogins.message.value?.contains("已过期") == true }
         compose.onNodeWithTag("saved-login-status").assertTextContains("已过期", substring = true)
         compose.onNodeWithTag("open-accounts").performClick()
-        compose.onNodeWithText("本机已保存 1 个 Tradovate 登录").assertExists()
+        compose.onNodeWithText("本机已保存 1 个登录").assertExists()
         compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
         compose.onNodeWithText("取消").performClick()
         kotlin.test.assertEquals(1, runtime.savedLogins.savedCount.value)

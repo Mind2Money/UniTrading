@@ -28,6 +28,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":broker-api"))
             api(project(":tradovate-broker"))
+            api(project(":rithmic-broker"))
             implementation(project(":demo-broker"))
             implementation(compose.runtime)
             implementation(compose.foundation)

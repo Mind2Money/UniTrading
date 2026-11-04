@@ -72,9 +72,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
         var showConnection by remember { mutableStateOf(false) }
         if (showConnection) TradovateConnectionDialog(runtime, login, ::selectBroker, { showConnection = false })
+        var showRithmicConnection by remember { mutableStateOf(false) }
+        if (showRithmicConnection) RithmicConnectionDialog(runtime, ::selectBroker, { showRithmicConnection = false })
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
         if (plugin == null) {
-            LoginWelcome(runtime, { showConnection = true }, { showTheme = true })
+            LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = { showRithmicConnection = true })
             return@TradingTheme
         }
         fun disconnectCurrent() {
@@ -97,6 +99,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
                     searchError?.let { Text(it, color = colors.Loss) }
                     TextButton({ showConnection = true }) { Text("连接 / 重新登录 Tradovate") }
+                    TextButton({ showRithmicConnection = true }) { Text("连接 / 重新登录 Rithmic") }
                     TextButton({ disconnectCurrent() }) { Text("断开连接") }
                     TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
                     SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
@@ -359,7 +362,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
-                val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment == BrokerEnvironment.LIVE) "Live 实盘" else "远程 Demo"
+                val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment.live) "Live 实盘" else "远程 Demo"
                 // The persistent order sheet shares the chart surface and never dims it.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
@@ -553,7 +556,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth())
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = { showRithmicConnection = true })
                         }
                     }
                     if (compact && !chartFirst) {
@@ -596,7 +599,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false })
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = { showRithmicConnection = true })
                         }
                     }
                 }
@@ -619,7 +622,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
                         Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = colors.Muted)
                         TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }
-                        if (!localDemo) TextButton({ disconnectCurrent(); showAccounts = false }) { Text("断开 Tradovate") }
+                        TextButton({ showAccounts = false; showRithmicConnection = true }) { Text("连接 Rithmic") }
+                        if (!localDemo) TextButton({ disconnectCurrent(); showAccounts = false }) { Text("断开 ${plugin.descriptor.name}") }
                         TextButton({ showTheme = true; showAccounts = false }) { Text("外观与主题") }
                         SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: ""); showAccounts = false }
                     } },

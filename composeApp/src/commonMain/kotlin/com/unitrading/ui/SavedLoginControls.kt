@@ -21,20 +21,20 @@ internal fun SavedLoginControls(saved: SavedTradovateAccounts, grouped: Boolean 
     var busy by remember { mutableStateOf(false) }
     val retry: () -> Unit = { scope.launch { busy = true; try { saved.retry() } finally { busy = false } }; Unit }
     if (grouped) {
-        SettingsActionRow("恢复已保存登录", if (restoring || busy) "正在处理…" else "本机已保存 $count 个 Tradovate 登录",
+        SettingsActionRow("恢复已保存登录", if (restoring || busy) "正在处理…" else "本机已保存 $count 个登录",
             SettingsGlyph.Sync, "settings-restore-logins", retry, enabled = !restoring && !busy)
         message?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 12.sp, color = TradingColors.Muted) }
         SettingsDivider()
         SettingsActionRow("清除已保存登录", "删除本机登录状态并断开连接", SettingsGlyph.Disconnect, "forget-saved-logins",
             { confirm = true }, enabled = !restoring && !busy, destructive = true)
     } else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("本机已保存 $count 个 Tradovate 登录", fontSize = 12.sp)
+        Text("本机已保存 $count 个登录", fontSize = 12.sp)
         message?.let { Text(it, fontSize = 12.sp) }
         TextButton(retry, enabled = !restoring && !busy) { Text("重试恢复登录") }
         TextButton({ confirm = true }, enabled = !restoring && !busy, modifier = Modifier.testTag("forget-saved-logins")) { Text("清除已保存登录") }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("清除已保存登录？") },
-        text = { Text("清除后将断开本机 Tradovate 连接，并删除保存的登录状态。浏览器密码、服务器订单和仓位不受影响。") },
+        text = { Text("清除后将断开本机已保存的 Tradovate / Rithmic 连接，并删除保存的登录状态（含已记住的 Rithmic 密码）。浏览器密码、服务器订单和仓位不受影响。") },
         confirmButton = { TextButton({
             confirm = false
             scope.launch { busy = true; try { if (saved.forgetAll()) onForgotten() } finally { busy = false } }

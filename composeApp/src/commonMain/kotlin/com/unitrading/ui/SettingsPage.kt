@@ -52,6 +52,7 @@ internal fun SettingsPage(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
     onClose: (() -> Unit)? = null,
+    onConnectRithmic: (() -> Unit)? = null,
 ) {
     val colors = TradingColors
     val theme by runtime.theme.settings.collectAsState()
@@ -108,6 +109,10 @@ internal fun SettingsPage(
                 }
                 SettingsDivider()
                 SettingsActionRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", SettingsGlyph.Add, "settings-connect", onConnect)
+                if (onConnectRithmic != null) {
+                    SettingsDivider()
+                    SettingsActionRow("连接 Rithmic", "通过 R | Protocol API 登录 Test / Paper / Live 系统", SettingsGlyph.Add, "settings-connect-rithmic", onConnectRithmic)
+                }
             }
 
             SettingsSection("交易操作") {
@@ -156,7 +161,7 @@ internal fun SettingsPage(
                 if (runtime.savedLogins.available) SavedLoginControls(runtime.savedLogins, grouped = true, onForgotten = onForgotten)
                 if (!localDemo) {
                     if (runtime.savedLogins.available) SettingsDivider()
-                    SettingsActionRow("断开 Tradovate", "断开当前连接，保留本机登录", SettingsGlyph.Disconnect,
+                    SettingsActionRow("断开 ${plugin.descriptor.name}", "断开当前连接，保留本机登录", SettingsGlyph.Disconnect,
                         "settings-disconnect", onDisconnect, destructive = true)
                 }
             }

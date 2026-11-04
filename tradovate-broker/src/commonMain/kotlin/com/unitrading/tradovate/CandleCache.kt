@@ -1,43 +1,13 @@
 package com.unitrading.tradovate
 
 import com.unitrading.broker.Candle
-import com.unitrading.broker.Timeframe
-import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.time.Instant
 
-/** Non-secret market data; implementations should replace each value atomically. */
-interface CandleCacheStore {
-    suspend fun read(key: String): String?
-    suspend fun write(key: String, value: String)
-}
-
-@Serializable
-private data class CachedCandles(val version: Int = 1, val candles: List<Candle>)
-
-internal class CandleCache(private val store: CandleCacheStore?, private val namespace: String) {
-    // Hex encoding is collision-free and keeps symbols such as @MES out of filesystem paths.
-    private fun key(series: Pair<String, Timeframe>): String =
-        "candles-v1-$namespace-${series.first.encodeToByteArray().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }}-${series.second.minutes}"
-
-    suspend fun read(series: Pair<String, Timeframe>, now: Long): List<Candle> = try {
-        val text = store?.read(key(series))
-        val cached = text?.let { Json.decodeFromString<CachedCandles>(it) }
-        if (cached == null || cached.version != 1 || cached.candles.size > CHART_BARS ||
-            cached.candles.any { it.timeMs !in 0..now || it.low <= 0 || it.high < maxOf(it.open, it.close) ||
-                it.low > minOf(it.open, it.close) || it.volume?.let { v -> v < 0 } == true } ||
-            cached.candles.zipWithNext().any { (a, b) -> a.timeMs >= b.timeMs }) emptyList()
-        else cached.candles
-    } catch (cancel: CancellationException) { throw cancel }
-    catch (_: Exception) { emptyList() }
-
-    suspend fun write(series: Pair<String, Timeframe>, candles: List<Candle>) {
-        store?.write(key(series), Json.encodeToString(CachedCandles(candles = candles)))
-    }
-}
+/** The cache itself now lives in broker-api so every remote adapter shares one format. */
+typealias CandleCacheStore = com.unitrading.broker.CandleCacheStore
+internal typealias CandleCache = com.unitrading.broker.CandleCache
 
 internal fun chartTimeRange(cached: List<Candle>) = buildJsonObject {
     // Cached subscriptions only establish the live stream; history is backfilled separately.

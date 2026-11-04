@@ -92,7 +92,7 @@ internal fun OrderTicket(
         if (showTitle) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("新建订单", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment == BrokerEnvironment.LIVE) "Live 实盘" else "Demo")
+                Badge(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else if (environment.live) "Live 实盘" else "Demo")
             }
             Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, fontSize = 11.sp)
             if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = TradingColors.Accent, fontSize = 11.sp)
@@ -136,7 +136,7 @@ internal fun OrderTicket(
         Button(onSubmit, Modifier.fillMaxWidth().height(46.dp).testTag("review-order"), enabled = preview?.valid == true && !busy) {
             Text(if (busy) "处理中…" else (if (skipConfirmation) "" else "检查并") + (if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟" else "") + draft.side.label())
         }
-        Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "订单只提交给当前模拟交易商。" else "订单将发送至当前 Tradovate ${environment.label} 账户。", color = TradingColors.Muted, fontSize = 10.sp)
+        Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "订单只提交给当前模拟交易商。" else "订单将发送至当前 ${environment.label} 账户。", color = TradingColors.Muted, fontSize = 10.sp)
     }
 }
 

@@ -83,7 +83,12 @@ data class OrderCapacity(val maximumLotsHundredths: Long? = null, val message: S
 @Serializable
 data class Candle(val timeMs: Long, val open: Long, val high: Long, val low: Long, val close: Long, val volume: Long? = null)
 @Serializable
-enum class BrokerEnvironment(val label: String) { LOCAL_DEMO("本地模拟"), REMOTE_DEMO("Tradovate Demo"), LIVE("Tradovate Live · 真实账户") }
+enum class BrokerEnvironment(val label: String, val live: Boolean = false) {
+    LOCAL_DEMO("本地模拟"), REMOTE_DEMO("Tradovate Demo"), LIVE("Tradovate Live · 真实账户", true),
+    RITHMIC_TEST("Rithmic Test"), RITHMIC_PAPER("Rithmic Paper Trading"), RITHMIC_LIVE("Rithmic Live · 真实账户", true);
+    /** Server-backed environments; local demos are the only ones that are not. */
+    val remote: Boolean get() = this != LOCAL_DEMO
+}
 @Serializable
 data class BrokerDescriptor(val id: String, val name: String, val description: String, val simulated: Boolean = true,
     val environment: BrokerEnvironment = if (simulated) BrokerEnvironment.LOCAL_DEMO else BrokerEnvironment.LIVE)
