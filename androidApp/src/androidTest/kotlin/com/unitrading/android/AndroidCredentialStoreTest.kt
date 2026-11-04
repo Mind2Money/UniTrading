@@ -30,6 +30,23 @@ class AndroidCredentialStoreTest {
         } finally { store.clear() }
     }
 
+    @Test fun licenseRecordUsesItsOwnFileAndKey() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".credentialtest"))
+        val logins = AndroidCredentialStore(context)
+        val license = AndroidCredentialStore(context, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS)
+        val loginFile = File(context.noBackupFilesDir, "tradovate-credentials-v1.enc")
+        val hadLogins = loginFile.exists()
+        try {
+            license.write("synthetic-license-record")
+            assertEquals("synthetic-license-record", AndroidCredentialStore(context, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS).read())
+            assertFalse(File(context.noBackupFilesDir, AndroidCredentialStore.LICENSE_FILE).readBytes().toString(Charsets.UTF_8).contains("synthetic-license-record"))
+            assertEquals(hadLogins, loginFile.exists())
+            assertTrue(java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(AndroidCredentialStore.LICENSE_KEY_ALIAS))
+            if (!hadLogins) assertNull(logins.read())
+        } finally { license.clear() }
+    }
+
     /** Run these two methods in separate instrumentation processes to check process-death recovery. */
     @Test fun processRestart() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

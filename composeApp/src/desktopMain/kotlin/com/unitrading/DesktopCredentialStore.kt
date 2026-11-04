@@ -11,8 +11,8 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.StandardCopyOption
 
 /** DPAPI is scoped to the current Windows user, with no plaintext fallback. */
-class DesktopCredentialStore(private val directory: Path = defaultCredentialDirectory()) : CredentialStore {
-    private val file get() = directory.resolve("tradovate.dpapi")
+class DesktopCredentialStore(private val directory: Path = defaultCredentialDirectory(), private val fileName: String = "tradovate.dpapi") : CredentialStore {
+    private val file get() = directory.resolve(fileName)
 
     override suspend fun read(): String? = withContext(Dispatchers.IO) {
         if (!Files.exists(file)) return@withContext null
@@ -34,6 +34,11 @@ class DesktopCredentialStore(private val directory: Path = defaultCredentialDire
     }
 
     override suspend fun clear() { withContext(Dispatchers.IO) { Files.deleteIfExists(file) } }
+
+    companion object {
+        /** License activation record, separate from saved logins so clearing one never touches the other. */
+        const val LICENSE_FILE = "license.dpapi"
+    }
 }
 
 private fun defaultCredentialDirectory(): Path =

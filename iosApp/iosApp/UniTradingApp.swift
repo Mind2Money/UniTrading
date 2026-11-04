@@ -39,6 +39,7 @@ struct TradingView: UIViewControllerRepresentable {
         coordinator.livePnl.dismiss()
         coordinator.bridge.presenter = nil
         coordinator.bridge.storage = nil
+        coordinator.bridge.licenseStorage = nil
         coordinator.bridge.livePnl = nil
     }
 }

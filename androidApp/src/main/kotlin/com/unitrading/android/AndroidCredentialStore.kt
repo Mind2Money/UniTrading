@@ -14,9 +14,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class AndroidCredentialStore(context: Context) : CredentialStore {
-    private val file = AtomicFile(File(context.noBackupFilesDir, "tradovate-credentials-v1.enc"))
-    private val alias = "unitrading.tradovate.sessions.v1"
+/** Each store has its own file and non-exportable Keystore key; the defaults hold the saved broker logins. */
+class AndroidCredentialStore(
+    context: Context,
+    fileName: String = "tradovate-credentials-v1.enc",
+    private val alias: String = "unitrading.tradovate.sessions.v1",
+) : CredentialStore {
+    private val file = AtomicFile(File(context.noBackupFilesDir, fileName))
 
     private fun key(create: Boolean): SecretKey {
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -58,5 +62,11 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
         file.delete()
         check(!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists())
         // Retaining the non-exportable key avoids affecting an in-flight atomic write.
+    }
+
+    companion object {
+        /** License activation record; kept out of backups like the logins, and bound to this device's Keystore. */
+        const val LICENSE_FILE = "license-v1.enc"
+        const val LICENSE_KEY_ALIAS = "unitrading.license.v1"
     }
 }

@@ -11,11 +11,13 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
     weak var presentingController: UIViewController?
     private var loginWindow: UINavigationController?
     private let keychain = SessionKeychain(service: "com.unitrading.credentials.v1")
+    private let license = KeychainCredentialStorage(SessionKeychain(service: "com.unitrading.license.v1", account: "license"))
 
     override init() {
         super.init()
         bridge.presenter = self
         bridge.storage = self
+        bridge.licenseStorage = license
         bridge.livePnl = livePnl
     }
 
@@ -67,12 +69,22 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
     #endif
 }
 
+/// Keychain item behind a Kotlin `NativeCredentialStorage` other than the saved logins (the license activation record).
+final class KeychainCredentialStorage: NSObject, NativeCredentialStorage {
+    private let keychain: SessionKeychain
+    init(_ keychain: SessionKeychain) { self.keychain = keychain }
+    func read() -> NativeStorageResult { keychain.read() }
+    func write(value: String) -> NativeStorageResult { keychain.write(value) }
+    func clear() -> NativeStorageResult { keychain.clear() }
+}
+
 final class SessionKeychain {
     private let service: String
-    init(service: String) { self.service = service }
+    private let account: String
+    init(service: String, account: String = "tradovate") { self.service = service; self.account = account }
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-         kSecAttrAccount as String: "tradovate", kSecAttrSynchronizable as String: false]
+         kSecAttrAccount as String: account, kSecAttrSynchronizable as String: false]
     }
     func read() -> NativeStorageResult {
         var request = query
@@ -208,8 +220,10 @@ final class TradovateWebLogin: UIViewController, WKScriptMessageHandler, WKNavig
 #if DEBUG
 enum NativePlatformSelfTest {
     static func run() {
-        let store = SessionKeychain(service: "com.unitrading.tests.\(UUID().uuidString)")
-        defer { _ = store.clear() }
+        let service = "com.unitrading.tests.\(UUID().uuidString)"
+        let store = SessionKeychain(service: service)
+        let license = SessionKeychain(service: service, account: "license")
+        defer { _ = store.clear(); _ = license.clear() }
         let initial = store.read()
         precondition(initial.value == nil && initial.error == nil, initial.error ?? "Unexpected existing test item")
         let firstWrite = store.write("synthetic-platform-test")
@@ -218,6 +232,9 @@ enum NativePlatformSelfTest {
         precondition(store.write("synthetic-platform-update").error == nil)
         precondition(store.read().value == "synthetic-platform-update")
         precondition(store.clear().error == nil && store.read().value == nil)
+        // Items under one service are kept apart by account, as the license record is from the saved logins.
+        precondition(license.write("synthetic-license-test").error == nil && store.read().value == nil)
+        precondition(license.read().value == "synthetic-license-test" && license.clear().error == nil)
         let official = URL(string: "https://trader.tradovate.com/welcome")!
         precondition(OfficialLoginPolicy.navigationAllowed(official))
         for rejected in ["http://trader.tradovate.com", "https://trader.tradovate.com.evil.example", "https://user@trader.tradovate.com", "https://trader.tradovate.com:8443"] {

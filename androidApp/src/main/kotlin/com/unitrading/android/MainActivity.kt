@@ -16,8 +16,10 @@ import androidx.activity.enableEdgeToEdge
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.unitrading.app.LicenseController
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
+import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +48,7 @@ class MainActivity : ComponentActivity() {
                     else SystemBarStyle.dark(Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
             }
-            TradingScreen(model.runtime, login)
+            LicenseGate(model.license, model.runtime.theme) { TradingScreen(model.runtime, login) }
         }
     }
 
@@ -58,6 +60,8 @@ class MainActivity : ComponentActivity() {
 
 class TradingRuntimeModel(application: Application) : AndroidViewModel(application) {
     val runtime = TradingRuntime(AndroidSnapshotStore(File(application.filesDir, "demo-v1")), credentialStore = AndroidCredentialStore(application))
+    /** Held here so the activation survives configuration changes; the gate keeps the trading UI closed until it is active. */
+    val license = LicenseController(AndroidCredentialStore(application, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS))
     /** Live P&L notice; runs for the lifetime of the task and is cleared when the model is dropped. */
     val notifier = LivePnlNotifier(application)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

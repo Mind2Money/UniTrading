@@ -6,9 +6,11 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import com.unitrading.app.LicenseController
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -46,6 +48,8 @@ fun main(args: Array<String>) = application {
         if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
     }
+    // One activation per Windows user, shared by both modes; the local demo is gated like the real terminal.
+    val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
     Window(onCloseRequest = {
@@ -61,6 +65,6 @@ fun main(args: Array<String>) = application {
         }
     }, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
         state = rememberWindowState(width = 1440.dp, height = 940.dp)) {
-        TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() })
+        LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }) }
     }
 }

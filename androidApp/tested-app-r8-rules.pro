@@ -14,6 +14,8 @@
 -keep class com.unitrading.android.AndroidCredentialStore { *; }
 -keep class com.unitrading.android.TradingRuntimeModel { *; }
 -keep class com.unitrading.app.MemorySnapshotStore { *; }
+-keep class com.unitrading.app.LicenseKt { *; }
+-keep class com.unitrading.app.LicenseKey { *; }
 -keep class com.unitrading.app.ThemeController { *; }
 -keep class com.unitrading.app.ThemePreset { *; }
 -keep class com.unitrading.app.ThemeSettings { *; }

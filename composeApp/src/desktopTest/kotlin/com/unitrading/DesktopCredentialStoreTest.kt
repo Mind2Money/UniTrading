@@ -29,4 +29,22 @@ class DesktopCredentialStoreTest {
             Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) }
         }
     }
+
+    @Test fun licenseRecordIsIndependentOfSavedLogins() = runBlocking {
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        val directory = Files.createTempDirectory("unitrading-license-test-")
+        try {
+            val logins = DesktopCredentialStore(directory)
+            val license = DesktopCredentialStore(directory, DesktopCredentialStore.LICENSE_FILE)
+            logins.write("synthetic-login")
+            license.write("synthetic-license-record")
+            assertEquals("synthetic-login", DesktopCredentialStore(directory).read())
+            assertEquals("synthetic-license-record", DesktopCredentialStore(directory, DesktopCredentialStore.LICENSE_FILE).read())
+            assertFalse(Files.readAllBytes(directory.resolve("license.dpapi")).toString(Charsets.UTF_8).contains("synthetic-license-record"))
+            logins.clear()
+            assertEquals("synthetic-license-record", license.read())
+        } finally {
+            Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists) }
+        }
+    }
 }

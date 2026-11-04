@@ -6,7 +6,8 @@
 
 | 能力 | 当前状态 | 代码入口与边界 |
 | --- | --- | --- |
-| 首次启动 | 已实现并测试 | `TradingRuntime` 默认空注册表，`TradingScreen` 转到 `LoginWelcome`；旧模拟账本不加载、不自动删除 |
+| 授权码激活 | 已实现；桌面单元与 UI 测试、Android 模拟器设备测试（debug / R8）通过，真机未测，iOS 未构建验证 | 三端入口用 `LicenseGate` 包住 `TradingScreen`；`LicenseController` + `OfflineLicenseVerifier` 离线校验 PBKDF2 验证值，授权记录存 DPAPI / Keystore / Keychain，连续输错逐步锁定；无服务端吊销，见[授权码激活](license-activation.md) |
+| 首次启动 | 已实现并测试 | 授权后 `TradingRuntime` 默认空注册表，`TradingScreen` 转到 `LoginWelcome`；旧模拟账本不加载、不自动删除 |
 | Windows / Android 网页登录 | 已实现 | `DesktopTradovateLogin`、`AndroidTradovateLogin`；Windows Demo 只读账户/行情链路曾实测，Android 完整授权账户链路未记录为通过 |
 | 多用户、Demo/Live 登录恢复 | 已实现并用合成会话测试 | `SavedTradovateAccounts`；Windows DPAPI、Android Keystore AES-GCM；过期或撤销仍需认证，不保存密码字段 |
 | 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统/TradingV 主题，页面、面板、图表、K 线、盈亏等分别配置 |

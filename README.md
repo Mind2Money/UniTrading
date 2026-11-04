@@ -6,7 +6,8 @@ UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 
 
 ## 功能
 
-- 首次启动显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录和 Rithmic Test / Paper Trading / Live 登录，并可恢复本机加密保存的会话。Rithmic 接入尚未连接真实系统验证，见 [Rithmic 接入](docs/rithmic.md)。
+- 首次使用需输入授权码，验证通过后本机保持授权。授权前不恢复已保存登录，也不连接行情和账户。应用只带授权码的 PBKDF2 验证值，授权记录用本机加密存储，连续输错会逐步锁定；目前为离线校验，见 [授权码激活](docs/license-activation.md)。
+- 授权后显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录和 Rithmic Test / Paper Trading / Live 登录，并可恢复本机加密保存的会话。Rithmic 接入尚未连接真实系统验证，见 [Rithmic 接入](docs/rithmic.md)。
 - Android 底部使用带图标的 Material 3 导航。手机图表页参考 MT5 的布局，图表占据主要空间，下单面板折叠在图表下方，见 [手机布局](docs/mobile-layout.md)。桌面使用多栏工作台。
 - 实时盈亏通知显示当前账户的浮动盈亏、净值和持仓数，可在账户页关闭。Android 使用常驻通知，Android 16 起支持 Live Update / HyperOS 超级岛，状态栏显示盈亏，前台服务负责后台刷新；iOS 使用灵动岛 / 锁屏 Live Activity。详见 [实时盈亏通知](docs/live-pnl-notifications.md)。
 - 今日盈亏使用 Tradovate 返回的账户总盈亏快照，按券商交易日展示，附更新时间；桌面资金栏、手机交易/账户页及图表摘要均可查看，见 [今日盈亏](docs/daily-pnl.md)。
@@ -152,6 +153,7 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 - [文档索引](docs/README.md)
 - [当前实现与验证状态](docs/current-status.md)
+- [授权码激活](docs/license-activation.md)
 - [代码与文档核对](docs/implementation-audit.md)
 - [实施计划](docs/implementation-plan.md)
 - [UI 与图表交互计划](docs/ui-and-chart-design.md)

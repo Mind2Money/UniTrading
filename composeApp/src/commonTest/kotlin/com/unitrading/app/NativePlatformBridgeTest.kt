@@ -60,4 +60,21 @@ class NativePlatformBridgeTest {
         bridge.credentials.clear()
         assertNull(bridge.credentials.read())
     }
+    @Test fun licenseRecordUsesItsOwnStorage() = runTest {
+        class Item : NativeCredentialStorage {
+            var value: String? = null
+            override fun read() = NativeStorageResult(value, null)
+            override fun write(value: String): NativeStorageResult { this.value = value; return NativeStorageResult(null, null) }
+            override fun clear(): NativeStorageResult { value = null; return NativeStorageResult(null, null) }
+        }
+        val bridge = NativePlatformBridge()
+        val logins = Item().also { bridge.storage = it }
+        assertFailsWith<IllegalStateException> { bridge.licenseCredentials.read() }
+        val license = Item().also { bridge.licenseStorage = it }
+        bridge.licenseCredentials.write("synthetic-license-record")
+        assertEquals("synthetic-license-record", license.value)
+        assertNull(logins.value)
+        assertNull(bridge.credentials.read())
+        assertEquals("synthetic-license-record", bridge.licenseCredentials.read())
+    }
 }

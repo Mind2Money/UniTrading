@@ -4,18 +4,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.window.ComposeUIViewController
+import com.unitrading.app.LicenseController
 import com.unitrading.app.SnapshotStore
 import com.unitrading.app.NativePlatformBridge
 import com.unitrading.app.TradingRuntime
+import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
 import platform.Foundation.NSUserDefaults
 
 fun MainViewController(platform: NativePlatformBridge) = ComposeUIViewController {
     val store = remember { AppleSnapshotStore() }
     val runtime = remember { TradingRuntime(store, credentialStore = platform.credentials) }
+    val license = remember { LicenseController(platform.licenseCredentials) }
     DisposableEffect(runtime) { onDispose { runtime.registry.plugins.forEach { it.disconnect() } } }
     LaunchedEffect(runtime) { runtime.livePnl.run(platform.livePnlPresenter) }
-    TradingScreen(runtime, platform.login)
+    LicenseGate(license, runtime.theme) { TradingScreen(runtime, platform.login) }
 }
 
 private class AppleSnapshotStore : SnapshotStore {

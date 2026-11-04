@@ -29,6 +29,8 @@ interface NativeLivePnlPresenter {
 class NativePlatformBridge {
     var presenter: NativeLoginPresenter? = null
     var storage: NativeCredentialStorage? = null
+    /** Keychain item holding the license activation record, separate from the saved logins in [storage]. */
+    var licenseStorage: NativeCredentialStorage? = null
     var livePnl: NativeLivePnlPresenter? = null
     private var pending: CancellableContinuation<TradovateSession>? = null
     private var accumulator: LoginAccumulator? = null
@@ -71,13 +73,16 @@ class NativePlatformBridge {
         override fun clear() { livePnl?.dismiss() }
     }
 
-    internal val credentials: CredentialStore = object : CredentialStore {
-        private fun NativeStorageResult.checked(): String? {
-            check(error == null) { "系统凭据存储操作失败" }
-            return value
-        }
-        override suspend fun read(): String? = withContext(Dispatchers.Default) { checkNotNull(storage).read().checked() }
-        override suspend fun write(value: String) { withContext(Dispatchers.Default) { checkNotNull(storage).write(value).checked() } }
-        override suspend fun clear() { withContext(Dispatchers.Default) { checkNotNull(storage).clear().checked() } }
+    internal val credentials: CredentialStore = BridgedCredentialStore { storage }
+    internal val licenseCredentials: CredentialStore = BridgedCredentialStore { licenseStorage }
+}
+
+private class BridgedCredentialStore(private val storage: () -> NativeCredentialStorage?) : CredentialStore {
+    private fun NativeStorageResult.checked(): String? {
+        check(error == null) { "系统凭据存储操作失败" }
+        return value
     }
+    override suspend fun read(): String? = withContext(Dispatchers.Default) { checkNotNull(storage()).read().checked() }
+    override suspend fun write(value: String) { withContext(Dispatchers.Default) { checkNotNull(storage()).write(value).checked() } }
+    override suspend fun clear() { withContext(Dispatchers.Default) { checkNotNull(storage()).clear().checked() } }
 }

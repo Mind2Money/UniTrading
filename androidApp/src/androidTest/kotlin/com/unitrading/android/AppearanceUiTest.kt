@@ -13,8 +13,10 @@ import androidx.activity.SystemBarStyle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.ProductionLicenseKeys
 import com.unitrading.app.TradingRuntime
 import com.unitrading.ui.TradingScreen
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -141,6 +143,16 @@ class AppearanceUiTest {
 
     @Test fun loginThemeAndMaterialNavigationWithChartGestures() {
         check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        val license = AndroidCredentialStore(instrumentation.targetContext, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS)
+        runBlocking { license.clear() }
+        // Without an activation the app opens on the license gate, with no login page or account behind it.
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitText("输入授权码"); idle()
+            assertNull(node("登录交易账户"))
+            screenshot("android-license-gate")
+        }
+        // The test holds no production key; it installs the device-bound record a verified key leaves behind.
+        runBlocking { license.write("""{"activation":{"keyId":"${ProductionLicenseKeys.first().id}","activatedAtMs":0}}""") }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             // The title reads "正在恢复已保存的登录" until saved-login restoration settles.
             awaitText("登录交易账户"); idle()
