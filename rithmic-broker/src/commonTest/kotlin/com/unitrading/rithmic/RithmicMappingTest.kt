@@ -129,6 +129,42 @@ class RithmicMappingTest {
         assertNull(parseFill(message { string(Rf.FILL_ID, "F3"); string(Rf.BASKET_ID, "B"); string(Rf.ACCOUNT_ID, "A"); string(Rf.SYMBOL, "S"); int32(Rf.FILL_SIZE, 1); double(Rf.FILL_PRICE, 1.0) }, 0))
     }
 
+    private val mes = mapInstrument(message {
+        string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME"); string(Rf.SYMBOL_NAME, "Micro"); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD")
+        double(Rf.MIN_QPRICE_CHANGE, 0.25); double(Rf.SINGLE_POINT_VALUE, 5.0)
+    })!!
+    private fun fill(id: String, basket: String, side: Side, quantity: Long, price: Double, time: Long) = RithmicFill(id, basket, "ACC1", "MESZ6", side, quantity, price, time)
+    private fun child(basket: String, entry: String, type: Int) = RithmicOrder(basket, "ACC1", "MESZ6", "CME", "complete", null, 1, null, null, RithmicEnums.PRICE_MARKET, 0,
+        entry, null, null, 1, 0, null, null, 0, null, origPriceType = type)
+
+    @Test fun pairsAPlainCloseAcrossPartialFills() {
+        val trades = pairFills(listOf(fill("1", "A", Side.BUY, 3, 100.0, 10), fill("2", "B", Side.SELL, 1, 101.0, 20), fill("3", "C", Side.SELL, 2, 102.0, 30)), emptyMap(), mes, null, "p", 0)
+        assertEquals(listOf(100L, 200L), trades.map { it.lotsHundredths })
+        assertEquals(listOf(10100L, 10200L), trades.map { it.exitPrice })
+        assertEquals(listOf("平仓", "平仓"), trades.map { it.reason })
+        assertEquals(listOf(5_000_000L, 20_000_000L), trades.map { it.grossPnlMicros })
+        assertEquals(listOf<Long?>(null, null), trades.map { it.netPnlMicros })
+    }
+
+    @Test fun aBracketChildClosesItsOwnEntryBeforeOlderLots() {
+        val fills = listOf(fill("1", "OLD", Side.BUY, 1, 100.0, 10), fill("2", "NEW", Side.BUY, 1, 110.0, 20), fill("3", "T", Side.SELL, 1, 112.0, 30))
+        val trade = pairFills(fills, mapOf("T" to child("T", "NEW", RithmicEnums.PRICE_LIMIT)), mes, null, "p", 1).single()
+        assertEquals(11000, trade.entryPrice)
+        assertEquals("止盈", trade.reason)
+    }
+
+    @Test fun aTriggeredStopChildIsLabelledAStop() {
+        val fills = listOf(fill("1", "E", Side.SELL, 1, 100.0, 10), fill("2", "S", Side.BUY, 1, 103.0, 20))
+        assertEquals("止损", pairFills(fills, mapOf("S" to child("S", "E", RithmicEnums.PRICE_STOP_MARKET)), mes, null, "p", 0).single().reason)
+    }
+
+    @Test fun aReplayThatMissesTheServersNetPositionPairsNothing() {
+        // The sell closed a position opened before the fill window, so it must not read as a new short.
+        val fills = listOf(fill("1", "A", Side.SELL, 1, 100.0, 10), fill("2", "B", Side.BUY, 1, 99.0, 20))
+        assertEquals(1, pairFills(fills, emptyMap(), mes, null, "p", 0).size)
+        assertTrue(pairFills(fills, emptyMap(), mes, null, "p", 2).isEmpty())
+    }
+
     @Test fun nearestContractSkipsExpiredPlaceholderAndForeignRows() {
         fun row(symbol: String, product: String, expiration: String, type: String = "Future", exchange: String = "CME") = message {
             string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, product); string(Rf.EXPIRATION_DATE, expiration); string(Rf.INSTRUMENT_TYPE, type)

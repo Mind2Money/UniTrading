@@ -402,8 +402,8 @@ class RithmicBroker(
                             if (!synchronizing && message.bool(Rf.IS_SNAPSHOT) != true && now() >= liveSince && fill.id !in notifiedFills) {
                                 notifiedFills.add(fill.id)
                                 val role = when {
-                                    next.isBracketChild && next.priceType in setOf(RithmicEnums.PRICE_STOP_MARKET, RithmicEnums.PRICE_STOP_LIMIT) -> OrderRole.STOP_LOSS
-                                    next.isBracketChild && next.priceType == RithmicEnums.PRICE_LIMIT -> OrderRole.TAKE_PROFIT
+                                    next.isBracketChild && next.isStop -> OrderRole.STOP_LOSS
+                                    next.isBracketChild && RithmicEnums.PRICE_LIMIT in setOf(next.priceType, next.origPriceType) -> OrderRole.TAKE_PROFIT
                                     else -> OrderRole.ENTRY
                                 }
                                 tradeEvents.tryEmit(TradeFill(fill.accountId, fill.basketId, fill.id, role))
@@ -939,14 +939,20 @@ class RithmicBroker(
             }.sortedBy { it.timeMs }
             val money = financials[aid]
             // account_balance carries realized P&L and fees through the day; cash_on_hand stays at the session's opening value.
-            val balance = money?.balanceMicros ?: money?.cashMicros
-            val equity = money?.let { runCatching { accountEquityMicros(it) }.getOrNull() }
+            val value = money?.let { runCatching { accountValueMicros(it) }.getOrNull() }
+            val balance = value?.first
+            val equity = value?.second
+            val closedTrades = fills.values.filter { it.accountId == aid }.groupBy { it.symbol }.flatMap { (symbol, group) ->
+                val spec = specs[symbol] ?: return@flatMap emptyList()
+                val commission = spec.productCode?.let { productRms[aid to it]?.commissionMicros }
+                runCatching { pairFills(group, orders, spec, commission, "$aid:$symbol", positions[aid to symbol]?.net ?: 0) }.getOrDefault(emptyList())
+            }.sortedBy { it.closedAtMs }
             val margin = money?.usedBuyingPowerMicros
             val dailyPnl = money?.let { m ->
                 val total = m.dayPnlMicros ?: if (m.dayOpenPnlMicros != null && m.dayClosedPnlMicros != null) runCatching { checkedAdd(m.dayOpenPnlMicros, m.dayClosedPnlMicros) }.getOrNull() else null
                 total?.let { DailyPnl(it, m.dayClosedPnlMicros, m.dayOpenPnlMicros, null, m.timeMs) }
             }
-            val snapshot = AccountSnapshot(aid, balance ?: 0, equity ?: balance ?: 0, margin ?: 0, mappedPositions, pending, trades = emptyList(),
+            val snapshot = AccountSnapshot(aid, balance ?: 0, equity ?: balance ?: 0, margin ?: 0, mappedPositions, pending, trades = closedTrades,
                 events = localEvents[aid] ?: emptyList(), executions = executions,
                 balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = false, dailyPnl = dailyPnl)
             nextFlows.getOrPut(aid) { MutableStateFlow(snapshot) }.value = snapshot
@@ -1196,27 +1202,35 @@ class RithmicBroker(
         lock.withLock { awaiting[key] = Awaiting(account, kind, entity, tag(requestId), now(), expectedPrice, baselineSequence, symbol); publish() }
         return try {
             val reply = plant.request(template, 20_000, build)
-            val terminal = reply.lastOrNull() ?: throw RithmicRemoteException("empty", "缺少服务器回执")
-            val basket = terminal.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() }
+            if (reply.isEmpty()) throw RithmicRemoteException("empty", "缺少服务器回执")
+            // The server sends the basket id on a part ahead of the terminal one.
+            val basket = reply.firstNotNullOfOrNull { part -> part.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() } }
             lock.withLock {
                 if (kind == "place") {
-                    if (basket == null) throw RithmicRemoteException("basket", "缺少订单回执 ID，无法确认结果")
                     // The order notification can beat this reply and settle the wait by its client tag already.
+                    if (basket == null && key in awaiting) throw RithmicRemoteException("basket", "缺少订单回执 ID，无法确认结果")
                     awaiting[key]?.let { awaiting[key] = it.copy(entity = basket) }
                 }
                 reconcile(); publish()
             }
             TradeResult(true, "Rithmic 已受理，最终结果以服务器订单/仓位更新为准", basket ?: entity)
         } catch (cancel: CancellationException) {
-            withContext(NonCancellable) { lock.withLock { unknownCommands.add(key); publish() } }
+            withContext(NonCancellable) { lock.withLock { if (key in awaiting) unknownCommands.add(key); publish() } }
             throw cancel
         } catch (error: RithmicRemoteException) {
             val certainRejection = error.code !in setOf("closed", "empty", "basket", "timeout")
-            lock.withLock { if (certainRejection) awaiting.remove(key) else unknownCommands.add(key); publish() }
-            if (certainRejection) TradeResult(false, "Rithmic 拒绝：${safeRithmicMessage(error.message ?: "请求被拒绝")}")
-            else TradeResult(false, "交易结果未知，未自动重试。请在 R | Trader 核对，当前会话已暂停发送交易指令。", outcome = CommandOutcome.UNKNOWN)
+            val confirmed = lock.withLock {
+                if (certainRejection) awaiting.remove(key) else if (key in awaiting) unknownCommands.add(key)
+                publish()
+                !certainRejection && key !in awaiting
+            }
+            when {
+                certainRejection -> TradeResult(false, "Rithmic 拒绝：${safeRithmicMessage(error.message ?: "请求被拒绝")}")
+                confirmed -> TradeResult(true, "服务器已确认该指令；未重发", entity)
+                else -> TradeResult(false, "交易结果未知，未自动重试。请在 R | Trader 核对，当前会话已暂停发送交易指令。", outcome = CommandOutcome.UNKNOWN)
+            }
         } catch (_: Exception) {
-            lock.withLock { unknownCommands.add(key); publish() }
+            lock.withLock { if (key in awaiting) unknownCommands.add(key); publish() }
             TradeResult(false, "交易结果未知，未自动重试。请在 R | Trader 核对，当前会话已暂停发送交易指令。", outcome = CommandOutcome.UNKNOWN)
         }
     }
@@ -1246,6 +1260,8 @@ class RithmicBroker(
                 if (result.outcome == CommandOutcome.UNKNOWN) results[key] = signature to TradeResult(true, "服务器状态已确认；未重发指令", wait.entity)
             }
         }
+        // Nothing is left to confirm for a command the server has already settled.
+        unknownCommands.retainAll(awaiting.keys)
     }
 
     private fun tag(id: String) = "UT-$id"

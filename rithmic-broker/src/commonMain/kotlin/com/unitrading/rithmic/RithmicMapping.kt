@@ -99,11 +99,15 @@ internal data class RithmicOrder(
     val completionReason: String?,
     val timeMs: Long,
     val sequence: String?,
+    val origPriceType: Int = 0,
 ) {
     val isBracketChild: Boolean get() = !originalBasketId.isNullOrBlank() && originalBasketId != basketId
+    /** A triggered stop reports as a market order; its original type still says stop. */
+    val isStop: Boolean get() = priceType in STOP_PRICE_TYPES || origPriceType in STOP_PRICE_TYPES
     val active: Boolean get() = orderStatusActive(status, completionReason)
 }
 
+private val STOP_PRICE_TYPES = setOf(RithmicEnums.PRICE_STOP_MARKET, RithmicEnums.PRICE_STOP_LIMIT)
 private val ACTIVE_STATUSES = setOf("open", "pending", "trigger pending", "open pending", "modify pending", "cancel pending",
     "modified", "modified, trigger pending", "partial", "partially filled", "partially_filled")
 private val TERMINAL_STATUSES = setOf("complete", "completed", "filled", "cancelled", "canceled", "rejected", "expired")
@@ -133,7 +137,8 @@ internal fun parseOrderNotification(data: ProtoMessage, previous: RithmicOrder?,
         data.size(Rf.TOTAL_FILL_SIZE_64, Rf.TOTAL_FILL_SIZE) ?: previous?.filled ?: 0, data.size(Rf.TOTAL_UNFILLED_SIZE_64, Rf.TOTAL_UNFILLED_SIZE) ?: previous?.unfilled,
         data.double(Rf.AVG_FILL_PRICE) ?: previous?.avgFillPrice,
         data.str(Rf.COMPLETION_REASON)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.completionReason,
-        data.timeMs() ?: previous?.timeMs ?: fallbackTime, data.str(Rf.SEQUENCE_NUMBER) ?: previous?.sequence)
+        data.timeMs() ?: previous?.timeMs ?: fallbackTime, data.str(Rf.SEQUENCE_NUMBER) ?: previous?.sequence,
+        data.int(Rf.ORIG_PRICE_TYPE)?.takeIf { it > 0 } ?: previous?.origPriceType ?: 0)
 }
 
 internal data class RithmicFill(val id: String, val basketId: String, val accountId: String, val symbol: String, val side: Side, val quantity: Long, val price: Double, val timeMs: Long)
@@ -147,6 +152,40 @@ internal fun parseFill(data: ProtoMessage, fallbackTime: Long): RithmicFill? {
     val size = data.size(Rf.FILL_SIZE_64, Rf.FILL_SIZE)?.takeIf { it > 0 } ?: return null
     val price = data.double(Rf.FILL_PRICE)?.takeIf { it.isFinite() && it > 0 } ?: return null
     return RithmicFill(id, basket, account, symbol, side, size, price, data.timeMs() ?: fallbackTime)
+}
+
+/**
+ * Closed trades of one account and contract. Rithmic has no fill-pair record, so pairing rests on two server facts: a
+ * bracket child names its entry through original_basket_id, and a net account closes its oldest lots first. A replay
+ * that does not end on the server's net position started inside an older position, so it yields nothing rather than
+ * a wrong pair.
+ */
+internal fun pairFills(fills: List<RithmicFill>, orders: Map<String, RithmicOrder>, spec: RithmicSpec, commissionMicros: Long?, positionId: String, serverNet: Long): List<ClosedTrade> {
+    class Lot(val fill: RithmicFill, var open: Long)
+    val lots = mutableListOf<Lot>()
+    val trades = mutableListOf<ClosedTrade>()
+    for (fill in fills.sortedWith(compareBy({ it.timeMs }, { it.id }))) {
+        val order = orders[fill.basketId]
+        val entryBasket = order?.originalBasketId?.takeIf { order.isBracketChild }
+        var left = fill.quantity
+        for (lot in lots.filter { it.fill.side != fill.side }.sortedBy { it.fill.basketId != entryBasket }) {
+            if (left == 0L) break
+            val quantity = minOf(left, lot.open)
+            val entry = spec.scale.units(lot.fill.price) ?: return emptyList()
+            val exit = spec.scale.units(fill.price) ?: return emptyList()
+            val lotsHundredths = checkedMultiply(quantity, 100)
+            val gross = grossPnl(spec.instrument, lot.fill.side, lotsHundredths, entry, exit)
+            val fees = commissionMicros?.let { checkedMultiply(checkedMultiply(it, 2), quantity) }
+            val reason = when { order?.isBracketChild != true -> "平仓"; order.isStop -> "止损"; else -> "止盈" }
+            trades += ClosedTrade("fill-${lot.fill.id}-${fill.id}", positionId, fill.symbol, lot.fill.side, lotsHundredths, entry, exit,
+                lot.fill.timeMs, fill.timeMs, fees?.let { checkedAdd(gross, -it) }, reason, gross, fees)
+            lot.open -= quantity
+            left -= quantity
+        }
+        lots.removeAll { it.open == 0L }
+        if (left > 0) lots += Lot(fill, left)
+    }
+    return if (lots.sumOf { if (it.fill.side == Side.BUY) it.open else -it.open } == serverNet) trades else emptyList()
 }
 
 /** Net position per account and contract from InstrumentPnLPositionUpdate (450). */
@@ -184,17 +223,17 @@ internal data class RithmicFinancials(
 )
 
 /**
- * Account value. The dev kit does not say whether account_balance already holds the open P&L, so the reading that sits
- * closer to cash + closed + open wins; adding it to a balance that holds it would count the open P&L twice.
+ * Balance without the open P&L and equity with it; the app shows their difference as floating P&L. The dev kit does not
+ * say whether account_balance already holds the open P&L, so the reading that sits closer to cash + closed + open wins.
  */
-internal fun accountEquityMicros(money: RithmicFinancials): Long? {
-    val balance = money.balanceMicros ?: money.cashMicros ?: return null
-    val open = money.openPnlMicros ?: return null
-    val added = checkedAdd(balance, open)
-    val cash = money.cashMicros ?: return added
-    val closed = money.closedPnlMicros ?: return added
+internal fun accountValueMicros(money: RithmicFinancials): Pair<Long, Long?>? {
+    val reported = money.balanceMicros ?: money.cashMicros ?: return null
+    val open = money.openPnlMicros ?: return reported to null
+    val added = checkedAdd(reported, open)
+    val cash = money.cashMicros ?: return reported to added
+    val closed = money.closedPnlMicros ?: return reported to added
     val gross = checkedAdd(checkedAdd(cash, closed), open)
-    return if (abs(balance - gross) < abs(added - gross)) balance else added
+    return if (abs(reported - gross) < abs(added - gross)) checkedAdd(reported, -open) to reported else reported to added
 }
 
 internal fun parseFinancials(data: ProtoMessage, previous: RithmicFinancials?, fallbackTime: Long): RithmicFinancials? {

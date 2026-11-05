@@ -39,7 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The read path and a market bracket order work on Paper Trading; modify, cancel and close are unverified live, and conformance is pending. */
+/** The read path works on Paper Trading and the server accepted a market bracket order; order handling is still being verified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
 
 @Composable

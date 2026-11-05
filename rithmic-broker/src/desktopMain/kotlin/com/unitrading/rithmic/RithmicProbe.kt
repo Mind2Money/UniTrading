@@ -440,10 +440,11 @@ internal class RithmicProbe(
                 int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_LIMIT); double(Rf.PRICE, limitPrice)
                 int32(Rf.TRANSACTION_TYPE, RithmicEnums.BUY); int32(Rf.DURATION, RithmicEnums.DURATION_DAY)
                 string(Rf.TRADE_ROUTE, route); int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
-            }.last()
+            }
         }
-        val basket = placed?.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() }
-        out("[write] place ack: rp_code=${placed?.rpCode()} basket=${basket ?: "(none in ack)"}")
+        placed?.forEach { out("[write] ${it.label()} ${it.render()}") }
+        val basket = placed?.firstNotNullOfOrNull { part -> part.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() } }
+        out("[write] place ack: rp_code=${placed?.lastOrNull()?.rpCode()} basket=${basket ?: "(none in ack)"}")
         delay(4_000)
         val restingBasket = basket ?: tagToBasket[tag]
         out("[write] order after place: ${restingBasket?.let { ordersByBasket[it] }?.let { "status='${it.status}' active=${it.active} filled=${it.filled}/${it.quantity}" } ?: "(no notification captured for tag $tag)"}")

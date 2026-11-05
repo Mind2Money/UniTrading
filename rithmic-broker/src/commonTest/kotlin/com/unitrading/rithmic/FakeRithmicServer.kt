@@ -12,7 +12,7 @@ internal class FakeRithmicServer : RithmicWire {
     var systemNames = listOf("Rithmic Test", "Rithmic Paper Trading")
     var accounts = listOf("ACC1")
     var loginRejection: String? = null
-    enum class OrderReply { ACCEPT, REJECT, SILENT }
+    enum class OrderReply { ACCEPT, ACCEPT_WITHOUT_BASKET, REJECT, SILENT }
     var orderReply = OrderReply.ACCEPT
     var maxOrderQuantity: Long? = 10
     var quote: Pair<Double, Double>? = 5500.0 to 5500.25
@@ -170,10 +170,20 @@ internal class FakeRithmicServer : RithmicWire {
                 val response = if (m.templateId == Rt.REQUEST_NEW_ORDER) Rt.RESPONSE_NEW_ORDER else Rt.RESPONSE_BRACKET_ORDER
                 when (orderReply) {
                     OrderReply.SILENT -> {}
+                    OrderReply.ACCEPT_WITHOUT_BASKET -> {
+                        socket.push {
+                            int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, "B${++baskets}"); string(Rf.USER_TAG, m.str(Rf.USER_TAG) ?: "")
+                            string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: "")
+                            string(Rf.STATUS, "open"); int32(Rf.TRANSACTION_TYPE, m.int(Rf.TRANSACTION_TYPE) ?: 0); int32(Rf.QUANTITY, m.int(Rf.QUANTITY) ?: 0); int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt())
+                        }
+                        reply(response)
+                    }
                     OrderReply.REJECT -> reply(response, codes = listOf("9", "RMS: quantity exceeds limit"))
                     OrderReply.ACCEPT -> {
+                        // As on the real server: the basket id on a part of its own, then a terminal part without it.
                         val basket = "B${++baskets}"
-                        reply(response) { string(Rf.BASKET_ID, basket); string(Rf.USER_TAG, m.str(Rf.USER_TAG) ?: "") }
+                        reply(response, terminal = false) { string(Rf.BASKET_ID, basket); string(Rf.USER_TAG, m.str(Rf.USER_TAG) ?: "") }
+                        reply(response)
                         socket.push {
                             int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, basket); string(Rf.USER_TAG, m.str(Rf.USER_TAG) ?: "")
                             string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: "")
@@ -198,10 +208,11 @@ internal class FakeRithmicServer : RithmicWire {
         int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, basket); string(Rf.STATUS, status); int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt()); build()
     }
 
-    fun fill(basket: String, fillId: String, side: Int, size: Int, price: Double, originalBasket: String? = null, priceType: Int = RithmicEnums.PRICE_MARKET) = plant(RithmicEnums.INFRA_ORDER).push {
+    fun fill(basket: String, fillId: String, side: Int, size: Int, price: Double, originalBasket: String? = null, priceType: Int = RithmicEnums.PRICE_MARKET, origPriceType: Int = 0) = plant(RithmicEnums.INFRA_ORDER).push {
         int32(Rf.TEMPLATE_ID, Rt.EXCHANGE_ORDER_NOTIFICATION); int32(Rf.NOTIFY_TYPE, RithmicEnums.NOTIFY_FILL); string(Rf.BASKET_ID, basket); string(Rf.ACCOUNT_ID, "ACC1")
         string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME"); string(Rf.STATUS, "complete"); string(Rf.COMPLETION_REASON, "F")
         int32(Rf.TRANSACTION_TYPE, side); int32(Rf.QUANTITY, size); int32(Rf.PRICE_TYPE, priceType); originalBasket?.let { string(Rf.ORIGINAL_BASKET_ID, it) }
+        if (origPriceType != 0) int32(Rf.ORIG_PRICE_TYPE, origPriceType)
         string(Rf.FILL_ID, fillId); int32(Rf.FILL_SIZE, size); double(Rf.FILL_PRICE, price); int32(Rf.TOTAL_FILL_SIZE, size); double(Rf.AVG_FILL_PRICE, price)
         int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt())
     }

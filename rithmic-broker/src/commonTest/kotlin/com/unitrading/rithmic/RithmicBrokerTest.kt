@@ -366,17 +366,72 @@ class RithmicBrokerTest {
         assertEquals(24_930_500_000, account.equityMicros)
     }
 
-    /** The dev kit does not say which of these two the server sends; neither may count the open P&L twice. */
-    @Test fun equityCountsTheOpenPnlOnceWhicheverWayTheBalanceIsReported() = runTest {
+    /** The dev kit does not say which of these two the server sends; floating P&L is equity minus balance in both. */
+    @Test fun openPnlCountsOnceWhicheverWayTheBalanceIsReported() = runTest {
         val server = FakeRithmicServer()
         val broker = ready(server)
         val session = broker.openSession("ACC1")
-        accountUpdate(server, balance = "25100.00", cash = "25000.00", closed = "0.00", open = "100.00")
+        for (reported in listOf("25100.00", "25000.00")) {
+            accountUpdate(server, balance = reported, cash = "25000.00", closed = "0.00", open = "100.00")
+            runCurrent()
+            assertEquals(25_000_000_000, session.state.value.balanceMicros)
+            assertEquals(25_100_000_000, session.state.value.equityMicros)
+            assertEquals(100_000_000, session.state.value.floatingPnlMicros)
+        }
+    }
+
+    /** On the real server the basket id comes on a part before the terminal one; this left the session paused. */
+    @Test fun aBasketIdOnAnEarlierReplyPartConfirmsTheOrder() = runTest {
+        val server = FakeRithmicServer()
+        val broker = ready(server)
+        val result = broker.openSession("ACC1").placeOrder("req-40", OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100))
+        assertTrue(result.accepted, result.message)
+        assertEquals("B1", result.entityId)
         runCurrent()
-        assertEquals(25_100_000_000, session.state.value.equityMicros)
-        accountUpdate(server, balance = "25000.00", cash = "25000.00", closed = "0.00", open = "100.00")
+        assertTrue(broker.market.value.tradingReady, broker.market.value.statusMessage)
+    }
+
+    @Test fun anOrderNotificationConfirmsAReplyWithoutABasketId() = runTest {
+        val server = FakeRithmicServer().apply { orderReply = FakeRithmicServer.OrderReply.ACCEPT_WITHOUT_BASKET }
+        val broker = ready(server)
+        val result = broker.openSession("ACC1").placeOrder("req-41", OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100))
+        assertTrue(result.accepted, result.message)
         runCurrent()
-        assertEquals(25_100_000_000, session.state.value.equityMicros)
+        assertTrue(broker.market.value.tradingReady, broker.market.value.statusMessage)
+    }
+
+    /** The real trade this was found on: a short entry, then its bracket stop. */
+    @Test fun aBracketStopFillPairsWithItsEntryInTheHistory() = runTest {
+        val server = FakeRithmicServer().apply { fillHistoryListed = false; productMaxOrder = mapOf("MES" to 3); productCommission = mapOf("MES" to 0.75) }
+        val session = ready(server).openSession("ACC1")
+        server.fill("E1", "F1", RithmicEnums.SELL, 1, 5500.0)
+        server.position(-1, 5500.0)
+        runCurrent()
+        assertTrue(session.state.value.trades.isEmpty())
+        server.fill("E3", "F2", RithmicEnums.BUY, 1, 5510.0, originalBasket = "E1", origPriceType = RithmicEnums.PRICE_STOP_MARKET)
+        server.position(0, 5500.0)
+        runCurrent()
+        val trade = session.state.value.trades.single()
+        assertEquals(Side.SELL, trade.side)
+        assertEquals(550000, trade.entryPrice)
+        assertEquals(551000, trade.exitPrice)
+        assertEquals("止损", trade.reason)
+        assertEquals(-50_000_000, trade.grossPnlMicros)
+        assertEquals(1_500_000, trade.feesMicros)
+        assertEquals(-51_500_000, trade.netPnlMicros)
+        assertEquals("ACC1:MESZ6", trade.positionId)
+    }
+
+    /** A triggered stop reports as a market order, so its sound comes from the original type. */
+    @Test fun aTriggeredStopPlaysAsAStopLoss() = runTest {
+        val server = FakeRithmicServer().apply { fillHistoryListed = false }
+        val broker = ready(server)
+        val fills = mutableListOf<TradeFill>()
+        val collector = launch(UnconfinedTestDispatcher(testScheduler)) { broker.tradeFills.collect { fills += it } }
+        server.fill("E3", "F2", RithmicEnums.BUY, 1, 5510.0, originalBasket = "E1", origPriceType = RithmicEnums.PRICE_STOP_MARKET)
+        runCurrent()
+        assertEquals(OrderRole.STOP_LOSS, fills.single().role)
+        collector.cancel()
     }
 
     private fun accountUpdate(server: FakeRithmicServer, balance: String, cash: String, closed: String, open: String) = server.plant(RithmicEnums.INFRA_PNL).push {
