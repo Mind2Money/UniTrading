@@ -269,7 +269,7 @@ internal class RithmicProbe(
             fun ProtoWriter.account() { string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId ?: "") }
             if (order != null && accountId != null) {
                 order.show("rms info (304)", Rt.REQUEST_ACCOUNT_RMS_INFO) { account(); int32(Rf.USER_TYPE, userType) }
-                order.show("product rms (306)", Rt.REQUEST_PRODUCT_RMS_INFO, limit = 6) { account() }
+                order.show("product rms (306)", Rt.REQUEST_PRODUCT_RMS_INFO, limit = 60) { account() }
                 order.show("exchange permissions (342)", Rt.REQUEST_LIST_EXCHANGE_PERMISSIONS, limit = 40) { string(Rf.PERMISSION_USER, credentials.user) }
                 order.show("open orders (320)", Rt.REQUEST_SHOW_ORDERS, limit = 20) { account() }
                 order.show("bracket targets (338)", Rt.REQUEST_SHOW_BRACKETS) { account() }

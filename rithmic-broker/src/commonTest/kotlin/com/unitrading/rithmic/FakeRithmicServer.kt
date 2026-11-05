@@ -40,6 +40,7 @@ internal class FakeRithmicServer : RithmicWire {
     var productCodes = emptyMap<String, List<String>>()
     /** Per-product order limits answering the product RMS request. */
     var productMaxOrder = emptyMap<String, Int>()
+    var productCommission = emptyMap<String, Double>()
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -62,6 +63,8 @@ internal class FakeRithmicServer : RithmicWire {
         /** Simulates the server dropping the connection. */
         fun drop() { inbound.close() }
     }
+
+    private fun productOf(symbol: String) = if (symbol == "MES" || symbol == "MES2") "MES" else symbol.dropLast(2)
 
     private fun handle(socket: FakeSocket, m: ProtoMessage) {
         requests += m
@@ -130,8 +133,10 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_SEARCH_SYMBOLS -> {
                 val alias = if (frontMonthAlias) mapOf("MES" to "CME") else emptyMap()
                 val wanted = m.str(Rf.EXCHANGE)
-                parts(Rt.RESPONSE_SEARCH_SYMBOLS, (foreignListings + alias + knownSymbols).filter { wanted == null || it.value == wanted }.map { (symbol, exchange) -> {
-                    string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future")
+                val product = m.str(Rf.PRODUCT_CODE)
+                val rows = (foreignListings + alias + knownSymbols).filter { (symbol, exchange) -> (wanted == null || exchange == wanted) && (product == null || productOf(symbol) == product) }
+                parts(Rt.RESPONSE_SEARCH_SYMBOLS, rows.map { (symbol, exchange) -> {
+                    string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, productOf(symbol)); string(Rf.INSTRUMENT_TYPE, "Future")
                     string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6" || symbol == "MES") "20261218" else "20270319")
                 } })
             }
@@ -141,7 +146,7 @@ internal class FakeRithmicServer : RithmicWire {
                 else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
             }
             Rt.REQUEST_PRODUCT_CODES -> parts(Rt.RESPONSE_PRODUCT_CODES, productCodes[m.str(Rf.EXCHANGE)].orEmpty().map { code -> { string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: ""); string(Rf.PRODUCT_CODE, code) } })
-            Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit) } })
+            Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit); productCommission[code]?.let { double(Rf.COMMISSION_FILL_RATE, it) } } })
             Rt.REQUEST_MARKET_DATA_UPDATE -> {
                 reply(Rt.RESPONSE_MARKET_DATA_UPDATE)
                 val (bid, ask) = quote ?: return

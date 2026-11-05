@@ -336,6 +336,54 @@ class RithmicBrokerTest {
         assertTrue(broker.market.value.statusMessage.startsWith("已连接"), broker.market.value.statusMessage)
     }
 
+    /** Product RMS rows name what the account may trade, and they carry no exchange. */
+    @Test fun theAccountsProductRowsDriveTheInstrumentList() = runTest {
+        val server = FakeRithmicServer().apply { knownSymbols["ESZ6"] = "CME"; productMaxOrder = mapOf("ES" to 3, "NO" to 3); productCodes = mapOf("CME" to listOf("ZZ")) }
+        val broker = broker(server)
+        broker.connect()
+        runCurrent()
+        assertEquals("ESZ6", broker.instruments.single { it.symbol == "@ES" }.tradeSymbol)
+        assertTrue(server.requests(Rt.REQUEST_FRONT_MONTH).any { it.str(Rf.SYMBOL) == "ES" && it.str(Rf.EXCHANGE) == "CME" })
+        assertFalse(broker.instruments.any { it.symbol == "@NO" })
+        assertTrue(server.requests(Rt.REQUEST_PRODUCT_CODES).isEmpty())
+    }
+
+    @Test fun thePreviewShowsTheProductsCommissionForBothFills() = runTest {
+        val server = FakeRithmicServer().apply { productMaxOrder = mapOf("MES" to 3); productCommission = mapOf("MES" to 0.75) }
+        val session = ready(server).openSession("ACC1")
+        val preview = session.preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 200))
+        assertTrue(preview.feesKnown)
+        assertEquals(3_000_000, preview.feesMicros)
+    }
+
+    @Test fun theBalanceIsTheServersAccountBalanceNotTheOpeningCash() = runTest {
+        val server = FakeRithmicServer()
+        val broker = ready(server)
+        accountUpdate(server, balance = "24930.50", cash = "25000.00", closed = "-68.00", open = "0.00")
+        runCurrent()
+        val account = broker.openSession("ACC1").state.value
+        assertEquals(24_930_500_000, account.balanceMicros)
+        assertEquals(24_930_500_000, account.equityMicros)
+    }
+
+    /** The dev kit does not say which of these two the server sends; neither may count the open P&L twice. */
+    @Test fun equityCountsTheOpenPnlOnceWhicheverWayTheBalanceIsReported() = runTest {
+        val server = FakeRithmicServer()
+        val broker = ready(server)
+        val session = broker.openSession("ACC1")
+        accountUpdate(server, balance = "25100.00", cash = "25000.00", closed = "0.00", open = "100.00")
+        runCurrent()
+        assertEquals(25_100_000_000, session.state.value.equityMicros)
+        accountUpdate(server, balance = "25000.00", cash = "25000.00", closed = "0.00", open = "100.00")
+        runCurrent()
+        assertEquals(25_100_000_000, session.state.value.equityMicros)
+    }
+
+    private fun accountUpdate(server: FakeRithmicServer, balance: String, cash: String, closed: String, open: String) = server.plant(RithmicEnums.INFRA_PNL).push {
+        int32(Rf.TEMPLATE_ID, Rt.ACCOUNT_PNL_UPDATE); string(Rf.ACCOUNT_ID, "ACC1"); string(Rf.ACCOUNT_BALANCE, balance); string(Rf.CASH_ON_HAND, cash)
+        string(Rf.CLOSED_POSITION_PNL, closed); string(Rf.OPEN_POSITION_PNL, open); int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt())
+    }
+
     @Test fun aProductLimitTightensTheAccountWideLimit() = runTest {
         val server = FakeRithmicServer().apply { maxOrderQuantity = 10; productMaxOrder = mapOf("MES" to 3, "ES" to 1) }
         val session = ready(server).openSession("ACC1")

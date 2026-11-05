@@ -183,6 +183,20 @@ internal data class RithmicFinancials(
     val timeMs: Long,
 )
 
+/**
+ * Account value. The dev kit does not say whether account_balance already holds the open P&L, so the reading that sits
+ * closer to cash + closed + open wins; adding it to a balance that holds it would count the open P&L twice.
+ */
+internal fun accountEquityMicros(money: RithmicFinancials): Long? {
+    val balance = money.balanceMicros ?: money.cashMicros ?: return null
+    val open = money.openPnlMicros ?: return null
+    val added = checkedAdd(balance, open)
+    val cash = money.cashMicros ?: return added
+    val closed = money.closedPnlMicros ?: return added
+    val gross = checkedAdd(checkedAdd(cash, closed), open)
+    return if (abs(balance - gross) < abs(added - gross)) balance else added
+}
+
 internal fun parseFinancials(data: ProtoMessage, previous: RithmicFinancials?, fallbackTime: Long): RithmicFinancials? {
     val account = data.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     fun money(field: Int, old: Long?): Long? = if (data.has(field)) moneyMicros(data.str(field)) ?: old else old

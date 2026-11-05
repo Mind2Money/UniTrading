@@ -121,7 +121,7 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 ## Rithmic 登录
 
-> 应用内的 Rithmic 登录入口已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`）。Paper Trading 的登录、行情和图表已通过适配器实测，真实下单回执尚未联调。Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
+> 应用内的 Rithmic 登录入口已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`）。Paper Trading 的登录、行情、图表和带括号的市价单已实测，改单、撤单和平仓回执尚未验证。Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
 
 1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 预填芝加哥生产网关 `wss://rprotocol.rithmic.com:443`（该网关的系统列表包含 Rithmic 01、Rithmic Paper Trading 与各 prop firm 系统），Rithmic 提供区域网关时可替换。
 2. 网关只接受 `wss://*.rithmic.com`。可先“查询”系统列表确认系统名称，再输入 Rithmic 登录 ID 和密码。

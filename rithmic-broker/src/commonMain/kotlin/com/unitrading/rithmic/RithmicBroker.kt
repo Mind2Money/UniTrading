@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlin.math.abs
+import kotlin.math.roundToLong
 import kotlin.time.Clock
 
 /** History depth per series: twice the largest indicator period, like the Tradovate adapter. */
@@ -73,7 +74,8 @@ class RithmicBroker(
     private val positions = mutableMapOf<Pair<String, String>, RithmicPosition>()
     private val financials = mutableMapOf<String, RithmicFinancials>()
     private val maxOrderQuantities = mutableMapOf<String, Long?>()
-    private val productOrderLimits = mutableMapOf<Pair<String, String>, Long>()
+    private data class ProductRms(val orderLimit: Long?, val commissionMicros: Long?)
+    private val productRms = mutableMapOf<Pair<String, String>, ProductRms>()
     private val brackets = mutableMapOf<String, BracketLevels>()
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
@@ -257,10 +259,12 @@ class RithmicBroker(
         try {
             val rows = order.request(Rt.REQUEST_PRODUCT_RMS_INFO, 30_000) { account() }
             lock.withLock {
-                productOrderLimits.keys.removeAll { it.first == accountId }
+                productRms.keys.removeAll { it.first == accountId }
                 for (row in rows) {
                     val product = row.str(Rf.PRODUCT_CODE)?.trim()?.takeIf { it.isNotEmpty() } ?: continue
-                    productOrderLimits[accountId to product] = listOfNotNull(row.long(Rf.MAX_ORDER_QUANTITY), row.long(Rf.BUY_LIMIT), row.long(Rf.SELL_LIMIT)).filter { it > 0 }.minOrNull() ?: continue
+                    productRms[accountId to product] = ProductRms(
+                        listOfNotNull(row.long(Rf.MAX_ORDER_QUANTITY), row.long(Rf.BUY_LIMIT), row.long(Rf.SELL_LIMIT)).filter { it > 0 }.minOrNull(),
+                        row.double(Rf.COMMISSION_FILL_RATE)?.takeIf { it >= 0 && it.isFinite() }?.let { (it * MICROS_PER_USD).roundToLong() })
                 }
             }
         } catch (cancel: CancellationException) { throw cancel }
@@ -540,10 +544,24 @@ class RithmicBroker(
         for (product in products.keys) refreshContinuous("@$product")
     }
 
-    /** Fills the instrument list after login: the products of every exchange this login can route, each with its front month. */
+    /**
+     * Fills the instrument list after login. The account's product RMS rows name what it may trade, micros included;
+     * the time-of-interest list is older and lacks them, so it only serves a login without such rows.
+     */
     private suspend fun syncProductList() {
         val plant = ticker ?: return
-        val products = mutableListOf<Pair<String, String>>()
+        val accountProducts = lock.withLock { productRms.keys.map { it.second }.distinct() }
+        val products = accountProducts.map { it to null }.ifEmpty { timeOfInterestProducts(plant) }
+        coroutineScope {
+            products.take(PRODUCT_LIST_LIMIT).map { (product, exchange) ->
+                launch { productListSlots.withPermit { loadProduct(plant, product, exchange) } }
+            }.joinAll()
+        }
+        refreshQuoteWatch()
+    }
+
+    private suspend fun timeOfInterestProducts(plant: RithmicPlant): List<Pair<String, String?>> {
+        val products = mutableListOf<Pair<String, String?>>()
         for (exchange in lock.withLock { tradeRoutes.keys.sorted() }) {
             try {
                 plant.request(Rt.REQUEST_PRODUCT_CODES, 30_000) { string(Rf.EXCHANGE, exchange); bool(Rf.GIVE_TOI_PRODUCTS_ONLY, true) }
@@ -551,25 +569,30 @@ class RithmicBroker(
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { /* The other exchanges still load, and search reaches this one. */ }
         }
-        coroutineScope {
-            products.distinctBy { it.first }.take(PRODUCT_LIST_LIMIT).map { (product, exchange) ->
-                launch { productListSlots.withPermit { loadProduct(plant, product, exchange) } }
-            }.joinAll()
-        }
-        refreshQuoteWatch()
+        return products.distinctBy { it.first }
+    }
+
+    /** Product RMS rows carry no exchange, so ask where a product is listed among the exchanges this login can route. */
+    private suspend fun listingExchange(plant: RithmicPlant, product: String): String? {
+        val routable = lock.withLock { tradeRoutes.keys.toSet() }
+        return plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) { productSearch(product, null) }
+            .filter { it.str(Rf.PRODUCT_CODE)?.trim() == product }
+            .mapNotNull { it.str(Rf.EXCHANGE)?.trim() }.firstOrNull { it in routable }
     }
 
     /** Adds one product of the login list; a product the server refuses is left out, without an error for the user. */
-    private suspend fun loadProduct(plant: RithmicPlant, product: String, exchange: String) {
+    private suspend fun loadProduct(plant: RithmicPlant, product: String, exchange: String?) {
         val key = "@$product"
         if (lock.withLock { continuousRoutes[key]?.tradeSymbol != null }) return
-        val contract = try { frontMonthContract(plant, product, exchange, quiet = true) }
-            catch (_: TimeoutCancellationException) { return }
-            catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { return }
+        val (contract, listing) = try {
+            val listing = exchange ?: listingExchange(plant, product) ?: return
+            frontMonthContract(plant, product, listing, quiet = true) to listing
+        } catch (_: TimeoutCancellationException) { return }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { return }
         lock.withLock {
-            val route = continuousRoutes[key] ?: ContinuousRoute(product, exchange, null, null, null)
-            continuousRoutes[key] = route.copy(exchange = exchange, tradeSymbol = contract, checkedAt = now(), status = null)
+            val route = continuousRoutes[key] ?: ContinuousRoute(product, listing, null, null, null)
+            continuousRoutes[key] = route.copy(exchange = listing, tradeSymbol = contract, checkedAt = now(), status = null)
             rebuild()
         }
     }
@@ -915,9 +938,9 @@ class RithmicBroker(
                 Execution(fill.id, fill.symbol, fill.side, checkedMultiply(fill.quantity, 100), price, fill.timeMs, fill.basketId)
             }.sortedBy { it.timeMs }
             val money = financials[aid]
-            val balance = money?.cashMicros ?: money?.balanceMicros
-            val openPnl = money?.openPnlMicros
-            val equity = if (balance != null && openPnl != null) runCatching { checkedAdd(balance, openPnl) }.getOrNull() else null
+            // account_balance carries realized P&L and fees through the day; cash_on_hand stays at the session's opening value.
+            val balance = money?.balanceMicros ?: money?.cashMicros
+            val equity = money?.let { runCatching { accountEquityMicros(it) }.getOrNull() }
             val margin = money?.usedBuyingPowerMicros
             val dailyPnl = money?.let { m ->
                 val total = m.dayPnlMicros ?: if (m.dayOpenPnlMicros != null && m.dayClosedPnlMicros != null) runCatching { checkedAdd(m.dayOpenPnlMicros, m.dayClosedPnlMicros) }.getOrNull() else null
@@ -1092,7 +1115,7 @@ class RithmicBroker(
 
     /** The tightest server limit for one order of [symbol]: account-wide and, where listed, for its product. */
     private fun orderLimit(accountId: String, symbol: String): Long? =
-        listOfNotNull(maxOrderQuantities[accountId], specs[symbol]?.productCode?.let { productOrderLimits[accountId to it] }).minOrNull()
+        listOfNotNull(maxOrderQuantities[accountId], specs[symbol]?.productCode?.let { productRms[accountId to it]?.orderLimit }).minOrNull()
 
     private fun ProtoWriter.modifyBody(accountId: String, basketId: String, spec: RithmicSpec, quantity: Long, kind: OrderKind, price: Long) {
         string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId); string(Rf.BASKET_ID, basketId)
@@ -1131,9 +1154,12 @@ class RithmicBroker(
         if (!modifying && (request.stopLoss != null || request.takeProfit != null)) require(accountFlows[accountId]?.value?.positions?.none { it.symbol == request.symbol } != false) { "该合约已有净仓，不能再叠加括号保护" }
         val warnings = mutableListOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Rithmic / FCM 为准")
         if (request.kind == OrderKind.MARKET && (request.stopLoss != null || request.takeProfit != null)) warnings.add("市价单的括号保护按实际成交价加减相同 tick 数生成，实际 SL/TP 价位可能与输入不同")
-        OrderPreview(entry, stopLossPnlMicros = request.stopLoss?.let { grossPnl(spec.instrument, request.side, request.lotsHundredths, entry, it) },
+        // The rate is per fill, so one lot in and out pays it twice.
+        val commission = spec.productCode?.let { productRms[accountId to it]?.commissionMicros }
+        OrderPreview(entry, feesMicros = commission?.let { checkedMultiply(checkedMultiply(it, 2), request.lotsHundredths / 100) } ?: 0,
+            stopLossPnlMicros = request.stopLoss?.let { grossPnl(spec.instrument, request.side, request.lotsHundredths, entry, it) },
             takeProfitPnlMicros = request.takeProfit?.let { grossPnl(spec.instrument, request.side, request.lotsHundredths, entry, it) },
-            quoteRevision = market.value.revision, marginKnown = false, feesKnown = false, warnings = warnings)
+            quoteRevision = market.value.revision, marginKnown = false, feesKnown = commission != null, warnings = warnings)
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeRithmicMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
 
     private fun validateProtection(spec: Instrument, side: Side, quote: Quote?, sl: Long?, tp: Long?) {
