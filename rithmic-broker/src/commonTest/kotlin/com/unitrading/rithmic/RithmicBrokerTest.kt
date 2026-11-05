@@ -290,7 +290,7 @@ class RithmicBrokerTest {
         val series = broker.instruments.single { it.isContinuous }
         assertEquals("MESZ6", series.tradeSymbol)
         assertEquals(null, series.tradeSymbolStatus)
-        assertEquals(listOf("CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) })
+        assertEquals(setOf("CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) }.toSet())
         assertTrue(server.requests(Rt.REQUEST_REFERENCE_DATA).none { it.str(Rf.EXCHANGE) == "XEX" || it.str(Rf.SYMBOL) == "MES" })
         assertFalse(broker.instruments.any { it.symbol == "MES" || it.symbol == "MES2" })
     }
@@ -303,6 +303,10 @@ class RithmicBrokerTest {
         runCurrent()
         assertEquals("MESZ6", broker.instruments.single { it.isContinuous }.tradeSymbol)
         assertEquals(listOf("XEX", "CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) })
+        // A later refresh asks the exchange that answered, not the refused one.
+        broker.searchInstruments("@MES")
+        runCurrent()
+        assertEquals(listOf("XEX", "CME", "CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) })
     }
 
     @Test fun refusedFrontMonthNamesEveryExchangeItTried() = runTest {
@@ -313,6 +317,51 @@ class RithmicBrokerTest {
         runCurrent()
         val status = broker.market.value.statusMessage
         assertTrue("CME：permission denied" in status && "XEX：permission denied" in status, status)
+    }
+
+    /** The add-symbol list should show what the login can trade without a search; a refused product is left out quietly. */
+    @Test fun connectFillsTheInstrumentListFromTheProductsOfRoutableExchanges() = runTest {
+        val server = FakeRithmicServer().apply { knownSymbols["ESZ6"] = "CME"; productCodes = mapOf("CME" to listOf("MES", "ES", "XX"), "XEX" to listOf("YY")) }
+        val broker = broker(server)
+        broker.connect()
+        runCurrent()
+        val es = broker.instruments.single { it.symbol == "@ES" }
+        assertEquals("ESZ6", es.tradeSymbol)
+        assertEquals("ES future 连续合约", es.name)
+        assertTrue(broker.instruments.any { it.symbol == "ESZ6" })
+        assertFalse(broker.instruments.any { "XX" in it.symbol || "YY" in it.symbol })
+        val request = server.requests(Rt.REQUEST_PRODUCT_CODES).single()
+        assertEquals("CME", request.str(Rf.EXCHANGE))
+        assertEquals(true, request.bool(Rf.GIVE_TOI_PRODUCTS_ONLY))
+        assertTrue(broker.market.value.statusMessage.startsWith("已连接"), broker.market.value.statusMessage)
+    }
+
+    @Test fun aProductLimitTightensTheAccountWideLimit() = runTest {
+        val server = FakeRithmicServer().apply { maxOrderQuantity = 10; productMaxOrder = mapOf("MES" to 3, "ES" to 1) }
+        val session = ready(server).openSession("ACC1")
+        assertEquals(300, session.orderCapacity(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).maximumLotsHundredths)
+        assertFalse(session.preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 400)).valid)
+        assertTrue(session.preview(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 300)).valid)
+    }
+
+    @Test fun fillHistoryCoversTheLastSevenDays() = runTest {
+        val server = FakeRithmicServer()
+        ready(server)
+        assertEquals((FAKE_TIME / 1_000 - 7 * 86_400).toInt(), server.requests(Rt.REQUEST_SHOW_FILL_HISTORY).single().int(Rf.START_INDEX))
+    }
+
+    /** Without this the app stops on its manual search page after every login. */
+    @Test fun connectLoadsAStarterInstrumentSoTheAppOpensOnItsWorkbench() = runTest {
+        val broker = broker(FakeRithmicServer().apply { fillHistoryListed = false })
+        broker.connect()
+        assertEquals("MESZ6", broker.instruments.single { it.symbol == "@MES" }.tradeSymbol)
+    }
+
+    @Test fun connectStillSucceedsWhenTheStarterInstrumentIsUnavailable() = runTest {
+        val broker = broker(FakeRithmicServer().apply { knownSymbols.clear(); fillHistoryListed = false })
+        broker.connect()
+        assertTrue(broker.market.value.connected)
+        assertTrue(broker.instruments.isEmpty())
     }
 
     /** Pushes name the dated contract; a continuous chart must follow them. */

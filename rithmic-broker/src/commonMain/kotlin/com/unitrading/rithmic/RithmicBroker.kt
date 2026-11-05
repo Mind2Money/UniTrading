@@ -14,6 +14,8 @@ import kotlin.time.Clock
 /** History depth per series: twice the largest indicator period, like the Tradovate adapter. */
 const val RITHMIC_CHART_BARS = 2000
 private const val QUOTE_FRESH_MS = 15_000L
+/** Upper bound for the list loaded at login; anything beyond it stays reachable through search. */
+private const val PRODUCT_LIST_LIMIT = 200
 
 /**
  * R | Protocol API adapter. Four plant connections (ticker, order, PnL, history) share one login;
@@ -52,6 +54,7 @@ class RithmicBroker(
     private val quoteSyncLock = Mutex()
     private val specLocks = mutableMapOf<String, Mutex>()
     private val specSlots = Semaphore(4)
+    private val productListSlots = Semaphore(2)
     private var ticker: RithmicPlant? = null
     private var orderPlant: RithmicPlant? = null
     private var pnlPlant: RithmicPlant? = null
@@ -70,6 +73,7 @@ class RithmicBroker(
     private val positions = mutableMapOf<Pair<String, String>, RithmicPosition>()
     private val financials = mutableMapOf<String, RithmicFinancials>()
     private val maxOrderQuantities = mutableMapOf<String, Long?>()
+    private val productOrderLimits = mutableMapOf<Pair<String, String>, Long>()
     private val brackets = mutableMapOf<String, BracketLevels>()
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
@@ -101,6 +105,7 @@ class RithmicBroker(
     private var reconnectJob: Job? = null
     private var recoveryJob: Job? = null
     private var continuousJob: Job? = null
+    private var productListJob: Job? = null
     private var liveSince = 0L
 
     // ───────────────────────────── connection ─────────────────────────────
@@ -155,10 +160,20 @@ class RithmicBroker(
                 throw error
             }
         }
+        // Rithmic has no contract list to read at login, so start from the product the Tradovate adapter loads;
+        // with an empty catalog the app would stop on its manual search page.
+        if (lock.withLock { marketReady && specs.isEmpty() }) {
+            onProgress("正在加载默认合约…")
+            try { withTimeoutOrNull(15_000) { searchInstruments("MES") } }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* The manual search page stays available. */ }
+        }
         onProgress(problem)
         watching?.let { watch(it.first, it.second) }
         refreshQuoteWatch()
         startMaintenance()
+        productListJob?.cancel()
+        productListJob = scope.launch { syncProductList() }
     }
 
     private suspend fun openPlant(name: String, gateway: String, onEvent: suspend (ProtoMessage) -> Unit): RithmicPlant {
@@ -240,9 +255,20 @@ class RithmicBroker(
         } catch (cancel: CancellationException) { throw cancel }
         catch (_: Exception) { lock.withLock { maxOrderQuantities[accountId] = null } }
         try {
+            val rows = order.request(Rt.REQUEST_PRODUCT_RMS_INFO, 30_000) { account() }
+            lock.withLock {
+                productOrderLimits.keys.removeAll { it.first == accountId }
+                for (row in rows) {
+                    val product = row.str(Rf.PRODUCT_CODE)?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+                    productOrderLimits[accountId to product] = listOfNotNull(row.long(Rf.MAX_ORDER_QUANTITY), row.long(Rf.BUY_LIMIT), row.long(Rf.SELL_LIMIT)).filter { it > 0 }.minOrNull() ?: continue
+                }
+            }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* The account-wide limit still applies, and the server checks every order. */ }
+        try {
             val end = now() / 1_000
             val rows = order.request(Rt.REQUEST_SHOW_FILL_HISTORY, 30_000) {
-                account(); string(Rf.INDEX_FORMAT, "ssboe"); int32(Rf.START_INDEX, (end - 36 * 3_600).toInt()); int32(Rf.FINISH_INDEX, end.toInt()); int32(Rf.USER_MAX_COUNT, 5_000)
+                account(); string(Rf.INDEX_FORMAT, "ssboe"); int32(Rf.START_INDEX, (end - 7 * 86_400).toInt()); int32(Rf.FINISH_INDEX, end.toInt()); int32(Rf.USER_MAX_COUNT, 5_000)
             }
             lock.withLock { rows.mapNotNull { parseFill(it, now()) }.forEach { fills[it.id] = it }; notifiedFills.addAll(fills.keys) }
         } catch (cancel: CancellationException) { throw cancel }
@@ -341,7 +367,7 @@ class RithmicBroker(
         stopped = true
         scope.launch {
             lock.withLock { connected = false; marketReady = false; problem = "已断开"; publish() }
-            maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); quoteWatchJob?.cancel(); recoveryJob?.cancel(); continuousJob?.cancel()
+            maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); quoteWatchJob?.cancel(); recoveryJob?.cancel(); continuousJob?.cancel(); productListJob?.cancel()
             closePlants(logout = true)
             saveCandleCache()
             wire.close(); scope.cancel()
@@ -514,8 +540,42 @@ class RithmicBroker(
         for (product in products.keys) refreshContinuous("@$product")
     }
 
+    /** Fills the instrument list after login: the products of every exchange this login can route, each with its front month. */
+    private suspend fun syncProductList() {
+        val plant = ticker ?: return
+        val products = mutableListOf<Pair<String, String>>()
+        for (exchange in lock.withLock { tradeRoutes.keys.sorted() }) {
+            try {
+                plant.request(Rt.REQUEST_PRODUCT_CODES, 30_000) { string(Rf.EXCHANGE, exchange); bool(Rf.GIVE_TOI_PRODUCTS_ONLY, true) }
+                    .mapNotNullTo(products) { row -> row.str(Rf.PRODUCT_CODE)?.trim()?.takeIf { it.isNotEmpty() }?.let { it to exchange } }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* The other exchanges still load, and search reaches this one. */ }
+        }
+        coroutineScope {
+            products.distinctBy { it.first }.take(PRODUCT_LIST_LIMIT).map { (product, exchange) ->
+                launch { productListSlots.withPermit { loadProduct(plant, product, exchange) } }
+            }.joinAll()
+        }
+        refreshQuoteWatch()
+    }
+
+    /** Adds one product of the login list; a product the server refuses is left out, without an error for the user. */
+    private suspend fun loadProduct(plant: RithmicPlant, product: String, exchange: String) {
+        val key = "@$product"
+        if (lock.withLock { continuousRoutes[key]?.tradeSymbol != null }) return
+        val contract = try { frontMonthContract(plant, product, exchange, quiet = true) }
+            catch (_: TimeoutCancellationException) { return }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { return }
+        lock.withLock {
+            val route = continuousRoutes[key] ?: ContinuousRoute(product, exchange, null, null, null)
+            continuousRoutes[key] = route.copy(exchange = exchange, tradeSymbol = contract, checkedAt = now(), status = null)
+            rebuild()
+        }
+    }
+
     /** Loads reference data once per symbol; concurrent callers for the same symbol share the request. */
-    private suspend fun hydrateSpecs(symbols: List<Pair<String, String>>) {
+    private suspend fun hydrateSpecs(symbols: List<Pair<String, String>>, quiet: Boolean = false) {
         val plant = ticker ?: return
         coroutineScope {
             symbols.distinctBy { it.first }.map { (symbol, exchange) -> launch {
@@ -533,7 +593,7 @@ class RithmicBroker(
                                 break
                             }
                         } catch (cancel: CancellationException) { throw cancel }
-                        catch (_: Exception) { lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
+                        catch (_: Exception) { if (!quiet) lock.withLock { problem = "部分合约规格无法加载，缺失规格的品种不可交易" } }
                     }
                 }
             } }.joinAll()
@@ -553,7 +613,8 @@ class RithmicBroker(
         val route = lock.withLock { continuousRoutes[symbol] } ?: return
         var found: Pair<String, String>? = null
         val failures = mutableListOf<String>()
-        for (exchange in route.candidates) {
+        // The exchange that answered last goes first, so a refresh does not ask a refused one again.
+        for (exchange in (listOf(route.exchange) + route.candidates).distinct()) {
             try { found = frontMonthContract(plant, route.productCode, exchange) to exchange; break }
             catch (_: TimeoutCancellationException) { failures += "$exchange：主力合约查询超时" }
             catch (cancel: CancellationException) { throw cancel }
@@ -572,7 +633,7 @@ class RithmicBroker(
     }
 
     /** The dated contract the server names for a product on one exchange, with its specification loaded. */
-    private suspend fun frontMonthContract(plant: RithmicPlant, productCode: String, exchange: String): String {
+    private suspend fun frontMonthContract(plant: RithmicPlant, productCode: String, exchange: String, quiet: Boolean = false): String {
         val reply = withTimeout(20_000) { plant.request(Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, productCode); string(Rf.EXCHANGE, exchange); bool(Rf.NEED_UPDATES, false) } }
         val row = reply.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() || !it.str(Rf.SYMBOL).isNullOrBlank() }
         var name = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != productCode }
@@ -583,14 +644,14 @@ class RithmicBroker(
             nearestContract(rows, productCode, exchange, yyyymmdd(now()))?.let { (contract, listed) -> name = contract; contractExchange = listed }
         }
         val contract = name ?: throw RithmicRemoteException("front-month", "服务器未返回主力合约")
-        hydrateSpecs(listOf(contract to contractExchange))
+        hydrateSpecs(listOf(contract to contractExchange), quiet)
         if (lock.withLock { contract !in specs }) throw RithmicRemoteException("front-month", "主力合约规格无法加载")
         return contract
     }
 
     private fun continuousInstrument(symbol: String, route: ContinuousRoute): Instrument? {
         val base = route.tradeSymbol?.let { specs[it] } ?: specs.values.firstOrNull { it.productCode == route.productCode } ?: return null
-        return base.instrument.copy(symbol = symbol, name = "${route.productCode} 连续合约", category = "连续合约 · ${route.exchange}", isContinuous = true,
+        return base.instrument.copy(symbol = symbol, name = "${base.instrument.name} 连续合约", category = "连续合约 · ${route.exchange}", isContinuous = true,
             tradeSymbol = route.tradeSymbol, tradeSymbolStatus = route.status, quoteSymbol = route.tradeSymbol)
     }
 
@@ -898,7 +959,7 @@ class RithmicBroker(
             override fun preview(request: OrderRequest) = estimate(accountId, request)
             override suspend fun orderCapacity(request: OrderRequest): OrderCapacity {
                 if (!market.value.tradingReady) return OrderCapacity(message = "账户或行情尚未就绪，无法确认可下单数量")
-                val limit = lock.withLock { maxOrderQuantities[accountId] }
+                val limit = lock.withLock { orderLimit(accountId, request.symbol) }
                 return if (limit != null) OrderCapacity(checkedMultiply(limit, 100), "服务器风控的单笔最大数量") else OrderCapacity(message = "服务器未提供数量上限，以下单校验为准")
             }
             override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {
@@ -1029,6 +1090,10 @@ class RithmicBroker(
         }
     }
 
+    /** The tightest server limit for one order of [symbol]: account-wide and, where listed, for its product. */
+    private fun orderLimit(accountId: String, symbol: String): Long? =
+        listOfNotNull(maxOrderQuantities[accountId], specs[symbol]?.productCode?.let { productOrderLimits[accountId to it] }).minOrNull()
+
     private fun ProtoWriter.modifyBody(accountId: String, basketId: String, spec: RithmicSpec, quantity: Long, kind: OrderKind, price: Long) {
         string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId); string(Rf.BASKET_ID, basketId)
         string(Rf.SYMBOL, spec.instrument.symbol); string(Rf.EXCHANGE, spec.exchange)
@@ -1048,7 +1113,7 @@ class RithmicBroker(
         require(accounts.any { it.id == accountId }) { "账户不在当前登录中" }
         val spec = specs[request.symbol] ?: errorArgument("合约规格尚未加载")
         require(request.lotsHundredths in spec.instrument.minLotsHundredths..spec.instrument.maxLotsHundredths && request.lotsHundredths % 100 == 0L) { "期货数量必须为正整数张" }
-        val limit = maxOrderQuantities[accountId]
+        val limit = orderLimit(accountId, request.symbol)
         require(limit == null || request.lotsHundredths / 100 <= limit) { "数量超过服务器风控的单笔上限 $limit 张" }
         val quote = quotes[request.symbol]
         require(request.symbol in subscribedQuotes && fresh(quote)) { "无可用实时 Bid/Ask 或报价超过 15 秒" }

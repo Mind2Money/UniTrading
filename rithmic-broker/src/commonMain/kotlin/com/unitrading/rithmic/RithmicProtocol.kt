@@ -50,6 +50,14 @@ internal object Rf {
     const val QTOF_PRICE = 154385
     const val SEARCH_TEXT = 120008
     const val SEARCH_PATTERN = 155008
+    const val GIVE_TOI_PRODUCTS_ONLY = 153499
+    const val PERMISSION_USER = 154220
+    const val ENTITLEMENT_FLAG = 153400
+    const val LEVEL_1_MARKET_DATA = 153508
+    const val LEVEL_2_MARKET_DATA = 153509
+    const val COMMISSION_FILL_RATE = 156969
+    const val BUY_MARGIN_RATE = 157003
+    const val SELL_MARGIN_RATE = 157004
     const val IS_FRONT_MONTH = 149166
     const val NEED_UPDATES = 154352
     const val REQUEST = 100000
@@ -171,6 +179,8 @@ internal object Rt {
     const val RESPONSE_MARKET_DATA_UPDATE = 101
     const val REQUEST_SEARCH_SYMBOLS = 109
     const val RESPONSE_SEARCH_SYMBOLS = 110
+    const val REQUEST_PRODUCT_CODES = 111
+    const val RESPONSE_PRODUCT_CODES = 112
     const val REQUEST_FRONT_MONTH = 113
     const val RESPONSE_FRONT_MONTH = 114
     const val LAST_TRADE = 150
@@ -186,6 +196,10 @@ internal object Rt {
     const val RESPONSE_ACCOUNT_LIST = 303
     const val REQUEST_ACCOUNT_RMS_INFO = 304
     const val RESPONSE_ACCOUNT_RMS_INFO = 305
+    const val REQUEST_PRODUCT_RMS_INFO = 306
+    const val RESPONSE_PRODUCT_RMS_INFO = 307
+    const val REQUEST_LIST_EXCHANGE_PERMISSIONS = 342
+    const val RESPONSE_LIST_EXCHANGE_PERMISSIONS = 343
     const val REQUEST_SUBSCRIBE_ORDER_UPDATES = 308
     const val RESPONSE_SUBSCRIBE_ORDER_UPDATES = 309
     const val REQUEST_TRADE_ROUTES = 310

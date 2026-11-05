@@ -4,11 +4,15 @@
 🔌 **Rithmic 接入**
 ✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。Paper Trading 的登录、账户、行情和图表已通过适配器实测，下单回执仍未联调。Rithmic 对生产系统要求先通过 conformance，公开分发前请自行确认合规。
 ✅ 连续合约优先使用账户可交易的交易所，失败时换下一个交易所，错误信息写明交易所；连续图表跟随到期合约的实时逐笔和 K 线
+✅ 登录 Rithmic 后自动加载 MES，直接进入主界面；随后在后台同步可交易产品，添加品种时不用先搜索
+✅ 登录时同步按产品的下单上限和最近 7 天成交
 
 ## English
 🔌 **Rithmic**
 ✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Paper Trading login, accounts, market data and charts pass against the adapter; order receipts are still not integration-tested. Rithmic requires conformance for production systems, so confirm compliance before public distribution.
 ✅ Continuous contracts prefer an exchange the account can trade, fall back to the next one, and name the exchange in errors; continuous charts follow live trades and bars of the dated contract
+✅ Rithmic login loads MES automatically and opens on the main screen, then syncs the tradable products in the background so the add-symbol list needs no search
+✅ Login also syncs per-product order limits and the last 7 days of fills
 
 # v1.2.0
 

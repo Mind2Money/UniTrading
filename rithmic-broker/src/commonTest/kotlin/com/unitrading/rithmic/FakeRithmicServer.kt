@@ -35,6 +35,11 @@ internal class FakeRithmicServer : RithmicWire {
     /** Rithmic Paper Trading lists a bare product row as a front-month alias. */
     var frontMonthAlias = false
     var tradeRoutesListed = true
+    var fillHistoryListed = true
+    /** Products answering the product-code request, by exchange. */
+    var productCodes = emptyMap<String, List<String>>()
+    /** Per-product order limits answering the product RMS request. */
+    var productMaxOrder = emptyMap<String, Int>()
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -95,7 +100,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_SHOW_BRACKETS -> parts(Rt.RESPONSE_SHOW_BRACKETS, bracketTargets.map { (basket, level) -> { string(Rf.BASKET_ID, basket); string(Rf.TARGET_TICKS, level.first.toString()); string(Rf.TARGET_QUANTITY, level.second.toString()) } })
             Rt.REQUEST_SHOW_BRACKET_STOPS -> parts(Rt.RESPONSE_SHOW_BRACKET_STOPS, bracketStops.map { (basket, level) -> { string(Rf.BASKET_ID, basket); string(Rf.STOP_TICKS, level.first.toString()); string(Rf.STOP_QUANTITY, level.second.toString()) } })
             Rt.REQUEST_ACCOUNT_RMS_INFO -> reply(Rt.RESPONSE_ACCOUNT_RMS_INFO) { string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); maxOrderQuantity?.let { int32(Rf.MAX_ORDER_QUANTITY, it.toInt()) } }
-            Rt.REQUEST_SHOW_FILL_HISTORY -> parts(Rt.RESPONSE_SHOW_FILL_HISTORY, listOf {
+            Rt.REQUEST_SHOW_FILL_HISTORY -> parts(Rt.RESPONSE_SHOW_FILL_HISTORY, if (!fillHistoryListed) emptyList() else listOf {
                 string(Rf.FILL_ID, "H1"); string(Rf.BASKET_ID, "H-B1"); string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")
                 string(Rf.TRANSACTION_TYPE, "B"); int64(Rf.FILL_SIZE, 1); double(Rf.FILL_PRICE, 5480.0); int32(Rf.SSBOE, (FAKE_TIME / 1_000 - 3_600).toInt())
             })
@@ -115,7 +120,8 @@ internal class FakeRithmicServer : RithmicWire {
                 if (m.str(Rf.EXCHANGE) in deniedExchanges) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("13", "permission denied"))
                 else if (exchange == null || exchange != m.str(Rf.EXCHANGE)) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("7", "no data"))
                 else reply(Rt.RESPONSE_REFERENCE_DATA) {
-                    string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.SYMBOL_NAME, "Micro E-mini S&P 500"); string(Rf.PRODUCT_CODE, "MES")
+                    val product = symbol.dropLast(2)
+                    string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.SYMBOL_NAME, if (product == "MES") "Micro E-mini S&P 500" else "$product future"); string(Rf.PRODUCT_CODE, product)
                     string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD")
                     double(Rf.MIN_QPRICE_CHANGE, 0.25); double(Rf.MIN_FPRICE_CHANGE, 25.0); double(Rf.FTOQ_PRICE, 0.01); double(Rf.SINGLE_POINT_VALUE, 5.0)
                     string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319"); string(Rf.IS_TRADABLE, "true")
@@ -132,8 +138,10 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_FRONT_MONTH -> when {
                 m.str(Rf.EXCHANGE) in deniedExchanges -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("13", "permission denied"))
                 frontMonthNoData -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data"))
-                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "MESZ6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
             }
+            Rt.REQUEST_PRODUCT_CODES -> parts(Rt.RESPONSE_PRODUCT_CODES, productCodes[m.str(Rf.EXCHANGE)].orEmpty().map { code -> { string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: ""); string(Rf.PRODUCT_CODE, code) } })
+            Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit) } })
             Rt.REQUEST_MARKET_DATA_UPDATE -> {
                 reply(Rt.RESPONSE_MARKET_DATA_UPDATE)
                 val (bid, ask) = quote ?: return

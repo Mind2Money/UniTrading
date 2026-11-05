@@ -269,6 +269,8 @@ internal class RithmicProbe(
             fun ProtoWriter.account() { string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId ?: "") }
             if (order != null && accountId != null) {
                 order.show("rms info (304)", Rt.REQUEST_ACCOUNT_RMS_INFO) { account(); int32(Rf.USER_TYPE, userType) }
+                order.show("product rms (306)", Rt.REQUEST_PRODUCT_RMS_INFO, limit = 6) { account() }
+                order.show("exchange permissions (342)", Rt.REQUEST_LIST_EXCHANGE_PERMISSIONS, limit = 40) { string(Rf.PERMISSION_USER, credentials.user) }
                 order.show("open orders (320)", Rt.REQUEST_SHOW_ORDERS, limit = 20) { account() }
                 order.show("bracket targets (338)", Rt.REQUEST_SHOW_BRACKETS) { account() }
                 order.show("bracket stops (340)", Rt.REQUEST_SHOW_BRACKET_STOPS) { account() }
@@ -306,6 +308,10 @@ internal class RithmicProbe(
                 out("[ticker] exchanges listing $product: ${listed.joinToString(", ").ifEmpty { "(none)" }}; trade routes: ${routes.keys.sorted().joinToString(", ").ifEmpty { "(none)" }}")
                 (listed - exchange).forEach { other ->
                     ticker.show("front month (113) $product@$other", Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, product); string(Rf.EXCHANGE, other); bool(Rf.NEED_UPDATES, false) }
+                }
+                routes.keys.sorted().forEach { routed ->
+                    ticker.show("product codes (111) $routed, time-of-interest only", Rt.REQUEST_PRODUCT_CODES, limit = 3) { string(Rf.EXCHANGE, routed); bool(Rf.GIVE_TOI_PRODUCTS_ONLY, true) }
+                    ticker.show("product codes (111) $routed, all", Rt.REQUEST_PRODUCT_CODES, limit = 3) { string(Rf.EXCHANGE, routed) }
                 }
                 if (symbol == null) {
                     // Rithmic Test has no front-month data; the adapter falls back to the nearest unexpired contract the same way.
@@ -382,7 +388,7 @@ internal class RithmicProbe(
             var quoted = false
             var routed: String? = null
             var bars = 0
-            for (second in 3..45 step 3) {
+            for (second in 3..90 step 3) {
                 delay(3_000)
                 val market = broker.market.value
                 val instrument = broker.catalog.value.instruments.firstOrNull { it.symbol == symbol }
@@ -394,9 +400,10 @@ internal class RithmicProbe(
                 val last = series.lastOrNull()
                 if (firstLast == null) firstLast = last else if (last != null && last != firstLast) liveChange = true
                 fun price(units: Long) = instrument?.formatPrice(units) ?: units.toString()
-                out("[broker] +${second}s connected=${market.connected} ready=${market.tradingReady} route=${routed ?: "-"} routeStatus=${instrument?.tradeSymbolStatus ?: "-"} " +
+                out("[broker] +${second}s connected=${market.connected} ready=${market.tradingReady} instruments=${broker.instruments.size} route=${routed ?: "-"} routeStatus=${instrument?.tradeSymbolStatus ?: "-"} " +
                     "quote=${quote?.let { "${price(it.bid)}/${price(it.ask)}" } ?: "-"} bars=$bars last=${last?.let { "${utcDateTime.format(Instant.ofEpochMilli(it.timeMs))} c=${price(it.close)} v=${it.volume}" } ?: "-"} status='${market.statusMessage}'")
             }
+            out("[broker] instruments: ${broker.instruments.map { it.symbol }.take(80).joinToString(" ")}")
             val ok = routed != null && quoted && bars > 0
             out("[broker] RESULT ${if (ok) "OK" else "FAILED"}: route=${routed ?: "-"} quote=$quoted bars=$bars liveBarChange=$liveChange instruments=${broker.instruments.size}")
             return if (ok) 0 else 1
