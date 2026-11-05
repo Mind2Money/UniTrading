@@ -51,6 +51,8 @@ kotlin {
     }
 }
 val isWindows = System.getProperty("os.name").startsWith("Windows")
+// Compose packages only appResources/{common,<os>,<os>-<arch>}. `run` and the probes read this folder as the resources dir.
+val desktopAppResources = layout.buildDirectory.dir("appResources/windows")
 val buildTradovateLoginHost = tasks.register<Exec>("buildTradovateLoginHost") {
     onlyIf { isWindows }
     inputs.files(rootProject.file("native-auth/TradovateLogin.cs"), rootProject.file("native-auth/build.ps1"))
@@ -62,7 +64,7 @@ val stageTradovateLoginHost = tasks.register<Copy>("stageTradovateLoginHost") {
     dependsOn(buildTradovateLoginHost)
     onlyIf { isWindows }
     from(rootProject.file("native-auth/build/1.1.1")) { include("*.exe", "*.dll", "*.txt") }
-    into(layout.buildDirectory.dir("appResources/tradovate-login/1.1.1"))
+    into(desktopAppResources.map { it.dir("tradovate-login/1.1.1") })
 }
 val desktopTestCompilation = kotlin.targets.getByName("desktop").compilations.getByName("test")
 tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
@@ -79,7 +81,7 @@ tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
     systemProperty("file.encoding", "UTF-8")
     systemProperty("sun.stdout.encoding", "UTF-8")
     systemProperty("sun.stderr.encoding", "UTF-8")
-    systemProperty("compose.application.resources.dir", layout.buildDirectory.dir("appResources").get().asFile.absolutePath)
+    systemProperty("compose.application.resources.dir", desktopAppResources.get().asFile.absolutePath)
     doFirst {
         check(isWindows && providers.gradleProperty("confirmTradovateReadOnly").orNull == "true") {
             "This Windows-only diagnostic requires -PconfirmTradovateReadOnly=true and never permits orders."
@@ -102,7 +104,7 @@ tasks.register<JavaExec>("tradovateReadOnlyCapacityProbe") {
     }
 }
 
-tasks.matching { it.name in setOf("run", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
+tasks.matching { it.name in setOf("run", "prepareAppResources", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
@@ -111,6 +113,8 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
             packageVersion = "1.1.4"
+            // jlink keeps only listed modules; `suggestRuntimeModules` lists what the jars need beyond the defaults.
+            modules("java.instrument", "java.management", "jdk.unsupported")
         }
     }
 }

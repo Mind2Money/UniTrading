@@ -32,7 +32,7 @@ tasks.withType<JavaExec>().matching { it.name == "run" }.configureEach {
         activeRunSnapshots.add(snapshot)
         val copied = copyRuntimeFiles(classpath.files.toList(), snapshot)
         check(copied.isNotEmpty()) { "Desktop runtime classpath is empty" }
-        val resources = layout.buildDirectory.dir("appResources").get().asFile
+        val resources = layout.buildDirectory.dir("appResources/windows").get().asFile
         val copiedResources = File(snapshot, "appResources")
         if (resources.exists()) check(resources.copyRecursively(copiedResources))
         classpath = files(copied)
