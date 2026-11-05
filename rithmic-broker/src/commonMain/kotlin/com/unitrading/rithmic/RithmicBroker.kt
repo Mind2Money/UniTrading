@@ -916,14 +916,14 @@ class RithmicBroker(
                     if (side == Side.BUY) entryPrice - ticks * spec.instrument.tickSize else entryPrice + ticks * spec.instrument.tickSize } else null
                 val takeProfit = if (role == OrderRole.ENTRY && entryPrice != null) levels?.targetTicks?.takeIf { it > 0 }?.let { ticks ->
                     if (side == Side.BUY) entryPrice + ticks * spec.instrument.tickSize else entryPrice - ticks * spec.instrument.tickSize } else null
-                val working = order.status.trim().lowercase() in setOf("open", "modified", "trigger pending", "modified, trigger pending", "partial")
+                val working = !order.commandInFlight
                 val editable = when (role) {
                     OrderRole.ENTRY -> working && kind != OrderKind.MARKET && order.filled == 0L
                     OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> positionId != null && working
                     else -> false
                 }
                 val note = when {
-                    role == OrderRole.ENTRY && !editable -> "订单正在处理或已部分成交，暂不可改价"
+                    role == OrderRole.ENTRY && !editable -> if (order.filled > 0) "订单已部分成交，暂不可改价" else "订单状态为“${order.status}”，暂不可改价"
                     role != OrderRole.ENTRY && positionId == null -> "括号保护单尚未唯一关联到当前净仓，仅显示"
                     role == OrderRole.UNRESOLVED -> "无法识别的括号订单类型"
                     else -> null

@@ -104,10 +104,13 @@ internal data class RithmicOrder(
     val isBracketChild: Boolean get() = !originalBasketId.isNullOrBlank() && originalBasketId != basketId
     /** A triggered stop reports as a market order; its original type still says stop. */
     val isStop: Boolean get() = priceType in STOP_PRICE_TYPES || origPriceType in STOP_PRICE_TYPES
+    /** The server's wording for a working order varies, so only a modify or cancel under way blocks an edit; it judges the rest. */
+    val commandInFlight: Boolean get() = status.trim().lowercase() in IN_FLIGHT_STATUSES
     val active: Boolean get() = orderStatusActive(status, completionReason)
 }
 
 private val STOP_PRICE_TYPES = setOf(RithmicEnums.PRICE_STOP_MARKET, RithmicEnums.PRICE_STOP_LIMIT)
+private val IN_FLIGHT_STATUSES = setOf("modify pending", "cancel pending", "modification pending", "cancellation pending")
 private val ACTIVE_STATUSES = setOf("open", "pending", "trigger pending", "open pending", "modify pending", "cancel pending",
     "modified", "modified, trigger pending", "partial", "partially filled", "partially_filled")
 private val TERMINAL_STATUSES = setOf("complete", "completed", "filled", "cancelled", "canceled", "rejected", "expired")

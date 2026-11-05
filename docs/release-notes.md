@@ -8,7 +8,7 @@
 ✅ 登录时同步按产品的下单上限、手续费和最近 7 天成交，下单预估显示双边手续费
 ✅ 余额改用服务器的账户余额，当日盈亏和手续费计入余额；净值和浮动盈亏不重复计算
 ✅ 修复下单后误报“交易结果未知”并暂停交易的问题
-✅ 修复持仓的止损、止盈无法修改的问题
+✅ 修复持仓和挂单的止损、止盈、入场价无法修改的问题
 ✅ 历史列表配对入场和止盈、止损、平仓成交，并显示手续费和净盈亏；止损触发时播放止损音效
 
 ## English
@@ -19,7 +19,7 @@
 ✅ Login also syncs per-product order limits, commissions and the last 7 days of fills; order previews show the round-trip commission
 ✅ The balance now uses the server's account balance, including the day's P&L and fees, and equity and floating P&L count open P&L once
 ✅ Fixed orders being reported as "result unknown", which paused trading
-✅ Fixed position stop-loss and take-profit edits being refused as out of date
+✅ Fixed stop-loss, take-profit and entry price edits being refused on positions and pending orders
 ✅ History pairs entries with their take-profit, stop-loss and closing fills, with fees and net P&L; a triggered stop plays the stop-loss sound
 
 # v1.2.0

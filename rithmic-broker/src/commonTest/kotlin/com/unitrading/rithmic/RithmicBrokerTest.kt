@@ -185,6 +185,23 @@ class RithmicBrokerTest {
         assertTrue(broker.market.value.tradingReady, broker.market.value.statusMessage)
     }
 
+    /** The live server left a resting bracket entry on a status outside the old list, which locked its price and protection. */
+    @Test fun onlyACommandInFlightLocksAPendingEntry() = runTest {
+        val server = FakeRithmicServer().apply { openOrders += limitEntry("E1", RithmicEnums.BUY, 1, 5490.0) }
+        val session = ready(server).openSession("ACC1")
+        assertTrue(session.state.value.orders.single().editable)
+        for (status in listOf("order sent to exch", "open pending", "Open", "trigger pending")) {
+            server.notifyOrder("E1", status)
+            runCurrent()
+            assertTrue(session.state.value.orders.single().editable, status)
+        }
+        server.notifyOrder("E1", "modify pending")
+        runCurrent()
+        val locked = session.state.value.orders.single()
+        assertFalse(locked.editable)
+        assertTrue("modify pending" in locked.note.orEmpty(), locked.note)
+    }
+
     @Test fun pendingEntryCanBeRepricedAndCancelled() = runTest {
         val server = FakeRithmicServer().apply { openOrders += limitEntry("E1", RithmicEnums.BUY, 1, 5490.0) }
         val broker = ready(server)
