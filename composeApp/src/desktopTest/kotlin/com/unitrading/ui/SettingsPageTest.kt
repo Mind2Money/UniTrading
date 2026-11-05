@@ -43,6 +43,8 @@ class SettingsPageTest {
         compose.onNodeWithTag("nav-3").performClick()
         compose.onNodeWithTag("broker-picker").assertDoesNotExist()
         capture("settings-phone-dark")
+        compose.onNodeWithTag("settings-connect").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("settings-connect-rithmic").assertDoesNotExist()
         compose.onNodeWithTag("settings-account").performClick()
         compose.onNodeWithTag("broker-picker").assertIsDisplayed()
         compose.onNodeWithTag("settings-account").performClick()

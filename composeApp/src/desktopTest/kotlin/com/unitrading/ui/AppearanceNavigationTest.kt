@@ -36,6 +36,8 @@ class AppearanceNavigationTest {
         val runtime = TradingRuntime(store)
         render(runtime)
         compose.onNodeWithTag("welcome-login").assertExists()
+        compose.onNodeWithTag("welcome-login-rithmic").assertDoesNotExist()
+        compose.onNodeWithText("连接 Tradovate 后查看账户、行情和图表。").assertExists()
         compose.onNodeWithTag("broker-picker").assertDoesNotExist()
         compose.onNodeWithTag("review-order").assertDoesNotExist()
         compose.onNodeWithTag("open-theme").performClick()
