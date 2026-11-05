@@ -57,7 +57,7 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 
 ## 只读联调探针
 
-`rithmic-broker` 带一个只读探针，用真实系统核对上面的协议假设。它只做登录、列表、回放、订阅和登出，**不会发送任何下单、改单、撤单、括号档位或平仓请求**（模板 312–335、3504 不在代码路径中）。凭据只从环境变量读取，不出现在命令行、构建日志或输出中（输出里的密码会被替换为 `[redacted]`）。
+`rithmic-broker` 带一个探针，用真实系统核对上面的协议假设。默认**只读**：只做登录、列表、回放、订阅和登出，不发送任何下单类请求。凭据只从环境变量读取，不出现在命令行、构建日志或输出中（输出里的密码会被替换为 `[redacted]`）。
 
 ```powershell
 $env:RITHMIC_GATEWAY = 'wss://rprotocol.rithmic.com:443'   # 省略则为 Rithmic Test 网关
@@ -69,7 +69,23 @@ $env:RITHMIC_PASSWORD = '<密码>'
 
 可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.1.4`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `ES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）。
 
-探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、未签协议 500、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。
+探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。订单、成交、持仓推送除原始字段外，还用 `parseOrderNotification` / `parseFill` / `parsePosition` 解析后一并打印，直接核对解析是否正确。
+
+### 写入测试（仅 Rithmic Test 模拟账户）
+
+探针可选地下一笔测试单再撤掉，用于验证 312 / 330 / 316 / 3504 回执与订单 / 成交 / 持仓推送解析。**硬性限制**：只有系统名恰为 `Rithmic Test` 且网关为 `wss://rituz00100.rithmic.com:443` 时才执行，其他系统（含 Paper / Live）一律拒绝；且必须显式设置确认用的环境变量。
+
+- `RITHMIC_PROBE_WRITE=yes-test-order`：下一笔**挂单限价单**，价格离市价 200 个 tick（买单在下方、卖单在上方，不会成交），打印下单回执和订单推送，然后撤单（316）并打印撤单推送。
+- `RITHMIC_PROBE_BRACKET=1`：把上面的挂单改成静态括号入场单（模板 330，带 40 tick 止损 / 止盈）。
+- `RITHMIC_WRITE_SIDE=buy|sell`：方向，默认 `buy`。
+- `RITHMIC_PROBE_FILL=yes-market-fill`：在挂单测试之后，再下一笔 **1 手市价单**（模拟账户立即成交），打印成交与持仓推送，然后用平仓请求（3504）平掉并确认净持仓归零。模拟账户、无真实资金，但仍会真实成交，请自行确认账户性质。
+
+```powershell
+$env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'; $env:RITHMIC_PASSWORD = '<密码>'
+$env:RITHMIC_PROBE_WRITE = 'yes-test-order'      # 挂单 + 撤单
+# $env:RITHMIC_PROBE_FILL = 'yes-market-fill'    # 可选：市价成交 + 平仓
+.\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
+```
 
 ## 验证状态
 
