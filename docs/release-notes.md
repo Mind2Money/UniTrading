@@ -1,5 +1,13 @@
 # Unreleased
 
+## 简体中文
+🔌 **Rithmic 接入**
+✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。已在 Rithmic Test 与 Paper Trading（TPT 账号）实测登录、账户、行情与历史 K 线；真实账户下单回执仍未联调。Rithmic 对生产系统要求先通过 conformance，公开分发前请自行确认合规。
+
+## English
+🔌 **Rithmic**
+✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Login, accounts, quotes and historical bars are verified against Rithmic Test and Paper Trading (TPT account); live order receipts are still not integration-tested. Rithmic requires conformance for production systems — confirm compliance before public distribution.
+
 # v1.2.0
 
 ## 简体中文

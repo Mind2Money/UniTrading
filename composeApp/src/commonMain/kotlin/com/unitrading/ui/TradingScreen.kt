@@ -39,8 +39,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Off until the adapter passes Rithmic conformance; remembered logins still restore. */
-private const val RITHMIC_LOGIN_ENABLED = false
+/** Login + market data + history verified on Rithmic Test and Paper Trading (TPT) 2026-11-06; order receipts not yet live-verified, conformance still pending for production compliance. */
+private const val RITHMIC_LOGIN_ENABLED = true
 
 @Composable
 fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {

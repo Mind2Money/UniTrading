@@ -1,8 +1,8 @@
 # Rithmic 接入与验证
 
-> 文档类型：当前实现说明。首版接入日期 2026-11-05。协议实现只用离线假服务器验证，**尚未连接任何 Rithmic 系统**；真实账户、行情、下单链路均未实测。
+> 文档类型：当前实现说明。首版接入日期 2026-11-05。已连接 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）：登录、账户、RMS、行情、历史 K 线实测通过；下单 / 撤单回执仅在离线假服务器与探针层面验证，真实账户下单链路尚未联调。
 >
-> 应用内入口：接入完成前隐藏。`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED` 为 `false` 时，登录页、设置、账户切换和空合约页都不显示 Rithmic 登录；已记住的 Rithmic 登录仍会恢复，联调探针不受影响。
+> 应用内入口：已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`，2026-11-06）。登录页、设置、账户切换和空合约页均可进入 Rithmic 登录。注意：Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
 
 ## 接入方式
 

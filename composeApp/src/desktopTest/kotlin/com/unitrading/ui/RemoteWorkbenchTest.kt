@@ -103,7 +103,7 @@ class RemoteWorkbenchTest {
         compose.onNodeWithTag("open-accounts").performClick()
         compose.onNodeWithText("本机已保存 1 个登录").assertExists()
         compose.onNodeWithText("连接 Tradovate").assertExists()
-        compose.onNodeWithText("连接 Rithmic").assertDoesNotExist()
+        compose.onNodeWithText("连接 Rithmic").assertExists()
         compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
         compose.onNodeWithText("取消").performClick()
         kotlin.test.assertEquals(1, runtime.savedLogins.savedCount.value)
@@ -171,7 +171,7 @@ class RemoteWorkbenchTest {
         render(remote(empty = true))
         compose.onNodeWithText("查询合约").assertExists()
         compose.onNodeWithText("连接 / 重新登录 Tradovate").assertExists()
-        compose.onNodeWithText("连接 / 重新登录 Rithmic").assertDoesNotExist()
+        compose.onNodeWithText("连接 / 重新登录 Rithmic").assertExists()
         compose.onNodeWithText("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。").assertExists()
         compose.onNodeWithTag("review-order").assertDoesNotExist()
     }
