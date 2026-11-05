@@ -451,7 +451,7 @@ class RithmicBroker(
                 val spec = specs[symbol] ?: return@withLock
                 if (message.bool(Rf.IS_SNAPSHOT) == true) return@withLock
                 val price = message.double(Rf.TRADE_PRICE)?.let(spec.scale::units) ?: return@withLock
-                val size = message.long(Rf.TRADE_SIZE)?.takeIf { it >= 0 } ?: 0
+                val size = message.size(Rf.TRADE_SIZE_64, Rf.TRADE_SIZE)?.takeIf { it >= 0 } ?: 0
                 val time = message.timeMs() ?: now()
                 if (price <= 0) return@withLock
                 val series = barSubscription ?: return@withLock
@@ -900,7 +900,8 @@ class RithmicBroker(
                     string(Rf.USER_TAG, tag(requestId))
                     string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId)
                     string(Rf.SYMBOL, request.symbol); string(Rf.EXCHANGE, spec.exchange)
-                    int32(Rf.QUANTITY, quantity.toInt())
+                    // Dev kit 0.90 deprecated the 4-byte quantity for quantity_64; both carry the same value.
+                    int32(Rf.QUANTITY, quantity.toInt()); int64(Rf.QUANTITY_64, quantity)
                     when (request.kind) {
                         OrderKind.LIMIT -> { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_LIMIT); double(Rf.PRICE, spec.scale.price(entry)) }
                         OrderKind.STOP -> { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_STOP_MARKET); double(Rf.TRIGGER_PRICE, spec.scale.price(entry)) }
@@ -919,8 +920,8 @@ class RithmicBroker(
                             stopTicks != null -> if (static) RithmicEnums.BRACKET_STOP_ONLY_STATIC else 1
                             else -> if (static) RithmicEnums.BRACKET_TARGET_ONLY_STATIC else 2
                         })
-                        stopTicks?.let { int32(Rf.STOP_TICKS, it.toInt()); int32(Rf.STOP_QUANTITY, quantity.toInt()) }
-                        targetTicks?.let { int32(Rf.TARGET_TICKS, it.toInt()); int32(Rf.TARGET_QUANTITY, quantity.toInt()) }
+                        stopTicks?.let { int32(Rf.STOP_TICKS, it.toInt()); int32(Rf.STOP_QUANTITY, quantity.toInt()); int64(Rf.STOP_QUANTITY_64, quantity) }
+                        targetTicks?.let { int32(Rf.TARGET_TICKS, it.toInt()); int32(Rf.TARGET_QUANTITY, quantity.toInt()); int64(Rf.TARGET_QUANTITY_64, quantity) }
                     }
                 }
             }
@@ -1002,7 +1003,7 @@ class RithmicBroker(
     private fun ProtoWriter.modifyBody(accountId: String, basketId: String, spec: RithmicSpec, quantity: Long, kind: OrderKind, price: Long) {
         string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId); string(Rf.BASKET_ID, basketId)
         string(Rf.SYMBOL, spec.instrument.symbol); string(Rf.EXCHANGE, spec.exchange)
-        int32(Rf.QUANTITY, quantity.toInt())
+        int32(Rf.QUANTITY, quantity.toInt()); int64(Rf.QUANTITY_64, quantity)
         if (kind == OrderKind.LIMIT) { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_LIMIT); double(Rf.PRICE, spec.scale.price(price)) }
         else { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_STOP_MARKET); double(Rf.TRIGGER_PRICE, spec.scale.price(price)) }
         int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)

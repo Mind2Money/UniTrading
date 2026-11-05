@@ -2,7 +2,7 @@ package com.unitrading.rithmic
 
 /**
  * R | Protocol API field numbers (Rithmic's MNM ids plus the 100000 offset) and template ids,
- * taken from the proto definitions of the R | Protocol dev kit.
+ * checked against the proto definitions of the R | Protocol API dev kit 0.90.0.0 (template version 5.55).
  */
 internal object Rf {
     const val TEMPLATE_ID = 154467
@@ -59,10 +59,13 @@ internal object Rf {
     const val IS_SNAPSHOT = 110121
     const val BID_PRICE = 100022
     const val BID_SIZE = 100030
+    const val BID_SIZE_64 = 159000
     const val ASK_PRICE = 100025
     const val ASK_SIZE = 100031
+    const val ASK_SIZE_64 = 159002
     const val TRADE_PRICE = 100006
     const val TRADE_SIZE = 100178
+    const val TRADE_SIZE_64 = 159008
     const val BAR_TYPE = 119200
     const val BAR_PERIOD = 119112
     const val BAR_MARKER = 119100
@@ -85,6 +88,7 @@ internal object Rf {
     const val USER_TAG = 154119
     const val WINDOW_NAME = 154629
     const val QUANTITY = 112004
+    const val QUANTITY_64 = 159017
     const val PRICE = 110306
     const val TRIGGER_PRICE = 149247
     const val TRANSACTION_TYPE = 112003
@@ -101,8 +105,11 @@ internal object Rf {
     const val AVG_FILL_PRICE = 110322
     const val TOTAL_FILL_SIZE = 154111
     const val TOTAL_UNFILLED_SIZE = 154112
+    const val TOTAL_FILL_SIZE_64 = 159019
+    const val TOTAL_UNFILLED_SIZE_64 = 159020
     const val FILL_PRICE = 110307
     const val FILL_SIZE = 110308
+    const val FILL_SIZE_64 = 159024
     const val FILL_TIME = 110309
     const val FILL_DATE = 110310
     const val FILL_ID = 110311
@@ -111,8 +118,10 @@ internal object Rf {
     const val SEQUENCE_NUMBER = 112002
     const val BRACKET_TYPE = 157087
     const val TARGET_QUANTITY = 154457
+    const val TARGET_QUANTITY_64 = 159025
     const val TARGET_TICKS = 154456
     const val STOP_QUANTITY = 154459
+    const val STOP_QUANTITY_64 = 159026
     const val STOP_TICKS = 154458
     const val TARGET_QUANTITY_RELEASED = 154460
     const val STOP_QUANTITY_RELEASED = 154466
@@ -259,6 +268,8 @@ class RithmicRemoteException(val code: String, message: String) : Exception(mess
 
 internal fun ProtoMessage.rpCode(): List<String> = strings(Rf.RP_CODE)
 internal fun ProtoMessage.userMsg(): String? = strings(Rf.USER_MSG).firstOrNull()
+/** Dev kit 0.90 deprecated the 4-byte size fields for 8-byte `*_64` ones; a server may send either generation. */
+internal fun ProtoMessage.size(field64: Int, field32: Int): Long? = long(field64) ?: long(field32)
 internal fun ProtoMessage.timeMs(): Long? = long(Rf.SSBOE)?.takeIf { it > 0 }?.let { it * 1_000 + (long(Rf.USECS) ?: 0) / 1_000 }
 
 /** Rithmic sends `rp_code` only on the terminal message of a reply; `"0"` is success, `"7"` is "no data". */

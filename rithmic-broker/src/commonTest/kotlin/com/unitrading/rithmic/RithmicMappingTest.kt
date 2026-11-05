@@ -119,6 +119,25 @@ class RithmicMappingTest {
         assertNull(parseFill(message { string(Rf.FILL_ID, "F3"); string(Rf.BASKET_ID, "B"); string(Rf.ACCOUNT_ID, "A"); string(Rf.SYMBOL, "S"); int32(Rf.FILL_SIZE, 1); double(Rf.FILL_PRICE, 1.0) }, 0))
     }
 
+    /** Dev kit 0.90 servers may send only the 8-byte `*_64` size fields; they win over the deprecated 4-byte ones when both appear. */
+    @Test fun eightByteSizeFieldsAreReadAndPreferred() {
+        val order = parseOrderNotification(message {
+            int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, "B9"); string(Rf.ACCOUNT_ID, "ACC1"); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")
+            string(Rf.STATUS, "open"); int32(Rf.TRANSACTION_TYPE, RithmicEnums.BUY); int64(Rf.QUANTITY_64, 3); int64(Rf.TOTAL_FILL_SIZE_64, 1); int64(Rf.TOTAL_UNFILLED_SIZE_64, 2)
+        }, null, 0)
+        assertEquals(3, order?.quantity); assertEquals(1, order?.filled); assertEquals(2, order?.unfilled)
+        val both = parseOrderNotification(message {
+            int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, "B9"); string(Rf.ACCOUNT_ID, "ACC1"); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")
+            int32(Rf.QUANTITY, 1); int64(Rf.QUANTITY_64, 4)
+        }, null, 0)
+        assertEquals(4, both?.quantity)
+        val fill = parseFill(message {
+            int32(Rf.TEMPLATE_ID, Rt.EXCHANGE_ORDER_NOTIFICATION); string(Rf.FILL_ID, "F9"); string(Rf.BASKET_ID, "B9"); string(Rf.ACCOUNT_ID, "ACC1"); string(Rf.SYMBOL, "MESZ6")
+            int32(Rf.TRANSACTION_TYPE, RithmicEnums.BUY); int64(Rf.FILL_SIZE_64, 2); double(Rf.FILL_PRICE, 5500.0)
+        }, 1)
+        assertEquals(2, fill?.quantity)
+    }
+
     @Test fun positionsKeepTheirNetWhenAnUpdateCarriesNoQuantities() {
         val snapshot = parsePosition(message {
             int32(Rf.TEMPLATE_ID, Rt.INSTRUMENT_PNL_UPDATE); bool(Rf.IS_SNAPSHOT, true); string(Rf.ACCOUNT_ID, "ACC1"); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")

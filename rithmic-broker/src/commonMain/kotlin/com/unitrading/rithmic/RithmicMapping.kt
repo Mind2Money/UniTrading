@@ -117,7 +117,7 @@ internal fun parseOrderNotification(data: ProtoMessage, previous: RithmicOrder?,
     val exchange = data.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.exchange ?: return null
     val status = data.str(Rf.STATUS)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.status ?: ""
     val side = when (data.int(Rf.TRANSACTION_TYPE)) { RithmicEnums.BUY -> Side.BUY; RithmicEnums.SELL -> Side.SELL; else -> previous?.side }
-    val quantity = data.long(Rf.QUANTITY)?.takeIf { it > 0 } ?: previous?.quantity ?: 0
+    val quantity = data.size(Rf.QUANTITY_64, Rf.QUANTITY)?.takeIf { it > 0 } ?: previous?.quantity ?: 0
     val priceType = data.int(Rf.PRICE_TYPE)?.takeIf { it > 0 } ?: previous?.priceType ?: 0
     return RithmicOrder(basketId, accountId, symbol, exchange, status, side, quantity,
         data.double(Rf.PRICE) ?: previous?.price, data.double(Rf.TRIGGER_PRICE) ?: previous?.triggerPrice, priceType,
@@ -125,7 +125,7 @@ internal fun parseOrderNotification(data: ProtoMessage, previous: RithmicOrder?,
         data.str(Rf.ORIGINAL_BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.originalBasketId,
         data.str(Rf.LINKED_BASKET_IDS)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.linkedBasketIds,
         data.str(Rf.USER_TAG)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.userTag,
-        data.long(Rf.TOTAL_FILL_SIZE) ?: previous?.filled ?: 0, data.long(Rf.TOTAL_UNFILLED_SIZE) ?: previous?.unfilled,
+        data.size(Rf.TOTAL_FILL_SIZE_64, Rf.TOTAL_FILL_SIZE) ?: previous?.filled ?: 0, data.size(Rf.TOTAL_UNFILLED_SIZE_64, Rf.TOTAL_UNFILLED_SIZE) ?: previous?.unfilled,
         data.double(Rf.AVG_FILL_PRICE) ?: previous?.avgFillPrice,
         data.str(Rf.COMPLETION_REASON)?.trim()?.takeIf { it.isNotEmpty() } ?: previous?.completionReason,
         data.timeMs() ?: previous?.timeMs ?: fallbackTime, data.str(Rf.SEQUENCE_NUMBER) ?: previous?.sequence)
@@ -139,7 +139,7 @@ internal fun parseFill(data: ProtoMessage, fallbackTime: Long): RithmicFill? {
     val account = data.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val symbol = data.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
     val side = when (data.int(Rf.TRANSACTION_TYPE)) { RithmicEnums.BUY -> Side.BUY; RithmicEnums.SELL -> Side.SELL; else -> when (data.str(Rf.TRANSACTION_TYPE)?.trim()?.lowercase()) { "buy", "b", "1" -> Side.BUY; "sell", "s", "ss", "2" -> Side.SELL; else -> null } } ?: return null
-    val size = data.long(Rf.FILL_SIZE)?.takeIf { it > 0 } ?: return null
+    val size = data.size(Rf.FILL_SIZE_64, Rf.FILL_SIZE)?.takeIf { it > 0 } ?: return null
     val price = data.double(Rf.FILL_PRICE)?.takeIf { it.isFinite() && it > 0 } ?: return null
     return RithmicFill(id, basket, account, symbol, side, size, price, data.timeMs() ?: fallbackTime)
 }

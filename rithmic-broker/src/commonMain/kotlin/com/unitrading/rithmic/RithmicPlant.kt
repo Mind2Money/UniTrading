@@ -148,7 +148,7 @@ internal class RithmicPlant(
     }
 
     companion object {
-        /** Template version the public R | Protocol clients send; Rithmic accepts it on all plants. */
-        const val TEMPLATE_VERSION = "3.9"
+        /** Template version used by the R | Protocol API dev kit 0.90.0.0 samples (August 2026). */
+        const val TEMPLATE_VERSION = "5.55"
     }
 }
