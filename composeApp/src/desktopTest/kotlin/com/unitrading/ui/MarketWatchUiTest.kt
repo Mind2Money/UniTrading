@@ -74,7 +74,7 @@ class MarketWatchUiTest {
         val before = state.value
         compose.onNodeWithTag("symbol-XAUUSD").performClick()
         compose.runOnIdle { assertEquals("XAUUSD", chosen); assertEquals(before, state.value); state.value = AccountSnapshot("B", 0) }
-        compose.onNodeWithTag("market-corner-XAUUSD", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("market-markers-XAUUSD", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithTag("symbol-XAUUSD").assert(SemanticsMatcher.expectValue(
             androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "无持仓或挂单"))
         compose.runOnIdle { market.value = MarketSnapshot(connected = false) }
@@ -111,6 +111,8 @@ class MarketWatchUiTest {
         render(320)
         compose.onNodeWithTag("market-edit").performClick()
         compose.onNodeWithTag("market-remove-XAUUSD").performClick()
+        // The next row slides under the pointer and shows its tooltip; a person's pointer leaves it before clicking elsewhere.
+        compose.onNodeWithTag("market-quotes").performMouseInput { moveTo(androidx.compose.ui.geometry.Offset(1f, height - 1f)) }
         compose.onNodeWithTag("market-edit-done").performClick()
         compose.onNodeWithTag("symbol-XAUUSD").assertDoesNotExist()
         compose.onNodeWithTag("market-add").performClick()
@@ -118,6 +120,9 @@ class MarketWatchUiTest {
         compose.onNodeWithTag("market-add-XAUUSD").performClick()
         compose.onNodeWithContentDescription("已添加 XAUUSD").assertExists()
         capture("add-symbol-category")
+        // Back steps up one level: from a category to the category list, then out of the add page.
+        compose.onNodeWithTag("market-back").performClick()
+        compose.onNodeWithTag("market-category-贵金属").assertExists()
         compose.onNodeWithTag("market-back").performClick()
         compose.onNodeWithTag("symbol-XAUUSD").assertExists()
         compose.onNodeWithTag("market-edit").performClick()
@@ -156,11 +161,11 @@ class MarketWatchUiTest {
     @Test fun continuousAliasUsesItsDatedContractAndClearsWhenUnresolved() {
         catalog.value = catalog.value.copy(instruments = listOf(spec.copy(symbol = "@GC", isContinuous = true, tradeSymbol = "XAUUSD")))
         render(240)
-        compose.onNodeWithTag("market-corner-@GC", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("market-markers-@GC", useUnmergedTree = true).assertExists()
         compose.onNodeWithContentDescription("Ask 买入 3880.08", useUnmergedTree = true).assertIsDisplayed()
         capture("desktop-narrow")
         compose.runOnIdle { catalog.value = catalog.value.copy(instruments = listOf(spec.copy(symbol = "@GC", isContinuous = true))) }
-        compose.onNodeWithTag("market-corner-@GC", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("market-markers-@GC", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Ask 买入 暂无报价", useUnmergedTree = true).assertIsDisplayed()
     }
 

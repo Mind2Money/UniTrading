@@ -51,7 +51,7 @@ class AppearanceNavigationTest {
         capture("login-light")
         compose.onNodeWithTag("open-theme").performClick()
         compose.onNodeWithTag("theme-DARK").performClick()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("theme-cancel").performClick()
         assertEquals(ThemePreset.LIGHT, runtime.theme.settings.value.preset)
     }
     @Test fun tradingVPresetAppliesTradingViewBlackPaletteAndPersists() {
@@ -59,7 +59,8 @@ class AppearanceNavigationTest {
         val runtime = TradingRuntime(store, includeDemoBrokers = true)
         render(runtime)
         compose.onNodeWithTag("trading-chart").assertExists()
-        compose.onNodeWithTag("open-theme").performClick()
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-theme").performScrollTo().performClick()
         compose.onNodeWithTag("theme-TRADINGV").performClick()
         compose.onNodeWithTag("theme-color-CHART").performScrollTo().assertTextContains("#0F0F0F")
         compose.onNodeWithTag("theme-color-ACCENT").performScrollTo().assertTextContains("#2962FF")
@@ -67,6 +68,7 @@ class AppearanceNavigationTest {
         compose.onNodeWithTag("theme-save").performClick()
         compose.waitUntil(5000) { runtime.theme.settings.value.preset == ThemePreset.TRADINGV }
         assertEquals(ThemePreset.TRADINGV, ThemeController(store).settings.value.preset)
+        compose.onNodeWithTag("close-settings").performClick()
         compose.onNodeWithTag("trading-chart").assertExists()
         capture("trading-tradingv")
     }
@@ -96,8 +98,10 @@ class AppearanceNavigationTest {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         render(runtime)
         // Hide overlays so free pan is tested away from editable order lines.
-        compose.onNodeWithText("仓位", useUnmergedTree = false).performClick()
-        compose.onNodeWithText("挂单", useUnmergedTree = false).performClick()
+        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("layer-0").performClick()
+        compose.onNodeWithTag("layer-1").performClick()
+        compose.onNodeWithTag("chart-layers").performClick()
         val chart = compose.onNodeWithTag("trading-chart")
         fun values(): Map<String, String> = chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription]
             .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
@@ -117,7 +121,7 @@ class AppearanceNavigationTest {
         assertNotEquals(timeZoom["low"], pan["low"])
         compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
         compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
-        compose.onNodeWithText("重置视图").performClick()
+        compose.onNodeWithTag("chart-reset").performClick()
         assertEquals("true", values()["auto"])
         assertEquals("80.0", values()["bars"])
         assertEquals("0.0", values()["offset"])

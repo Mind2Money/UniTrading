@@ -1,12 +1,10 @@
 package com.unitrading.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -15,12 +13,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 internal enum class NoticeTone { INFO, ATTENTION }
@@ -36,8 +31,8 @@ internal fun FloatingNoticeCard(
     title: String = "通知",
     action: (@Composable () -> Unit)? = null,
 ) {
-    val colors = TradingColors
-    val accent = if (notice.tone == NoticeTone.ATTENTION) colors.Loss else colors.Accent
+    val scheme = MaterialTheme.colorScheme
+    val attention = notice.tone == NoticeTone.ATTENTION
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val dismiss by rememberUpdatedState(onDismiss)
@@ -49,15 +44,19 @@ internal fun FloatingNoticeCard(
     Surface(modifier.fillMaxWidth().testTag("$tag-card").hoverable(interaction)
         .pointerInput(Unit) { detectTapGestures() }
         .semantics { liveRegion = LiveRegionMode.Polite },
-        shape = RoundedCornerShape(12.dp), color = colors.Raised, border = BorderStroke(1.dp, accent.copy(alpha = .45f)), shadowElevation = 8.dp) {
-        Column(Modifier.padding(start = 14.dp, end = 8.dp, bottom = 14.dp)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = accent)
-                action?.invoke()
-                if (onDismiss != null) IconButton(onDismiss, Modifier.size(36.dp).testTag("dismiss-$tag")
-                    .semantics { contentDescription = "关闭$title" }) { Text("×", fontSize = 20.sp, color = colors.Muted) }
+        shape = MaterialTheme.shapes.medium, color = if (attention) scheme.errorContainer else scheme.surfaceContainerHighest,
+        contentColor = scheme.onSurface, shadowElevation = 6.dp) {
+        Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
+            Icon(if (attention) AppIcons.ErrorOutline else AppIcons.Info, contentDescription = null, Modifier.padding(top = 12.dp).size(20.dp),
+                tint = if (attention) scheme.error else scheme.primary)
+            Column(Modifier.weight(1f).padding(start = 12.dp, top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(notice.message, Modifier.fillMaxWidth().testTag(tag), style = MaterialTheme.typography.bodyMedium)
             }
-            Text(notice.message, Modifier.fillMaxWidth().padding(end = 6.dp).testTag(tag), fontSize = 13.sp, lineHeight = 19.sp, color = colors.Ink)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                action?.invoke()
+                if (onDismiss != null) ActionIcon(AppIcons.Close, "关闭$title", "dismiss-$tag", onClick = onDismiss)
+            }
         }
     }
 }

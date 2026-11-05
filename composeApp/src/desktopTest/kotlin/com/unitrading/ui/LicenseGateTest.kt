@@ -65,9 +65,9 @@ class LicenseGateTest {
 
         compose.onNodeWithTag("license-key").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password)).performTextInput("wrong-key-000")
         assertEquals("•".repeat(13), displayedKey())
-        compose.onNodeWithTag("license-reveal").assertTextEquals("显示").performClick()
+        compose.onNodeWithTag("license-reveal").assertContentDescriptionEquals("显示授权码").performClick()
         assertEquals("wrong-key-000", displayedKey())
-        compose.onNodeWithTag("license-reveal").assertTextEquals("隐藏").performClick()
+        compose.onNodeWithTag("license-reveal").assertContentDescriptionEquals("隐藏授权码").performClick()
         assertEquals("•".repeat(13), displayedKey())
         compose.onNodeWithTag("license-submit").performClick()
         compose.waitUntil(5_000) { license.state.value.message != null }

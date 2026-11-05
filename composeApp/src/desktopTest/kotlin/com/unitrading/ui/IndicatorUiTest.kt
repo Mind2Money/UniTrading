@@ -166,7 +166,7 @@ class IndicatorUiTest {
         compose.onNodeWithTag("indicator-reference-value-2-2").performScrollTo().assertTextContains("75.25")
         compose.onNodeWithTag("indicator-reference-color-2-2").performScrollTo().assertTextContains("#FF00FF")
         compose.onNodeWithTag("remove-indicator-2").performScrollTo().performClick()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("indicators-cancel").performClick()
         assertEquals(3, runtime.indicators.settings.value.indicators.size)
         assertEquals(listOf(25.5, 50.0, 75.25), runtime.indicators.settings.value.indicators[2].guides)
         assertEquals(saved[2].referenceColors, runtime.indicators.settings.value.indicators[2].referenceColors)

@@ -35,10 +35,12 @@ class DailyPnlUiTest {
         var opened = false
         compose.setContent { TradingTheme { Column(Modifier.requiredWidth(400.dp)) {
             MobileTradeBar(snapshot, {}, { opened = true })
-            AccountStrip(snapshot)
+            AccountSummary(snapshot)
         } } }
         compose.onNodeWithTag("panel-daily-pnl").assertTextContains("-12.50")
         compose.onNodeWithTag("panel-positions").assertTextContains("+10.00")
+        // Every figure fits on the card; nothing hides behind sideways scrolling.
+        listOf("余额 USD", "净值 USD", "浮动盈亏", "已用保证金", "可用保证金", "保证金比例").forEach { compose.onNodeWithText(it).assertIsDisplayed() }
         val target = File("../artifacts/daily-pnl-mobile.png")
         target.parentFile.mkdirs()
         ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", target)

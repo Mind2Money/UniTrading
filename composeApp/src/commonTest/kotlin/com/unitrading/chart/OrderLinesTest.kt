@@ -95,7 +95,7 @@ class OrderLinesTest {
         // With the positions layer off the same stop is drawn from its order, still priced from the position's entry.
         val ordersOnly = orderLines(mes, listOf(position), position, bound, null, null, null, null, all.copy(showPositions = false))
         val stop = ordersOnly.single { it.price == 5_490_000_000L }
-        assertEquals("SL 止损 卖出 STOP  #702 · 毛 -50.00 USD · 拖动止损", stop.label)
+        assertEquals("SL 止损 卖出突破 #702 · 毛 -50.00 USD · 拖动止损", stop.label)
         assertEquals(EditableLine.Protection(position, true, 5_490_000_000), stop.edit)
     }
 

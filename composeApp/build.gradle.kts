@@ -115,6 +115,7 @@ compose.desktop {
             packageVersion = "1.2.0"
             // jlink keeps only listed modules; `suggestRuntimeModules` lists what the jars need beyond the defaults.
             modules("java.instrument", "java.management", "jdk.unsupported")
+            windows { iconFile.set(project.file("icons/unitrading.ico")) }
         }
     }
 }

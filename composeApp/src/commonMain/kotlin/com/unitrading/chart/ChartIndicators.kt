@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -25,7 +24,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
 import com.unitrading.ui.TradingColors
@@ -178,13 +176,13 @@ internal fun DrawScope.drawIndicatorPanes(
 internal fun IndicatorLegend(readouts: List<IndicatorReadout>, modifier: Modifier = Modifier) {
     val colors = TradingColors
     Column(
-        modifier.background(colors.Surface.copy(alpha = .8f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 5.dp),
+        modifier.background(colors.Surface.copy(alpha = .8f), androidx.compose.material3.MaterialTheme.shapes.small).padding(horizontal = 10.dp, vertical = 5.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         readouts.forEach { readout ->
             Row(Modifier.testTag("indicator-readout"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(readout.title, fontSize = 11.sp, color = colors.Muted)
-                readout.values.forEach { (value, hex) -> Text(value, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = parseHexColor(hex) ?: colors.Ink) }
+                Text(readout.title, style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.Muted)
+                readout.values.forEach { (value, hex) -> Text(value, style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = parseHexColor(hex) ?: colors.Ink) }
             }
         }
     }

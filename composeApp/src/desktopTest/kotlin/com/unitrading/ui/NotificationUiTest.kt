@@ -75,10 +75,10 @@ class NotificationUiTest {
     @Test fun desktopToolbarAndFloatingReceiptNeverChangeChartDimensions() {
         val broker = Broker()
         render(broker)
-        assertTrue(compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().size.height <= 44 * .7f + 1)
+        assertTrue(compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().size.height <= 48 * .7f + 1)
         compose.onNodeWithText(broker.market.value.statusMessage).assertDoesNotExist()
         val before = chartBounds()
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("confirm-action").performClick()
         compose.onNodeWithTag("trade-notice").assertTextContains("最终结果以服务器订单/成交更新为准", substring = true)
         assertEquals(1, broker.orderCalls)

@@ -5,15 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -179,7 +178,7 @@ fun TradingChart(
     val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
     // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
     val legendShown = !chrome.ordering || readout != null
-    val labelStyle = TextStyle(color = colors.Muted, fontSize = 10.sp)
+    val labelStyle = TextStyle(color = colors.Muted, fontSize = 11.sp, fontFeatureSettings = "tnum")
     val periodMs = timeframe.minutes * 60_000L
     val step = plotWidth / viewport.count.toFloat()
     val currentViewport by rememberUpdatedState(viewport)
@@ -231,41 +230,40 @@ fun TradingChart(
     val pickable = instruments.ifEmpty { listOf(instrument) }
     // Phones pin one toolbar row above the chart in every mode; wider layouts float the full toolbar over the plot.
     val toolbar: @Composable (Modifier) -> Unit = { m ->
-        if (compact) CompactChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers, indicatorToggle, chrome.toolbarEnd, m)
-        else ChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers + listOfNotNull(indicatorToggle), m)
+        ChartToolbar(instrument, pickable, onSymbol, timeframe, onTimeframe, intervals, layers, indicatorToggle, m, compact, chrome.toolbarEnd)
     }
 
     Column(modifier.background(colors.Surface)) {
         if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
-            Modifier.padding(horizontal = 12.dp, vertical = 3.dp).testTag("continuous-route"), fontSize = 11.sp, color = colors.Accent)
+            Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
         }
         if (showData) {
             if (!compact) {
-                toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+                toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", fontSize = 11.sp, color = colors.Muted)
+                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(dateTime(c.timeMs), fontSize = 11.sp, color = colors.Muted)
+                        Text(dateTime(c.timeMs), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
-                            (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), fontSize = 12.sp)
+                            (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
                     DividerLine()
                 }
             }
         } else if (candles.isEmpty()) {
             if (!compact) {
-                toolbar(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp))
+                toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
-            EmptyState("暂无行情", "等待交易商提供历史 K 线。", Modifier.weight(1f))
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { EmptyState("暂无行情", "等待交易商提供历史 K 线。", icon = com.unitrading.ui.AppIcons.Candlestick) }
         } else {
             // The toolbar, legend and navigation float over the plot instead of taking their own banner above it.
             val crosshairState = crosshair?.let { index -> "$index@" + (crosshairY?.takeIf { it in top..plotBottom }?.let { scale.price(it, instrument.tickSize).toString() } ?: "none") } ?: "none"
@@ -402,7 +400,7 @@ fun TradingChart(
                         placedLabels.add(bounds)
                         line.edit?.let { orderLabelHits.add(bounds to it) }
                         drawLine(color.copy(alpha = .65f), Offset(bounds.right, bounds.center.y), Offset(right, y), 1f)
-                        drawRect(colors.Surface.copy(alpha = 0.94f), bounds.topLeft, bounds.size)
+                        drawRoundRect(colors.Surface.copy(alpha = 0.94f), bounds.topLeft, bounds.size, CornerRadius(labelPadding, labelPadding))
                         drawText(measured, topLeft = bounds.topLeft + Offset(labelPadding, labelPadding))
                     }
                     for (i in 0..5) {
@@ -511,7 +509,7 @@ fun TradingChart(
                     val tagWidth = (size.width - tagLeft).coerceAtLeast(1f)
                     tags.zip(centers).forEachIndexed { index, (tag, center) ->
                         drawLine(colors.Muted, Offset(right, scale.y(tag.price)), Offset(tagLeft, center), 1f)
-                        drawRect(tag.background, Offset(tagLeft, center - lineHeight / 2), Size(tagWidth, lineHeight))
+                        drawRoundRect(tag.background, Offset(tagLeft, center - lineHeight / 2), Size(tagWidth, lineHeight), CornerRadius(2.dp.toPx(), 2.dp.toPx()))
                         text(instrument.formatPrice(tag.price), tagLeft + labelPadding, center - labelHeight / 2, tag.ink)
                         if (tag.priority == 2) {
                             // The live price tag also names the contract above and counts the bar down below, unless a neighbour needs the room.
@@ -552,8 +550,8 @@ fun TradingChart(
                 val barIndex = crosshair ?: visible.lastIndex
                 val bar = visible.getOrNull(barIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + barIndex - 1)
-                if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp, end = 96.dp)
-                    .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
+                    .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
@@ -566,7 +564,7 @@ fun TradingChart(
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
                     // On phones the small control sits bottom-left, away from the newest bars at the right edge.
-                    modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = navigationBottom)
+                    modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
                     compact = compact,
                 )
@@ -593,22 +591,15 @@ fun TradingChart(
                 }
             }
             selectedPosition?.protectionNote?.let { note ->
-                Text(note, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp), fontSize = 10.sp, color = colors.Muted)
+                Text(note, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
             }
             selectedTrade?.let { trade ->
-                Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 14.dp, vertical = 3.dp), fontSize = 10.sp)
+                Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
             selectedExecution?.let { fill ->
                 Text("选中成交 #${fill.id} · ${dateTime(fill.timeMs)} UTC · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
-                    Modifier.padding(horizontal = 14.dp, vertical = 3.dp).testTag("selected-execution"), fontSize = 10.sp)
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("selected-execution"), style = MaterialTheme.typography.labelSmall)
             }
-        }
-        // Gesture and marker hints; phones drop the row to give the height to the chart (the plot's description keeps the gestures).
-        if (!compact) Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("△ 买入 / 上涨", fontSize = 10.sp, color = colors.Muted)
-            Text("▽ 卖出 / 下跌", fontSize = 10.sp, color = colors.Muted)
-            Text("右轴 ↕ 价格缩放 · 底轴 ↔ 时间缩放", fontSize = 10.sp, color = colors.Muted)
-            Text(if (environment == BrokerEnvironment.LOCAL_DEMO) "模拟行情 · UTC" else "服务器行情 · UTC", fontSize = 10.sp, color = colors.Muted)
         }
     }
 }

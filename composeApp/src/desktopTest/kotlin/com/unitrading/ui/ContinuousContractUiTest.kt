@@ -50,7 +50,7 @@ class ContinuousContractUiTest {
             assertEquals(dated.symbol, previewed?.symbol)
             assertEquals("@TEST", previewed?.sourceSymbol)
         }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("图表 / 指标 @TEST → 下单 ${dated.symbol}").assertExists()
         compose.runOnIdle {
             changes.value = changes.value.copy(instruments = listOf(alias.copy(tradeSymbol = null, tradeSymbolStatus = "主力无法确认：日成交量查询超时")) + demo.instruments)

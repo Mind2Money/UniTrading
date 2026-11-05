@@ -74,7 +74,7 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         if (confirmed.map { relation(it.long("id")!!).group }.distinct().size != 1) return unavailable("存在多组保护，请在挂单列表中逐项核对")
         val stops = confirmed.filter { relation(it.long("id")!!).role == OrderRole.STOP_LOSS }
         val targets = confirmed.filter { relation(it.long("id")!!).role == OrderRole.TAKE_PROFIT }
-        if (stops.size > 1 || targets.size > 1) return unavailable("存在多个同类保护价，无法确定哪一条对应当前仓位")
+        if (stops.size > 1 || targets.size > 1) return unavailable("存在多个同类止损/止盈，无法确定哪一条对应当前仓位")
         if (confirmed.size == 2 && relation(confirmed.first().long("id")!!).group?.startsWith("parent:") == true && !linkedOco(confirmed[0], confirmed[1])) {
             return unavailable("父子关系已确认，但尚未确认两条保护单的 OCO 互斥关系")
         }

@@ -81,21 +81,24 @@ private fun LicenseScreen(license: LicenseController, state: LicenseState) {
     LaunchedEffect(state.status) { if (state.status == LicenseStatus.REQUIRED) runCatching { focus.requestFocus() } }
     Surface(Modifier.fillMaxSize().testTag("license-gate"), color = TradingColors.Shell) {
         Box(Modifier.safeDrawingPadding().padding(24.dp), contentAlignment = Alignment.Center) {
-            Column(Modifier.widthIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                Text("UniTrading", style = MaterialTheme.typography.headlineLarge)
-                if (checking) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("license-checking"))
-                else {
-                    Text("输入授权码", style = MaterialTheme.typography.headlineSmall)
-                    Text("验证通过后本机保持授权，重启应用无需再次输入。", color = TradingColors.Muted)
+            Column(Modifier.widthIn(max = 400.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (checking) {
+                    GateHeader("正在检查授权")
+                    LinearProgressIndicator(Modifier.fillMaxWidth().testTag("license-checking"))
+                } else {
+                    GateHeader("输入授权码", "验证通过后本机保持授权，重启应用无需再次输入。")
+                    Spacer(Modifier.height(12.dp))
                     OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth().focusRequester(focus).testTag("license-key"),
                         enabled = !verifying, singleLine = true, label = { Text("授权码") }, isError = message != null,
                         supportingText = message?.let { { Text(it, Modifier.testTag("license-message")) } },
+                        leadingIcon = { Icon(AppIcons.Key, contentDescription = null) },
                         visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false,
                             keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { submit() }),
                         trailingIcon = {
-                            TextButton({ revealed = !revealed }, Modifier.testTag("license-reveal")) { Text(if (revealed) "隐藏" else "显示") }
+                            ActionIcon(if (revealed) AppIcons.VisibilityOff else AppIcons.Visibility, if (revealed) "隐藏授权码" else "显示授权码", "license-reveal") { revealed = !revealed }
                         })
                     Button(::submit, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("license-submit"), enabled = canSubmit) {
                         Text(if (verifying) "正在验证…" else "验证并进入")

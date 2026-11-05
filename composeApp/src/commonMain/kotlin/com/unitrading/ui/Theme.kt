@@ -1,14 +1,14 @@
 package com.unitrading.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,58 +60,67 @@ val TradingColors: TradingPalette @Composable get() = LocalTradingPalette.curren
 
 fun TradingPalette.pnl(value: Long?): Color = when { value == null || value == 0L -> Ink; value > 0 -> Profit; else -> Loss }
 
+/** Readable text colour on a filled [color]. */
+internal fun contentOn(color: Color): Color = if (color.luminance() > .45f) Color(0xFF101820) else Color.White
+
+/**
+ * Every Material 3 colour role, derived from the palette so user colours stay coherent: containers tint the panel colour
+ * with their role, and the surface ramp steps from the panel colour towards the text colour.
+ */
+internal fun tradingColorScheme(palette: TradingPalette, dark: Boolean): ColorScheme = with(palette) {
+    fun container(role: Color, amount: Float) = lerp(Surface, role, amount)
+    // On a dark panel a deep accent needs a stronger mix to show at all.
+    val selection = container(Accent, if (dark && Accent.luminance() < .25f) .6f else .16f)
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    base.copy(
+        primary = Accent, onPrimary = contentOn(Accent), inversePrimary = lerp(Accent, Surface, .35f),
+        primaryContainer = container(Accent, .22f), onPrimaryContainer = Ink,
+        secondary = Accent, onSecondary = contentOn(Accent),
+        secondaryContainer = selection, onSecondaryContainer = Ink,
+        tertiary = Target, onTertiary = contentOn(Target),
+        tertiaryContainer = container(Target, .18f), onTertiaryContainer = Ink,
+        error = Loss, onError = contentOn(Loss), errorContainer = container(Loss, .18f), onErrorContainer = Ink,
+        background = Shell, onBackground = Ink,
+        surface = Surface, onSurface = Ink, surfaceTint = Accent,
+        surfaceVariant = Raised, onSurfaceVariant = Muted,
+        surfaceDim = Shell, surfaceBright = lerp(Surface, Ink, .12f),
+        surfaceContainerLowest = if (dark) Shell else Surface,
+        surfaceContainerLow = if (dark) lerp(Shell, Surface, .5f) else lerp(Surface, Shell, .5f),
+        surfaceContainer = Surface,
+        surfaceContainerHigh = lerp(Surface, Ink, .05f),
+        surfaceContainerHighest = lerp(Surface, Ink, .09f),
+        inverseSurface = Ink, inverseOnSurface = Surface,
+        outline = Border, outlineVariant = lerp(Surface, Border, .6f),
+    )
+}
+
+/** Material 3 baseline type scale, with tabular figures everywhere so prices and amounts line up in columns. */
+private fun type(size: Int, line: Int, weight: FontWeight = FontWeight.Normal, tracking: Double = 0.0) =
+    TextStyle(fontSize = size.sp, lineHeight = line.sp, fontWeight = weight, letterSpacing = tracking.sp, fontFeatureSettings = "tnum")
+
+private val TradingTypography = Typography(
+    displayLarge = type(57, 64), displayMedium = type(45, 52), displaySmall = type(36, 44),
+    headlineLarge = type(32, 40), headlineMedium = type(28, 36), headlineSmall = type(24, 32),
+    titleLarge = type(20, 28, FontWeight.Medium), titleMedium = type(16, 24, FontWeight.Medium), titleSmall = type(14, 20, FontWeight.Medium),
+    bodyLarge = type(16, 24), bodyMedium = type(14, 20), bodySmall = type(12, 16),
+    labelLarge = type(14, 20, FontWeight.Medium), labelMedium = type(12, 16, FontWeight.Medium), labelSmall = type(11, 16, FontWeight.Medium),
+)
+
+/** Material 3 shape scale. */
+private val TradingShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(28.dp),
+)
+
 @Composable
 fun TradingTheme(settings: com.unitrading.app.ThemeSettings = com.unitrading.app.ThemeSettings(), content: @Composable () -> Unit) {
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val palette = themePalette(settings, systemDark)
-    val dark = settings.preset.isDark(systemDark)
-    val base = if (dark) darkColorScheme() else lightColorScheme()
     androidx.compose.runtime.CompositionLocalProvider(LocalTradingPalette provides palette) {
-        MaterialTheme(
-            colorScheme = base.copy(
-                primary = palette.Accent,
-                onPrimary = if (palette.Accent.luminance() > .45f) Color(0xFF101820) else Color.White,
-                primaryContainer = palette.Raised, onPrimaryContainer = palette.Ink,
-                secondary = palette.Accent, secondaryContainer = palette.Raised, onSecondaryContainer = palette.Ink,
-                background = palette.Shell, onBackground = palette.Ink,
-                surface = palette.Surface, surfaceVariant = palette.Raised, surfaceContainer = palette.Surface,
-                onSurface = palette.Ink, onSurfaceVariant = palette.Muted, outline = palette.Border, error = palette.Loss,
-            ),
-            typography = Typography(
-                bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
-                bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
-                bodySmall = androidx.compose.ui.text.TextStyle(fontSize = 11.sp),
-                titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
-                labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium),
-            ),
-            shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(24.dp)),
-            content = content,
-        )
+        MaterialTheme(tradingColorScheme(palette, settings.preset.isDark(systemDark)), shapes = TradingShapes,
+            typography = TradingTypography, content = content)
     }
 }
 
 @Composable
-fun SectionTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
-    Column(modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-        if (subtitle != null) Text(subtitle, color = TradingColors.Muted, fontSize = 11.sp)
-    }
-}
-
-@Composable
-fun Badge(text: String, color: Color = TradingColors.Accent) {
-    Surface(color = color.copy(alpha = 0.10f), shape = RoundedCornerShape(5.dp), border = BorderStroke(1.dp, color.copy(alpha = 0.3f))) {
-        Text(text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), color = TradingColors.Ink, fontSize = 10.sp)
-    }
-}
-
-@Composable
-fun DividerLine(modifier: Modifier = Modifier) = HorizontalDivider(modifier, color = TradingColors.Border.copy(alpha = 0.65f))
-
-@Composable
-fun EmptyState(title: String, detail: String, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        Text(detail, color = TradingColors.Muted, fontSize = 12.sp)
-    }
-}
+fun DividerLine(modifier: Modifier = Modifier) = HorizontalDivider(modifier, color = MaterialTheme.colorScheme.outlineVariant)

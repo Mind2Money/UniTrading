@@ -3,6 +3,7 @@ package com.unitrading.chart
 import com.unitrading.broker.*
 import com.unitrading.ui.estimatedExitPnl
 import com.unitrading.ui.label
+import com.unitrading.ui.shortId
 
 /** An order line the pointer can pick up; [price] is where it was when the drag started. */
 internal sealed interface EditableLine {
@@ -86,7 +87,7 @@ internal fun orderLines(
     if (options.showPositions) {
         positions.forEach { p ->
             val pnl = quote?.let { positionPnl(instrument, p, it) }
-            add(OrderLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit} · 浮盈亏 ${resultLabel(pnl, true)} · #${p.id.takeLast(5)}", LineTone.POSITION,
+            add(OrderLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit} · 浮盈亏 ${resultLabel(pnl, true)} · #${shortId(p.id)}", LineTone.POSITION,
                 dashed = false, alpha = if (p.id == selectedPosition?.id) .85f else .3f, pnl = pnl, gross = true))
         }
         selectedPosition?.let { p ->
@@ -125,7 +126,7 @@ internal fun orderLines(
             val pnl = bound?.let { estimatedExitPnl(instrument, it, price) }
             val result = bound?.let { " · ${resultLabel(pnl, !it.feesKnown)}" } ?: ""
             val action = when (order.role) { OrderRole.STOP_LOSS -> "拖动止损"; OrderRole.TAKE_PROFIT -> "拖动止盈"; else -> "拖动入场" }
-            add(OrderLine(price, "${order.role.label()} ${request.side.label()} ${request.kind.name}  #${order.id.substringAfterLast(':')}$result${state(dragged, edit != null, action)}",
+            add(OrderLine(price, "${order.role.label()} ${request.side.label()}${request.kind.label()} #${shortId(order.id)}$result${state(dragged, edit != null, action)}",
                 when (order.role) { OrderRole.STOP_LOSS -> LineTone.STOP; OrderRole.TAKE_PROFIT -> LineTone.TARGET; else -> LineTone.ORDER },
                 edit = edit, pnl = pnl, gross = bound?.feesKnown == false, moving = dragged))
             if (order.role != OrderRole.ENTRY) return@forEach
@@ -137,7 +138,7 @@ internal fun orderLines(
                 val at = if (draggedBracket) drag!!.price else bracket
                 val editable = options.editPendingProtection && order.editable && order.protectionEditable
                 val bracketPnl = estimatedExitPnl(instrument, request.side, request.lotsHundredths, entry, at)
-                add(OrderLine(at, "挂单 #${order.id.substringAfterLast(':')} ${protectionLabel(stop, bracketPnl, !instrument.estimatesIncludeFees)}${state(draggedBracket, editable)}",
+                add(OrderLine(at, "挂单 #${shortId(order.id)} ${protectionLabel(stop, bracketPnl, !instrument.estimatesIncludeFees)}${state(draggedBracket, editable)}",
                     if (stop) LineTone.STOP else LineTone.TARGET, alpha = .8f, edit = if (editable) EditableLine.PendingProtection(order, stop, bracket) else null,
                     pnl = bracketPnl, gross = !instrument.estimatesIncludeFees, moving = draggedBracket))
             }
@@ -145,7 +146,7 @@ internal fun orderLines(
     }
     if (draft != null && draftEntry != null && draftEntry > 0) {
         val pending = draft.kind != OrderKind.MARKET && draft.entryPrice != null
-        add(OrderLine(draftEntry, "${draft.side.label()} ${draft.kind.name} 草稿 · ${instrument.formatQuantity(draft.lotsHundredths)} ${instrument.quantityUnit}${if (pending) " · 拖动入场" else ""}",
+        add(OrderLine(draftEntry, "${draft.side.label()}${draft.kind.label()} 草稿 · ${instrument.formatQuantity(draft.lotsHundredths)} ${instrument.quantityUnit}${if (pending) " · 拖动入场" else ""}",
             LineTone.ORDER, edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft))
         listOf(true to draft.stopLoss, false to draft.takeProfit).forEach { (stop, price) ->
             price ?: return@forEach

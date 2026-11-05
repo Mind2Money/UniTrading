@@ -15,6 +15,7 @@
 - [Rithmic 接入与验证](rithmic.md)：R | Protocol API 直连登录、四个 plant、交易边界与未实测项；应用内入口暂时隐藏。
 - [连续合约](continuous-contracts.md)：连续图表与指标、上一完整交易日成交量主力、实际到期合约下单及换月处理。
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
+- [Material 3 界面规范](ui-material3.md)：配色角色、字阶、图标、共用组件、导航布局和审计结论；改界面前先读。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
 - [手机布局](mobile-layout.md)：参考 MT5 的图表优先布局，单行图表工具条，下单收进可折叠面板，资金行移至交易/账户页。
 - [桌面布局](desktop-layout.md)：拖动分隔线调整各面板尺寸、本机记忆、窗口边界及重置操作。

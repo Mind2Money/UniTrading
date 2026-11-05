@@ -165,7 +165,8 @@ class MobileLayoutTest {
         compose.onNodeWithTag("order-panel").assertExists()
         compose.onNodeWithTag("minimize-order").performClick()
         compose.onNodeWithTag("compact-sl").performClick().assertIsOn()
-        compose.onNodeWithTag("order-kind-LIMIT-SELL").performClick().assertIsSelected()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick().assertIsSelected()
+        compose.onNodeWithTag("order-peek-side-SELL").performClick().assertIsSelected()
         compose.onNodeWithTag("order-panel").assertDoesNotExist()
         compose.onNodeWithTag("restore-order").performClick()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.23")
@@ -211,7 +212,8 @@ class MobileLayoutTest {
         render()
         val before = session.state.value
         compose.onNodeWithTag("open-order").performClick()
-        compose.onNodeWithTag("order-kind-LIMIT-SELL").performClick()
+        compose.onNodeWithTag("order-side-SELL").performClick()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
         compose.onNodeWithTag("order-quantity").performTextReplacement("0.23")
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("minimize-order").performClick()
@@ -330,11 +332,37 @@ class MobileLayoutTest {
         compose.onNodeWithText("${instrument.name} · 4小时 · ${instrument.category}").assertExists()
         compose.onNodeWithTag("chart-indicators").performClick()
         compose.onNodeWithTag("indicator-settings").assertExists()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("indicators-cancel").performClick()
         compose.onNodeWithTag("chart-layers").performClick()
         compose.onNodeWithTag("layer-3").performClick()
         compose.onNodeWithTag("ohlc-table").assertExists()
         compose.onNodeWithTag("chart-toolbar").assertExists()
+    }
+
+    @Test fun wideCompactWindowsNavigateFromASideRail() = phoneTest(645, 300) {
+        render(860.dp, 400.dp)
+        val rail = compose.onNodeWithTag("mobile-navigation").fetchSemanticsNode().boundsInRoot
+        assertTrue(rail.height > rail.width, "Navigation sits at the side once the window is wide")
+        compose.onNodeWithTag("trade-bar").assertExists()
+        compose.onNodeWithTag("nav-2").performClick().assertIsSelected()
+        compose.onNodeWithTag("trade-terminal").assertIsDisplayed()
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("trade-bar").assertExists()
+    }
+
+    @Test fun switchingSideWhileMinimizedRebuildsTheRestingPriceForThatSide() = phoneTest {
+        render()
+        val instrument = plugin.instruments.first()
+        val quote = plugin.market.value.quotes.getValue(instrument.symbol)
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-kind-LIMIT").performClick()
+        // Expanded, the side buttons with their prices own the side; the peek's copy appears only when minimized.
+        compose.onNodeWithTag("order-peek-side-SELL").assertDoesNotExist()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("order-peek-side-SELL").performClick().assertIsSelected()
+        compose.onNodeWithTag("restore-order").performClick()
+        val entry = compose.onNodeWithTag("order-entry").fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text
+        assertTrue(instrument.parsePrice(entry)!! > quote.bid, "A sell limit rests above the market, got $entry")
     }
 
     @Test fun landscapeUsesTheSamePersistentSheetAndKeepsReviewVisible() = phoneTest(645, 300) {

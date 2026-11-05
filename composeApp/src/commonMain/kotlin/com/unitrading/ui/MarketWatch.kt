@@ -1,6 +1,5 @@
 package com.unitrading.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,25 +10,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.broker.*
 import com.unitrading.app.MarketWatchPreferences
 import com.unitrading.app.MemorySnapshotStore
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.font.FontFamily
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -40,8 +36,11 @@ internal fun MarketWatch(
     plugin: BrokerPlugin, market: MarketSnapshot, account: AccountSnapshot,
     selected: String, onSymbol: (String) -> Unit, modifier: Modifier = Modifier,
     preferences: MarketWatchPreferences = remember { MarketWatchPreferences(MemorySnapshotStore()) },
+    subtitle: String? = null,
+    barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
+    val type = MaterialTheme.typography
     val catalog by plugin.catalog.collectAsState()
     val lists by preferences.lists.collectAsState()
     val saveError by preferences.error.collectAsState()
@@ -77,39 +76,30 @@ internal fun MarketWatch(
     fun group(instrument: Instrument) = if (instrument.isContinuous) "连续合约" else instrument.category
     val results = marketSearchResults(catalog.instruments, query)
         .filter { query.isNotBlank() || category == null || group(it) == category }
+    // A category steps back to the category list; everything else leaves the add page.
+    fun stepBack() { if (category != null && query.isBlank()) category = null else { adding = false; query = ""; category = null } }
+    NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = adding || editing,
+        onBackCompleted = { if (adding) stepBack() else editing = false })
     Column(modifier.background(colors.Surface).testTag("market-watch")) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (adding) WatchAction("‹", "返回行情", "market-back") { adding = false; query = ""; category = null }
-            Text(if (adding) "添加交易品种" else if (editing) "编辑自选" else "行情", Modifier.weight(1f).padding(start = 8.dp),
-                color = colors.Ink, fontSize = if (adding) 14.sp else 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            if (!adding) {
-                if (editing) WatchAction("✓", "完成编辑", "market-edit-done") { editing = false }
-                else {
-                    WatchAction("+", "添加交易品种", "market-add") { adding = true }
-                    WatchAction("✎", "编辑自选", "market-edit") { editing = true }
-                }
+        if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back")
+        else PageTopBar(if (editing) "编辑自选" else "行情", subtitle.takeUnless { editing }, actions = {
+            barActions()
+            if (editing) ActionIcon(AppIcons.Check, "完成编辑", "market-edit-done") { editing = false }
+            else {
+                ActionIcon(AppIcons.Add, "添加交易品种", "market-add") { adding = true }
+                ActionIcon(AppIcons.Edit, "编辑自选", "market-edit") { editing = true }
             }
-        }
+        })
         if (adding) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("⌕", color = colors.Muted, fontSize = 20.sp)
-                BasicTextField(query, { query = it.take(32) }, Modifier.weight(1f).padding(horizontal = 8.dp).testTag("symbol-search"),
-                    singleLine = true, textStyle = TextStyle(color = colors.Ink, fontSize = 13.sp), cursorBrush = SolidColor(colors.Accent),
-                    decorationBox = { inner -> Box { if (query.isEmpty()) Text("搜索：ES / @ES / ES1!", color = colors.Muted, fontSize = 12.sp); inner() } })
-                if (query.isNotEmpty()) WatchAction("×", "清空搜索", "market-clear-search") { query = "" }
-            }
-            HorizontalDivider(color = colors.Border, thickness = .5.dp)
-            if (query.isBlank()) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("⌂ 全部", Modifier.clickable { category = null }.padding(vertical = 8.dp), color = colors.Accent, fontSize = 12.sp)
-                    category?.let { Text("  ›  $it", color = colors.Muted, fontSize = 12.sp) }
-                }
-            }
-            if (searching) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp).testTag("market-search-progress"))
-            if (!market.connected && remote) Text("连接已断开 · 仅显示已加载品种", Modifier.padding(12.dp), color = colors.Muted, fontSize = 11.sp)
+            OutlinedTextField(query, { query = it.take(32) }, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp).testTag("symbol-search"),
+                singleLine = true, placeholder = { Text("搜索：ES / @ES / ES1!", maxLines = 1) }, shape = MaterialTheme.shapes.extraLarge,
+                leadingIcon = { Icon(AppIcons.Search, contentDescription = null) },
+                trailingIcon = { if (query.isNotEmpty()) ActionIcon(AppIcons.Close, "清空搜索", "market-clear-search") { query = "" } })
+            if (searching) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("market-search-progress"))
+            if (!market.connected && remote) Text("连接已断开 · 仅显示已加载品种", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = colors.Muted, style = type.bodySmall)
             searchError?.let { message ->
-                Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, Modifier.weight(1f), color = colors.Loss, fontSize = 11.sp)
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f), color = colors.Loss, style = type.bodySmall)
                     TextButton({ retry++ }) { Text("重试") }
                 }
             }
@@ -118,56 +108,59 @@ internal fun MarketWatch(
                     val groups = (listOf("连续合约") + catalog.instruments.map(::group)).distinct()
                     items(groups) { name ->
                         val members = catalog.instruments.filter { group(it) == name }
-                        Row(Modifier.fillMaxWidth().clickable { category = name }.padding(horizontal = 14.dp, vertical = 14.dp)
-                            .testTag("market-category-$name"), verticalAlignment = Alignment.CenterVertically) {
-                            Text("▰", color = colors.Target, fontSize = 19.sp)
-                            Text(name, Modifier.weight(1f).padding(horizontal = 10.dp), color = colors.Ink, fontSize = 13.sp)
-                            Text("${members.count { it.symbol in symbols }}/${members.size}  ›", color = colors.Muted, fontSize = 11.sp)
-                        }
+                        ListItem(headlineContent = { Text(name) }, leadingContent = { Icon(AppIcons.Folder, contentDescription = null) },
+                            trailingContent = {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("${members.count { it.symbol in symbols }}/${members.size}", style = type.labelMedium)
+                                    Icon(AppIcons.ChevronRight, contentDescription = null)
+                                }
+                            },
+                            modifier = Modifier.clickable { category = name }.testTag("market-category-$name"),
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent))
                     }
                 } else {
                     if (results.isEmpty()) item {
-                        Text(if (searching) "正在查找合约…" else "未找到品种，输入代码搜索服务器。",
-                            Modifier.padding(16.dp), color = colors.Muted, fontSize = 12.sp)
+                        EmptyState(if (searching) "正在查找合约…" else "未找到品种", "输入代码搜索服务器。", icon = AppIcons.Search)
                     }
                     items(results, key = { it.symbol }) { instrument ->
                         val included = instrument.symbol in symbols
-                        Row(Modifier.fillMaxWidth().testTag("search-${instrument.symbol}").padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(instrument.symbol, color = colors.Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                Text(instrument.name, color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (instrument.isContinuous) Text(watchSubtitle(instrument), color = colors.Muted, fontSize = 10.sp,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                            WatchAction(if (included) "✓" else "⊕", if (included) "已添加 ${instrument.symbol}" else "添加 ${instrument.symbol}",
-                                "market-add-${instrument.symbol}") { if (!included) update(symbols + instrument.symbol) }
-                        }
+                        ListItem(headlineContent = { Text(instrument.symbol, style = type.titleSmall) },
+                            supportingContent = {
+                                Column {
+                                    Text(instrument.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (instrument.isContinuous) Text(watchSubtitle(instrument), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            },
+                            trailingContent = {
+                                ActionIcon(if (included) AppIcons.CheckCircle else AppIcons.AddCircle, if (included) "已添加 ${instrument.symbol}" else "添加 ${instrument.symbol}",
+                                    "market-add-${instrument.symbol}", tint = colors.Accent) { if (!included) update(symbols + instrument.symbol) }
+                            },
+                            modifier = Modifier.testTag("search-${instrument.symbol}"), colors = ListItemDefaults.colors(containerColor = Color.Transparent))
                     }
                 }
             }
         } else {
-            if (editing) Text("箭头调整顺序，减号移出自选", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = colors.Muted, fontSize = 10.sp)
+            if (!editing && symbols.isNotEmpty()) QuoteListHeader()
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("market-quotes")) {
                 if (symbols.isEmpty()) item {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("暂无自选品种", color = colors.Ink, fontSize = 13.sp)
-                        TextButton({ adding = true }) { Text("＋ 添加交易品种") }
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        EmptyState("暂无自选品种", "添加品种后在这里查看实时买卖价。", icon = AppIcons.TrendingUp)
+                        TextButton({ adding = true }) { Text("添加交易品种") }
                     }
                 }
                 items(symbols, key = { it }) { symbol ->
                     val instrument = catalog.instruments.firstOrNull { it.symbol == symbol }
                     if (editing) {
-                        Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(symbol, Modifier.weight(1f), color = colors.Ink, fontSize = 13.sp, maxLines = 1)
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(symbol, Modifier.weight(1f), style = type.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val index = symbols.indexOf(symbol)
-                            WatchAction("↑", "上移 $symbol", "market-up-$symbol", index > 0) {
+                            ActionIcon(AppIcons.ArrowUpward, "上移 $symbol", "market-up-$symbol", enabled = index > 0) {
                                 update(symbols.toMutableList().apply { removeAt(index); add(index - 1, symbol) })
                             }
-                            WatchAction("↓", "下移 $symbol", "market-down-$symbol", index < symbols.lastIndex) {
+                            ActionIcon(AppIcons.ArrowDownward, "下移 $symbol", "market-down-$symbol", enabled = index < symbols.lastIndex) {
                                 update(symbols.toMutableList().apply { removeAt(index); add(index + 1, symbol) })
                             }
-                            WatchAction("−", "移除 $symbol", "market-remove-$symbol") { update(symbols - symbol) }
+                            ActionIcon(AppIcons.RemoveCircle, "移除 $symbol", "market-remove-$symbol", tint = colors.Loss) { update(symbols - symbol) }
                         }
                     } else if (instrument != null) {
                         // An unconfirmed continuous row keeps its last confirmed contract's prices; orders still wait.
@@ -176,13 +169,29 @@ internal fun MarketWatch(
                                 activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
                                 connected = market.connected, onClick = { onSymbol(symbol) })
                         }
-                    } else Text("$symbol · 等待合约加载", Modifier.padding(12.dp), color = colors.Muted, fontSize = 12.sp)
+                    } else Text("$symbol · 等待合约加载", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = colors.Muted, style = type.bodySmall)
                 }
             }
         }
-        saveError?.let { Text(it, Modifier.padding(8.dp), color = colors.Loss, fontSize = 11.sp) }
+        saveError?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = colors.Loss, style = type.bodySmall) }
     }
 }
+
+/** Column captions, once for the whole list. */
+@Composable
+private fun QuoteListHeader() {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val style = MaterialTheme.typography.labelSmall
+        val color = TradingColors.Muted
+        Text("品种", Modifier.weight(QuoteSymbolWeight), color = color, style = style, maxLines = 1)
+        Text("Bid 卖出", Modifier.weight(QuotePriceWeight), color = color, style = style, textAlign = TextAlign.End, maxLines = 1)
+        Text("Ask 买入", Modifier.weight(QuotePriceWeight), color = color, style = style, textAlign = TextAlign.End, maxLines = 1)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+private const val QuoteSymbolWeight = .36f
+private const val QuotePriceWeight = .32f
 
 /** Continuous rows name the dated contract behind their prices and mark it until the volume check confirms it. */
 internal fun watchSubtitle(instrument: Instrument): String {
@@ -195,13 +204,6 @@ internal fun watchSubtitle(instrument: Instrument): String {
     }
 }
 
-@Composable
-private fun WatchAction(glyph: String, label: String, tag: String, enabled: Boolean = true, onClick: () -> Unit) {
-    IconButton(onClick, Modifier.size(36.dp).testTag(tag).semantics { contentDescription = label }, enabled = enabled) {
-        Text(glyph, color = if (enabled) TradingColors.Accent else TradingColors.Muted.copy(alpha = .4f), fontSize = 23.sp)
-    }
-}
-
 private data class ActivityMarker(val label: String, val count: Int, val color: Color)
 
 @Composable
@@ -211,9 +213,9 @@ internal fun MarketQuoteRow(
 ) {
     val colors = TradingColors
     val markers = listOf(
-        ActivityMarker("多", activity.longPositions, colors.Accent),
-        ActivityMarker("空", activity.shortPositions, colors.Loss),
-        ActivityMarker("挂", activity.entries, colors.Target),
+        ActivityMarker("多", activity.longPositions, colors.Up),
+        ActivityMarker("空", activity.shortPositions, colors.Down),
+        ActivityMarker("挂", activity.entries, colors.Accent),
         ActivityMarker("SL", activity.stops, colors.Stop),
         ActivityMarker("TP", activity.targets, colors.Target),
         ActivityMarker("待", activity.unresolved, colors.Muted),
@@ -227,73 +229,59 @@ internal fun MarketQuoteRow(
     SideEffect { previous = quote; lastBidDirection = bidDirection; lastAskDirection = askDirection }
     fun quoteColor(direction: Int) = when {
         !connected || quote == null -> colors.Muted
-        direction > 0 -> colors.Accent
-        direction < 0 -> colors.Loss
+        direction > 0 -> colors.Up
+        direction < 0 -> colors.Down
         else -> colors.Ink
     }
+    val type = MaterialTheme.typography
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("symbol-${instrument.symbol}")
-        .background(if (selected) colors.Accent.copy(alpha = .06f) else colors.Surface)
+        .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
         .clickable(onClickLabel = "打开 ${instrument.symbol} 图表", onClick = onClick)
         .semantics { stateDescription = activity.description; this.selected = selected }) {
         val stacked = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.15f
-        if (markers.isNotEmpty()) Canvas(Modifier.align(Alignment.TopStart).size(22.dp).testTag("market-corner-${instrument.symbol}")) {
-            // Each active status gets a slice of the corner flag, in the same order as the labels.
-            markers.forEachIndexed { index, marker ->
-                val start = index.toFloat() / markers.size
-                val end = (index + 1f) / markers.size
-                drawPath(Path().apply {
-                    moveTo(0f, 0f)
-                    lineTo(size.width * (1f - start), size.height * start)
-                    lineTo(size.width * (1f - end), size.height * end)
-                    close()
-                }, marker.color)
-            }
-        }
-        Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (markers.isNotEmpty()) FlowRow(Modifier.padding(start = 10.dp).testTag("market-markers-${instrument.symbol}"),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                markers.forEach { Text("${it.label} ${it.count}", color = it.color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) }
-            }
-            val symbol: @Composable (Modifier) -> Unit = { m -> Column(m, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(instrument.symbol, color = colors.Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(watchSubtitle(instrument), color = colors.Muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            val symbol: @Composable (Modifier) -> Unit = { m -> Column(m) {
+                Text(instrument.symbol, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(watchSubtitle(instrument), color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
-            val quotes: @Composable (Modifier) -> Unit = { m -> Row(m, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                QuotePrice("Bid 卖出", quote?.let { instrument.formatPrice(it.bid) }, quoteColor(bidDirection), Modifier.weight(1f), stacked)
-                QuotePrice("Ask 买入", quote?.let { instrument.formatPrice(it.ask) }, quoteColor(askDirection), Modifier.weight(1f), stacked)
-            } }
+            val time = quote?.let { quoteTime(it.timeMs) } ?: "等待报价"
+            val spread = "点差 ${quoteSpread(quote, instrument)} tick"
             if (stacked) {
                 symbol(Modifier.fillMaxWidth())
-                quotes(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    QuotePrice("Bid 卖出", quote?.let { instrument.formatPrice(it.bid) }, quoteColor(bidDirection), time, Modifier.weight(1f), stacked = true)
+                    QuotePrice("Ask 买入", quote?.let { instrument.formatPrice(it.ask) }, quoteColor(askDirection), spread, Modifier.weight(1f), stacked = true)
+                }
             } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                symbol(Modifier.weight(.34f))
-                quotes(Modifier.weight(.66f))
+                symbol(Modifier.weight(QuoteSymbolWeight))
+                QuotePrice("Bid 卖出", quote?.let { instrument.formatPrice(it.bid) }, quoteColor(bidDirection), time, Modifier.weight(QuotePriceWeight), stacked = false)
+                QuotePrice("Ask 买入", quote?.let { instrument.formatPrice(it.ask) }, quoteColor(askDirection), spread, Modifier.weight(QuotePriceWeight), stacked = false)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(quote?.let { quoteTime(it.timeMs) } ?: "等待报价", fontSize = 10.sp, color = colors.Muted)
-                Text("点差 ${quoteSpread(quote, instrument)} tick", fontSize = 10.sp, color = colors.Muted)
+            if (markers.isNotEmpty()) FlowRow(Modifier.padding(top = 2.dp).testTag("market-markers-${instrument.symbol}"),
+                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                markers.forEach { StatusBadge("${it.label} ${it.count}", it.color) }
             }
         }
     }
-    HorizontalDivider(color = colors.Border.copy(alpha = .24f), thickness = .5.dp)
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
 }
 
 @Composable
-private fun QuotePrice(label: String, price: String?, color: Color, modifier: Modifier, stacked: Boolean) {
-    Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, color = TradingColors.Muted, fontSize = 9.sp, maxLines = 1)
+private fun QuotePrice(label: String, price: String?, color: Color, detail: String, modifier: Modifier, stacked: Boolean) {
+    Column(modifier, horizontalAlignment = Alignment.End) {
+        if (stacked) Text(label, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val text = price ?: "—"
             // Reserve the full number even for long index prices and increased system font size.
-            val baseSize = if (stacked) 23f else 22f
-            val size = minOf(baseSize, maxWidth.value / (text.length * .64f * LocalDensity.current.fontScale)).coerceAtLeast(10f)
+            val size = minOf(if (stacked) 22f else 20f, maxWidth.value / (text.length * .62f * LocalDensity.current.fontScale)).coerceAtLeast(10f)
             Text(buildAnnotatedString {
                 val split = if (price != null && '.' in text) (text.length - 2).coerceAtLeast(text.indexOf('.') + 1) else text.length
-                withStyle(SpanStyle(fontSize = (size * .8f).sp)) { append(text.take(split)) }
+                withStyle(SpanStyle(fontSize = (size * .78f).sp)) { append(text.take(split)) }
                 withStyle(SpanStyle(fontSize = size.sp)) { append(text.drop(split)) }
             }, Modifier.fillMaxWidth().semantics { contentDescription = "$label ${price ?: "暂无报价"}" },
-                color = color, fontSize = size.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, textAlign = TextAlign.End,
+                color = color, style = MaterialTheme.typography.titleMedium.copy(fontSize = size.sp, lineHeight = (size + 4).sp), textAlign = TextAlign.End,
                 maxLines = 1, softWrap = false)
         }
+        Text(detail, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }

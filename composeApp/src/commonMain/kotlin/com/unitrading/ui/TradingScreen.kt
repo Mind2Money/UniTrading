@@ -4,7 +4,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,15 +14,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
@@ -94,19 +89,27 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             var query by remember(plugin) { mutableStateOf("MES") }
             var searchError by remember(plugin) { mutableStateOf<String?>(null) }
             Surface(Modifier.fillMaxSize(), color = colors.Shell) {
-                Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("UniTrading · ${plugin.descriptor.name}", fontSize = 20.sp)
-                    Text(feed.statusMessage, color = colors.Muted)
-                    Text("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。", fontSize = 12.sp)
-                    BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
-                    OutlinedTextField(query, { query = it }, label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
-                    Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
-                    searchError?.let { Text(it, color = colors.Loss) }
-                    TextButton({ showConnection = true }) { Text("连接 / 重新登录 Tradovate") }
-                    connectRithmic?.let { TextButton(it) { Text("连接 / 重新登录 Rithmic") } }
-                    TextButton({ disconnectCurrent() }) { Text("断开连接") }
-                    TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("外观与主题") }
-                    SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
+                Column(Modifier.safeDrawingPadding()) {
+                    PageTopBar(plugin.descriptor.name, feed.statusMessage, actions = {
+                        EnvironmentBadge(plugin.descriptor.environment)
+                        ActionIcon(AppIcons.Palette, "外观与主题", "open-theme") { showTheme = true }
+                    })
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).widthIn(max = 560.dp).padding(top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
+                        BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(query, { query = it }, Modifier.weight(1f), label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
+                            Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
+                        }
+                        searchError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                        ListSubheader("连接")
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton({ showConnection = true }, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Tradovate") }
+                            connectRithmic?.let { OutlinedButton(it, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Rithmic") } }
+                            TextButton({ disconnectCurrent() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("断开连接") }
+                            SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
+                        }
+                    }
                 }
             }
             return@TradingTheme
@@ -154,7 +157,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var pendingProtection by remember(accountKey) { mutableStateOf<PendingProtectionEdit?>(null) }
         var confirmation by remember(accountKey, symbol, executionSymbol) { mutableStateOf<Confirmation?>(null) }
         var mobileTab by remember { mutableStateOf(1) }
-        var showAccounts by remember { mutableStateOf(false) }
         var showSettings by remember { mutableStateOf(false) }
         var showActivity by remember(accountKey) { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
@@ -277,7 +279,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             if (fromChart && skipConfirmation) {
                 val current = session.state.value.positions.firstOrNull { it.id == position.id }
                 val error = when {
-                    current == null || current.version != position.version || current.stopLoss != position.stopLoss || current.takeProfit != position.takeProfit -> "仓位或保护价已更新，请重新选择"
+                    current == null || current.version != position.version || current.stopLoss != position.stopLoss || current.takeProfit != position.takeProfit -> "仓位或止损/止盈已更新，请重新选择"
                     listOfNotNull(sl, tp).any { it <= 0 || it % spec.tickSize != 0L } -> "价格须大于零并符合最小变动单位"
                     else -> protectionEditError(plugin.capabilities, current, sl, tp)
                 }
@@ -366,7 +368,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val compactShort = compact && maxHeight < 550.dp
-                val environmentLabel = if (localDemo) "本地模拟" else if (plugin.descriptor.environment.live) "Live 实盘" else "远程 Demo"
+                // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
+                val rail = compact && maxWidth >= 600.dp
+                val environment = plugin.descriptor.environment
+                val syncAction: (() -> Unit)? = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null
+                val barStatus: @Composable () -> Unit = {
+                    EnvironmentBadge(environment)
+                    if (localDemo) Spacer(Modifier.width(12.dp)) else ConnectionStatusControl(market, compact = true, busy, syncAction)
+                }
+                val selectTab: (Int) -> Unit = { tab -> if (mobileTab != tab) showActivity = false; mobileTab = tab }
                 // The persistent order sheet shares the chart surface and never dims it.
                 val chartFirst = compact && mobileTab == 1
                 val panelOpen = chartFirst && orderOpen
@@ -443,42 +453,24 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOpen, toolbarEnd = {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    if (!localDemo) ConnectionStatusControl(market, compact = true, busy,
-                                        onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
-                                    Badge(environmentLabel)
-                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { barStatus() }
                             }))
                 }
-                Column(Modifier.fillMaxSize()) {
-                    if (!chartFirst) {
-                        Row(Modifier.fillMaxWidth().height(if (compact) 48.dp else 44.dp).testTag("app-toolbar")
-                            .padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Canvas(Modifier.size(22.dp)) {
-                                drawLine(colors.Accent, Offset(size.width * .1f, size.height * .72f), Offset(size.width * .45f, size.height * .3f), 4f)
-                                drawLine(colors.Accent, Offset(size.width * .45f, size.height * .3f), Offset(size.width * .65f, size.height * .55f), 4f)
-                                drawLine(colors.Ink, Offset(size.width * .65f, size.height * .55f), Offset(size.width * .95f, size.height * .12f), 4f)
-                            }
-                            Column(if (compact) Modifier.weight(1f) else Modifier) {
-                                Text("UniTrading", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                                if (compact) Text(session.account.name, fontSize = 10.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            Badge(environmentLabel)
-                            if (!localDemo && compact) ConnectionStatusControl(market, compact = true, busy,
-                                onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
-                            // Phones reach accounts, theme and the order ticket through the tab bar and the chart's order panel.
-                            if (desktop) {
-                                Text(session.account.name, Modifier.weight(1f),
-                                    fontSize = 12.sp, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (!localDemo) ConnectionStatusControl(market, compact = false, busy,
-                                    onSync = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null)
-                                if (localDemo) TextButton({ runtime.paused.value = !paused }) { Text(if (paused) "继续行情" else "暂停行情", fontSize = 11.sp) }
-                                TextButton({ runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }, Modifier.testTag("reset-desktop-layout")) { Text("重置布局") }
-                                TextButton({ showTheme = true }, Modifier.testTag("open-theme")) { Text("主题") }
-                                TextButton({ showActivity = false; showSettings = true }, Modifier.testTag("open-settings")) { Text("设置") }
-                                TextButton({ showAccounts = true }, Modifier.testTag("open-accounts")) { Text("切换账户", fontSize = 12.sp) }
-                                if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
-                            }
+                Row(Modifier.fillMaxSize()) {
+                if (rail) MobileNavigationRail(mobileTab, selectTab)
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    if (desktop) {
+                        Row(Modifier.fillMaxWidth().height(48.dp).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AppLogo(24.dp)
+                            Text("UniTrading", style = MaterialTheme.typography.titleMedium)
+                            EnvironmentBadge(environment)
+                            Text(session.account.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (!localDemo) ConnectionStatusControl(market, compact = false, busy, syncAction)
+                            if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
+                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
+                            ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
+                            if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                         }
                         DividerLine()
                     }
@@ -490,7 +482,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch) },
                             chart = chart,
                             order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = plugin.descriptor.environment,
+                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = environment,
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
@@ -501,10 +493,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             })
                     } else {
                         when (mobileTab) {
-                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch)
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }
                             1 -> key(orderSession) {
                                 // The sheet keeps a full-height host while the chart dock changes continuously.
-                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else 157.dp,
+                                val idleDock = if (rail) MobileTradeBarHeight else MobileTradeBarHeight + MobileNavigationHeight
+                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else idleDock,
                                     animationSpec = tween(250), label = "chart-order-dock")
                                 MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
                                     orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
@@ -515,43 +508,41 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     },
                                     content = {
                                         notice?.let { current ->
-                                            Box(Modifier.fillMaxWidth().heightIn(max = 100.dp).verticalScroll(rememberScrollState())
-                                                .padding(horizontal = 14.dp, vertical = 6.dp)) {
+                                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
+                                                .padding(horizontal = 16.dp, vertical = 8.dp)) {
                                                 FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
                                             }
                                         }
-                                        MobileOrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                        OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                             ::reviewMobileOrder, Modifier.weight(1f),
-                                            environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
+                                            environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
                                     },
                                     body = {
                                         Column(Modifier.fillMaxSize()) {
                                             chart(Modifier.weight(1f))
                                             Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
                                                 androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
-                                                    Column(Modifier.fillMaxWidth().requiredHeight(157.dp)) {
-                                                        Box(Modifier.height(76.dp)) {
+                                                    Column(Modifier.fillMaxWidth().requiredHeight(idleDock)) {
+                                                        Box(Modifier.height(MobileTradeBarHeight)) {
                                                             MobileTradeBar(account, onOpen = {
                                                                 draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                                                                 orderPanelState = MobileOrderPanelState.EDITING
                                                             }, onPositions = { mobileTab = 2 })
                                                         }
-                                                        DividerLine()
-                                                        MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
+                                                        if (!rail) MobileNavigation(mobileTab, selectTab)
                                                     }
                                                 }
                                             }
                                         }
                                     })
                             }
-                            2 -> Column(Modifier.weight(1f)) {
-                                AccountStrip(account)
-                                DividerLine()
+                            2 -> Column(Modifier.weight(1f).background(colors.Surface)) {
+                                PageTopBar("交易", session.account.name, actions = { barStatus() })
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
                                     onSelectPosition = { p -> focusedExecution = null; showSymbol(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
                                     onSelectTrade = { t -> focusedExecution = null; showSymbol(t.symbol); focusedTrade = t; mobileTab = 1 },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
+                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account) })
                             }
                             else -> if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
@@ -560,25 +551,20 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic)
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() })
                         }
                     }
-                    if (compact && !chartFirst) {
+                    if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
+                    else if (desktop) {
                         DividerLine()
-                        MobileNavigation(mobileTab) { if (mobileTab != it) showActivity = false; mobileTab = it }
-                    } else if (desktop) {
-                        DividerLine()
-                        AccountStrip(account)
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp)) {
-                            Text(if (!localDemo) plugin.descriptor.environment.label else if (paused) "模拟已暂停" else "模拟行情运行中 · ×15", color = colors.Muted, fontSize = 10.sp)
-                            Spacer(Modifier.weight(1f))
-                            Text(if (localDemo) "报价 ${clockLabel(market.simulatedTimeMs, true)} UTC   |   本地保存   |   无真实资金" else "${session.account.name}   |   状态以服务器为准   |   ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 10.sp)
-                        }
+                        AccountStrip(account, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
+                            else "状态以服务器为准 · ${environment.label}")
                     }
+                }
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 Column(Modifier.align(if (desktop) Alignment.TopEnd else Alignment.TopCenter)
-                    .padding(start = 12.dp, end = 12.dp, top = if (desktop) 54.dp else if (keyboardOpen) 8.dp else 58.dp)
+                    .padding(start = 12.dp, end = 12.dp, top = if (desktop) 56.dp else if (keyboardOpen) 8.dp else 56.dp)
                     .widthIn(max = 420.dp).fillMaxWidth().heightIn(max = maxHeight * .65f)
                     .verticalScroll(rememberScrollState()).testTag("notification-overlay"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     storageError?.let { message ->
@@ -595,7 +581,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 if (desktop && showSettings) {
                     Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.large, color = colors.Shell) {
+                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Shell) {
                             if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
@@ -609,31 +595,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 if (showOrder) {
                     Dialog(onDismissRequest = { if (!busy) showOrder = false }) {
-                        Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
-                            Column(Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding()) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.End) { TextButton({ showOrder = false }) { Text("返回图表") } }
-                                OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
-                                    request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
-                                }, Modifier.weight(1f), environment = plugin.descriptor.environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
-                            }
+                        Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
+                                request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
+                            }, Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding(), environment = environment, capacity = capacity,
+                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation, onClose = { showOrder = false })
                         }
                     }
                 }
-                if (showAccounts) AlertDialog(
-                    onDismissRequest = { showAccounts = false },
-                    title = { Text("交易商与账户") },
-                    text = { Column(Modifier.verticalScroll(rememberScrollState())) {
-                        BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)
-                        Text(if (localDemo) "当前账户为本地模拟。" else "${plugin.descriptor.environment.label} · 服务器账户 · 净额持仓", fontSize = 12.sp, color = colors.Muted)
-                        TextButton({ showAccounts = false; showConnection = true }) { Text("连接 Tradovate") }
-                        connectRithmic?.let { connect -> TextButton({ showAccounts = false; connect() }) { Text("连接 Rithmic") } }
-                        if (!localDemo) TextButton({ disconnectCurrent(); showAccounts = false }) { Text("断开 ${plugin.descriptor.name}") }
-                        TextButton({ showTheme = true; showAccounts = false }) { Text("外观与主题") }
-                        SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: ""); showAccounts = false }
-                    } },
-                    confirmButton = { TextButton({ showAccounts = false }) { Text("完成") } },
-                    dismissButton = { if (localDemo) TextButton({ showAccounts = false; confirmation = Confirmation.Reset }) { Text("重置演示") } },
-                )
 
                 confirmation?.takeIf { action ->
                     val target = when (action) {
@@ -646,23 +615,28 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }?.let { action ->
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
                     val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacity) }
+                    val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
+                    val confirmColor = when (action) {
+                        is Confirmation.Place -> if (action.request.side == Side.BUY) colors.Up else colors.Down
+                        else -> MaterialTheme.colorScheme.error
+                    }
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
                         text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${plugin.descriptor.name} / ${session.account.name} / ${plugin.descriptor.environment.label}", color = colors.Muted, fontSize = 12.sp)
+                            Text("${plugin.descriptor.name} / ${session.account.name} / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             when (action) {
                                 is Confirmation.Place -> {
                                     val r = action.request
-                                    r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, fontSize = 12.sp) }
-                                    Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}")
+                                    r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, style = MaterialTheme.typography.bodySmall) }
+                                    Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", style = MaterialTheme.typography.titleSmall)
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
-                                    Text("提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。", fontSize = 12.sp, color = colors.Muted)
-                                    livePreview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 12.sp) }
+                                    Text("提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。", style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    livePreview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                                 }
-                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${action.position.id} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
-                                is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${action.order.id}。" +
+                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
+                                is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${shortId(action.order.id)}。" +
                                     if (action.order.isProtection) "撤单后将移除这项保护，服务器也可能调整关联订单。" else "若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
@@ -670,7 +644,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         confirmButton = { Button({
                             confirmation = null
                             executeTrade(action)
-                        }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action")) { Text("确认") } },
+                        }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action"),
+                            colors = ButtonDefaults.buttonColors(containerColor = confirmColor, contentColor = contentOn(confirmColor))) { Text(confirmLabel) } },
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
@@ -686,16 +661,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDismissRequest = { if (!busy) pendingEdit = null },
                         title = { Text("修改挂单入场价") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("${order.request.symbol} · ${order.request.side.label()} ${order.request.kind.name} · ${spec.formatQuantity(order.request.lotsHundredths)} ${spec.quantityUnit}", fontSize = 12.sp)
-                            Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = colors.Muted, fontSize = 11.sp)
+                            Text("${order.request.symbol} · ${order.request.side.label()}${order.request.kind.label()} · ${spec.formatQuantity(order.request.lotsHundredths)} ${spec.quantityUnit}", style = MaterialTheme.typography.titleSmall)
+                            Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             PriceInput("新入场价", edit.entry, { pendingEdit = edit.copy(entry = it) }, "pending-entry")
                             EstimateRow("预计保证金", estimate?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
-                            Text("本次只改入场价，订单类型、数量和 SL/TP 不变。确认后会按最新报价重新校验。", color = colors.Muted, fontSize = 11.sp)
-                            if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
-                            if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, fontSize = 11.sp)
-                            estimate?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
+                            Text("本次只改入场价，订单类型、数量和 SL/TP 不变。确认后会按最新报价重新校验。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            estimate?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                         } },
                         confirmButton = { Button({
                             val newPrice = price ?: return@Button
@@ -732,17 +707,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDismissRequest = { if (!busy) protection = null },
                         title = { Text("修改止损 / 止盈") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${p.id}", fontSize = 12.sp)
-                            Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
+                            Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${shortId(p.id)}", style = MaterialTheme.typography.titleSmall)
+                            Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             PriceInput(if (plugin.capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
                             PriceInput(if (plugin.capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
-                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", fontSize = 11.sp)
-                            capabilityError?.let { Text(it, color = colors.Loss, fontSize = 11.sp) }
+                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", style = MaterialTheme.typography.bodySmall)
+                            capabilityError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate(sl))
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate(tp))
-                            Text("当前显示预估结果。确认后由交易商校验并更新，跳空可能使实际结果与预估不同。", color = colors.Muted, fontSize = 11.sp)
-                            if (!validVersion) Text("仓位已关闭或保护价已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
-                            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, fontSize = 11.sp)
+                            Text("当前显示预估结果。确认后由交易商校验并更新，跳空可能使实际结果与预估不同。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            if (!validVersion) Text("仓位已关闭或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
                         } },
                         confirmButton = { Button({
                             protection = null

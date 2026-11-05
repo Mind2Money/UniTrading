@@ -255,8 +255,8 @@ class DemoBroker(
                         closePrice(position.side, quote), command.stopLoss, command.takeProfit)
                     working.positions[index] = position.copy(stopLoss = command.stopLoss, takeProfit = command.takeProfit,
                         version = checkedAdd(position.version, 1))
-                    event(working, "修改保护价 ${position.id}")
-                    TradeResult(true, "保护价已更新", position.id)
+                    event(working, "修改止损/止盈 ${position.id}")
+                    TradeResult(true, "止损/止盈已更新", position.id)
                 }
             }
             stopOut(working)
@@ -348,7 +348,7 @@ class DemoBroker(
             require(distant || (allowCrossed && crossed)) { "止盈方向或最小距离无效" }
         }
         if (stopLoss != null && takeProfit != null) {
-            require(if (side == Side.BUY) stopLoss < takeProfit else stopLoss > takeProfit) { "保护价顺序无效" }
+            require(if (side == Side.BUY) stopLoss < takeProfit else stopLoss > takeProfit) { "止损/止盈顺序无效" }
         }
     }
 

@@ -1,11 +1,13 @@
 package com.unitrading.ui
 
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.CredentialStore
@@ -100,8 +102,8 @@ class RemoteWorkbenchTest {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.waitUntil(5_000) { runtime.savedLogins.message.value?.contains("已过期") == true }
         compose.onNodeWithTag("saved-login-status").assertTextContains("已过期", substring = true)
-        compose.onNodeWithTag("open-accounts").performClick()
-        compose.onNodeWithText("本机已保存 1 个登录").assertExists()
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithText("本机已保存 1 个登录").performScrollTo().assertExists()
         compose.onNodeWithText("连接 Tradovate").assertExists()
         compose.onNodeWithText("连接 Rithmic").assertExists()
         compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
@@ -145,10 +147,21 @@ class RemoteWorkbenchTest {
         compose.onNodeWithTag("order-quantity").assertTextContains("1")
         compose.onNodeWithText("数量（张）").assertExists()
         compose.onNodeWithText("全部为本地生成的模拟行情").assertDoesNotExist()
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("确认 Tradovate Live · 真实账户 下单").assertExists()
-        compose.onNodeWithText("未知 / 服务器校验").assertExists()
+        compose.onAllNodesWithText("未知 / 服务器校验").onLast().assertExists()
         compose.onNodeWithText("取消").performClick()
+    }
+    @Test fun everyRithmicEnvironmentFitsOnAPhoneDialog() {
+        val runtime = TradingRuntime(MemorySnapshotStore()).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.requiredSize(androidx.compose.ui.unit.DpSize(360.dp, 700.dp))) {
+                TradingTheme { RithmicConnectionDialog(runtime, {}, {}) }
+            }
+        } }
+        listOf("test", "paper", "live").forEach { compose.onNodeWithTag("rithmic-env-$it").assertIsDisplayed() }
+        compose.onNodeWithTag("rithmic-env-live").performClick().assertIsSelected()
+        compose.onNodeWithText("Live：后续确认的订单会发送到真实账户。").assertExists()
     }
     @Test fun capturedSessionProgressIsVisibleAndLoginCanBeCancelled() {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }

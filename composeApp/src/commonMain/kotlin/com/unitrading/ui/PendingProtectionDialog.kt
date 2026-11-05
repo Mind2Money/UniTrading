@@ -6,13 +6,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 
 /**
@@ -52,18 +52,18 @@ internal fun PendingProtectionDialog(
         title = { Text("修改挂单止损 / 止盈") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("${request.symbol} · ${request.side.label()}${request.kind.label()} · ${spec.formatQuantity(request.lotsHundredths)} ${spec.quantityUnit} · " +
-                "入场 ${request.entryPrice?.let(spec::formatPrice) ?: "—"}", fontSize = 12.sp)
-            Text("原 SL ${request.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${request.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, fontSize = 11.sp)
+                "入场 ${request.entryPrice?.let(spec::formatPrice) ?: "—"}", style = MaterialTheme.typography.bodySmall)
+            Text("原 SL ${request.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${request.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
             PriceInput(if (capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { onEdit(edit.copy(stopLoss = it)) }, "pending-protect-sl")
             PriceInput(if (capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { onEdit(edit.copy(takeProfit = it)) }, "pending-protect-tp")
-            if (!capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", fontSize = 11.sp)
-            capabilityError?.let { Text(it, color = colors.Loss, fontSize = 11.sp) }
+            if (!capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", style = MaterialTheme.typography.bodySmall)
+            capabilityError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
             EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", result(sl, preview?.stopLossPnlMicros))
             EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", result(tp, preview?.takeProfitPnlMicros))
-            Text("盈亏按挂单入场价估算，新的止损/止盈在入场成交后生效。确认后由交易商校验并更新。", color = colors.Muted, fontSize = 11.sp)
-            if (!validVersion) Text("挂单已成交、已撤销或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, fontSize = 11.sp)
-            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, fontSize = 11.sp)
-            preview?.errors?.forEach { Text(it, color = colors.Loss, fontSize = 11.sp) }
+            Text("盈亏按挂单入场价估算，新的止损/止盈在入场成交后生效。确认后由交易商校验并更新。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+            if (!validVersion) Text("挂单已成交、已撤销或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+            preview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
         } },
         confirmButton = { Button({ onConfirm(sl, tp) }, Modifier.testTag("confirm-pending-protection"),
             enabled = validInput && validVersion && capabilityError == null && preview?.valid == true && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },

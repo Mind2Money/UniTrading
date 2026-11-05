@@ -88,6 +88,9 @@ internal sealed interface Confirmation {
     data object Reset : Confirmation
 }
 
+/** The readable tail of a broker id: internal ids may carry a namespace such as `atlas-demo:position:9`. */
+internal fun shortId(id: String) = id.substringAfterLast(':').takeLast(7)
+
 internal fun Side.label() = if (this == Side.BUY) "买入" else "卖出"
 internal fun OrderKind.label() = when (this) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "突破" }
 internal fun OrderRole.label() = when (this) {

@@ -1210,7 +1210,7 @@ class TradovateBroker(
             }
             override fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview {
                 val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
-                if (order.role != OrderRole.ENTRY || !order.editable) return OrderPreview(null, errors = listOf("该单不是可编辑入场单；保护单请使用仓位保护价入口，关联待确认的订单不可改价"))
+                if (order.role != OrderRole.ENTRY || !order.editable) return OrderPreview(null, errors = listOf("该单不是可编辑入场单；保护单请使用仓位止损/止盈入口，关联待确认的订单不可改价"))
                 return estimate(accountId, order.request.copy(entryPrice = entryPrice), modifying = true)
             }
             override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?): OrderPreview {
@@ -1256,7 +1256,7 @@ class TradovateBroker(
                     require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                     val stop = order.request.stopLoss != stopLoss
                     val price = if (stop) stopLoss else takeProfit
-                    require(price != null && (if (stop) order.request.stopLoss else order.request.takeProfit) != null) { "这里只能修改已有保护价，添加或删除保护请到官网操作" }
+                    require(price != null && (if (stop) order.request.stopLoss else order.request.takeProfit) != null) { "这里只能修改已有止损/止盈，添加或删除保护请到官网操作" }
                     val estimate = estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
                     require(estimate.valid) { estimate.errors.joinToString("；") }
                     val spec = instruments.first { it.symbol == order.request.symbol }
@@ -1287,7 +1287,7 @@ class TradovateBroker(
                 val changes = listOf(p.stopLoss != stopLoss, p.takeProfit != takeProfit).count { it }
                 require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                 val stop = p.stopLoss != stopLoss
-                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有保护价，添加或删除保护请到官网操作" }
+                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有止损/止盈，添加或删除保护请到官网操作" }
                 val spec = instruments.first { it.symbol == p.symbol }
                 validateProtection(spec, p.side, quotes[p.symbol], stopLoss, takeProfit)
                 val binding = lock.withLock {
@@ -1334,9 +1334,9 @@ class TradovateBroker(
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
 
     private fun validateProtection(spec: Instrument, side: Side, quote: Quote?, sl: Long?, tp: Long?) {
-        require(fresh(quote)) { "保护价修改需要有效的实时报价" }
+        require(fresh(quote)) { "止损/止盈修改需要有效的实时报价" }
         val reference = if (side == Side.BUY) quote!!.bid else quote!!.ask
-        for (price in listOfNotNull(sl, tp)) require(price > 0 && price % spec.tickSize == 0L) { "保护价不符合最小变动单位" }
+        for (price in listOfNotNull(sl, tp)) require(price > 0 && price % spec.tickSize == 0L) { "止损/止盈不符合最小变动单位" }
         sl?.let { require(if (side == Side.BUY) it <= reference - spec.tickSize else it >= reference + spec.tickSize) { "止损方向或距离无效" } }
         tp?.let { require(if (side == Side.BUY) it >= reference + spec.tickSize else it <= reference - spec.tickSize) { "止盈方向或距离无效" } }
     }

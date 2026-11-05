@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -28,7 +29,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
 import kotlinx.coroutines.launch
@@ -53,7 +53,7 @@ internal fun DesktopWorkspace(
     Column(modifier.testTag("desktop-workspace")) {
         error?.let { message ->
             Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(message, Modifier.weight(1f), fontSize = 12.sp, color = TradingColors.Loss)
+                Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TradingColors.Loss)
                 TextButton({ save() }, Modifier.testTag("retry-layout-save")) { Text("重试保存") }
             }
         }

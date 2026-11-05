@@ -42,7 +42,7 @@ class TradingScreenTest {
         skipConfirmations()
         render()
         val before = session.state.value.positions.size
-        compose.onNodeWithTag("review-order").performScrollTo().assertTextContains("模拟买入").performClick()
+        compose.onNodeWithTag("review-order").assertTextContains("模拟买入").performClick()
         compose.waitUntil(5_000) { session.state.value.positions.size == before + 1 }
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         compose.onAllNodesWithText("平仓").onFirst().performClick()
@@ -99,11 +99,12 @@ class TradingScreenTest {
         render()
         val before = session.state.value.positions.size
         compose.onNodeWithTag("order-quantity").performTextReplacement("0.10")
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("确认模拟下单").assertExists()
         assertEquals(before, session.state.value.positions.size)
         compose.onNodeWithTag("confirm-action").performClick()
         compose.waitUntil(5_000) { session.state.value.positions.size == before + 1 }
+        compose.onNodeWithTag("chart-layers").performClick()
         compose.onNodeWithText("数据表").performClick()
         compose.onNodeWithTag("ohlc-table").assertExists()
     }
@@ -135,7 +136,7 @@ class TradingScreenTest {
     @Test fun cancelProtectionAndSwitchAccountDiscardDrafts() {
         render()
         val position = session.state.value.positions.first()
-        compose.onNodeWithText("保护价").performClick()
+        compose.onNodeWithText("止损/止盈").performClick()
         compose.onNodeWithTag("protect-sl").performTextReplacement("1.50000")
         compose.onNodeWithText("取消").performClick()
         assertEquals(position, session.state.value.positions.first())

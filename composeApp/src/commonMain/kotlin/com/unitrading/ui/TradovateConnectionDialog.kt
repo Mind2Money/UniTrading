@@ -6,7 +6,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.unitrading.app.TradingRuntime
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
@@ -20,26 +19,25 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
     var attempt by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
     val restoring by runtime.savedLogins.restoring.collectAsState()
+    val liveColor = MaterialTheme.colorScheme.error
     fun dismiss() { attempt?.cancel(); onDismiss() }
     AlertDialog(
         onDismissRequest = ::dismiss,
         title = { Text("连接 Tradovate") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TradovateEnvironment.entries.forEach { env ->
-                    FilterChip(environment == env, { if (!busy) environment = env }, label = { Text(env.wire) })
-                }
-            }
-            Text("在官方网页登录后自动返回。首次登录最多等待 60 秒，供浏览器保存密码；已保存过登录信息时会更快返回。", fontSize = 12.sp)
-            Text("登录由 Tradovate 认证服务处理。账户和行情使用你选择的 Demo/Live 环境，连接后不会自动下单。", fontSize = 12.sp, color = TradingColors.Muted)
-            if (runtime.savedLogins.available) Text("应用会在本机加密保存登录状态，下次启动时恢复仍有效的登录。可在账户页清除。", fontSize = 12.sp)
-            if (environment == TradovateEnvironment.LIVE) Text("Live：后续确认的订单会发送到真实账户。", color = TradingColors.Loss, fontSize = 12.sp)
-            if (login == null) Text("当前平台尚未配置官方网页登录组件。", color = TradingColors.Loss)
+            SegmentedChoice(TradovateEnvironment.entries, environment, { it.wire.replaceFirstChar(Char::uppercase) }, { "tradovate-env-${it.wire}" },
+                { if (!busy) environment = it }, Modifier.fillMaxWidth(), enabled = !busy,
+                activeColor = { env -> liveColor.takeIf { env == TradovateEnvironment.LIVE } })
+            Text("在官方网页登录后自动返回。首次登录最多等待 60 秒，供浏览器保存密码；已保存过登录信息时会更快返回。", style = MaterialTheme.typography.bodySmall)
+            Text("登录由 Tradovate 认证服务处理。账户和行情使用你选择的 Demo/Live 环境，连接后不会自动下单。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+            if (runtime.savedLogins.available) Text("应用会在本机加密保存登录状态，下次启动时恢复仍有效的登录。可在设置页清除。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+            if (environment == TradovateEnvironment.LIVE) Text("Live：后续确认的订单会发送到真实账户。", color = TradingColors.Loss, style = MaterialTheme.typography.bodySmall)
+            if (login == null) Text("当前平台尚未配置官方网页登录组件。", color = TradingColors.Loss, style = MaterialTheme.typography.bodySmall)
             if (busy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(progress, Modifier.testTag("login-progress"), fontSize = 12.sp)
+                Text(progress, Modifier.testTag("login-progress"), style = MaterialTheme.typography.bodySmall)
             }
-            error?.let { Text(it, color = TradingColors.Loss, fontSize = 12.sp) }
+            error?.let { Text(it, color = TradingColors.Loss, style = MaterialTheme.typography.bodySmall) }
         } },
         confirmButton = { Button({
             busy = true; error = null; progress = "正在打开官方登录窗口…"

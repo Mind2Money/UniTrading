@@ -11,6 +11,16 @@
 ✅ 修复持仓和挂单的止损、止盈、入场价无法修改的问题
 ✅ 历史列表配对入场和止盈、止损、平仓成交，并显示手续费和净盈亏；止损触发时播放止损音效
 
+🎨 **界面重做（Material 3）**
+✅ 全部页面按 Material Design 3 重做：统一配色、字号、圆角和官方图标，新增应用图标与桌面窗口图标
+✅ 手机每页只有一条顶栏；横屏和平板改用侧边导航，图表高度增加
+✅ 手机和桌面共用一套下单表单；下单与确认按钮随买卖方向变色，确认按钮直接写“买入”“平仓”“撤单”
+✅ 订单类型统一为市价、限价、突破；“保护价”改称止损/止盈
+✅ 交易页的资金数据全部显示在摘要卡片内，不用再横向滚动
+✅ 行情列表表头只显示一次，账户状态改用文字标签
+✅ 设置页重新分组，桌面删除重复的“切换账户”弹窗
+✅ 修复手机上 Rithmic 登录弹窗看不到 Live 选项的问题，修复持仓编号显示成 `#ition:9` 的问题
+
 ## English
 🔌 **Rithmic**
 ✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Paper Trading login, accounts, market data, charts, placing, modifying and cancelling orders and fill pairing are verified; closing a position is not verified yet. Rithmic requires conformance for production systems, so confirm compliance before public distribution.
@@ -21,6 +31,16 @@
 ✅ Fixed orders being reported as "result unknown", which paused trading
 ✅ Fixed stop-loss, take-profit and entry price edits being refused on positions and pending orders
 ✅ History pairs entries with their take-profit, stop-loss and closing fills, with fees and net P&L; a triggered stop plays the stop-loss sound
+
+🎨 **Material 3 redesign**
+✅ Every screen follows Material Design 3: one colour, type and shape system, official icons, plus an app icon and a desktop window icon
+✅ Each phone page has a single top bar; landscape phones and tablets use side navigation, which gives the chart more height
+✅ Phone and desktop share one order form; the order and confirm buttons take the side's colour, and confirmations name the action: Buy, Close, Cancel
+✅ Order types are consistently Market, Limit and Stop, and stop loss / take profit replaces the old protection-price wording
+✅ All account figures fit on a summary card on the trade page, with no sideways scrolling
+✅ The quote list shows its column captions once, and account states are text labels
+✅ Settings are regrouped, and the desktop's duplicate account-switch dialog is gone
+✅ Fixed the Live option being unreachable in the Rithmic login dialog on phones, and position ids showing as `#ition:9`
 
 # v1.2.0
 
