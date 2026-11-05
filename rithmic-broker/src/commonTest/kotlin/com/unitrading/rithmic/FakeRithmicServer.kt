@@ -108,7 +108,8 @@ internal class FakeRithmicServer : RithmicWire {
                 if (exchange == null || exchange != m.str(Rf.EXCHANGE)) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("7", "no data"))
                 else reply(Rt.RESPONSE_REFERENCE_DATA) {
                     string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.SYMBOL_NAME, "Micro E-mini S&P 500"); string(Rf.PRODUCT_CODE, "MES")
-                    string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD"); double(Rf.MIN_FPRICE_CHANGE, 0.25); double(Rf.SINGLE_POINT_VALUE, 5.0)
+                    string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD")
+                    double(Rf.MIN_QPRICE_CHANGE, 0.25); double(Rf.MIN_FPRICE_CHANGE, 25.0); double(Rf.FTOQ_PRICE, 0.01); double(Rf.SINGLE_POINT_VALUE, 5.0)
                     string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319"); string(Rf.IS_TRADABLE, "true")
                 }
             }

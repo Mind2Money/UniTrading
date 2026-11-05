@@ -53,8 +53,13 @@ internal fun mapInstrument(data: ProtoMessage): RithmicSpec? = runCatching {
     require(type.isEmpty() || type == "future" || type == "futures")
     val currency = data.str(Rf.CURRENCY)?.trim()?.uppercase()?.ifEmpty { null } ?: "USD"
     require(currency == "USD")
-    val tick = requireNotNull(data.double(Rf.MIN_FPRICE_CHANGE))
+    // Market data, bars and order prices are all quoted (q) prices, so the display scale and tick value use the
+    // quoted tick. min_fprice_change is the f-price tick (e.g. 25.0 where the q-tick is 0.25); f*ftoq = q.
     val pointValue = requireNotNull(data.double(Rf.SINGLE_POINT_VALUE))
+    val fTick = data.double(Rf.MIN_FPRICE_CHANGE)?.takeIf { it > 0 && it.isFinite() }
+    val ftoq = data.double(Rf.FTOQ_PRICE)?.takeIf { it > 0 && it.isFinite() }
+    val tick = data.double(Rf.MIN_QPRICE_CHANGE)?.takeIf { it > 0 && it.isFinite() }
+        ?: fTick?.let { f -> ftoq?.let { f * it } } ?: requireNotNull(fTick)
     require(tick > 0 && pointValue > 0 && pointValue.isFinite())
     val scale = requireNotNull(PriceScale.forTick(tick))
     val tickUnits = requireNotNull(scale.units(tick))

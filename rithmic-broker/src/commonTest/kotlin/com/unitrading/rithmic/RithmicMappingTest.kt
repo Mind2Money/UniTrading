@@ -34,7 +34,7 @@ class RithmicMappingTest {
             int32(Rf.TEMPLATE_ID, Rt.RESPONSE_REFERENCE_DATA); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")
             string(Rf.SYMBOL_NAME, "Micro E-mini S&P 500"); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future")
             string(Rf.EXPIRATION_DATE, "20261218"); string(Rf.CURRENCY, "USD")
-            double(Rf.MIN_FPRICE_CHANGE, 0.25); double(Rf.SINGLE_POINT_VALUE, 5.0); string(Rf.IS_TRADABLE, "true")
+            double(Rf.MIN_QPRICE_CHANGE, 0.25); double(Rf.MIN_FPRICE_CHANGE, 25.0); double(Rf.FTOQ_PRICE, 0.01); double(Rf.SINGLE_POINT_VALUE, 5.0); string(Rf.IS_TRADABLE, "true")
         })
         assertNotNull(spec)
         assertEquals("CME", spec.exchange)
@@ -46,6 +46,16 @@ class RithmicMappingTest {
         assertEquals(100, spec.instrument.lotStepHundredths)
         assertFalse(spec.instrument.estimatesIncludeFees)
         assertEquals("5500.25", spec.instrument.formatPrice(550025))
+        // ESZ6 as Rithmic Test actually sends it: q-tick 0.25, f-tick 25.0, 50 USD per point -> 12.50 USD per tick.
+        val es = mapInstrument(message {
+            string(Rf.SYMBOL, "ESZ6"); string(Rf.EXCHANGE, "CME"); string(Rf.SYMBOL_NAME, "E-Mini S&P 500")
+            string(Rf.PRODUCT_CODE, "ES"); string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD")
+            double(Rf.MIN_QPRICE_CHANGE, 0.25); double(Rf.MIN_FPRICE_CHANGE, 25.0); double(Rf.FTOQ_PRICE, 0.01); double(Rf.QTOF_PRICE, 100.0); double(Rf.SINGLE_POINT_VALUE, 50.0)
+        })!!
+        assertEquals(2, es.instrument.priceDecimals)
+        assertEquals(25, es.instrument.tickSize)
+        assertEquals(12_500_000, es.instrument.tickValueMicrosPerLot)
+        assertEquals("7708.25", es.instrument.formatPrice(770825))
     }
 
     @Test fun nonUsdOrIncompleteReferenceDataIsRejected() {
