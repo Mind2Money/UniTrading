@@ -1,6 +1,6 @@
 # Rithmic 接入与验证
 
-> 文档类型：当前实现说明。首版接入日期 2026-11-05。探针已在 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）实测登录、账户、RMS、行情、历史 K 线；这些是绕过 `RithmicBroker` 的逐请求检查。应用在 Paper Trading 上能登录并显示账户，行情、图表和连续合约流程仍在联调。下单 / 撤单回执只在离线假服务器上验证，探针的下单测试尚未运行。
+> 文档类型：当前实现说明。首版接入日期 2026-11-05。探针已在 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）实测登录、账户、RMS、行情、历史 K 线。`RithmicBroker` 的只读流程也已在 Paper Trading 上通过：连接、`@MES` 解析、实时报价和 1 分钟图。应用界面上的行情和图表待用户确认。下单 / 撤单回执只在离线假服务器上验证，探针的下单测试尚未运行。
 >
 > 应用内入口：已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`，2026-11-06）。登录页、设置、账户切换和空合约页均可进入 Rithmic 登录。注意：Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
 
@@ -98,8 +98,9 @@ $env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'
   - K 线：分钟回放首根 `marker` = 窗口起点 + 60 秒 = 该分钟收盘时间，**确认 marker 为收盘时间**；日线 `marker` 为 `YYYYMMDD`（如 20261104），**确认**。实时逐笔、BBO、分钟 `time_bar`（250）均收到。
   - `front_month`（113）对 `ES@CME` 返回 7 no data；CONTAINS 搜索 `ES` 返回 927 行（名称含 FUTURES 的也命中），按 `product_code` 搜 `ES` 返回 22 行，回退取最近未到期合约得 `ESZ6`。`instrument_type` 同时出现 `Future` 与 `FUTURE`。`tp_max_session_count = 1`：同一登录只允许一个 ticker plant 会话，探针与应用不能同时连接。
 - Rithmic Paper Trading 探针实测（2026-11-06，用户以 TPT 账号运行，只读）：四个 plant 登录成功，`app_name` 为 `UniTrading`，未做 conformance，fcm / ib 为 `TakeProfitTrader`。账户、RMS、交易路由（CME / CBOT / NYMEX / COMEX 均为 `simulator`）、`MES@CME` 的 front month（`MESZ6`，Test 上无此数据）、参考数据（`min_qprice_change=0.25`、`single_point_value=5.0`，每 tick 1.25 USD）、实时 BBO 与逐笔、分钟与日线回放、实时分钟 K 线均按预期返回。
-- 应用首次登录 Paper Trading（2026-11-06，用户手动）：登录、账户和资金正常，`@MES` 显示“主力无法确认：permission denied”，因此没有行情和图表。已知差异是应用按产品搜索时不带交易所并取第一行的交易所，探针固定 `CME`；是否为此原因待探针的不带交易所搜索结果确认。同时修复了连续图表收不到实时逐笔和 K 线的问题（推送用到期合约代码，订阅键是 `@MES`），并把未确认主力的重试间隔从 6 小时改为 60 秒。修复只经离线测试验证，尚未在 Paper Trading 上复测。
-- **未验证**：应用在 Paper Trading 上的连续合约、行情与图表；任何系统上的真实下单 / 改单 / 撤单回执与成交推送（探针的 MES@10 测试尚未运行）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（均无数据）。
+- 应用首次登录 Paper Trading（2026-11-06，用户手动）：登录、账户和资金正常，`@MES` 显示“主力无法确认：permission denied”，因此没有行情和图表。探针随后查到 `MES` 同时挂在 `CME` 和 `CME-Delayed`，账户的交易路由没有后者，后者的 front month 返回 13 `permission denied`。当时的代码取搜索首行的交易所。这次探针里 `CME` 行排在前面，所以 `CME-Delayed` 排在首行这一点没有被直接复现；修复后结果不再依赖行序。同时修复了连续图表收不到实时逐笔和 K 线的问题（推送用到期合约代码，订阅键是 `@MES`），并把未确认主力的重试间隔从 6 小时改为 60 秒。
+- `RithmicBroker` 只读流程实测（2026-11-06，用户运行探针，修复 3963497 之后，Paper Trading）：`[broker] RESULT OK`。`@MES` 解析到 `MESZ6`，有实时 Bid/Ask，加载 2000 根 1 分钟 K 线，最后一根随逐笔更新并按时换根，品种列表 6 项（5 个到期合约加 `@MES`）。
+- **未验证**：应用界面在 Paper Trading 上的行情与图表（适配器已通过，界面待用户确认）；任何系统上的真实下单 / 改单 / 撤单回执与成交推送（探针的 MES@10 测试尚未运行）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（均无数据）。
 
 ```bash
 ./gradlew :rithmic-broker:desktopTest

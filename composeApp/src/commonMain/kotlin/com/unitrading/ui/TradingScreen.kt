@@ -39,7 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The app logs in to Paper Trading; its market-data flow and every order receipt are still unverified live, and conformance is pending. */
+/** The adapter's read path passes on Paper Trading; every order receipt is still unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
 
 @Composable
