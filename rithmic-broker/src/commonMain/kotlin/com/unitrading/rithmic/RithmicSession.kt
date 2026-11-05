@@ -3,15 +3,20 @@ package com.unitrading.rithmic
 import kotlinx.serialization.Serializable
 
 /**
- * Which Rithmic system a login targets. Only "Rithmic Test" has a published gateway; the paper
- * trading and live gateways are handed out by Rithmic after conformance, so they are user input.
+ * Which Rithmic system a login targets. "Rithmic Test" has its own development gateway; the
+ * Chicago-area R | Protocol gateway serves every production system (Rithmic 01, Paper Trading and
+ * the prop-firm systems; checked 2026-11-05 with the system-list request). Rithmic may hand out a
+ * regional gateway after conformance, which the user can type instead.
  */
 @Serializable
 enum class RithmicEnvironment(val wire: String, val label: String, val defaultSystemName: String, val defaultGateway: String?, val live: Boolean) {
     TEST("test", "Rithmic Test", "Rithmic Test", "wss://rituz00100.rithmic.com:443", false),
-    PAPER("paper", "Rithmic Paper Trading", "Rithmic Paper Trading", null, false),
-    LIVE("live", "Rithmic Live", "Rithmic 01", null, true),
+    PAPER("paper", "Rithmic Paper Trading", "Rithmic Paper Trading", PRODUCTION_GATEWAY, false),
+    LIVE("live", "Rithmic Live", "Rithmic 01", PRODUCTION_GATEWAY, true),
 }
+
+/** Chicago-area production gateway; the public R | Protocol clients use the same host. */
+const val PRODUCTION_GATEWAY = "wss://rprotocol.rithmic.com:443"
 
 /** Everything a plant login needs. The password is only persisted when the user asks to remember it. */
 @Serializable

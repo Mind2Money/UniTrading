@@ -31,3 +31,14 @@ kotlin {
         }
     }
 }
+
+// Read-only R | Protocol probe (see docs/rithmic.md). Credentials come from RITHMIC_* environment
+// variables, never from the command line, so they stay out of shell history and build logs.
+tasks.register<JavaExec>("rithmicProbe") {
+    group = "verification"
+    description = "Logs in read-only to a Rithmic system and prints the raw replies; set RITHMIC_GATEWAY/SYSTEM/USER/PASSWORD"
+    dependsOn("desktopMainClasses")
+    val desktopMain = kotlin.targets.getByName("desktop").compilations.getByName("main")
+    classpath = files(desktopMain.output.allOutputs, configurations.getByName("desktopRuntimeClasspath"))
+    mainClass.set("com.unitrading.rithmic.RithmicProbeKt")
+}

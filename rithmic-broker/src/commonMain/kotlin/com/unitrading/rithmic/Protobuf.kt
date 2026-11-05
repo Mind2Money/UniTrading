@@ -64,6 +64,8 @@ internal class ProtoMessage(private val fields: Map<Int, List<ProtoValue>>) {
     fun double(field: Int): Double? = (fields[field]?.lastOrNull() as? ProtoValue.Fixed64)?.let { Double.fromBits(it.value) }
     fun str(field: Int): String? = (fields[field]?.lastOrNull() as? ProtoValue.Bytes)?.value?.decodeToString()
     fun strings(field: Int): List<String> = fields[field]?.mapNotNull { (it as? ProtoValue.Bytes)?.value?.decodeToString() } ?: emptyList()
+    /** Raw wire values in arrival order; diagnostics only. */
+    fun values(field: Int): List<ProtoValue> = fields[field] ?: emptyList()
     val templateId: Int get() = int(Rf.TEMPLATE_ID) ?: 0
     val fieldNumbers: Set<Int> get() = fields.keys
 }

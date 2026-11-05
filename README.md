@@ -121,7 +121,7 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 ## Rithmic 登录
 
-1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 网关由 Rithmic 在 conformance 通过后提供。
+1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 预填芝加哥生产网关 `wss://rprotocol.rithmic.com:443`（该网关的系统列表包含 Rithmic 01、Rithmic Paper Trading 与各 prop firm 系统），Rithmic 提供区域网关时可替换。
 2. 网关只接受 `wss://*.rithmic.com`。可先“查询”系统列表确认系统名称，再输入 Rithmic 登录 ID 和密码。
 3. 勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同加密保存并在启动时自动恢复；不勾选则只在本次运行内有效。
 4. 账户、交易路由、合约规格、Bid/Ask、历史 K 线、订单、成交和持仓均来自 R | Protocol 四个 plant。带 SL/TP 的新订单使用服务器静态括号单。

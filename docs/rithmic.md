@@ -6,7 +6,7 @@
 
 Rithmic 没有网页登录，应用通过 **R | Protocol API™**（WebSocket + Google Protocol Buffers）直接登录。在登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”：
 
-1. 选择环境：**Rithmic Test**（开发测试系统，网关 `wss://rituz00100.rithmic.com:443`）、**Rithmic Paper Trading** 或 **Rithmic Live**。后两者的网关地址由 Rithmic 在应用通过 conformance 审核后提供，需要手动填写。
+1. 选择环境：**Rithmic Test**（开发测试系统，网关 `wss://rituz00100.rithmic.com:443`，系统列表只有 `Rithmic Test`）、**Rithmic Paper Trading** 或 **Rithmic Live**。后两者预填芝加哥生产网关 `wss://rprotocol.rithmic.com:443`：2026-11-05 用系统列表请求确认可达，列出 29 个系统，包括 `Rithmic 01`、`Rithmic 04 Colo`、`Rithmic Paper Trading` 以及 `Apex`、`TopstepTrader`、`TheTradingPit`、`Bulenox`、`Earn2Trade` 等 prop firm 系统。Rithmic 提供区域网关（公开客户端中出现过 `rprotocol-ie` / `-de` / `-sg` 等主机）时可替换。
 2. 网关地址只接受 `wss://<主机>.rithmic.com[:端口]`；其他主机被拒绝，凭据不会发往别处。
 3. 点击“查询”向网关请求系统列表（模板 16/17，不含凭据），确认系统名称；登录时系统名称必须在该列表内。
 4. 输入 Rithmic 登录 ID 与密码。勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同写入 DPAPI / Keystore 加密文件，下次启动自动恢复；不勾选则仅本次运行有效。
@@ -55,10 +55,27 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 - 任一 plant 断开后自动重连最多三次，重新订阅行情与 K 线，不重放交易指令；服务器强制登出（并发会话超限）同样触发。
 - 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，应用请求约四倍图表宽度的时间窗。
 
+## 只读联调探针
+
+`rithmic-broker` 带一个只读探针，用真实系统核对上面的协议假设。它只做登录、列表、回放、订阅和登出，**不会发送任何下单、改单、撤单、括号档位或平仓请求**（模板 312–335、3504 不在代码路径中）。凭据只从环境变量读取，不出现在命令行、构建日志或输出中（输出里的密码会被替换为 `[redacted]`）。
+
+```powershell
+$env:RITHMIC_GATEWAY = 'wss://rprotocol.rithmic.com:443'   # 省略则为 Rithmic Test 网关
+$env:RITHMIC_SYSTEM  = 'Rithmic Paper Trading'              # 省略则只打印该网关的系统列表
+$env:RITHMIC_USER    = '<登录 ID>'
+$env:RITHMIC_PASSWORD = '<密码>'
+.\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
+```
+
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.1.4`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `ES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）。
+
+探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、未签协议 500、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。
+
 ## 验证状态
 
 - 离线：`rithmic-broker` 40 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
-- **未验证**：任何真实 Rithmic 系统的连接、登录、行情、历史与下单；字段语义中以下假设需在 Rithmic Test 上确认：分钟 `marker` 为收盘时间、日线索引 `YYYYMMDD`、括号档位修改的 `level` 为当前 tick 数、`AccountPnLPositionUpdate` 金额为十进制字符串、成交历史 `transaction_type` 的字符串取值、`is_tradable` 取值。
+- 在线（不含凭据）：2026-11-05 对 `wss://rituz00100.rithmic.com:443` 与 `wss://rprotocol.rithmic.com:443` 的系统列表请求（模板 16/17）成功，分帧与字段编号在真实网关上成立；公开客户端里出现的 `ritpa11120.11.rithmic.com`（证书不含该主机名）与 `ritpz01000.01.rithmic.com`（连接超时）不可用。
+- **未验证**：任何真实 Rithmic 系统的登录、行情、历史与下单；字段语义中以下假设需在 Rithmic Test 上确认：分钟 `marker` 为收盘时间、日线索引 `YYYYMMDD`、括号档位修改的 `level` 为当前 tick 数、`AccountPnLPositionUpdate` 金额为十进制字符串、成交历史 `transaction_type` 的字符串取值、`is_tradable` 取值。
 - 协议依据：公开的 R | Protocol proto 定义（`rundef/async_rithmic`、`pbeets/rithmic-rs` 随附）与 rithmic.com 的 API 说明。未取得官方开发包文档，字段编号与模板 id 以这些公开定义为准。
 
 ```bash

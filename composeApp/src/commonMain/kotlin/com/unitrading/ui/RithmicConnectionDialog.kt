@@ -86,7 +86,7 @@ internal fun RithmicConnectionDialog(
             Text("凭据只发送到你填写的 *.rithmic.com 网关。登录使用 R | Protocol API，连接后不会自动下单。", fontSize = 12.sp, color = TradingColors.Muted)
             when (environment) {
                 RithmicEnvironment.TEST -> Text("Rithmic Test 是开发系统：行情可能缺失或延迟，账户为测试账户。", fontSize = 12.sp, color = TradingColors.Muted)
-                RithmicEnvironment.PAPER -> Text("Paper Trading / 生产网关地址由 Rithmic 在应用通过 conformance 审核后提供。", fontSize = 12.sp, color = TradingColors.Muted)
+                RithmicEnvironment.PAPER -> Text("默认为芝加哥生产网关，可用“查询”查看该网关的系统列表（含各 prop firm 系统）；Rithmic 提供区域网关时可替换。应用未通过 Rithmic conformance 时登录可能被拒绝。", fontSize = 12.sp, color = TradingColors.Muted)
                 RithmicEnvironment.LIVE -> Text("Live：后续确认的订单会发送到真实账户。", color = TradingColors.Loss, fontSize = 12.sp)
             }
             if (busy) {
