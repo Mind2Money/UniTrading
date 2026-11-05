@@ -1,6 +1,8 @@
 # Rithmic 接入与验证
 
 > 文档类型：当前实现说明。首版接入日期 2026-11-05。协议实现只用离线假服务器验证，**尚未连接任何 Rithmic 系统**；真实账户、行情、下单链路均未实测。
+>
+> 应用内入口：接入完成前隐藏。`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED` 为 `false` 时，登录页、设置、账户切换和空合约页都不显示 Rithmic 登录；已记住的 Rithmic 登录仍会恢复，联调探针不受影响。
 
 ## 接入方式
 
@@ -12,7 +14,7 @@ Rithmic 没有网页登录，应用通过 **R | Protocol API™**（WebSocket + 
 4. 输入 Rithmic 登录 ID 与密码。勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同写入 DPAPI / Keystore 加密文件，下次启动自动恢复；不勾选则仅本次运行有效。
 5. 登录成功后账户、行情和历史由服务器提供，连接后不会自动下单。
 
-Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FCM 系统）前通过 conformance 审核，且 `app_name` 需要在 Rithmic 登记；R | Protocol API 不提供给带实时行情的纸面交易试用账户（见 [rithmic.com FAQ](https://www.rithmic.com/faq)）。开发者可在 [signup.rithmic.com/sdk](https://signup.rithmic.com/sdk/sdk.html) 申请 R | Protocol 开发包。本实现默认 `app_name = UniTrading`、`app_version = 1.1.4`、`template_version = 5.55`（官方开发包 0.90.0.0 示例所用）。
+Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FCM 系统）前通过 conformance 审核，且 `app_name` 需要在 Rithmic 登记；R | Protocol API 不提供给带实时行情的纸面交易试用账户（见 [rithmic.com FAQ](https://www.rithmic.com/faq)）。开发者可在 [signup.rithmic.com/sdk](https://signup.rithmic.com/sdk/sdk.html) 申请 R | Protocol 开发包。本实现默认 `app_name = UniTrading`、`app_version = 1.2.0`、`template_version = 5.55`（官方开发包 0.90.0.0 示例所用）。
 
 ## 协议实现
 
@@ -67,7 +69,7 @@ $env:RITHMIC_PASSWORD = '<密码>'
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 ```
 
-可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.1.4`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）。
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.2.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）。
 
 探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。订单、成交、持仓推送除原始字段外，还用 `parseOrderNotification` / `parseFill` / `parsePosition` 解析后一并打印，直接核对解析是否正确。
 

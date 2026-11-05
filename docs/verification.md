@@ -1,6 +1,17 @@
 # 验证记录索引
 
-## 当前：1.1.4 / 2dcf7e1
+## 当前：1.2.0 / v1.2.0
+
+2026-11-05 发布前在 Windows、JDK 21 上核对 `4847806`。标签提交只在此基础上改动本记录与发布说明的文字。
+
+- 桌面回归 534 项：broker-api 6、demo-broker 34、tradovate-broker 205、composeApp 246、rithmic-broker 43，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.py` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。
+- 脚本测试：`test_build_local.py` 20 项、`test_release_notes.py` 5 项通过。
+- Android：R8 release APK 构建通过；`Medium_Phone`（API 36）模拟器上 debug 与 R8 release 设备测试各 5 项通过。
+- Windows 包：`createDistributable` 含登录 host，登录 host 自测通过，运行时含 `suggestRuntimeModules` 列出的模块，zip 约 73 MB。从仓库外目录启动打包后的 `UniTrading.exe`，恢复了已保存的 Tradovate Demo 会话，账户、行情、图表和持仓正常显示，没有发送订单。之前的分发目录不含登录 host，打包版无法打开登录窗口；这次没有在打包版里实际走完网页登录。
+- Rithmic 四个入口的隐藏由桌面 UI 测试覆盖：登录页、设置、账户切换和空合约页。
+- 未验证：真机、真实下单、改价和成交回执、iOS、MSI 安装包；`windows-latest` 打包与 Release job 的首次运行以 v1.2.0 的 CI 结果为准。
+
+## 1.1.4 / 2dcf7e1
 
 2026-10-29 核对：常规套件 127 项（broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48），全部通过。本次另用 3 个显式启用的审计探针确认指令等待/重连对账缺口；探针通过表示复现成功，不表示业务缺口已修复。详见[实现核对](implementation-audit.md)。
 

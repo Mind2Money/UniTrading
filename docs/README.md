@@ -1,6 +1,6 @@
 # UniTrading 文档
 
-当前代码位于 `main`，应用版本为 1.1.4 / Android versionCode 6。Windows 与 Android 启动时先校验授权码，授权后显示登录页，并恢复仍有效的已保存 Tradovate 会话，默认不注册本地模拟券商。iOS 有工程入口，但尚未接入登录和凭据存储，交易流程暂不可用。
+当前代码位于 `main`，应用版本为 1.2.0 / Android versionCode 7。Windows 与 Android 启动时先校验授权码，授权后显示登录页，并恢复仍有效的已保存 Tradovate 会话，默认不注册本地模拟券商。iOS 有工程入口，但尚未接入登录和凭据存储，交易流程暂不可用。
 
 ## 当前实现与使用
 
@@ -8,10 +8,11 @@
 
 - [当前实现、构建与验证状态](current-status.md)：功能矩阵、代码入口、构建命令、CI 与验证边界，是查询当前状态的入口。
 - [授权码激活](license-activation.md)：启动授权页、授权码验证值、本机加密授权记录、失败锁定、更换授权码，以及离线校验的边界。
-- [本地构建与 CI](local-build.md)：本地测试、Windows/Android/iOS 构建、签名、Telegram 发布及后台完成回调。
+- [本地构建与 CI](local-build.md)：本地测试、Windows/Android/iOS 构建、签名、Telegram 发布、tag 发布及后台完成回调。
+- [发布说明](release-notes.md)：每个 tag 的双语更新内容，也是 GitHub Release 的正文。
 - [代码与文档核对](implementation-audit.md)：1.1.4 已确认的实现缺口、文档差异和可复现诊断。
 - [Tradovate 使用与验证](tradovate.md)：登录、服务器账户、交易限制、会话存储。
-- [Rithmic 接入与验证](rithmic.md)：R | Protocol API 直连登录、四个 plant、交易边界与未实测项。
+- [Rithmic 接入与验证](rithmic.md)：R | Protocol API 直连登录、四个 plant、交易边界与未实测项；应用内入口暂时隐藏。
 - [连续合约](continuous-contracts.md)：连续图表与指标、上一完整交易日成交量主力、实际到期合约下单及换月处理。
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。

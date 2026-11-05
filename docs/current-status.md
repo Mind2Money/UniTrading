@@ -1,6 +1,6 @@
 # 当前实现与验证状态
 
-核对日期：2026-10-29。业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计仅核对实现并更新文档。
+当前版本 1.2.0 / Android versionCode 7（2026-11-05）。下方全量核对的日期：2026-10-29，业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计仅核对实现并更新文档。
 
 ## 功能与代码对应
 
@@ -26,7 +26,7 @@
 | 实时盈亏通知 | 已实现；Android 设备测试在 CI 运行，iOS 未构建验证 | `LivePnlController`、`LivePnlNotifier` + `LivePnlService` dataSync 前台服务（Android 16+ 在系统允许时提升为 Live Update / 超级岛，更早版本常驻通知）、`AppleLivePnl` + `UniTradingWidgets` 扩展（iOS 16.2+ Live Activity / 灵动岛）；仅进程存活时刷新，90 秒无刷新自动过期，见[实时盈亏通知](live-pnl-notifications.md) |
 | 十字线、图层及时间缺口 | 部分实现 | 悬停、点击或长按显示虚线十字线：底轴标注所指 K 线时间（UTC），右轴标注所指价格，横线落在副图内时标注该指标值；方向键移动时只保留竖线。保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
 | iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |
-| Rithmic R \| Protocol 接入 | 已实现，仅离线假服务器验证 | `rithmic-broker`、`RithmicConnectionDialog`、`SavedTradovateAccounts.signInRithmic`；四个 plant、静态括号单、净额持仓；未连接任何真实 Rithmic 系统，见[Rithmic 接入](rithmic.md) |
+| Rithmic R \| Protocol 接入 | 已实现，应用内入口隐藏（`RITHMIC_LOGIN_ENABLED`）；离线假服务器与 Rithmic Test 探针验证，下单回执未实测 | `rithmic-broker`、`RithmicConnectionDialog`、`SavedTradovateAccounts.signInRithmic`；四个 plant、静态括号单、净额持仓；验证范围见[Rithmic 接入](rithmic.md) |
 | 本地 Demo | 保留实现，默认关闭 | `demo-broker` 仍是 `composeApp` 的编译依赖，未从产物完全移除；离线测试显式启用 `includeDemoBrokers = true` |
 
 主要源目录：[应用运行时](../composeApp/src/commonMain/kotlin/com/unitrading/app/)、[共享 UI](../composeApp/src/commonMain/kotlin/com/unitrading/ui/)、[图表](../composeApp/src/commonMain/kotlin/com/unitrading/chart/)、[Tradovate 插件](../tradovate-broker/src/commonMain/kotlin/com/unitrading/tradovate/)。
@@ -53,13 +53,15 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | --- | --- |
 | 构建 | branch push / PR / 手动执行 `:androidApp:assembleRelease`，检查 mapping/resources 输出并上传 unsigned APK |
 | 签名 | main/master 或 `v*` tag 的 push 使用 secrets 签名，再上传 signed APK |
+| Windows 包 | 仅 `v*` tag：`windows-latest` 执行 `:composeApp:createDistributable`，检查 exe 版本和登录 host 后压缩为 `UniTrading-<版本>-windows-x64.zip` |
+| GitHub Release | 仅 `v*` tag：tag 须等于 `v<versionName>`；两个包就绪后用 `docs/release-notes.md` 的小节和提交列表创建 Release，上传 signed APK、Windows zip 与 R8 mapping |
 | 通知 | 对上述发布 push 调用 Telegram；构建失败时也报告，取消运行时停止；未配置 Telegram secrets 时跳过 |
 | 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
 | 测试门禁 | 全部测试移到本地；运行 `pwsh -File scripts/build-local.ps1` 执行四模块 desktop 测试、桌面打包及 Android release 构建。CI 无测试门禁，签名只依赖 Android 编译；没有 Android instrumentation job |
 | iOS | 本地 Apple Silicon Mac 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检，见[本地构建](local-build.md)；不再启动 macOS hosted runner |
 | 并发 | 同一 PR 的新运行取消旧运行；push 和手动运行按 run ID 独立分组，旧运行不会串行阻塞后续构建 |
-| 超时 | Android 构建 35 分钟，签名 / 通知各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
+| 超时 | Android 构建与 Windows 打包各 35 分钟，签名 / 通知 / Release 各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
 
 上述 job 超时从 runner 开始执行后计时，不能限制 GitHub 分配 runner 前的排队时间。各次 push 可并行执行，仍受账户 runner 并发额度限制，通知可能按完成顺序到达。
 
@@ -69,6 +71,7 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 
 ## 验证证据及限制
 
+- 1.2.0 发布前回归 534 项，模拟器设备测试 debug / R8 各 5 项，打包后的 Windows 应用已实际启动，见[验证记录](verification.md)。以下条目是 2026-10-29 核对的结果。
 - 1.1.4 常规测试为 **127 项**：broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48，0 失败、0 跳过。
 - 本次审计重跑上述测试，并额外运行 3 个显式启用的诊断探针，合计 130 项；探针确认 A1 的缺陷现状，**通过不表示缺陷已修复**。命令及用例见[审计](implementation-audit.md)。
 - Android 1.1.4 已有模拟器触摸 UI 证据：导航、主题保存/Activity 重建、两轴缩放；1.1.3 另有 Keystore 加密、篡改拒绝和跨进程读取测试。本次未重新操作设备。

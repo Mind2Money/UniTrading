@@ -1,13 +1,13 @@
 # UniTrading
 
-UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic R | Protocol API 连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
+UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录连接服务器账户（Rithmic 接入尚未完成，应用内入口已隐藏）。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
 
-**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.1.4。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
+**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.2.0，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
 ## 功能
 
 - 首次使用需输入授权码，验证通过后本机保持授权。授权前不恢复已保存登录，也不连接行情和账户。应用只带授权码的 PBKDF2 验证值，授权记录用本机加密存储，连续输错会逐步锁定；目前为离线校验，见 [授权码激活](docs/license-activation.md)。
-- 授权后显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录和 Rithmic Test / Paper Trading / Live 登录，并可恢复本机加密保存的会话。Rithmic 接入尚未连接真实系统验证，见 [Rithmic 接入](docs/rithmic.md)。
+- 授权后显示登录页，默认没有交易商或账户。支持 Tradovate Demo/Live 登录，并可恢复本机加密保存的会话。Rithmic 登录入口在接入完成前隐藏，见 [Rithmic 接入](docs/rithmic.md)。
 - Android 底部使用带图标的 Material 3 导航。手机图表页参考 MT5 的布局，图表占据主要空间，下单面板折叠在图表下方，见 [手机布局](docs/mobile-layout.md)。桌面使用多栏工作台。
 - 实时盈亏通知显示当前账户的浮动盈亏、净值和持仓数，可在账户页关闭。Android 使用常驻通知，Android 16 起支持 Live Update / HyperOS 超级岛，状态栏显示盈亏，前台服务负责后台刷新；iOS 使用灵动岛 / 锁屏 Live Activity。详见 [实时盈亏通知](docs/live-pnl-notifications.md)。
 - 今日盈亏使用 Tradovate 返回的账户总盈亏快照，按券商交易日展示，附更新时间；桌面资金栏、手机交易/账户页及图表摘要均可查看，见 [今日盈亏](docs/daily-pnl.md)。
@@ -83,7 +83,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :rithmic-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。1.1.4 常规套件为 127 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 仅执行 Android R8 release 编译、签名及 Telegram 通知，测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.2.0 常规套件为 534 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows 并创建 GitHub Release；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
 
 ### iOS（必须在 Mac 上）
 
@@ -120,6 +120,8 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 详细边界和证据见 [Tradovate 使用与验证](docs/tradovate.md)；网页登录后卡住的修复及只读实测见 [登录交接修复](docs/tradovate-login-fix.md)。
 
 ## Rithmic 登录
+
+> 接入完成前，应用内的 Rithmic 登录入口全部隐藏（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED`）。以下步骤在打开该开关后适用。
 
 1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 预填芝加哥生产网关 `wss://rprotocol.rithmic.com:443`（该网关的系统列表包含 Rithmic 01、Rithmic Paper Trading 与各 prop firm 系统），Rithmic 提供区域网关时可替换。
 2. 网关只接受 `wss://*.rithmic.com`。可先“查询”系统列表确认系统名称，再输入 Rithmic 登录 ID 和密码。

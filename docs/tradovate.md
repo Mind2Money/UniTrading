@@ -2,7 +2,7 @@
 
 ## 接入方式
 
-当前应用 1.1.4 默认不注册本地模拟券商。首次启动点击“登录 Tradovate”；已有连接时从“账户 / 切换账户”选择“连接 Tradovate”，选 Demo 或 Live，再打开官方登录页。完整功能与验证矩阵见[当前状态](current-status.md)。
+当前应用 1.2.0 默认不注册本地模拟券商。首次启动点击“登录 Tradovate”；已有连接时从“账户 / 切换账户”选择“连接 Tradovate”，选 Demo 或 Live，再打开官方登录页。完整功能与验证矩阵见[当前状态](current-status.md)。
 
 - 页面为 `https://trader.tradovate.com/welcome`，由官方网页执行签名与登录，MFA/验证码保持原流程。
 - 只读取本应用弹出的登录窗口返回的 `accessToken`、`mdAccessToken` 等会话字段；不扫描 Chrome/Edge 的用户资料，不从密码输入框读取账号密码。

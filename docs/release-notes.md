@@ -1,0 +1,85 @@
+# Unreleased
+
+# v1.2.0
+
+## 简体中文
+
+🎉 UniTrading 更新至 **v1.2.0**！这是首个带 tag 的发布，包含 1.1.4 之后的全部改动。
+
+🔐 **授权**
+✅ 首次启动需要输入授权码，验证通过后本机保持授权
+
+📈 **行情与图表**
+✅ 新增 MT5 风格行情列表，可搜索添加连续合约、从列表切换图表，重开时回到上次的图表
+✅ 新增连续合约图表，按上一完整交易日成交量确定主力，下单路由到实际到期合约
+✅ 支持多指标叠加与副图（MA、EXPMA、BOLL、RSI、MACD、KDJ、ATR），参数和颜色可调
+✅ 新增虚线十字线，坐标轴显示所指价格和时间
+✅ K 线保存到本地，重启后恢复并自动补齐缺失区间
+
+🧾 **交易**
+✅ 可在图表上拖动草稿和挂单的止损止盈，下单面板增加保护单勾选和数量滑块
+✅ 新增“跳过交易确认”设置
+✅ 历史按服务器配对显示，含费用，可展开查看入场和出场明细；显示券商报告的今日盈亏
+✅ 入场、止盈、止损成交时播放音效
+
+📱 **手机与桌面**
+✅ 手机改为图表优先布局，下单面板可折叠、可最小化
+✅ Android 新增实时盈亏常驻通知，Android 16 起支持 Live Update
+✅ 桌面面板可拖动调整大小，设置页重新分组
+
+🛠️ **问题修复**
+✅ 修复数量滑块未按账户可用容量计算的问题
+✅ 修复连续合约解析不稳定，以及解析期间行情列表没有价格的问题
+✅ 指令已受理但结果未确认时，改为按服务器状态对账，不重复提交；设置页新增“同步账户”
+
+🚧 **开发中**
+Rithmic 登录尚未完成，本版本隐藏了全部入口
+
+⚠️ **注意**
+真实下单、改价和成交回执尚未联调。Live 模式会把你确认的指令发送到真实账户，请先用 Demo 账户确认行为
+
+⬇️ **安装**
+1️⃣ Windows x64：下载 `UniTrading-1.2.0-windows-x64.zip`，解压后运行 `UniTrading\UniTrading.exe`。需要 WebView2 Runtime；安装包没有代码签名，首次运行可能出现 SmartScreen 提示
+2️⃣ Android 8.0 及以上：下载 `UniTrading-1.2.0-*.apk` 并安装
+3️⃣ Windows 的登录状态和设置保存在 `%LOCALAPPDATA%\UniTrading`，替换程序目录不受影响
+
+## English
+
+🎉 UniTrading is now **v1.2.0**! This is the first tagged release and includes everything since 1.1.4.
+
+🔐 **License**
+✅ First launch asks for a license key; once verified, the device stays licensed
+
+📈 **Market and charts**
+✅ New MT5-style watch list: search and add continuous contracts, switch charts from the list, and reopen the last chart
+✅ New continuous contract charts: the leader comes from the last completed trading day's volume, and orders route to the actual expiry
+✅ Multiple overlays and panes (MA, EXPMA, BOLL, RSI, MACD, KDJ, ATR) with adjustable parameters and colours
+✅ New dashed crosshair with price and time readouts on the axes
+✅ Candles are saved locally, restored after a restart, and missing ranges are filled in automatically
+
+🧾 **Trading**
+✅ Drag stop loss and take profit of drafts and pending orders on the chart; the order panel gains protection checkboxes and a quantity slider
+✅ New "skip trade confirmation" setting
+✅ History shows server-paired trades with fees, and each expands to its entry and exit; the broker-reported daily P&L is displayed
+✅ Sounds play on entry, take-profit and stop-loss fills
+
+📱 **Phone and desktop**
+✅ Phones get a chart-first layout with a collapsible, minimizable order panel
+✅ New ongoing live P&L notification on Android, with Live Updates from Android 16
+✅ Desktop panels can be resized by dragging, and settings are regrouped
+
+🛠️ **Fixes**
+✅ Fixed the quantity slider not following the account's available capacity
+✅ Fixed unstable continuous contract resolution and missing watch-list prices while it runs
+✅ An accepted command with an unconfirmed result now reconciles against server state without being resubmitted, and settings gain "Sync account"
+
+🚧 **In development**
+Rithmic login is not finished, so every entry to it is hidden in this version
+
+⚠️ **Heads up**
+Real order placement, changes and fill receipts have not been verified against a live server. Live mode sends the commands you confirm to a real account, so check behaviour on a Demo account first
+
+⬇️ **Install**
+1️⃣ Windows x64: download `UniTrading-1.2.0-windows-x64.zip`, extract it and run `UniTrading\UniTrading.exe`. WebView2 Runtime is required; the package is not code-signed, so SmartScreen may warn on first launch
+2️⃣ Android 8.0 or later: download and install `UniTrading-1.2.0-*.apk`
+3️⃣ Windows logins and settings live in `%LOCALAPPDATA%\UniTrading`, so replacing the program folder keeps them

@@ -1,7 +1,7 @@
 # 本地构建与 CI
 
-GitHub Actions 只运行 Android R8 release 编译、产物上传、签名和 Telegram 发布。
-Windows 桌面与 iOS 的测试、应用构建移到本地。推送所有分支、PR 和手动运行仍会编译；
+GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Telegram 发布；`v*` 标签另外打包 Windows 并创建 GitHub Release。
+测试和 iOS 构建在本地完成。推送所有分支、PR 和手动运行仍会编译；
 只有 main/master 或 v* 标签的 push 会签名和发布。没有新增路径过滤或跳过 CI 标记。
 
 提交前由开发者运行本地测试；GitHub 不再提供测试通过的远端门禁，也不会验证本地报告。
@@ -134,6 +134,27 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
 不保存 Telegram 原始响应。整个配置对象不写入构建摘要或日志。
 本地失败写入日志，不自动向 Telegram 发送失败消息。GitHub CI 仍保留原有失败通知。
 本地脚本不自动推送 Git、创建 GitHub Actions artifacts 或下载 GitHub Secrets。
+
+## 发布版本
+
+1. 把改动写进 [docs/release-notes.md](release-notes.md) 的 `# vX.Y.Z` 小节，`## 简体中文` 和 `## English` 都要有；没有小节时 Release job 失败。
+2. 同时修改 `androidApp/build.gradle.kts` 的 `versionName`、`versionCode`，`composeApp/build.gradle.kts` 的 `packageVersion`，以及 `RithmicSession.DEFAULT_APP_VERSION`。
+3. 本地回归。本机 `local-build.json` 默认会签名并发 Telegram，回归时关闭：
+
+   ```powershell
+   pwsh -File scripts/build-local.ps1 -Sign:$false -NotifyTelegram:$false
+   ./gradlew.bat :rithmic-broker:desktopTest
+   python scripts/test_release_notes.py
+   ```
+
+4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
+5. 先推 `main`，确认 workflow 能解析、Android 构建通过，再推标签。两次 push 各自触发一次 CI，Telegram 会收到两条消息。
+
+标签 CI 依次构建并签名 APK、打包 Windows，全部成功后创建 GitHub Release，附带签名 APK、Windows zip 和 R8 mapping。
+标签必须等于 `v<versionName>`，否则 Android 构建失败，不会创建 Release。重跑失败的 job 时，已有 Release 的正文和附件会被覆盖更新。
+
+`createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
+打包后的应用从 `app/resources/` 读取。JDK 模块由 `nativeDistributions.modules` 声明，新增依赖后用 `:composeApp:suggestRuntimeModules` 检查。
 
 ## Mac / iOS
 
