@@ -213,6 +213,25 @@ class RithmicBrokerTest {
         assertTrue(broker.market.value.tradingReady)
     }
 
+    /** PnL updates arrive all the time on the real server; one must not invalidate a protection edit the user has open. */
+    @Test fun aPnlUpdateKeepsThePositionVersionSoProtectionStaysEditable() = runTest {
+        val server = FakeRithmicServer().apply {
+            positions += positionRow(1, 5500.0)
+            openOrders += limitEntry("S1", RithmicEnums.SELL, 1, 5490.0, originalBasket = "E1", priceType = RithmicEnums.PRICE_STOP_MARKET)
+            openOrders += limitEntry("T1", RithmicEnums.SELL, 1, 5510.0, originalBasket = "E1")
+        }
+        val session = ready(server).openSession("ACC1")
+        val before = session.state.value.positions.single()
+        server.position(1, 5500.0, pnl = "25")
+        runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals(before.version, after.version)
+        assertEquals(before.openedAtMs, after.openedAtMs)
+        val result = session.modifyProtection("req-50", before.id, before.version, 549000, 551500)
+        assertTrue(result.accepted, result.message)
+        assertEquals("T1", server.requests(Rt.REQUEST_MODIFY_ORDER).single().str(Rf.BASKET_ID))
+    }
+
     @Test fun bracketChildrenOfANetPositionAreItsProtectionAndModifyThatChild() = runTest {
         val server = FakeRithmicServer().apply {
             positions += positionRow(1, 5500.0)

@@ -882,12 +882,14 @@ class RithmicBroker(
                 stop?.let { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
                 target?.let { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
                 val id = "$aid:${p.symbol}"
-                val candidate = Position(id, p.symbol, side, checkedMultiply(abs(p.net), 100), entry, p.timeMs, stop?.triggerPrice?.let(spec.scale::units),
+                val prior = old?.positions?.firstOrNull { it.id == id }
+                // Every PnL update carries a new time; taking it as the opening time would bump the version and invalidate any open edit.
+                val opened = prior?.takeIf { it.side == side }?.openedAtMs ?: p.timeMs
+                val candidate = Position(id, p.symbol, side, checkedMultiply(abs(p.net), 100), entry, opened, stop?.triggerPrice?.let(spec.scale::units),
                     target?.price?.let(spec.scale::units), 0, version = 1, protectionEditable = editable, feesKnown = false,
                     stopLossOrderId = stop?.basketId, takeProfitOrderId = target?.basketId,
                     protectionRevision = listOf(stop?.basketId, stop?.triggerPrice, target?.basketId, target?.price).joinToString("/"),
                     protectionNote = if (editable) null else "该合约有多个括号保护单，请在 R | Trader 核对后再修改")
-                val prior = old?.positions?.firstOrNull { it.id == id }
                 candidate.copy(version = if (prior?.copy(version = 1) == candidate) prior.version else (prior?.version ?: 0) + 1)
             }
             val pending = accountOrders.mapNotNull { order ->
