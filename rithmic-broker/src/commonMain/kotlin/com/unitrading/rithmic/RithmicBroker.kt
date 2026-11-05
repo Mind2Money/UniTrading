@@ -485,9 +485,11 @@ class RithmicBroker(
         if (!connected || query.trim().length !in 1..32) return
         val text = query.trim().uppercase().removePrefix("@").removeSuffix("1!")
         if (text.isBlank()) return
-        val rows = plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) {
+        // A CONTAINS search for "ES" also returns every contract whose name says FUTURES, so a product-code query goes first.
+        val byProduct = if (Regex("^[A-Z0-9]{1,6}$").matches(text)) plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) { productSearch(text, null) }.filter { it.str(Rf.PRODUCT_CODE)?.trim() == text } else emptyList()
+        val rows = byProduct.ifEmpty { plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) {
             string(Rf.SEARCH_TEXT, text); int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
-        }
+        } }
         val matches = rows.mapNotNull { row ->
             val symbol = row.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32 } ?: return@mapNotNull null
             val exchange = row.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
@@ -532,6 +534,12 @@ class RithmicBroker(
         lock.withLock { rebuild() }
     }
 
+    private fun ProtoWriter.productSearch(productCode: String, exchange: String?) {
+        string(Rf.SEARCH_TEXT, productCode); string(Rf.PRODUCT_CODE, productCode)
+        if (!exchange.isNullOrBlank()) string(Rf.EXCHANGE, exchange)
+        int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
+    }
+
     /** Front-month resolution from the server; the continuous chart symbol trades the contract Rithmic names. */
     suspend fun refreshContinuous(symbol: String) {
         val plant = ticker ?: return
@@ -541,10 +549,17 @@ class RithmicBroker(
         try {
             val reply = withTimeout(20_000) { plant.request(Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, route.productCode); string(Rf.EXCHANGE, route.exchange); bool(Rf.NEED_UPDATES, false) } }
             val row = reply.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() || !it.str(Rf.SYMBOL).isNullOrBlank() }
-            val name = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != route.productCode }
-            if (name == null) reason = "服务器未返回主力合约" else {
-                hydrateSpecs(listOf(name to (row?.str(Rf.TRADING_EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: route.exchange)))
-                if (lock.withLock { name in specs }) resolved = name else reason = "主力合约规格无法加载"
+            var name = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != route.productCode }
+            var exchange = row?.str(Rf.TRADING_EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: route.exchange
+            if (name == null) {
+                // Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract of the product stands in.
+                val rows = plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) { productSearch(route.productCode, route.exchange) }
+                nearestContract(rows, route.productCode, route.exchange, yyyymmdd(now()))?.let { (contract, contractExchange) -> name = contract; exchange = contractExchange }
+            }
+            val contract = name
+            if (contract == null) reason = "服务器未返回主力合约" else {
+                hydrateSpecs(listOf(contract to exchange))
+                if (lock.withLock { contract in specs }) resolved = contract else reason = "主力合约规格无法加载"
             }
         } catch (_: TimeoutCancellationException) { reason = "主力合约查询超时" }
         catch (cancel: CancellationException) { throw cancel }

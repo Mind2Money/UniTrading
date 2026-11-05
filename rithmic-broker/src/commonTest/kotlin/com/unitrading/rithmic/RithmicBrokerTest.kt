@@ -267,6 +267,19 @@ class RithmicBrokerTest {
         assertEquals(41, server.requests(Rt.REQUEST_UPDATE_TARGET_LEVEL).single().int(Rf.TARGET_TICKS))
     }
 
+    /** Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract found by product code stands in. */
+    @Test fun continuousSymbolFallsBackToTheNearestExpiryWhenTheServerHasNoFrontMonth() = runTest {
+        val server = FakeRithmicServer().apply { frontMonthNoData = true }
+        val broker = broker(server)
+        broker.connect()
+        broker.searchInstruments("MES")
+        runCurrent()
+        val series = broker.instruments.single { it.isContinuous }
+        assertEquals("MESZ6", series.tradeSymbol)
+        assertEquals(null, series.tradeSymbolStatus)
+        assertTrue(server.requests(Rt.REQUEST_SEARCH_SYMBOLS).any { it.str(Rf.PRODUCT_CODE) == "MES" && it.str(Rf.EXCHANGE) == "CME" })
+    }
+
     @Test fun continuousSymbolTradesTheFrontMonthContractTheServerNames() = runTest {
         val server = FakeRithmicServer()
         val broker = broker(server)

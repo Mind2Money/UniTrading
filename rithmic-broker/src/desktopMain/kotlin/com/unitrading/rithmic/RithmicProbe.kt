@@ -75,7 +75,7 @@ private fun ProtoValue.render(): String = when (this) {
     is ProtoValue.Bytes -> {
         val text = runCatching { value.decodeToString(throwOnInvalidSequence = true) }.getOrNull()
         if (text != null && text.none { it.code < 0x20 }) "\"${text.take(200)}\""
-        else "hex:" + value.take(32).joinToString("") { "%02x".format(it) } + (if (value.size > 32) "…" else "")
+        else "hex:" + value.take(32).joinToString("") { "%02x".format(it) } + (if (value.size > 32) "..." else "")
     }
 }
 
@@ -134,7 +134,7 @@ internal class RithmicProbe(
             return
         }
         if (n <= 4) out("[$plant] <- ${message.label()} ${message.render()}")
-        else if (n == 5) out("[$plant] <- ${message.label()} … further ones only counted")
+        else if (n == 5) out("[$plant] <- ${message.label()} ... further ones only counted")
     }
 
     private suspend fun <T> step(plant: String, label: String, block: suspend () -> T): T? = try { block() }
@@ -163,7 +163,7 @@ internal class RithmicProbe(
             val parts = request(templateId, timeoutMs, build)
             out("[$name] $label -> ${parts.size} part(s), rp_code=${parts.lastOrNull()?.rpCode()}")
             parts.take(limit).forEach { out("[$name]    ${it.label()} ${it.render()}") }
-            if (parts.size > limit) out("[$name]    … ${parts.size - limit} more part(s) not shown")
+            if (parts.size > limit) out("[$name]    ... ${parts.size - limit} more part(s) not shown")
             parts
         }
 
@@ -210,8 +210,7 @@ internal class RithmicProbe(
                 if (account == null) account = rows.firstOrNull()?.str(Rf.ACCOUNT_ID)?.trim()
                 rows.firstOrNull { it.str(Rf.ACCOUNT_ID)?.trim() == account }?.let { fcmId = it.str(Rf.FCM_ID)?.trim() ?: fcmId; ibId = it.str(Rf.IB_ID)?.trim() ?: ibId }
                 out("[order] using account=$account fcm_id=$fcmId ib_id=$ibId user_type=$userType (${rows.size} account(s) listed)")
-                order.show("trade routes (310)", Rt.REQUEST_TRADE_ROUTES) { bool(Rf.SUBSCRIBE_FLAG, false) }
-                order.show("unaccepted agreements (500)", Rt.REQUEST_LIST_UNACCEPTED_AGREEMENTS) {}
+                order.show("trade routes (310)", Rt.REQUEST_TRADE_ROUTES, limit = 40) { bool(Rf.SUBSCRIBE_FLAG, false) }
             }
             val accountId = account
             fun ProtoWriter.account() { string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId ?: "") }
@@ -242,11 +241,16 @@ internal class RithmicProbe(
                         ?.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() || !it.str(Rf.SYMBOL).isNullOrBlank() }
                     symbol = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != product }
                 }
-                out("[ticker] symbol=${symbol ?: "(unresolved)"} exchange=$exchange")
-                ticker.show("search (109) '$product'", Rt.REQUEST_SEARCH_SYMBOLS, limit = 12) {
-                    string(Rf.SEARCH_TEXT, product); string(Rf.EXCHANGE, exchange)
+                val rows = ticker.show("search by product (109) $product@$exchange", Rt.REQUEST_SEARCH_SYMBOLS, limit = 8) {
+                    string(Rf.SEARCH_TEXT, product); string(Rf.PRODUCT_CODE, product); string(Rf.EXCHANGE, exchange)
                     int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
                 }
+                if (symbol == null) {
+                    // Rithmic Test has no front-month data; the adapter falls back to the nearest unexpired contract the same way.
+                    symbol = rows?.let { nearestContract(it, product, exchange, yyyymmdd(now())) }?.first
+                    out("[ticker] nearest unexpired $product contract: ${symbol ?: "(none)"}")
+                }
+                out("[ticker] symbol=${symbol ?: "(unresolved)"} exchange=$exchange")
                 if (symbol != null) {
                     ticker.show("reference data (14) $symbol", Rt.REQUEST_REFERENCE_DATA) { string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange) }
                     ticker.show("subscribe market data (100) $symbol", Rt.REQUEST_MARKET_DATA_UPDATE) {
@@ -269,7 +273,7 @@ internal class RithmicProbe(
             } else if (history != null) out("[history] no symbol: replay skipped")
 
             if (listenMs > 0) {
-                out("listening ${listenMs / 1_000}s for live updates (bbo, last trade, bars, pnl, orders)…")
+                out("listening ${listenMs / 1_000}s for live updates (bbo, last trade, bars, pnl, orders)...")
                 delay(listenMs)
             }
             if (ticker != null && symbol != null) ticker.show("unsubscribe market data (100)", Rt.REQUEST_MARKET_DATA_UPDATE) {

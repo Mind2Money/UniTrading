@@ -189,6 +189,20 @@ internal fun parseFinancials(data: ProtoMessage, previous: RithmicFinancials?, f
         data.timeMs() ?: fallbackTime)
 }
 
+/**
+ * Nearest unexpired contract of a product among search rows (template 110): the stand-in when the
+ * front-month request answers "no data", as Rithmic Test does. Placeholder expirations (20991231) are skipped.
+ */
+internal fun nearestContract(rows: List<ProtoMessage>, productCode: String, exchange: String, today: Int): Pair<String, String>? = rows.mapNotNull { row ->
+    val symbol = row.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32 } ?: return@mapNotNull null
+    val rowExchange = row.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+    if (row.str(Rf.PRODUCT_CODE)?.trim() != productCode || !rowExchange.equals(exchange, ignoreCase = true)) return@mapNotNull null
+    val type = row.str(Rf.INSTRUMENT_TYPE)?.trim()?.lowercase()
+    if (!type.isNullOrEmpty() && type != "future" && type != "futures") return@mapNotNull null
+    val expiration = row.str(Rf.EXPIRATION_DATE)?.trim()?.toIntOrNull()?.takeIf { it in 19_000_101..20_991_230 && it >= today } ?: return@mapNotNull null
+    Triple(symbol, rowExchange, expiration)
+}.minByOrNull { it.third }?.let { it.first to it.second }
+
 /** Bracket levels of an entry order, in ticks from its price, as ShowBrackets/ShowBracketStops/BracketUpdates report them. */
 internal data class BracketLevels(val stopTicks: Long? = null, val stopQuantity: Long? = null, val targetTicks: Long? = null, val targetQuantity: Long? = null)
 

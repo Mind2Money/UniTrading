@@ -26,6 +26,8 @@ internal class FakeRithmicServer : RithmicWire {
     val bracketTargets = mutableMapOf<String, Pair<Long, Long>>()   // basket → (ticks, quantity)
     val bracketStops = mutableMapOf<String, Pair<Long, Long>>()
     val knownSymbols = mutableMapOf("MESZ6" to "CME", "MESH7" to "CME")
+    /** Rithmic Test answers the front-month request with rp_code 7 "no data". */
+    var frontMonthNoData = false
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -110,8 +112,11 @@ internal class FakeRithmicServer : RithmicWire {
                     string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319"); string(Rf.IS_TRADABLE, "true")
                 }
             }
-            Rt.REQUEST_SEARCH_SYMBOLS -> parts(Rt.RESPONSE_SEARCH_SYMBOLS, knownSymbols.map { (symbol, exchange) -> { string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future") } })
-            Rt.REQUEST_FRONT_MONTH -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "MESZ6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+            Rt.REQUEST_SEARCH_SYMBOLS -> parts(Rt.RESPONSE_SEARCH_SYMBOLS, knownSymbols.map { (symbol, exchange) -> {
+                string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future")
+                string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319")
+            } })
+            Rt.REQUEST_FRONT_MONTH -> if (frontMonthNoData) reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data")) else reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "MESZ6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
             Rt.REQUEST_MARKET_DATA_UPDATE -> {
                 reply(Rt.RESPONSE_MARKET_DATA_UPDATE)
                 val (bid, ask) = quote ?: return

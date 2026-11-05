@@ -38,7 +38,7 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 | 成交 | 352 FILL、3512 | 保留最近 36 小时成交历史作为执行记录；不生成配对 `ClosedTrade` |
 | 持仓与资金 | 402/400，450/451 | 净额持仓、均价、开仓盈亏、账户余额 / 现金 / 已用购买力、当日盈亏 |
 | 合约规格 | 14 | 仅 USD 期货；`min_fprice_change` 为 tick，`single_point_value` 为每点价值 |
-| 搜索与主力 | 109、113 | `@产品代码` 连续合约映射到服务器返回的 front month |
+| 搜索与主力 | 109、113 | 搜索先按 `product_code` 过滤，无结果再用 CONTAINS；`@产品代码` 连续合约映射到服务器返回的 front month，服务器无数据（Rithmic Test 即如此）时取该产品最近未到期合约 |
 | 行情 | 100，150/151 | BBO 作为 Bid/Ask，逐笔推进正在形成的 K 线；`clear_bits` 清空一侧时撤下报价 |
 | K 线 | 202、200/250 | 分钟 / 日线回放与订阅；分钟 `marker` 为收盘时间，日线用 `YYYYMMDD` |
 | 下单 | 312 / 330 | 市价、Limit、Stop Market；带 SL/TP 时用静态括号单（tick 距离） |
@@ -76,7 +76,8 @@ $env:RITHMIC_PASSWORD = '<密码>'
 - 离线：`rithmic-broker` 40 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
 - 在线（不含凭据）：2026-11-05 对 `wss://rituz00100.rithmic.com:443` 与 `wss://rprotocol.rithmic.com:443` 的系统列表请求（模板 16/17）成功，分帧与字段编号在真实网关上成立；公开客户端里出现的 `ritpa11120.11.rithmic.com`（证书不含该主机名）与 `ritpz01000.01.rithmic.com`（连接超时）不可用。
 - 协议依据：2026-11-05 取得官方 R | Protocol API 开发包 0.90.0.0（template version 5.55，194 个 proto，Reference Guide 0.49）。用脚本逐项核对：139 个字段编号全部与官方 proto 一致（其中 10 个常量名与官方字段名不同但编号相同），模板 id 与 Reference Guide 的表一致；回复终止判定（`rq_handler_rp_code` 表示还有后续，`rp_code` 表示结束）和登录失败判定（`rp_code` 两项：错误码与文本）与指南一致。开发包 0.90 把 4 字节数量字段标为弃用并新增 8 字节 `*_64` 字段（`quantity_64 = 159017`、`fill_size_64 = 159024`、`trade_size_64 = 159008` 等）：解析优先读 `_64`，下单同时发送两种字段，与官方示例（只发 `quantity_64`）兼容。`AccountPnLPositionUpdate` 金额字段在官方 proto 中为字符串，`InstrumentPnLPositionUpdate` 的 `day_pnl` 为 double、`open_position_pnl` 为字符串，与实现一致。括号档位修改的 `level` 取当前 tick 数，与参考客户端 `async_rithmic` 的做法相同。开发包受 Rithmic 许可协议约束，不随仓库分发。
-- **未验证**：任何真实 Rithmic 系统的登录、行情、历史与下单；需在 Rithmic Test 上确认的语义：分钟 `marker` 为收盘时间、日线索引 `YYYYMMDD`、`is_tradable` 与成交历史 `transaction_type` 的字符串取值、生产系统是否接受未登记的 `app_name`。
+- Rithmic Test 实测（2026-11-05，用户以开发包账号运行探针）：四个 plant 登录成功（服务器 template_version 5.56，心跳 60 秒）；登录信息、账户、RMS（`max_order_quantity`、买卖限额、`status`）、21 条交易路由、挂单、括号、成交历史（空，`rp_code` 7）、盈亏快照与各订阅均按预期返回；账户资金字段为十进制字符串，无值时为空字符串；front month 请求（113）对 `ES@CME` 返回 7 no data；CONTAINS 搜索 `ES` 返回 927 行（名称含 FUTURES 的合约也命中）；`instrument_type` 同时出现 `Future` 与 `FUTURE`；`tp_max_session_count = 1`：同一登录只允许一个 ticker plant 会话，探针与应用不能同时连接。该次运行未取得参考数据、行情与 K 线（主力未解析时探针跳过），已加入最近到期合约回退。
+- **未验证**：Rithmic Test 上的参考数据、行情、历史 K 线与下单；Rithmic Paper Trading 的登录（需 conformance）；需确认的语义：分钟 `marker` 为收盘时间、日线索引 `YYYYMMDD`、`is_tradable` 与成交历史 `transaction_type` 的字符串取值。
 
 ```bash
 ./gradlew :rithmic-broker:desktopTest
