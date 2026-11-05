@@ -55,9 +55,9 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 - 任一 plant 断开后自动重连最多三次，重新订阅行情与 K 线，不重放交易指令；服务器强制登出（并发会话超限）同样触发。
 - 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，应用请求约四倍图表宽度的时间窗。
 
-## 只读联调探针
+## 联调探针
 
-`rithmic-broker` 带一个探针，用真实系统核对上面的协议假设。默认**只读**：只做登录、列表、回放、订阅和登出，不发送任何下单类请求。凭据只从环境变量读取，不出现在命令行、构建日志或输出中（输出里的密码会被替换为 `[redacted]`）。
+`rithmic-broker` 带一个探针，用真实系统核对上面的协议假设。它做登录、列表、回放、订阅；在 `Rithmic Test` 模拟系统上默认再跑一次下单测试（见下）。设 `RITHMIC_PROBE_READONLY=1` 则只读、不发送任何下单类请求。凭据只从环境变量读取，不出现在命令行、构建日志或输出中（输出里的密码会被替换为 `[redacted]`）。
 
 ```powershell
 $env:RITHMIC_GATEWAY = 'wss://rprotocol.rithmic.com:443'   # 省略则为 Rithmic Test 网关
@@ -67,24 +67,21 @@ $env:RITHMIC_PASSWORD = '<密码>'
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 ```
 
-可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.1.4`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `ES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）。
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.1.4`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）。
 
 探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。订单、成交、持仓推送除原始字段外，还用 `parseOrderNotification` / `parseFill` / `parsePosition` 解析后一并打印，直接核对解析是否正确。
 
-### 写入测试（仅 Rithmic Test 模拟账户）
+### 下单测试（仅 Rithmic Test 模拟账户）
 
-探针可选地下一笔测试单再撤掉，用于验证 312 / 330 / 316 / 3504 回执与订单 / 成交 / 持仓推送解析。**硬性限制**：只有系统名恰为 `Rithmic Test` 且网关为 `wss://rituz00100.rithmic.com:443` 时才执行，其他系统（含 Paper / Live）一律拒绝；且必须显式设置确认用的环境变量。
+在 `Rithmic Test` 上，探针默认下一笔测试单再撤掉，用于验证 312 下单回执、316 撤单回执与订单推送解析。不下市价单、不下括号单、不产生成交。**硬性限制**：只有系统名恰为 `Rithmic Test` 且网关为 `wss://rituz00100.rithmic.com:443` 时才执行，其他系统（含 Paper / Live）一律拒绝；设 `RITHMIC_PROBE_READONLY=1` 可关闭此测试。
 
-- `RITHMIC_PROBE_WRITE=yes-test-order`：下一笔**挂单限价单**，价格离市价 200 个 tick（买单在下方、卖单在上方，不会成交），打印下单回执和订单推送，然后撤单（316）并打印撤单推送。
-- `RITHMIC_PROBE_BRACKET=1`：把上面的挂单改成静态括号入场单（模板 330，带 40 tick 止损 / 止盈）。
-- `RITHMIC_WRITE_SIDE=buy|sell`：方向，默认 `buy`。
-- `RITHMIC_PROBE_FILL=yes-market-fill`：在挂单测试之后，再下一笔 **1 手市价单**（模拟账户立即成交），打印成交与持仓推送，然后用平仓请求（3504）平掉并确认净持仓归零。模拟账户、无真实资金，但仍会真实成交，请自行确认账户性质。
+- 下单：**买入 1 手 MES 限价单，价格 10**（远低于标普微型指数现价，只会挂单、不可能成交），打印 312 回执和订单推送（经 `parseOrderNotification` 解析），随后用 316 撤单并打印撤单推送。
+- 价格固定为 10、方向固定为买、数量固定为 1；不随行情浮动，不读取 bid/ask。
 
 ```powershell
 $env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'; $env:RITHMIC_PASSWORD = '<密码>'
-$env:RITHMIC_PROBE_WRITE = 'yes-test-order'      # 挂单 + 撤单
-# $env:RITHMIC_PROBE_FILL = 'yes-market-fill'    # 可选：市价成交 + 平仓
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
+# 只读、不下单：额外设 $env:RITHMIC_PROBE_READONLY = '1'
 ```
 
 ## 验证状态
@@ -96,7 +93,7 @@ $env:RITHMIC_PROBE_WRITE = 'yes-test-order'      # 挂单 + 撤单
   - 参考数据（14，ESZ6）：`min_qprice_change=0.25`、`min_fprice_change=25.0`、`ftoq_price=0.01`、`qtof_price=100.0`、`single_point_value=50.0`。行情（BBO bid=7708.25）是报价（q）价，据此把 tick 改用 `min_qprice_change`，每 tick 价值 = 0.25 × 50 = 12.50 USD；原先误用 `min_fprice_change`（25.0）会得到 0 位小数、每 tick 1250 USD。`is_tradable` 字段此行未出现（`presence_bits` 未置位），解析按缺省通过。
   - K 线：分钟回放首根 `marker` = 窗口起点 + 60 秒 = 该分钟收盘时间，**确认 marker 为收盘时间**；日线 `marker` 为 `YYYYMMDD`（如 20261104），**确认**。实时逐笔、BBO、分钟 `time_bar`（250）均收到。
   - `front_month`（113）对 `ES@CME` 返回 7 no data；CONTAINS 搜索 `ES` 返回 927 行（名称含 FUTURES 的也命中），按 `product_code` 搜 `ES` 返回 22 行，回退取最近未到期合约得 `ESZ6`。`instrument_type` 同时出现 `Future` 与 `FUTURE`。`tp_max_session_count = 1`：同一登录只允许一个 ticker plant 会话，探针与应用不能同时连接。
-- **未验证**：Rithmic Test 上的下单 / 改单 / 撤单回执与成交推送（探针只读）；Rithmic Paper Trading 的登录（需 conformance）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（Test 上均无数据）。
+- **未验证**：Rithmic Test 上的下单 / 撤单回执与订单推送（探针已加 MES@10 挂单 + 撤单测试，尚未实测）；改单与成交推送；Rithmic Paper Trading 的登录（需 conformance）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（Test 上均无数据）。
 
 ```bash
 ./gradlew :rithmic-broker:desktopTest

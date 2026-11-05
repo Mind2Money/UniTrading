@@ -11,28 +11,26 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * R | Protocol probe for checking the adapter against a real Rithmic system.
  *
- * By default it is read-only: it logs in, lists, replays, subscribes, prints the raw replies and
- * logs out. An opt-in write mode places and cancels a test order so the 312 / 330 / 316 / 3504
- * paths and the order / fill / position notification parsing can be checked against a live server.
- * Credentials and all order parameters come from environment variables so nothing secret ever
- * appears on a command line; the password is redacted from every printed line.
+ * It logs in, lists, replays, subscribes and prints the raw replies. On the Rithmic Test simulator it
+ * then runs one order test: place a resting LIMIT BUY of 1 MES at price 10 (far below the market, so it
+ * can only rest, never fill), read the 312 ack and the order notification, then cancel it (316) and read
+ * the cancel notification. The order link is checked with no market order and no fill. Credentials come
+ * from environment variables so nothing secret appears on a command line; the password is redacted from
+ * every printed line.
  *
  * - `RITHMIC_GATEWAY`: `wss://<host>.rithmic.com:443` (default: the Rithmic Test gateway)
  * - `RITHMIC_SYSTEM`: system name; without it the probe only prints the gateway's system list
  * - `RITHMIC_USER`, `RITHMIC_PASSWORD`
  * - `RITHMIC_APP_NAME`, `RITHMIC_APP_VERSION` (default: UniTrading / 1.1.4)
  * - `RITHMIC_ENV`: `test`, `paper` or `live` (default: by gateway)
- * - `RITHMIC_PRODUCT`, `RITHMIC_EXCHANGE` (default: ES / CME); `RITHMIC_SYMBOL` skips the front-month lookup
+ * - `RITHMIC_PRODUCT`, `RITHMIC_EXCHANGE` (default: MES / CME); `RITHMIC_SYMBOL` skips the front-month lookup
  * - `RITHMIC_ACCOUNT`: account id to inspect (default: the first account listed)
  * - `RITHMIC_PLANTS`: subset of `order,pnl,ticker,history` (default: all)
  * - `RITHMIC_LISTEN_SECONDS`: how long the live subscriptions stay open (default: 75)
+ * - `RITHMIC_PROBE_READONLY=1`: skip the order test and only read (no order is ever placed)
  *
- * Write mode (refused unless the system is exactly `Rithmic Test` on the test gateway):
- * - `RITHMIC_PROBE_WRITE=yes-test-order`: place a resting limit far from the market, then cancel it.
- *   `RITHMIC_PROBE_BRACKET=1` makes it a static bracket entry (template 330) with stop/target ticks.
- *   `RITHMIC_WRITE_SIDE=buy|sell` (default buy; a buy rests below the market, a sell above it).
- * - `RITHMIC_PROBE_FILL=yes-market-fill`: additionally send a 1-lot market order that fills, print the
- *   fill and position updates, then flatten with an exit-position request. Simulated account only.
+ * The order test places an order ONLY when the system is exactly `Rithmic Test` on the test gateway; on
+ * any other system (Paper, Live) it is refused, so it can never reach a real account.
  */
 fun main() {
     val env = System.getenv()
@@ -55,16 +53,13 @@ fun main() {
     val probe = RithmicProbe(
         gateway = validateRithmicGateway(gateway),
         credentials = credentials,
-        product = env("RITHMIC_PRODUCT") ?: "ES",
+        product = env("RITHMIC_PRODUCT") ?: "MES",
         exchange = env("RITHMIC_EXCHANGE") ?: "CME",
         symbolOverride = env("RITHMIC_SYMBOL"),
         accountOverride = env("RITHMIC_ACCOUNT"),
         plants = (env("RITHMIC_PLANTS") ?: "order,pnl,ticker,history").split(',').map { it.trim().lowercase() }.toSet(),
         listenMs = (env("RITHMIC_LISTEN_SECONDS")?.toLongOrNull() ?: 75L).coerceIn(0, 900) * 1_000,
-        writeToken = env("RITHMIC_PROBE_WRITE"),
-        fillToken = env("RITHMIC_PROBE_FILL"),
-        bracket = env("RITHMIC_PROBE_BRACKET") != null,
-        sellSide = env("RITHMIC_WRITE_SIDE")?.lowercase()?.startsWith("s") == true,
+        readOnly = env("RITHMIC_PROBE_READONLY") != null,
     )
     val code = runBlocking { probe.run() }
     System.out.flush()
@@ -122,10 +117,7 @@ internal class RithmicProbe(
     private val accountOverride: String?,
     private val plants: Set<String>,
     private val listenMs: Long,
-    private val writeToken: String? = null,
-    private val fillToken: String? = null,
-    private val bracket: Boolean = false,
-    private val sellSide: Boolean = false,
+    private val readOnly: Boolean = false,
 ) {
     private val wire = KtorRithmicWire()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -140,9 +132,6 @@ internal class RithmicProbe(
     private val tagToBasket = ConcurrentHashMap<String, String>()
     private val fills = CopyOnWriteArrayList<RithmicFill>()
     private val positions = ConcurrentHashMap<String, RithmicPosition>()
-    @Volatile private var lastBid: Double? = null
-    @Volatile private var lastAsk: Double? = null
-    @Volatile private var lastTrade: Double? = null
     @Volatile private var spec: RithmicSpec? = null
     private val routes = ConcurrentHashMap<String, String>()
 
@@ -162,11 +151,6 @@ internal class RithmicProbe(
                 if (changed || n <= 3) out("[$plant] <- ${message.label()} marker=$marker (${markerText(marker)}, marker-now=${marker - now() / 1_000}s) ${message.render()}")
                 return
             }
-            Rt.BEST_BID_OFFER -> {
-                message.double(Rf.BID_PRICE)?.takeIf { it.isFinite() && it > 0 }?.let { lastBid = it }
-                message.double(Rf.ASK_PRICE)?.takeIf { it.isFinite() && it > 0 }?.let { lastAsk = it }
-            }
-            Rt.LAST_TRADE -> message.double(Rf.TRADE_PRICE)?.takeIf { it.isFinite() && it > 0 }?.let { lastTrade = it }
             Rt.RITHMIC_ORDER_NOTIFICATION, Rt.EXCHANGE_ORDER_NOTIFICATION -> {
                 val basket = message.str(Rf.BASKET_ID)?.trim()
                 val parsed = parseOrderNotification(message, basket?.let { ordersByBasket[it] }, now())
@@ -333,9 +317,9 @@ internal class RithmicProbe(
                 }
             } else if (history != null) out("[history] no symbol: replay skipped")
 
-            // Let a couple of quotes arrive before the write test needs a fresh bid/ask.
-            if (writeToken != null) delay(3_000)
-            if (order != null && accountId != null && symbol != null) writeTest(order, credentials, fcmId, ibId, accountId, userType, symbol)
+            // Let the order-update subscription settle before the order test.
+            if (!readOnly) delay(2_000)
+            if (order != null && accountId != null && symbol != null) writeTest(order, credentials, fcmId, ibId, accountId, symbol)
 
             if (listenMs > 0) {
                 out("listening ${listenMs / 1_000}s for live updates (bbo, last trade, bars, pnl, orders)...")
@@ -361,48 +345,29 @@ internal class RithmicProbe(
         }
     }
 
-    /** Places and cancels a test order on the Rithmic Test simulator; refused anywhere else. */
-    private suspend fun writeTest(order: RithmicPlant, credentials: RithmicCredentials, fcmId: String, ibId: String, accountId: String, userType: Int, symbol: String) {
-        if (writeToken == null) return
-        if (writeToken != "yes-test-order") { out("[write] REFUSED: set RITHMIC_PROBE_WRITE=yes-test-order to run the order test"); return }
-        // Hard gate: only the simulated Rithmic Test system on its own gateway may receive orders.
+    /** Places and cancels one resting MES long limit at price 10 on the Rithmic Test simulator; refused anywhere else. No market order, no fill. */
+    private suspend fun writeTest(order: RithmicPlant, credentials: RithmicCredentials, fcmId: String, ibId: String, accountId: String, symbol: String) {
+        if (readOnly) { out("[write] read-only run (RITHMIC_PROBE_READONLY set): order test skipped"); return }
+        // Hard gate: only the simulated Rithmic Test system on its own gateway may ever receive an order.
         if (!credentials.systemName.equals("Rithmic Test", ignoreCase = true) || gateway != RithmicEnvironment.TEST.defaultGateway) {
             out("[write] REFUSED: order tests run only on system 'Rithmic Test' on ${RithmicEnvironment.TEST.defaultGateway} (got system='${credentials.systemName}', gateway=$gateway)")
             return
         }
-        val scale = spec?.scale
-        if (scale == null) { out("[write] skipped: no contract spec for $symbol"); return }
-        val reference = (if (sellSide) lastAsk else lastBid) ?: lastTrade
-        if (reference == null || reference <= 0) { out("[write] skipped: no fresh bid/ask for $symbol yet (market closed?)"); return }
-        val tick = scale.price(spec!!.instrument.tickSize)
-        val offsetTicks = 200L
-        // A buy rests far below the market and a sell far above, so the resting limit cannot fill.
-        val priceUnits = (scale.units(reference) ?: return).let { if (sellSide) it + offsetTicks * spec!!.instrument.tickSize else it - offsetTicks * spec!!.instrument.tickSize }
-        if (priceUnits <= 0) { out("[write] skipped: computed limit price is not positive"); return }
-        val limitPrice = scale.price(priceUnits)
-        val side = if (sellSide) RithmicEnums.SELL else RithmicEnums.BUY
-        val sideText = if (sellSide) "SELL" else "BUY"
+        // A buy limit at 10 is thousands of points below the S&P micro, so it can only rest, never fill.
+        val limitPrice = 10.0
         val route = routes[exchange] ?: routes.values.firstOrNull() ?: "globex"
         val tag = "probe-${now()}"
         out("[write] === ORDER TEST on Rithmic Test (simulated account $accountId) ===")
-        out("[write] reference ${if (sellSide) "ask" else "bid"}=$reference tick=$tick route=$route")
-
-        val template = if (bracket) Rt.REQUEST_BRACKET_ORDER else Rt.REQUEST_NEW_ORDER
-        out("[write] placing resting LIMIT ${if (bracket) "BRACKET " else ""}$sideText 1 $symbol @ $limitPrice ($offsetTicks ticks ${if (sellSide) "above" else "below"} the market; should rest, not fill) tag=$tag")
-        val placed = step("write", "place (${if (bracket) 330 else 312})") {
-            order.request(template, 20_000) {
+        spec?.let { out("[write] $symbol spec: tick=${it.scale.price(it.instrument.tickSize)} tickValueMicros=${it.instrument.tickValueMicrosPerLot}") }
+        out("[write] placing resting LIMIT BUY 1 $symbol @ $limitPrice (far below the market; should rest, not fill) route=$route tag=$tag")
+        val placed = step("write", "place (312)") {
+            order.request(Rt.REQUEST_NEW_ORDER, 20_000) {
                 string(Rf.USER_TAG, tag); string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId)
                 string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange)
                 int32(Rf.QUANTITY, 1); int64(Rf.QUANTITY_64, 1)
                 int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_LIMIT); double(Rf.PRICE, limitPrice)
-                int32(Rf.TRANSACTION_TYPE, side); int32(Rf.DURATION, RithmicEnums.DURATION_DAY)
+                int32(Rf.TRANSACTION_TYPE, RithmicEnums.BUY); int32(Rf.DURATION, RithmicEnums.DURATION_DAY)
                 string(Rf.TRADE_ROUTE, route); int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
-                if (bracket) {
-                    int32(Rf.USER_TYPE, userType)
-                    int32(Rf.BRACKET_TYPE, RithmicEnums.BRACKET_TARGET_AND_STOP_STATIC)
-                    int32(Rf.STOP_TICKS, 40); int32(Rf.STOP_QUANTITY, 1); int64(Rf.STOP_QUANTITY_64, 1)
-                    int32(Rf.TARGET_TICKS, 40); int32(Rf.TARGET_QUANTITY, 1); int64(Rf.TARGET_QUANTITY_64, 1)
-                }
             }.last()
         }
         val basket = placed?.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() }
@@ -425,45 +390,6 @@ internal class RithmicProbe(
         } else {
             out("[write] WARNING: no basket id captured; cancel skipped. Check for a resting order in R | Trader.")
         }
-
-        if (fillToken == "yes-market-fill") marketFillTest(order, fcmId, ibId, accountId, symbol)
-        else if (fillToken != null) out("[write] fill test skipped: set RITHMIC_PROBE_FILL=yes-market-fill to run it")
         out("[write] === ORDER TEST done ===")
-    }
-
-    /** Sends a 1-lot market order that fills, then flattens with exit-position. Simulated account only. */
-    private suspend fun marketFillTest(order: RithmicPlant, fcmId: String, ibId: String, accountId: String, symbol: String) {
-        val side = if (sellSide) RithmicEnums.SELL else RithmicEnums.BUY
-        val sideText = if (sellSide) "SELL" else "BUY"
-        val tag = "probe-fill-${now()}"
-        val fillsBefore = fills.size
-        out("[write] FILL TEST: market $sideText 1 $symbol (fills immediately on the simulator), then flatten")
-        val placed = step("write", "market place (312)") {
-            order.request(Rt.REQUEST_NEW_ORDER, 20_000) {
-                string(Rf.USER_TAG, tag); string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId)
-                string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange)
-                int32(Rf.QUANTITY, 1); int64(Rf.QUANTITY_64, 1)
-                int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_MARKET)
-                int32(Rf.TRANSACTION_TYPE, side); int32(Rf.DURATION, RithmicEnums.DURATION_DAY)
-                string(Rf.TRADE_ROUTE, routes[exchange] ?: routes.values.firstOrNull() ?: "globex"); int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
-            }.last()
-        }
-        out("[write] market ack: rp_code=${placed?.rpCode()} basket=${placed?.str(Rf.BASKET_ID)}")
-        delay(5_000)
-        out("[write] fills captured: ${fills.drop(fillsBefore).joinToString("; ") { "${it.side} ${it.quantity} @ ${it.price}" }.ifEmpty { "(none)" }}")
-        out("[write] position ${symbol}: ${positions[symbol]?.let { "net=${it.net} avg=${it.avgPrice}" } ?: "(no position update captured)"}")
-
-        out("[write] flattening with exit position (3504)")
-        val exit = step("write", "exit position (3504)") {
-            order.request(Rt.REQUEST_EXIT_POSITION, 20_000) {
-                string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId)
-                string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
-            }.last()
-        }
-        out("[write] exit ack: rp_code=${exit?.rpCode()}")
-        delay(5_000)
-        val net = positions[symbol]?.net
-        out("[write] position ${symbol} after exit: ${positions[symbol]?.let { "net=${it.net} avg=${it.avgPrice}" } ?: "(no update)"}")
-        if (net != null && net != 0L) out("[write] WARNING: position is $net, not flat. Check R | Trader and flatten manually if needed.")
     }
 }
