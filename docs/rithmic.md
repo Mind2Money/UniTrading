@@ -1,6 +1,6 @@
 # Rithmic 接入与验证
 
-> 文档类型：当前实现说明。首版接入日期 2026-11-05。已连接 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）：登录、账户、RMS、行情、历史 K 线实测通过；下单 / 撤单回执仅在离线假服务器与探针层面验证，真实账户下单链路尚未联调。
+> 文档类型：当前实现说明。首版接入日期 2026-11-05。探针已在 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）实测登录、账户、RMS、行情、历史 K 线；这些是绕过 `RithmicBroker` 的逐请求检查。应用在 Paper Trading 上能登录并显示账户，行情、图表和连续合约流程仍在联调。下单 / 撤单回执只在离线假服务器上验证，探针的下单测试尚未运行。
 >
 > 应用内入口：已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`，2026-11-06）。登录页、设置、账户切换和空合约页均可进入 Rithmic 登录。注意：Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
 
@@ -40,7 +40,7 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 | 成交 | 352 FILL、3512 | 保留最近 36 小时成交历史作为执行记录；不生成配对 `ClosedTrade` |
 | 持仓与资金 | 402/400，450/451 | 净额持仓、均价、开仓盈亏、账户余额 / 现金 / 已用购买力、当日盈亏 |
 | 合约规格 | 14 | 仅 USD 期货；tick 取 `min_qprice_change`（报价最小变动，行情/K 线/下单都用报价），`single_point_value` 为每报价点价值；`min_fprice_change` 是 f-price tick（ES 为 25.0，而报价 tick 为 0.25），不直接作 tick |
-| 搜索与主力 | 109、113 | 搜索先按 `product_code` 过滤，无结果再用 CONTAINS；`@产品代码` 连续合约映射到服务器返回的 front month，服务器无数据（Rithmic Test 即如此）时取该产品最近未到期合约 |
+| 搜索与主力 | 109、113 | 搜索先按 `product_code` 过滤，无结果再用 CONTAINS；`@产品代码` 连续合约映射到服务器返回的 front month，服务器无数据（Rithmic Test 即如此）时取该产品最近未到期合约。按产品搜索不带交易所，结果可能跨交易所：优先用账户有交易路由的交易所，被拒绝时换下一个，错误信息逐个写明交易所。Paper Trading 列出的裸产品行（如 `MES`，名称为 `Front Month for ...`）是 front month 别名，不是合约，不进入品种列表 |
 | 行情 | 100，150/151 | BBO 作为 Bid/Ask，逐笔推进正在形成的 K 线；`clear_bits` 清空一侧时撤下报价 |
 | K 线 | 202、200/250 | 分钟 / 日线回放与订阅；分钟 `marker` 为收盘时间，日线用 `YYYYMMDD` |
 | 下单 | 312 / 330 | 市价、Limit、Stop Market；带 SL/TP 时用静态括号单（tick 距离） |
@@ -71,7 +71,9 @@ $env:RITHMIC_PASSWORD = '<密码>'
 
 可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.2.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）。
 
-探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。订单、成交、持仓推送除原始字段外，还用 `parseOrderNotification` / `parseFill` / `parsePosition` 解析后一并打印，直接核对解析是否正确。
+逐请求检查绕过 `RithmicBroker`，不能证明应用流程可用。所以探针最后会退出这些连接，再用 `RithmicBroker`（应用实际使用的适配器）跑约 45 秒：连接、解析 `@<产品>` 连续合约、订阅行情、加载并跟踪 1 分钟图。这一段在任何系统上都只读，不调用下单接口；应用是否可用以 `[broker] RESULT` 这一行为准。可把 `RITHMIC_LISTEN_SECONDS` 设小以缩短前面的监听时间。
+
+探针按顺序输出：系统列表（16）→ 四个 plant 的登录回复（含心跳间隔）→ 登录信息 300、账户 302、交易路由 310、RMS 304、挂单 320、括号 338/340、最近 7 天成交 3512 → 盈亏快照 402 → 主力合约 113、搜索 109（含不带交易所的搜索，以及其他交易所的 front month 回执）、参考数据 14 → 分钟 / 日线回放 202 → 实时 BBO、逐笔、K 线、盈亏推送。每行带 UTC 时间戳；K 线行额外打印 `marker` 的两种解读与 `marker-now`，用于确认 marker 是开盘还是收盘时间。订单、成交、持仓推送除原始字段外，还用 `parseOrderNotification` / `parseFill` / `parsePosition` 解析后一并打印，直接核对解析是否正确。
 
 ### 下单测试（仅 Rithmic Test 模拟账户）
 
@@ -88,14 +90,16 @@ $env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'
 
 ## 验证状态
 
-- 离线：`rithmic-broker` 40 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
+- 离线：`rithmic-broker` 47 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
 - 在线（不含凭据）：2026-11-05 对 `wss://rituz00100.rithmic.com:443` 与 `wss://rprotocol.rithmic.com:443` 的系统列表请求（模板 16/17）成功，分帧与字段编号在真实网关上成立；公开客户端里出现的 `ritpa11120.11.rithmic.com`（证书不含该主机名）与 `ritpz01000.01.rithmic.com`（连接超时）不可用。
 - 协议依据：2026-11-05 取得官方 R | Protocol API 开发包 0.90.0.0（template version 5.55，194 个 proto，Reference Guide 0.49）。用脚本逐项核对：139 个字段编号全部与官方 proto 一致（其中 10 个常量名与官方字段名不同但编号相同），模板 id 与 Reference Guide 的表一致；回复终止判定（`rq_handler_rp_code` 表示还有后续，`rp_code` 表示结束）和登录失败判定（`rp_code` 两项：错误码与文本）与指南一致。开发包 0.90 把 4 字节数量字段标为弃用并新增 8 字节 `*_64` 字段（`quantity_64 = 159017`、`fill_size_64 = 159024`、`trade_size_64 = 159008` 等）：解析优先读 `_64`，下单同时发送两种字段，与官方示例（只发 `quantity_64`）兼容。`AccountPnLPositionUpdate` 金额字段在官方 proto 中为字符串，`InstrumentPnLPositionUpdate` 的 `day_pnl` 为 double、`open_position_pnl` 为字符串，与实现一致。括号档位修改的 `level` 取当前 tick 数，与参考客户端 `async_rithmic` 的做法相同。开发包受 Rithmic 许可协议约束，不随仓库分发。
 - Rithmic Test 实测（2026-11-05，用户以开发包账号运行探针，两次）：四个 plant 登录成功（服务器 template_version 5.56，心跳 60 秒）；登录信息、账户、RMS（`max_order_quantity=40`、买卖限额 20、`status=active`）、21 条交易路由（globex/ice/simulator）、挂单、括号、成交历史（空，`rp_code` 7）、盈亏快照与各订阅均按预期返回；账户资金字段为十进制字符串，无值时为空字符串。
   - 参考数据（14，ESZ6）：`min_qprice_change=0.25`、`min_fprice_change=25.0`、`ftoq_price=0.01`、`qtof_price=100.0`、`single_point_value=50.0`。行情（BBO bid=7708.25）是报价（q）价，据此把 tick 改用 `min_qprice_change`，每 tick 价值 = 0.25 × 50 = 12.50 USD；原先误用 `min_fprice_change`（25.0）会得到 0 位小数、每 tick 1250 USD。`is_tradable` 字段此行未出现（`presence_bits` 未置位），解析按缺省通过。
   - K 线：分钟回放首根 `marker` = 窗口起点 + 60 秒 = 该分钟收盘时间，**确认 marker 为收盘时间**；日线 `marker` 为 `YYYYMMDD`（如 20261104），**确认**。实时逐笔、BBO、分钟 `time_bar`（250）均收到。
   - `front_month`（113）对 `ES@CME` 返回 7 no data；CONTAINS 搜索 `ES` 返回 927 行（名称含 FUTURES 的也命中），按 `product_code` 搜 `ES` 返回 22 行，回退取最近未到期合约得 `ESZ6`。`instrument_type` 同时出现 `Future` 与 `FUTURE`。`tp_max_session_count = 1`：同一登录只允许一个 ticker plant 会话，探针与应用不能同时连接。
-- **未验证**：Rithmic Test 上的下单 / 撤单回执与订单推送（探针已加 MES@10 挂单 + 撤单测试，尚未实测）；改单与成交推送；Rithmic Paper Trading 的登录（需 conformance）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（Test 上均无数据）。
+- Rithmic Paper Trading 探针实测（2026-11-06，用户以 TPT 账号运行，只读）：四个 plant 登录成功，`app_name` 为 `UniTrading`，未做 conformance，fcm / ib 为 `TakeProfitTrader`。账户、RMS、交易路由（CME / CBOT / NYMEX / COMEX 均为 `simulator`）、`MES@CME` 的 front month（`MESZ6`，Test 上无此数据）、参考数据（`min_qprice_change=0.25`、`single_point_value=5.0`，每 tick 1.25 USD）、实时 BBO 与逐笔、分钟与日线回放、实时分钟 K 线均按预期返回。
+- 应用首次登录 Paper Trading（2026-11-06，用户手动）：登录、账户和资金正常，`@MES` 显示“主力无法确认：permission denied”，因此没有行情和图表。已知差异是应用按产品搜索时不带交易所并取第一行的交易所，探针固定 `CME`；是否为此原因待探针的不带交易所搜索结果确认。同时修复了连续图表收不到实时逐笔和 K 线的问题（推送用到期合约代码，订阅键是 `@MES`），并把未确认主力的重试间隔从 6 小时改为 60 秒。修复只经离线测试验证，尚未在 Paper Trading 上复测。
+- **未验证**：应用在 Paper Trading 上的连续合约、行情与图表；任何系统上的真实下单 / 改单 / 撤单回执与成交推送（探针的 MES@10 测试尚未运行）；成交历史 `transaction_type` 与 `is_tradable` 的字符串取值（均无数据）。
 
 ```bash
 ./gradlew :rithmic-broker:desktopTest

@@ -196,10 +196,11 @@ internal fun parseFinancials(data: ProtoMessage, previous: RithmicFinancials?, f
 
 /**
  * Nearest unexpired contract of a product among search rows (template 110): the stand-in when the
- * front-month request answers "no data", as Rithmic Test does. Placeholder expirations (20991231) are skipped.
+ * front-month request answers "no data", as Rithmic Test does. Placeholder expirations (20991231) and the bare
+ * product row Rithmic Paper Trading lists as a front-month alias are skipped.
  */
 internal fun nearestContract(rows: List<ProtoMessage>, productCode: String, exchange: String, today: Int): Pair<String, String>? = rows.mapNotNull { row ->
-    val symbol = row.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32 } ?: return@mapNotNull null
+    val symbol = row.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32 && it != productCode } ?: return@mapNotNull null
     val rowExchange = row.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
     if (row.str(Rf.PRODUCT_CODE)?.trim() != productCode || !rowExchange.equals(exchange, ignoreCase = true)) return@mapNotNull null
     val type = row.str(Rf.INSTRUMENT_TYPE)?.trim()?.lowercase()

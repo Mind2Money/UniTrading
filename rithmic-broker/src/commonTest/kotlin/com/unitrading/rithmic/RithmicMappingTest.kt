@@ -133,7 +133,7 @@ class RithmicMappingTest {
         fun row(symbol: String, product: String, expiration: String, type: String = "Future", exchange: String = "CME") = message {
             string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, product); string(Rf.EXPIRATION_DATE, expiration); string(Rf.INSTRUMENT_TYPE, type)
         }
-        val rows = listOf(row("ESU6", "ES", "20260918"), row("0ESZ6", "0ES", "20261218"), row("ESH7", "ES", "20270319"), row("ESZ6", "ES", "20261218"),
+        val rows = listOf(row("ES", "ES", "20261218"), row("ESU6", "ES", "20260918"), row("0ESZ6", "0ES", "20261218"), row("ESH7", "ES", "20270319"), row("ESZ6", "ES", "20261218"),
             row("ESF3", "ES", "20991231"), row("ESZ6C", "ES", "20261120", type = "FUTURE_OPTION"), row("ESZ6", "ES", "20261218", exchange = "CBOT"))
         assertEquals("ESZ6" to "CME", nearestContract(rows, "ES", "CME", 20261105))
         assertEquals("ESH7" to "CME", nearestContract(rows, "ES", "CME", 20261219))

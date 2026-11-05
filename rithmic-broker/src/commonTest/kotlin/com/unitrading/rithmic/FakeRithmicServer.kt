@@ -28,6 +28,13 @@ internal class FakeRithmicServer : RithmicWire {
     val knownSymbols = mutableMapOf("MESZ6" to "CME", "MESH7" to "CME")
     /** Rithmic Test answers the front-month request with rp_code 7 "no data". */
     var frontMonthNoData = false
+    /** Listings a product search returns ahead of [knownSymbols], as symbol to exchange. */
+    var foreignListings = emptyMap<String, String>()
+    /** Exchanges this login has no entitlement for. */
+    var deniedExchanges = emptySet<String>()
+    /** Rithmic Paper Trading lists a bare product row as a front-month alias. */
+    var frontMonthAlias = false
+    var tradeRoutesListed = true
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -78,7 +85,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_ACCOUNT_LIST -> accounts.forEachIndexed { index, account ->
                 reply(Rt.RESPONSE_ACCOUNT_LIST, terminal = index == accounts.lastIndex) { string(Rf.ACCOUNT_ID, account); string(Rf.ACCOUNT_NAME, "Account $account"); string(Rf.ACCOUNT_CURRENCY, "USD") }
             }
-            Rt.REQUEST_TRADE_ROUTES -> reply(Rt.RESPONSE_TRADE_ROUTES) { string(Rf.EXCHANGE, "CME"); string(Rf.TRADE_ROUTE, "simulator"); string(Rf.ROUTE_STATUS, "UP"); bool(Rf.IS_DEFAULT_ROUTE, true) }
+            Rt.REQUEST_TRADE_ROUTES -> reply(Rt.RESPONSE_TRADE_ROUTES) { if (tradeRoutesListed) { string(Rf.EXCHANGE, "CME"); string(Rf.TRADE_ROUTE, "simulator"); string(Rf.ROUTE_STATUS, "UP"); bool(Rf.IS_DEFAULT_ROUTE, true) } }
             Rt.REQUEST_SUBSCRIBE_ORDER_UPDATES -> reply(Rt.RESPONSE_SUBSCRIBE_ORDER_UPDATES)
             Rt.REQUEST_SUBSCRIBE_BRACKET_UPDATES -> reply(Rt.RESPONSE_SUBSCRIBE_BRACKET_UPDATES)
             Rt.REQUEST_SHOW_ORDERS -> {
@@ -105,7 +112,8 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_REFERENCE_DATA -> {
                 val symbol = m.str(Rf.SYMBOL) ?: ""
                 val exchange = knownSymbols[symbol]
-                if (exchange == null || exchange != m.str(Rf.EXCHANGE)) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("7", "no data"))
+                if (m.str(Rf.EXCHANGE) in deniedExchanges) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("13", "permission denied"))
+                else if (exchange == null || exchange != m.str(Rf.EXCHANGE)) reply(Rt.RESPONSE_REFERENCE_DATA, codes = listOf("7", "no data"))
                 else reply(Rt.RESPONSE_REFERENCE_DATA) {
                     string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.SYMBOL_NAME, "Micro E-mini S&P 500"); string(Rf.PRODUCT_CODE, "MES")
                     string(Rf.INSTRUMENT_TYPE, "Future"); string(Rf.CURRENCY, "USD")
@@ -113,11 +121,19 @@ internal class FakeRithmicServer : RithmicWire {
                     string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319"); string(Rf.IS_TRADABLE, "true")
                 }
             }
-            Rt.REQUEST_SEARCH_SYMBOLS -> parts(Rt.RESPONSE_SEARCH_SYMBOLS, knownSymbols.map { (symbol, exchange) -> {
-                string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future")
-                string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6") "20261218" else "20270319")
-            } })
-            Rt.REQUEST_FRONT_MONTH -> if (frontMonthNoData) reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data")) else reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "MESZ6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+            Rt.REQUEST_SEARCH_SYMBOLS -> {
+                val alias = if (frontMonthAlias) mapOf("MES" to "CME") else emptyMap()
+                val wanted = m.str(Rf.EXCHANGE)
+                parts(Rt.RESPONSE_SEARCH_SYMBOLS, (foreignListings + alias + knownSymbols).filter { wanted == null || it.value == wanted }.map { (symbol, exchange) -> {
+                    string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); string(Rf.PRODUCT_CODE, "MES"); string(Rf.INSTRUMENT_TYPE, "Future")
+                    string(Rf.EXPIRATION_DATE, if (symbol == "MESZ6" || symbol == "MES") "20261218" else "20270319")
+                } })
+            }
+            Rt.REQUEST_FRONT_MONTH -> when {
+                m.str(Rf.EXCHANGE) in deniedExchanges -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("13", "permission denied"))
+                frontMonthNoData -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data"))
+                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "MESZ6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+            }
             Rt.REQUEST_MARKET_DATA_UPDATE -> {
                 reply(Rt.RESPONSE_MARKET_DATA_UPDATE)
                 val (bid, ask) = quote ?: return

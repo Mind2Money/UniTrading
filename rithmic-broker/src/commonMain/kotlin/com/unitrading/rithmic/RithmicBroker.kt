@@ -62,7 +62,8 @@ class RithmicBroker(
     private var accountInfos = emptyList<AccountInfo>()
     private var tradeRoutes = emptyMap<String, String>()
     private val specs = mutableMapOf<String, RithmicSpec>()
-    private data class ContinuousRoute(val productCode: String, val exchange: String, val tradeSymbol: String?, val checkedAt: Long?, val status: String?)
+    /** [candidates] are the exchanges listing the product, routable ones first; the first that names a front month becomes [exchange]. */
+    private data class ContinuousRoute(val productCode: String, val exchange: String, val tradeSymbol: String?, val checkedAt: Long?, val status: String?, val candidates: List<String> = listOf(exchange))
     private val continuousRoutes = mutableMapOf<String, ContinuousRoute>()
     private val orders = mutableMapOf<String, RithmicOrder>()
     private val fills = mutableMapOf<String, RithmicFill>()
@@ -314,7 +315,7 @@ class RithmicBroker(
                     catch (_: Exception) { lock.withLock { problem = "重新同步失败，未重发交易指令；请重试同步或在 R | Trader 核对"; publish() } }
                 }
                 val selected = watching?.first
-                if (selected != null && lock.withLock { continuousRoutes[selected]?.let { route -> route.checkedAt == null || now() - route.checkedAt >= 6 * 3_600_000L } == true } && continuousJob?.isActive != true) {
+                if (selected != null && lock.withLock { continuousRoutes[selected]?.let { route -> route.checkedAt == null || now() - route.checkedAt >= if (route.tradeSymbol == null) 60_000L else 6 * 3_600_000L } == true } && continuousJob?.isActive != true) {
                     continuousJob = scope.launch { refreshContinuous(selected) }
                 }
             }
@@ -456,7 +457,7 @@ class RithmicBroker(
                 if (price <= 0) return@withLock
                 val series = barSubscription ?: return@withLock
                 // Daily bars follow the exchange trading date, not the UTC calendar day; only the server closes them.
-                if (series.first != symbol || series.second.minutes % 1440 == 0) return@withLock
+                if (executionSymbol(series.first) != symbol || series.second.minutes % 1440 == 0) return@withLock
                 applyTrade(series, price, size, time)
             }
             Rt.FORCED_LOGOUT -> { marketReady = false; problem = "Rithmic 服务器强制登出了行情连接"; publish() }
@@ -467,7 +468,7 @@ class RithmicBroker(
         when (message.templateId) {
             Rt.TIME_BAR -> {
                 val symbol = message.str(Rf.SYMBOL)?.trim() ?: return@withLock
-                val series = barSubscription?.takeIf { it.first == symbol } ?: return@withLock
+                val series = barSubscription?.takeIf { executionSymbol(it.first) == symbol } ?: return@withLock
                 val spec = specs[symbol] ?: return@withLock
                 val bar = candleFrom(message, spec, series.second) ?: return@withLock
                 history = history + (series to mergeBars(history[series] ?: emptyList(), listOf(bar)))
@@ -490,21 +491,27 @@ class RithmicBroker(
         val rows = byProduct.ifEmpty { plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) {
             string(Rf.SEARCH_TEXT, text); int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
         } }
+        // A product query spans every exchange, including ones this login is not entitled to, so listings it can route go first.
+        val routable = lock.withLock { tradeRoutes.keys.toSet() }
         val matches = rows.mapNotNull { row ->
             val symbol = row.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 32 } ?: return@mapNotNull null
             val exchange = row.str(Rf.EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
             val product = row.str(Rf.PRODUCT_CODE)?.trim()?.takeIf { it.isNotEmpty() }
             Triple(symbol, exchange, product)
-        }.filter { (symbol, _, product) -> symbol.startsWith(text) || product == text }.distinctBy { it.first }
-        val products = matches.mapNotNull { (_, exchange, product) -> product?.let { it to exchange } }.distinct().filter { it.first == text || matches.size <= 3 }
+        }.filter { (symbol, _, product) -> symbol != product && (symbol.startsWith(text) || product == text) } // A bare product row is the server's front-month alias.
+            .sortedByDescending { it.second in routable }.distinctBy { it.first }
+        val products = matches.mapNotNull { (_, exchange, product) -> product?.let { it to exchange } }.distinct()
+            .filter { it.first == text || matches.size <= 3 }.groupBy({ it.first }, { it.second })
         lock.withLock {
-            for ((product, exchange) in products) {
+            for ((product, exchanges) in products) {
                 val key = "@$product"
-                if (key !in continuousRoutes) continuousRoutes[key] = ContinuousRoute(product, exchange, null, null, "正在核实主力")
+                val current = continuousRoutes[key]
+                if (current == null) continuousRoutes[key] = ContinuousRoute(product, exchanges.first(), null, null, "正在核实主力", exchanges)
+                else if (current.tradeSymbol == null) continuousRoutes[key] = current.copy(candidates = exchanges)
             }
         }
-        hydrateSpecs(matches.take(60).map { it.first to it.second })
-        for ((product, _) in products) refreshContinuous("@$product")
+        hydrateSpecs(matches.filter { it.second in routable }.ifEmpty { matches }.take(60).map { it.first to it.second })
+        for (product in products.keys) refreshContinuous("@$product")
     }
 
     /** Loads reference data once per symbol; concurrent callers for the same symbol share the request. */
@@ -544,34 +551,41 @@ class RithmicBroker(
     suspend fun refreshContinuous(symbol: String) {
         val plant = ticker ?: return
         val route = lock.withLock { continuousRoutes[symbol] } ?: return
-        var resolved: String? = null
-        var reason = ""
-        try {
-            val reply = withTimeout(20_000) { plant.request(Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, route.productCode); string(Rf.EXCHANGE, route.exchange); bool(Rf.NEED_UPDATES, false) } }
-            val row = reply.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() || !it.str(Rf.SYMBOL).isNullOrBlank() }
-            var name = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != route.productCode }
-            var exchange = row?.str(Rf.TRADING_EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: route.exchange
-            if (name == null) {
-                // Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract of the product stands in.
-                val rows = plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) { productSearch(route.productCode, route.exchange) }
-                nearestContract(rows, route.productCode, route.exchange, yyyymmdd(now()))?.let { (contract, contractExchange) -> name = contract; exchange = contractExchange }
-            }
-            val contract = name
-            if (contract == null) reason = "服务器未返回主力合约" else {
-                hydrateSpecs(listOf(contract to exchange))
-                if (lock.withLock { contract in specs }) resolved = contract else reason = "主力合约规格无法加载"
-            }
-        } catch (_: TimeoutCancellationException) { reason = "主力合约查询超时" }
-        catch (cancel: CancellationException) { throw cancel }
-        catch (e: Exception) { reason = safeRithmicMessage(e.message ?: "主力合约不可用") }
+        var found: Pair<String, String>? = null
+        val failures = mutableListOf<String>()
+        for (exchange in route.candidates) {
+            try { found = frontMonthContract(plant, route.productCode, exchange) to exchange; break }
+            catch (_: TimeoutCancellationException) { failures += "$exchange：主力合约查询超时" }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (e: Exception) { failures += "$exchange：${safeRithmicMessage(e.message ?: "主力合约不可用")}" }
+        }
+        val resolved = found
+        val reason = failures.joinToString("；")
         lock.withLock {
             val current = continuousRoutes[symbol] ?: return@withLock
-            continuousRoutes[symbol] = current.copy(tradeSymbol = resolved, checkedAt = now(), status = if (resolved == null) "主力无法确认：$reason" else null)
+            continuousRoutes[symbol] = current.copy(exchange = resolved?.second ?: current.exchange, tradeSymbol = resolved?.first, checkedAt = now(), status = if (resolved == null) "主力无法确认：$reason" else null)
             if (resolved == null) problem = "$symbol 主力无法确认：$reason；连续合约下单已暂停"
-            else if (problem.startsWith("$symbol 主力无法确认")) problem = "$symbol 主力已确认：$resolved"
+            else if (problem.startsWith("$symbol 主力无法确认")) problem = "$symbol 主力已确认：${resolved.first}"
             rebuild()
         }
         if (resolved != null) { refreshQuoteWatch(); watching?.takeIf { it.first == symbol }?.let { watch(it.first, it.second) } }
+    }
+
+    /** The dated contract the server names for a product on one exchange, with its specification loaded. */
+    private suspend fun frontMonthContract(plant: RithmicPlant, productCode: String, exchange: String): String {
+        val reply = withTimeout(20_000) { plant.request(Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, productCode); string(Rf.EXCHANGE, exchange); bool(Rf.NEED_UPDATES, false) } }
+        val row = reply.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() || !it.str(Rf.SYMBOL).isNullOrBlank() }
+        var name = row?.str(Rf.TRADING_SYMBOL)?.trim()?.takeIf { it.isNotEmpty() } ?: row?.str(Rf.SYMBOL)?.trim()?.takeIf { it.isNotEmpty() && it != productCode }
+        var contractExchange = row?.str(Rf.TRADING_EXCHANGE)?.trim()?.takeIf { it.isNotEmpty() } ?: exchange
+        if (name == null) {
+            // Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract of the product stands in.
+            val rows = plant.request(Rt.REQUEST_SEARCH_SYMBOLS, 30_000) { productSearch(productCode, exchange) }
+            nearestContract(rows, productCode, exchange, yyyymmdd(now()))?.let { (contract, listed) -> name = contract; contractExchange = listed }
+        }
+        val contract = name ?: throw RithmicRemoteException("front-month", "服务器未返回主力合约")
+        hydrateSpecs(listOf(contract to contractExchange))
+        if (lock.withLock { contract !in specs }) throw RithmicRemoteException("front-month", "主力合约规格无法加载")
+        return contract
     }
 
     private fun continuousInstrument(symbol: String, route: ContinuousRoute): Instrument? {

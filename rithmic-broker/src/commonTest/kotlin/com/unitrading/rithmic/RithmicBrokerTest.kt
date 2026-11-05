@@ -280,6 +280,62 @@ class RithmicBrokerTest {
         assertTrue(server.requests(Rt.REQUEST_SEARCH_SYMBOLS).any { it.str(Rf.PRODUCT_CODE) == "MES" && it.str(Rf.EXCHANGE) == "CME" })
     }
 
+    /** A product search spans every exchange: the login's front month lives on the exchange it can route, whatever row comes first. */
+    @Test fun continuousSymbolUsesTheExchangeTheLoginCanRouteNotTheFirstListing() = runTest {
+        val server = FakeRithmicServer().apply { foreignListings = mapOf("MES2" to "XEX"); deniedExchanges = setOf("XEX"); frontMonthAlias = true }
+        val broker = broker(server)
+        broker.connect()
+        broker.searchInstruments("@MES")
+        runCurrent()
+        val series = broker.instruments.single { it.isContinuous }
+        assertEquals("MESZ6", series.tradeSymbol)
+        assertEquals(null, series.tradeSymbolStatus)
+        assertEquals(listOf("CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) })
+        assertTrue(server.requests(Rt.REQUEST_REFERENCE_DATA).none { it.str(Rf.EXCHANGE) == "XEX" || it.str(Rf.SYMBOL) == "MES" })
+        assertFalse(broker.instruments.any { it.symbol == "MES" || it.symbol == "MES2" })
+    }
+
+    @Test fun continuousSymbolTriesTheNextExchangeWhenOneIsRefused() = runTest {
+        val server = FakeRithmicServer().apply { foreignListings = mapOf("MES2" to "XEX"); deniedExchanges = setOf("XEX"); tradeRoutesListed = false }
+        val broker = broker(server)
+        broker.connect()
+        broker.searchInstruments("@MES")
+        runCurrent()
+        assertEquals("MESZ6", broker.instruments.single { it.isContinuous }.tradeSymbol)
+        assertEquals(listOf("XEX", "CME"), server.requests(Rt.REQUEST_FRONT_MONTH).map { it.str(Rf.EXCHANGE) })
+    }
+
+    @Test fun refusedFrontMonthNamesEveryExchangeItTried() = runTest {
+        val server = FakeRithmicServer().apply { foreignListings = mapOf("MES2" to "XEX"); deniedExchanges = setOf("XEX", "CME") }
+        val broker = broker(server)
+        broker.connect()
+        broker.searchInstruments("@MES")
+        runCurrent()
+        val status = broker.market.value.statusMessage
+        assertTrue("CME：permission denied" in status && "XEX：permission denied" in status, status)
+    }
+
+    /** Pushes name the dated contract; a continuous chart must follow them. */
+    @Test fun continuousChartFollowsTradesAndBarsOfItsDatedContract() = runTest {
+        val server = FakeRithmicServer()
+        val broker = broker(server)
+        broker.connect()
+        broker.searchInstruments("MES")
+        runCurrent()
+        broker.watch("@MES", Timeframe.M5)
+        runCurrent()
+        val lastClose = FAKE_TIME / 1_000 / 300 * 300 * 1_000
+        server.plant(RithmicEnums.INFRA_TICKER).push { int32(Rf.TEMPLATE_ID, Rt.LAST_TRADE); string(Rf.SYMBOL, "MESZ6"); double(Rf.TRADE_PRICE, 5502.0); int32(Rf.TRADE_SIZE, 3); int32(Rf.SSBOE, ((lastClose + 60_000) / 1_000).toInt()) }
+        runCurrent()
+        assertEquals(Candle(lastClose, 550200, 550200, 550200, 550200, 3), broker.history("@MES", Timeframe.M5).last())
+        server.plant(RithmicEnums.INFRA_HISTORY).push {
+            int32(Rf.TEMPLATE_ID, Rt.TIME_BAR); string(Rf.SYMBOL, "MESZ6"); int32(Rf.BAR_MARKER, ((lastClose + 300_000) / 1_000).toInt())
+            double(Rf.OPEN_PRICE, 5501.0); double(Rf.HIGH_PRICE, 5503.0); double(Rf.LOW_PRICE, 5500.0); double(Rf.CLOSE_PRICE, 5502.5); int64(Rf.BAR_VOLUME, 40)
+        }
+        runCurrent()
+        assertEquals(Candle(lastClose, 550100, 550300, 550000, 550250, 40), broker.history("@MES", Timeframe.M5).last())
+    }
+
     @Test fun continuousSymbolTradesTheFrontMonthContractTheServerNames() = runTest {
         val server = FakeRithmicServer()
         val broker = broker(server)

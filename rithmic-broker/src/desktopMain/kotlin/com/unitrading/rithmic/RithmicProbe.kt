@@ -1,5 +1,7 @@
 package com.unitrading.rithmic
 
+import com.unitrading.broker.Candle
+import com.unitrading.broker.Timeframe
 import kotlinx.coroutines.*
 import java.lang.reflect.Modifier
 import java.time.Instant
@@ -17,6 +19,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * the cancel notification. The order link is checked with no market order and no fill. Credentials come
  * from environment variables so nothing secret appears on a command line; the password is redacted from
  * every printed line.
+ *
+ * Those requests bypass [RithmicBroker], so they cannot show that the app works. The probe therefore ends by
+ * running the adapter itself on `@<product>`: connect, resolve the continuous symbol, quotes and the chart.
+ * That part is read-only on every system; its `[broker] RESULT` line is the answer for the app.
  *
  * - `RITHMIC_GATEWAY`: `wss://<host>.rithmic.com:443` (default: the Rithmic Test gateway)
  * - `RITHMIC_SYSTEM`: system name; without it the probe only prints the gateway's system list
@@ -61,7 +67,11 @@ fun main() {
         listenMs = (env("RITHMIC_LISTEN_SECONDS")?.toLongOrNull() ?: 75L).coerceIn(0, 900) * 1_000,
         readOnly = env("RITHMIC_PROBE_READONLY") != null,
     )
-    val code = runBlocking { probe.run() }
+    val code = runBlocking {
+        val raw = probe.run()
+        // One login holds one ticker session, so the adapter runs after the raw plants have logged out.
+        if (raw == 0 && credentials != null) probe.brokerFlow() else raw
+    }
     System.out.flush()
     // Ktor's engine threads would otherwise keep the JVM alive.
     kotlin.system.exitProcess(code)
@@ -288,6 +298,15 @@ internal class RithmicProbe(
                     string(Rf.SEARCH_TEXT, product); string(Rf.PRODUCT_CODE, product); string(Rf.EXCHANGE, exchange)
                     int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
                 }
+                // The app searches by product without an exchange: show what that lists and how each exchange answers the front-month request.
+                val listed = ticker.show("search by product (109) $product, every exchange", Rt.REQUEST_SEARCH_SYMBOLS, limit = 40) {
+                    string(Rf.SEARCH_TEXT, product); string(Rf.PRODUCT_CODE, product)
+                    int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
+                }?.mapNotNull { it.str(Rf.EXCHANGE)?.trim()?.takeIf(String::isNotEmpty) }?.distinct().orEmpty()
+                out("[ticker] exchanges listing $product: ${listed.joinToString(", ").ifEmpty { "(none)" }}; trade routes: ${routes.keys.sorted().joinToString(", ").ifEmpty { "(none)" }}")
+                (listed - exchange).forEach { other ->
+                    ticker.show("front month (113) $product@$other", Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, product); string(Rf.EXCHANGE, other); bool(Rf.NEED_UPDATES, false) }
+                }
                 if (symbol == null) {
                     // Rithmic Test has no front-month data; the adapter falls back to the nearest unexpired contract the same way.
                     symbol = rows?.let { nearestContract(it, product, exchange, yyyymmdd(now())) }?.first
@@ -342,6 +361,52 @@ internal class RithmicProbe(
                 scope.cancel()
             }
             out("done: ${open.size} plant(s) logged out")
+        }
+    }
+
+    /** Runs the adapter the app uses and reports what the app would show. It calls no order method. */
+    suspend fun brokerFlow(): Int {
+        val credentials = credentials ?: return 0
+        delay(3_000)
+        val symbol = "@" + product.uppercase()
+        val timeframe = Timeframe.M1
+        val broker = RithmicBroker(credentials, KtorRithmicWire(), CoroutineScope(SupervisorJob() + Dispatchers.Default), now)
+        out("[broker] === app adapter: $symbol ${timeframe.label}, read-only ===")
+        try {
+            broker.connect { out("[broker] $it") }
+            out("[broker] accounts: ${broker.accounts.joinToString { it.id }.ifEmpty { "(none)" }}")
+            broker.watchQuotes(setOf(symbol))
+            broker.watch(symbol, timeframe)
+            var firstLast: Candle? = null
+            var liveChange = false
+            var quoted = false
+            var routed: String? = null
+            var bars = 0
+            for (second in 3..45 step 3) {
+                delay(3_000)
+                val market = broker.market.value
+                val instrument = broker.catalog.value.instruments.firstOrNull { it.symbol == symbol }
+                routed = instrument?.tradeSymbol
+                val quote = instrument?.tradeSymbol?.let { market.quotes[it] }
+                quoted = quoted || quote != null
+                val series = broker.history(symbol, timeframe)
+                bars = series.size
+                val last = series.lastOrNull()
+                if (firstLast == null) firstLast = last else if (last != null && last != firstLast) liveChange = true
+                fun price(units: Long) = instrument?.formatPrice(units) ?: units.toString()
+                out("[broker] +${second}s connected=${market.connected} ready=${market.tradingReady} route=${routed ?: "-"} routeStatus=${instrument?.tradeSymbolStatus ?: "-"} " +
+                    "quote=${quote?.let { "${price(it.bid)}/${price(it.ask)}" } ?: "-"} bars=$bars last=${last?.let { "${utcDateTime.format(Instant.ofEpochMilli(it.timeMs))} c=${price(it.close)} v=${it.volume}" } ?: "-"} status='${market.statusMessage}'")
+            }
+            val ok = routed != null && quoted && bars > 0
+            out("[broker] RESULT ${if (ok) "OK" else "FAILED"}: route=${routed ?: "-"} quote=$quoted bars=$bars liveBarChange=$liveChange instruments=${broker.instruments.size}")
+            return if (ok) 0 else 1
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (error: Exception) {
+            out("[broker] RESULT FAILED: ${error::class.simpleName}: ${error.message}")
+            return 1
+        } finally {
+            withContext(NonCancellable) { broker.disconnect(); delay(2_000) }
+            out("[broker] disconnected")
         }
     }
 

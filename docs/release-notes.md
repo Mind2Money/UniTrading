@@ -2,11 +2,13 @@
 
 ## 简体中文
 🔌 **Rithmic 接入**
-✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。已在 Rithmic Test 与 Paper Trading（TPT 账号）实测登录、账户、行情与历史 K 线；真实账户下单回执仍未联调。Rithmic 对生产系统要求先通过 conformance，公开分发前请自行确认合规。
+✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。Paper Trading 可以登录并显示账户，行情、图表和下单仍在联调。Rithmic 对生产系统要求先通过 conformance，公开分发前请自行确认合规。
+✅ 连续合约优先使用账户可交易的交易所，失败时换下一个交易所，错误信息写明交易所；连续图表跟随到期合约的实时逐笔和 K 线
 
 ## English
 🔌 **Rithmic**
-✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Login, accounts, quotes and historical bars are verified against Rithmic Test and Paper Trading (TPT account); live order receipts are still not integration-tested. Rithmic requires conformance for production systems — confirm compliance before public distribution.
+✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Paper Trading logs in and shows the account; market data, charts and orders are still being integrated. Rithmic requires conformance for production systems, so confirm compliance before public distribution.
+✅ Continuous contracts prefer an exchange the account can trade, fall back to the next one, and name the exchange in errors; continuous charts follow live trades and bars of the dated contract
 
 # v1.2.0
 

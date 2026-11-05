@@ -39,7 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Login + market data + history verified on Rithmic Test and Paper Trading (TPT) 2026-11-06; order receipts not yet live-verified, conformance still pending for production compliance. */
+/** The app logs in to Paper Trading; its market-data flow and every order receipt are still unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
 
 @Composable
