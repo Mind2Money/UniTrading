@@ -235,10 +235,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chosenSymbol = value
             restoring = null
         }
-        /** Shows a contract from a list or an order. Its continuous series stays on the chart while it trades that contract; the dated chart has only that contract's own, thinner history. */
+        /** The continuous chart of a contract, while one trades it or last did. A dated chart has only that contract's own, thinner history. */
+        fun continuousChart(contract: String) = catalog.instruments.firstOrNull { it.isContinuous && it.priceSymbol == contract }?.symbol
         fun showContract(contract: String) {
-            if (contract != executionSymbol) showSymbol(catalog.instruments.firstOrNull { it.isContinuous && it.executionSymbol == contract }?.symbol ?: contract)
+            if (contract != executionSymbol) showSymbol(continuousChart(contract) ?: contract)
         }
+        // A chart opens by hand only from the watch list, so a dated chart outside it came from a saved list click or the start-up fallback.
+        val replacement = continuousChart(symbol).takeIf { restoring == null && !instrument.isContinuous && symbol !in watchSymbols }
+        LaunchedEffect(replacement) { replacement?.let(::showSymbol) }
         fun chooseSymbol(value: String) {
             showSymbol(value)
             focusedTrade = null

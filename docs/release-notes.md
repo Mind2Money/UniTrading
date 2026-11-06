@@ -14,7 +14,7 @@
 
 📈 **图表**
 ✅ Tradovate 的分钟周期图表向更早翻页，1 小时、4 小时图不再只有约一个月的 K 线；首次打开时 K 线会分批出现
-✅ 点击持仓、历史或挂单时，图表保持在连续合约上，不再切到历史更短的到期合约
+✅ 点击持仓、历史或挂单时，图表保持在连续合约上，不再切到历史更短的到期合约；此前停在到期合约上的图表，启动后自动回到连续合约
 
 🎨 **界面重做（Material 3）**
 ✅ 全部页面按 Material Design 3 重做：统一配色、字号、圆角和官方图标，新增应用图标与桌面窗口图标
@@ -40,7 +40,7 @@
 
 📈 **Charts**
 ✅ Tradovate intraday charts now page further back, so 1-hour and 4-hour charts no longer stop at about a month of bars; on first open the bars arrive in batches
-✅ Selecting a position, trade or order keeps the chart on the continuous contract instead of switching to the dated contract and its shorter history
+✅ Selecting a position, trade or order keeps the chart on the continuous contract instead of switching to the dated contract and its shorter history; a chart left on a dated contract returns to the continuous contract at startup
 
 🎨 **Material 3 redesign**
 ✅ Every screen follows Material Design 3: one colour, type and shape system, official icons, plus an app icon and a desktop window icon

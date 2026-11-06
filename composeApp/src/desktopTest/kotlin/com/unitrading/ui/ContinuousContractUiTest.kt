@@ -94,4 +94,43 @@ class ContinuousContractUiTest {
         compose.onNodeWithTag("position-current").performClick()
         compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
     }
+
+    private fun openSavedChart(demo: BrokerPlugin, saved: Instrument, catalog: List<Instrument>, watched: List<String>, charts: MutableList<String>): MutableStateFlow<BrokerCatalog> {
+        val changes = MutableStateFlow(BrokerCatalog(catalog, demo.accounts))
+        val plugin = object : BrokerPlugin by demo {
+            override val catalog = changes
+            override val instruments get() = changes.value.instruments
+            override fun watch(symbol: String, timeframe: Timeframe) { charts += symbol }
+            override fun history(symbol: String, timeframe: Timeframe) = demo.history(saved.symbol, timeframe)
+        }
+        val store = MemorySnapshotStore()
+        store.write("market-watch-v1", """{"${demo.descriptor.id}":[${watched.joinToString(",") { "\"$it\"" }}]}""")
+        store.write("chart-v1", """{"lastSymbols":{"${demo.descriptor.id}":"${saved.symbol}"}}""")
+        val runtime = TradingRuntime(store, listOf(plugin)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        return changes
+    }
+
+    /** A list click used to leave a dated chart saved as the one to reopen; its continuous series loads later than the contract. */
+    @Test fun savedDatedChartMovesToItsContinuousSeriesOnceTheCatalogNamesIt() {
+        val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
+        val dated = demo.instruments.first()
+        val charts = mutableListOf<String>()
+        val changes = openSavedChart(demo, dated, demo.instruments, listOf("@TEST"), charts)
+        compose.runOnIdle { assertEquals(dated.symbol, charts.last()) }
+        // Unconfirmed, as after a restart: only the last confirmed contract links the two.
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = null, quoteSymbol = dated.symbol)
+        compose.runOnIdle { changes.value = changes.value.copy(instruments = listOf(alias) + demo.instruments) }
+        compose.runOnIdle { assertEquals("@TEST", charts.last()) }
+    }
+
+    @Test fun datedChartOnTheWatchListStaysDated() {
+        val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
+        val dated = demo.instruments.first()
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol)
+        val charts = mutableListOf<String>()
+        openSavedChart(demo, dated, listOf(alias) + demo.instruments, listOf(dated.symbol, "@TEST"), charts)
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(setOf(dated.symbol), charts.toSet()) }
+    }
 }
