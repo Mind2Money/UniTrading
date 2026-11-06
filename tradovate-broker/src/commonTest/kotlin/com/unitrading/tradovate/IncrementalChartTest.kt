@@ -10,6 +10,7 @@ import kotlin.time.Instant
 
 private const val CACHE_NOW = 1_798_589_000_000L
 private const val BAR_STEP = 300_000L
+private const val NAMESPACE = "v2-demo-42"
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class IncrementalChartTest {
@@ -78,8 +79,8 @@ class IncrementalChartTest {
                     if (automatic) {
                         val start = range.str("asFarAsTimestamp")?.let { Instant.parse(it).toEpochMilliseconds() } ?: 0
                         val end = range.str("closestTimestamp")?.let { Instant.parse(it).toEpochMilliseconds() } ?: CACHE_NOW
-                        val count = range.long("asMuchAsElements")?.toInt() ?: pageLimit
-                        for (time in (serverBars ?: listOf(CACHE_NOW - BAR_STEP)).filter { it in start..end }.sorted().takeLast(count)) bars(historicalId, time)
+                        val count = minOf(range.long("asMuchAsElements")?.toInt() ?: Int.MAX_VALUE, pageLimit)
+                        page(historicalId, (serverBars ?: listOf(CACHE_NOW - BAR_STEP)).filter { it in start..end }.sorted().takeLast(count))
                         eoh()
                     }
                 }
@@ -88,6 +89,12 @@ class IncrementalChartTest {
         suspend fun bars(id: Int, time: Long, close: String = "5500.25", source: String? = null) {
             val status = source?.let { "\"s\":\"$it\"," } ?: ""
             delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,${status}"bars":[{"timestamp":"${Instant.fromEpochMilliseconds(time)}","open":5500,"high":5502,"low":5499,"close":$close,"upVolume":3,"downVolume":2}]}]}}]""")
+        }
+        /** One frame, as the real server batches a page. */
+        suspend fun page(id: Int, times: List<Long>) {
+            if (times.isEmpty()) return
+            val bars = times.joinToString(",") { time -> """{"timestamp":"${Instant.fromEpochMilliseconds(time)}","open":5500,"high":5502,"low":5499,"close":5500.25,"upVolume":3,"downVolume":2}""" }
+            delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"bars":[$bars]}]}}]""")
         }
         suspend fun eoh() { delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":$historicalId,"eoh":true}]}}]""") }
         override fun close() = delegate.close()
@@ -105,7 +112,7 @@ class IncrementalChartTest {
         val wire = Wire()
         val broker = ready(wire)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
-        assertEquals(CHART_BARS.toLong(), lastRange(wire).long("asMuchAsElements"))
+        assertEquals(CHART_BARS.toLong(), wire.charts.first().getValue("timeRange").jsonObject.long("asMuchAsElements"))
         broker.watch("MESZ6", Timeframe.M1); runCurrent()
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         assertEquals(Instant.fromEpochMilliseconds(CACHE_NOW - BAR_STEP).toString(), lastRange(wire).str("asFarAsTimestamp"))
@@ -120,9 +127,11 @@ class IncrementalChartTest {
         val wire = Wire()
         val broker = ready(wire)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val requests = wire.charts.size
+        val cancelled = wire.cancelled.toList()
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
-        assertEquals(1, wire.charts.size)
-        assertTrue(wire.cancelled.isEmpty())
+        assertEquals(requests, wire.charts.size)
+        assertEquals(cancelled, wire.cancelled)
     }
 
     @Test fun restartShowsDiskCacheBeforeTheServerReplies() = runTest {
@@ -141,7 +150,7 @@ class IncrementalChartTest {
     @Test fun unfinishedHistoryAndRealtimeNeverAdvanceTheSavedCheckpoint() = runTest {
         val store = Store()
         val seed = Candle(CACHE_NOW - 2 * BAR_STEP, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000)
-        CandleCache(store, "demo-42").write("MESZ6" to Timeframe.M5, listOf(seed))
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5, listOf(seed))
         val wire = Wire().apply { automatic = false }
         val broker = ready(wire, store)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
@@ -151,7 +160,7 @@ class IncrementalChartTest {
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         assertEquals(Instant.fromEpochMilliseconds(seed.timeMs).toString(), lastRange(wire).str("asFarAsTimestamp"))
         broker.disconnect(); runCurrent()
-        assertEquals(listOf(seed), CandleCache(store, "demo-42").read("MESZ6" to Timeframe.M5, CACHE_NOW))
+        assertEquals(listOf(seed), CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW))
     }
 
     @Test fun sharedSubscriptionIdPersistsHistoryAndPrefersRealtimeOverLateHistory() = runTest {
@@ -160,10 +169,10 @@ class IncrementalChartTest {
         val broker = ready(wire, store)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         wire.bars(wire.liveId, CACHE_NOW - BAR_STEP, "5501", "")
-        wire.bars(wire.historicalId, CACHE_NOW - BAR_STEP, "5500.25", "db"); runCurrent()
+        wire.bars(wire.liveId, CACHE_NOW - BAR_STEP, "5500.25", "db"); runCurrent()
         assertEquals(5_501_000_000L, broker.history("MESZ6", Timeframe.M5).single().close)
         broker.disconnect(); runCurrent()
-        assertEquals(5_501_000_000L, CandleCache(store, "demo-42").read("MESZ6" to Timeframe.M5, CACHE_NOW).single().close)
+        assertEquals(5_501_000_000L, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW).single().close)
     }
 
     @Test fun switchingDuringARequestCancelsTheOldSubscriptionBeforeBindingTheNewOne() = runTest {
@@ -174,8 +183,9 @@ class IncrementalChartTest {
         broker.watch("MESZ6", Timeframe.M1); runCurrent()
         assertEquals(1, wire.charts.size)
         gate.complete(Unit); runCurrent()
-        assertEquals(2, wire.charts.size)
-        assertEquals(setOf("100", "101"), wire.cancelled.toSet())
+        assertEquals(listOf(5L, 1L), wire.charts.map { it.getValue("chartDescription").jsonObject.long("elementSize") }.distinct())
+        assertEquals(1, wire.charts.count { it.getValue("chartDescription").jsonObject.long("elementSize") == 5L })
+        assertTrue(wire.cancelled.containsAll(listOf("100", "101")))
         wire.bars(100, CACHE_NOW); runCurrent()
         assertEquals(1, broker.history("MESZ6", Timeframe.M1).size)
     }
@@ -200,7 +210,7 @@ class IncrementalChartTest {
         val anchor = CACHE_NOW - 10 * BAR_STEP
         val store = Store()
         val old = List(CHART_BARS) { i -> Candle(anchor - (CHART_BARS - 1 - i) * BAR_STEP, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000) }
-        CandleCache(store, "demo-42").write("MESZ6" to Timeframe.M5, old)
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5, old)
         val wire = Wire().apply { serverBars = (0..10).map { anchor + it * BAR_STEP }; pageLimit = 3 }
         val broker = ready(wire, store)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
@@ -211,7 +221,7 @@ class IncrementalChartTest {
         assertTrue(pages.zipWithNext().all { (a, b) -> Instant.parse(a.str("closestTimestamp")!!) > Instant.parse(b.str("closestTimestamp")!!) })
         assertFalse(wire.liveId.toString() in wire.cancelled)
         broker.disconnect(); runCurrent()
-        val saved = CandleCache(store, "demo-42").read("MESZ6" to Timeframe.M5, CACHE_NOW)
+        val saved = CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW)
         assertEquals(CHART_BARS, saved.size)
         assertEquals(CACHE_NOW, saved.last().timeMs)
         assertTrue(saved.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == BAR_STEP })
@@ -221,7 +231,7 @@ class IncrementalChartTest {
         val anchor = CACHE_NOW - 10 * BAR_STEP
         val store = Store()
         val old = listOf(Candle(anchor, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000))
-        CandleCache(store, "demo-42").write("MESZ6" to Timeframe.M5, old)
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5, old)
         val wire = Wire().apply {
             serverBars = (0..10).map { anchor + it * BAR_STEP }
             pageLimit = 3; failBackfillAfter = 1
@@ -229,19 +239,19 @@ class IncrementalChartTest {
         val broker = ready(wire, store)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         advanceTimeBy(1_001); runCurrent()
-        assertEquals(old, CandleCache(store, "demo-42").read("MESZ6" to Timeframe.M5, CACHE_NOW))
+        assertEquals(old, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW))
         val attempts = wire.charts.size
         wire.failBackfillAfter = null
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         assertTrue(wire.charts.size > attempts)
         broker.disconnect(); runCurrent()
-        assertEquals(CACHE_NOW, CandleCache(store, "demo-42").read("MESZ6" to Timeframe.M5, CACHE_NOW).last().timeMs)
+        assertEquals(CACHE_NOW, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW).last().timeMs)
     }
 
     @Test fun delayedLiveSubscriptionSnapshotCannotOverwriteNewerRealtime() = runTest {
         val store = Store()
         val anchor = CACHE_NOW - BAR_STEP
-        CandleCache(store, "demo-42").write("MESZ6" to Timeframe.M5,
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5,
             listOf(Candle(anchor, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000)))
         val wire = Wire()
         val broker = ready(wire, store)
@@ -293,11 +303,93 @@ class IncrementalChartTest {
         val wire = Wire()
         val broker = ready(wire)
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val requests = wire.charts.size
         wire.dropCancelAck = true
         broker.watch("MESZ6", Timeframe.M1); runCurrent()
         advanceTimeBy(5_001); runCurrent()
         assertTrue(wire.marketClosed)
-        assertEquals(1, wire.charts.size)
+        assertEquals(requests, wire.charts.size)
         broker.disconnect(); runCurrent()
+    }
+
+    private fun range(chart: JsonObject) = chart.getValue("timeRange").jsonObject
+
+    /** The real server answers about a month per request, however many bars are asked for. */
+    @Test fun freshChartPagesBackToAFullChartAndKeepsItsLiveStream() = runTest {
+        val store = Store()
+        val wire = Wire().apply { serverBars = List(CHART_BARS + 500) { CACHE_NOW - it * BAR_STEP }; pageLimit = 700 }
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(CHART_BARS.toLong(), range(wire.charts.first()).long("asMuchAsElements"))
+        val pages = wire.charts.drop(1).map(::range)
+        assertEquals(2, pages.size)
+        val floor = Instant.fromEpochMilliseconds(chartHistoryFloor(Timeframe.M5, CACHE_NOW)).toString()
+        assertTrue(pages.all { it.str("asFarAsTimestamp") == floor && it["asMuchAsElements"] == null })
+        assertTrue(pages.zipWithNext().all { (a, b) -> Instant.parse(a.str("closestTimestamp")!!) > Instant.parse(b.str("closestTimestamp")!!) })
+        val bars = broker.history("MESZ6", Timeframe.M5)
+        assertEquals(CHART_BARS, bars.size)
+        assertEquals(CACHE_NOW, bars.last().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == BAR_STEP })
+        assertFalse(wire.liveId.toString() in wire.cancelled)
+        wire.bars(wire.liveId, CACHE_NOW, "5501"); runCurrent()
+        assertEquals(5_501_000_000L, broker.history("MESZ6", Timeframe.M5).last().close)
+        advanceTimeBy(1_001); runCurrent()
+        assertEquals(CHART_BARS, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW).size)
+    }
+
+    @Test fun freshChartStopsWhereTheServerHistoryEnds() = runTest {
+        val store = Store()
+        val wire = Wire().apply { serverBars = List(300) { CACHE_NOW - it * BAR_STEP }; pageLimit = 100 }
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(300, broker.history("MESZ6", Timeframe.M5).size)
+        val requests = wire.charts.size
+        advanceTimeBy(1_001); runCurrent()
+        assertEquals(requests, wire.charts.size)
+        assertEquals(300, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW).size)
+    }
+
+    @Test fun freshChartRequestsAreBounded() = runTest {
+        val wire = Wire().apply { serverBars = List(CHART_BARS) { CACHE_NOW - it * BAR_STEP }; pageLimit = 10 }
+        val broker = ready(wire)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(MAX_FRESH_HISTORY_PAGES, wire.charts.size)
+        assertEquals(wire.charts.size * 10 - (wire.charts.size - 1), broker.history("MESZ6", Timeframe.M5).size)
+    }
+
+    /** A cached series only grows at its end, so a partial one would stay partial. */
+    @Test fun freshChartThatFailsPartWayStaysOutOfTheCacheAndStartsOver() = runTest {
+        val store = Store()
+        val wire = Wire().apply { serverBars = List(CHART_BARS) { CACHE_NOW - it * BAR_STEP }; pageLimit = 700; failBackfillAfter = 1 }
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertTrue(broker.history("MESZ6", Timeframe.M5).size > 700)
+        assertTrue("更早的历史" in broker.market.value.statusMessage, broker.market.value.statusMessage)
+        advanceTimeBy(1_001); runCurrent()
+        assertTrue(store.values.isEmpty())
+        wire.failBackfillAfter = null
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(CHART_BARS, broker.history("MESZ6", Timeframe.M5).size)
+        assertTrue(wire.charts.count { range(it)["asMuchAsElements"] != null } == 2)
+    }
+
+    @Test fun switchingAwayStopsPagingTheOldChart() = runTest {
+        val wire = Wire().apply { serverBars = List(CHART_BARS) { CACHE_NOW - it * BAR_STEP }; pageLimit = 700; automatic = false }
+        val broker = ready(wire)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.bars(wire.historicalId, CACHE_NOW - BAR_STEP)
+        broker.watch("MESZ6", Timeframe.M1); runCurrent()
+        wire.eoh(); runCurrent()
+        assertEquals(1, wire.charts.count { it.getValue("chartDescription").jsonObject.long("elementSize") == 5L })
+    }
+
+    /** Entries from before paging hold about a month of intraday bars and would never deepen. */
+    @Test fun seriesCachedBeforePagingIsReadAgain() = runTest {
+        val store = Store()
+        CandleCache(store, "demo-42").write("MESZ6" to Timeframe.M5, listOf(Candle(CACHE_NOW - 2 * BAR_STEP, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000)))
+        val wire = Wire()
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertEquals(CHART_BARS.toLong(), range(wire.charts.first()).long("asMuchAsElements"))
     }
 }

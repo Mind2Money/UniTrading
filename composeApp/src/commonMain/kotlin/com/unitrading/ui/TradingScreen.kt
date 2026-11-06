@@ -235,6 +235,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chosenSymbol = value
             restoring = null
         }
+        /** Shows a contract from a list or an order. Its continuous series stays on the chart while it trades that contract; the dated chart has only that contract's own, thinner history. */
+        fun showContract(contract: String) {
+            if (contract != executionSymbol) showSymbol(catalog.instruments.firstOrNull { it.isContinuous && it.executionSymbol == contract }?.symbol ?: contract)
+        }
         fun chooseSymbol(value: String) {
             showSymbol(value)
             focusedTrade = null
@@ -287,7 +291,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 perform { session.modifyProtection(requestId(), position.id, position.version, sl, tp) }
                 return
             }
-            if (position.symbol != executionSymbol) showSymbol(position.symbol)
+            showContract(position.symbol)
             selectedPositionId = position.id
             pendingProtection = null
             protection = ProtectionEdit(position, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
@@ -311,7 +315,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 perform { session.modifyOrderProtection(requestId(), current.id, current.version, sl, tp) }
                 return
             }
-            if (current.request.symbol != executionSymbol) showSymbol(current.request.symbol)
+            showContract(current.request.symbol)
             protection = null
             pendingEdit = null
             showDraft = false
@@ -353,7 +357,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 return
             }
             val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
-            if (current.request.symbol != executionSymbol) showSymbol(current.request.symbol)
+            showContract(current.request.symbol)
             protection = null
             pendingProtection = null
             showDraft = false
@@ -486,8 +490,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> focusedExecution = null; showSymbol(p.symbol); selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> focusedExecution = null; showSymbol(t.symbol); focusedTrade = t; selectedPositionId = null },
+                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
+                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             })
@@ -539,8 +543,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             2 -> Column(Modifier.weight(1f).background(colors.Surface)) {
                                 PageTopBar("交易", session.account.name, actions = { barStatus() })
                                 TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                    onSelectPosition = { p -> focusedExecution = null; showSymbol(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                    onSelectTrade = { t -> focusedExecution = null; showSymbol(t.symbol); focusedTrade = t; mobileTab = 1 },
+                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1 },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account) })
                             }

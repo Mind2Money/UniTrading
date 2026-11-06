@@ -236,6 +236,29 @@ class CandleCacheTest {
         }, chartBackfillRange(anchor, closest))
     }
 
+    @Test fun freshHistoryFloorCoversFourChartWidthsAndStaysPositive() {
+        assertEquals(CACHE_TIME - 8_000 * 60_000L, chartHistoryFloor(Timeframe.M1, CACHE_TIME))
+        assertEquals(0, chartHistoryFloor(Timeframe(Timeframe.MAX_MINUTES), 1_000))
+    }
+
+    @Test fun freshLoadCompletesAtItsFloorOrWhenThePageAddsNothingOlder() {
+        val floor = CACHE_TIME - 4 * CACHE_STEP
+        val reached = ChartLoad(emptyList(), floor)
+        reached.accept(listOf(candle(floor), candle(CACHE_TIME)), historical = true, endOfHistory = true, validPacket = true)
+        assertTrue(reached.complete)
+        assertNull(reached.nextPageBefore)
+
+        val paging = ChartLoad(emptyList(), floor)
+        paging.accept(listOf(candle(CACHE_TIME - CACHE_STEP)), historical = true, endOfHistory = true, validPacket = true)
+        assertFalse(paging.complete)
+        assertEquals(CACHE_TIME - CACHE_STEP, paging.nextPageBefore)
+        paging.beginPage()
+        paging.accept(listOf(candle(CACHE_TIME - CACHE_STEP)), historical = true, endOfHistory = true, validPacket = true)
+        assertTrue(paging.complete)
+        assertFalse(paging.failed)
+        assertNull(paging.nextPageBefore)
+    }
+
     @Test fun historicalChunksStayIncompleteUntilEndOfHistory() {
         val cached = candle(CACHE_TIME - 2 * CACHE_STEP)
         val first = candle(CACHE_TIME - CACHE_STEP)

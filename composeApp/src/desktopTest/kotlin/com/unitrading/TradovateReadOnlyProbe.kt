@@ -8,8 +8,34 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentHashMap
 
 /** Explicit diagnostics only. Trading writes are always refused, including when dryrun is enabled. */
-internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false, private val captureDailyEvidence: Boolean = false) : TradovateWire {
+internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = false, private val captureDailyEvidence: Boolean = false, private val logChartPages: Boolean = false) : TradovateWire {
     private val delegate = KtorTradovateWire()
+    /** Bars seen per chart id since its last end-of-history, as count and oldest/newest timestamp. */
+    private val chartPages = ConcurrentHashMap<String, Triple<Int, String, String>>()
+    private fun logChartPackets(text: String) {
+        val frames = runCatching { Json.parseToJsonElement(text.drop(1)).jsonArray }.getOrNull() ?: return
+        for (value in frames) {
+            val frame = value as? JsonObject ?: continue
+            val data = frame["d"] as? JsonObject
+            if ((frame["e"] as? JsonPrimitive)?.content != "chart") {
+                if (data != null && ("historicalId" in data || "errorText" in data || "p-time" in data))
+                    println("CHART_REPLY " + JsonObject(data.filterKeys { it in setOf("historicalId", "realtimeId", "mode", "errorText", "p-time", "p-message") }))
+                continue
+            }
+            for (item in (data?.get("charts") as? JsonArray).orEmpty()) {
+                val chart = item as? JsonObject ?: continue
+                val id = (chart["id"] as? JsonPrimitive)?.content ?: continue
+                val times = (chart["bars"] as? JsonArray).orEmpty().mapNotNull { ((it as? JsonObject)?.get("timestamp") as? JsonPrimitive)?.content }
+                if (times.isNotEmpty()) chartPages.merge(id, Triple(times.size, times.min(), times.max())) { old, new ->
+                    Triple(old.first + new.first, minOf(old.second, new.second), maxOf(old.third, new.third))
+                }
+                if ((chart["eoh"] as? JsonPrimitive)?.booleanOrNull == true) {
+                    val page = chartPages.remove(id)
+                    println("CHART_PAGE id=$id bars=${page?.first ?: 0} oldest=${page?.second ?: "-"} newest=${page?.third ?: "-"}")
+                }
+            }
+        }
+    }
     private fun evidence(event: String, data: JsonElement) {
         if (captureDailyEvidence) println("DAILY_DIAGNOSTIC_EVIDENCE " + asciiJson(buildJsonObject {
             put("event", event); put("data", data)
@@ -90,6 +116,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
                 if (route == "md/getChart") {
                     val body = Json.parseToJsonElement(text.substringAfter("\n\n")).jsonObject
                     val description = body["chartDescription"] as? JsonObject
+                    if (logChartPages) println("CHART_REQUEST " + JsonObject(body.filterKeys { it in setOf("symbol", "timeRange") }) + " " + description?.get("underlyingType") + "/" + description?.get("elementSize"))
                     if (description?.get("underlyingType")?.jsonPrimitive?.content == "DailyBar" && description["elementSize"]?.jsonPrimitive?.intOrNull == 1) {
                         dailyVolumeRequests.incrementAndGet()
                         if (captureDailyEvidence) {
@@ -104,6 +131,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
             }
             override suspend fun receive() = socket.receive().also { text ->
                 inspectShape(text)
+                if (logChartPages && text?.startsWith("a") == true) logChartPackets(text)
                 if (captureDailyEvidence && text?.startsWith("a") == true) {
                     val frames = runCatching { Json.parseToJsonElement(text.drop(1)).jsonArray }.getOrNull()
                     for (item in frames.orEmpty()) {
@@ -194,9 +222,69 @@ private suspend fun dailyDiagnostic(): Boolean {
     return resolved && wire.refusedWrites == 0
 }
 
+private suspend fun savedDemoSession(): TradovateSession {
+    val saved = requireNotNull(DesktopCredentialStore().read()) { "No saved login" }
+    val json = Json { ignoreUnknownKeys = true }
+    return requireNotNull(json.parseToJsonElement(saved).jsonObject["sessions"]?.jsonArray?.map {
+        json.decodeFromJsonElement(TradovateSession.serializer(), it)
+    }?.firstOrNull { it.environment == TradovateEnvironment.DEMO }) { "No saved Demo login" }
+}
+
+/** Prints each history page of a few charts with the saved Demo session: how deep a chart gets, and in how many requests. */
+private suspend fun chartHistoryDepth(): Boolean {
+    val wire = ReadOnlyProbeWire(logChartPages = true)
+    var broker: TradovateBroker? = null
+    var verified = true
+    try {
+        println("CHART_HISTORY: saved Demo session; all order endpoints including dryrun are blocked.")
+        val connected = TradovateBroker(savedDemoSession(), wire)
+        broker = connected
+        withTimeout(90_000) { connected.connect { } }
+        for ((symbol, minutes) in listOf("@YM" to 240, "@YM" to 60, "@MES" to 15, "@MES" to 1440, "YMZ6" to 60)) {
+            val timeframe = Timeframe(minutes)
+            val started = System.nanoTime()
+            withTimeout(60_000) { connected.searchInstruments(symbol) }
+            connected.watch(symbol, timeframe)
+            var last = -1
+            var stable = 0
+            withTimeoutOrNull(90_000) {
+                while (stable < 10) {
+                    delay(500)
+                    val bars = connected.history(symbol, timeframe).size
+                    if (bars == last && bars > 0) stable++ else stable = 0
+                    last = bars
+                }
+            }
+            val bars = connected.history(symbol, timeframe)
+            verified = verified && bars.isNotEmpty() && wire.refusedWrites == 0
+            println("CHART_HISTORY_RESULT " + asciiJson(buildJsonObject {
+                put("symbol", symbol); put("minutes", minutes); put("bars", bars.size)
+                put("oldest", bars.firstOrNull()?.let { kotlin.time.Instant.fromEpochMilliseconds(it.timeMs).toString() })
+                put("newest", bars.lastOrNull()?.let { kotlin.time.Instant.fromEpochMilliseconds(it.timeMs).toString() })
+                put("seconds", (System.nanoTime() - started) / 1_000_000_000); put("status", connected.market.value.statusMessage)
+                put("refusedWriteRequests", wire.refusedWrites); put("sentOrderRequests", 0)
+            }))
+        }
+    } catch (error: Exception) {
+        verified = false
+        println("CHART_HISTORY_ERROR " + asciiJson(buildJsonObject {
+            put("errorType", error.javaClass.simpleName); put("message", (error.message ?: "").take(200)); put("sentOrderRequests", 0)
+        }))
+    } finally {
+        broker?.disconnect()
+        if (broker == null) wire.close()
+        delay(200)
+    }
+    return verified
+}
+
 fun main(args: Array<String>) = runBlocking {
     if (args.contentEquals(arrayOf("--demo-daily-diagnostic-read-only"))) {
         if (!dailyDiagnostic()) kotlin.system.exitProcess(2)
+        return@runBlocking
+    }
+    if (args.contentEquals(arrayOf("--demo-chart-history-read-only"))) {
+        if (!chartHistoryDepth()) kotlin.system.exitProcess(2)
         return@runBlocking
     }
     val continuous = args.contentEquals(arrayOf("--demo-continuous-read-only"))
@@ -209,11 +297,7 @@ fun main(args: Array<String>) = runBlocking {
         println("READ_ONLY_PROBE: Demo only; no order endpoints; credentials remain in memory.")
         val session = if (continuous) {
             phase = "saved-demo-session"
-            val saved = requireNotNull(DesktopCredentialStore().read()) { "No saved login" }
-            val json = Json { ignoreUnknownKeys = true }
-            requireNotNull(json.parseToJsonElement(saved).jsonObject["sessions"]?.jsonArray?.map {
-                json.decodeFromJsonElement(TradovateSession.serializer(), it)
-            }?.firstOrNull { it.environment == TradovateEnvironment.DEMO }) { "No saved Demo login" }
+            savedDemoSession()
         } else withTimeout(180_000) {
             DesktopTradovateLogin().signIn(TradovateEnvironment.DEMO) { status -> phase = phaseCode(status); println("STATUS $phase") }
         }

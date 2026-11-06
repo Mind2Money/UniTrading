@@ -60,4 +60,38 @@ class ContinuousContractUiTest {
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.runOnIdle { assertNull(submitted) }
     }
+
+    /** A dated chart has only that contract's own history, so a list row must not move the chart off its continuous series. */
+    @Test fun positionRowsShowTheContinuousChartOfTheirContract() {
+        val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
+        val dated = demo.instruments[0]
+        val old = demo.instruments[1]
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol)
+        val changes = MutableStateFlow(BrokerCatalog(listOf(alias) + demo.instruments, demo.accounts))
+        val rows = listOf(Position("current", dated.symbol, Side.BUY, 100, 110000, 1_798_589_000_000L, marginMicros = 0),
+            Position("old", old.symbol, Side.BUY, 100, 110000, 1_798_589_000_000L, marginMicros = 0))
+        var chartSymbol: String? = null
+        val plugin = object : BrokerPlugin by demo {
+            override val catalog = changes
+            override val instruments get() = changes.value.instruments
+            override fun watch(symbol: String, timeframe: Timeframe) { chartSymbol = symbol }
+            override fun history(symbol: String, timeframe: Timeframe) = demo.history(dated.symbol, timeframe)
+            override fun openSession(accountId: String): AccountSession {
+                val session = demo.openSession(accountId)
+                return object : AccountSession by session {
+                    override val state = MutableStateFlow(session.state.value.copy(positions = rows))
+                }
+            }
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
+        compose.onNodeWithTag("position-current").performClick()
+        compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
+        // A contract no continuous series trades any more has only its dated chart.
+        compose.onNodeWithTag("position-old").performClick()
+        compose.runOnIdle { assertEquals(old.symbol, chartSymbol) }
+        compose.onNodeWithTag("position-current").performClick()
+        compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
+    }
 }

@@ -79,7 +79,8 @@ class TradovateBroker(
     private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
-    private val candleCache = CandleCache(candleCacheStore, "${credentials.environment.wire}-${credentials.userId}")
+    // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
+    private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}")
     private val cachedHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
     private val dirtyHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
     private var cacheSaveJob: Job? = null
@@ -822,7 +823,7 @@ class TradovateBroker(
                     withContext(NonCancellable) {
                         cancelCharts(socket)
                         if (watching != series || stopped || !marketReady) return@withContext
-                        val load = ChartLoad(cached)
+                        val load = ChartLoad(cached, chartHistoryFloor(timeframe, now()))
                         requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false), chartTimeRange(cached))
                         if (cached.isNotEmpty() && watching == series && !stopped) {
                             lock.withLock { load.beginPage() }
@@ -934,18 +935,19 @@ class TradovateBroker(
                 val socket = marketSocket ?: return@launch
                 if (stopped || !marketReady || watching != page.series || lock.withLock { charts.values.none { it.page === page } }) return@launch
                 withContext(NonCancellable) {
-                    cancelCharts(socket, page)
+                    // A fresh chart's first page also carries the live stream.
+                    if (page.historyOnly) cancelCharts(socket, page)
                     if (!marketReady) return@withContext
                     val before = lock.withLock { page.load.nextPageBefore }
                     if (before != null && !page.load.failed && watching == page.series && !stopped) {
                         lock.withLock { page.load.beginPage() }
                         try {
                             requestChart(socket, ChartPage(page.series, page.load, page.startedAt, liveOnly = false, historyOnly = true),
-                                chartBackfillRange(requireNotNull(page.load.anchor), before))
+                                chartBackfillRange(requireNotNull(page.load.floor), before))
                         } catch (_: Exception) {
                             lock.withLock {
                                 page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
-                                problem = "历史补取失败，已保留原缓存；可重新选择品种或周期重试"
+                                problem = if (page.load.anchor != null) "历史补取失败，已保留原缓存；可重新选择品种或周期重试" else "更早的历史读取失败，可重新选择品种或周期重试"
                                 publish()
                             }
                         }
@@ -1046,7 +1048,7 @@ class TradovateBroker(
         if (!page.ended && chart.bool("eoh") == true) {
             page.ended = true
             if (page.load.failed) problem = "历史补取未接上缓存，已保留原缓存；可重新选择品种或周期重试"
-            if (page.historyOnly) continueChartHistory(page)
+            if (page.historyOnly || !page.liveOnly && page.load.nextPageBefore != null) continueChartHistory(page)
         }
     }
 
