@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 # Read-only: signing and the Telegram upload need secrets, not repository writes.
-# Only the release job, which runs for v* tags, writes to the repository.
+# Only the v* tag jobs write: release publishes, notify-discord records its send.
 permissions:
   contents: read
 
@@ -26,8 +26,8 @@ env:
 
 jobs:
   # Tests and iOS builds run locally via scripts/build-local.ps1. Hosted runners
-  # produce and deliver the Android release; a v* tag also packages Windows and
-  # publishes the GitHub Release.
+  # produce and deliver the Android release; a v* tag also packages Windows,
+  # publishes the GitHub Release and announces it on Discord.
   # ─── Android ────────────────────────────────────────────────────────────────
   # Every branch and pull request builds the R8-minified release APK; only
   # main/master and v* tag pushes go on to signing and Telegram.
@@ -303,6 +303,28 @@ jobs:
           fi
           gh release upload "$TAG" --clobber \
             "dist/${APK_NAME}.apk" "dist/UniTrading-${VERSION_NAME}-windows-x64.zip" "$mapping"
+
+  # ─── Discord（仅 v* tag）─────────────────────────────────────────────────────
+  # Runs after the release, so the link in the message already downloads. A failure
+  # here leaves the release published; re-running this job sends the message.
+  notify-discord:
+    name: Discord 公告
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: 发送公告
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        run: python3 scripts/release-discord.py "$GITHUB_REF_NAME"
 
   # ─── Telegram（main/master 与 v* tag 的 push）────────────────────────────────
   notify-telegram:

@@ -1,6 +1,6 @@
 # 本地构建与 CI
 
-GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Telegram 发布；`v*` 标签另外打包 Windows 并创建 GitHub Release。
+GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Telegram 发布；`v*` 标签另外打包 Windows、创建 GitHub Release 并发送 Discord 公告。
 测试和 iOS 构建在本地完成。推送所有分支、PR 和手动运行仍会编译；
 只有 main/master 或 v* 标签的 push 会签名和发布。没有新增路径过滤或跳过 CI 标记。
 
@@ -145,6 +145,7 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
    pwsh -File scripts/build-local.ps1 -Sign:$false -NotifyTelegram:$false
    ./gradlew.bat :rithmic-broker:desktopTest
    python scripts/test_release_notes.py
+   python scripts/test_release_discord.py
    ```
 
 4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
@@ -155,6 +156,33 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
 
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
 打包后的应用从 `app/resources/` 读取。JDK 模块由 `nativeDistributions.modules` 声明，新增依赖后用 `:composeApp:suggestRuntimeModules` 检查。
+
+### Discord 公告
+
+Release 成功后，`notify-discord` job 用 `DISCORD_RELEASE_WEBHOOK` secret 发一条消息：版本号、Release 链接和该版本的 `## 简体中文` 小节，不带英文和提交记录。
+内容超过 Discord 上限时发节选，完整说明作为附件。发版前可以预览：
+
+```powershell
+python scripts/release-discord.py vX.Y.Z --dry-run
+```
+
+未配置 secret 或 Discord 拒收（4xx）时 job 失败，已发布的 Release 不受影响；修好后重跑这个 job。
+
+仓库公开，Release 附件人人可见，所以发送记录存成标签提交上的 commit status（context `discord-announcement/vX.Y.Z`），不上传回执文件：
+
+| 状态 | 含义 | 重跑时 |
+|------|------|--------|
+| `success` | 已发送，description 含消息 ID | 跳过 |
+| `failure` | Discord 拒收，消息未发出 | 重新发送 |
+| `pending` | 已开始发送但未确认，消息可能已到频道 | 报错，不发送 |
+
+`pending` 要先看频道：已有公告就把状态写成 `success`，没有就写成 `failure` 再重跑：
+
+```bash
+gh api --method POST "repos/Mind2Money/UniTrading/statuses/$(git rev-parse 'vX.Y.Z^{commit}')" -f state=failure -f context=discord-announcement/vX.Y.Z -f description='Checked the channel by hand'
+```
+
+记录跟随提交：同一版本号的标签改打到新提交后，会再发一次公告。
 
 ## Mac / iOS
 
