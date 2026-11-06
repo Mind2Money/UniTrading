@@ -2,7 +2,7 @@
 
 > 文档类型：当前实现说明。首版接入日期 2026-11-05。探针已在 Rithmic Test 与 Rithmic Paper Trading（TPT 账号）实测登录、账户、RMS、行情、历史 K 线。`RithmicBroker` 的只读流程也已在 Paper Trading 上通过：连接、`@MES` 解析、实时报价和 1 分钟图。用户已在应用内完成下单、改单和撤单，并确认行情、图表和历史配对。平仓只在离线假服务器上验证，探针的下单测试尚未运行。
 >
-> 应用内入口：已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`，2026-11-06）。登录页、设置、账户切换和空合约页均可进入 Rithmic 登录。注意：Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
+> 应用内入口：已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`，2026-11-06）。登录页、设置、账户切换和空合约页均可进入 Rithmic 登录。注意：Rithmic 要求接入生产系统（含 Paper Trading）前通过 conformance，UniTrading 尚未通过。
 
 ## 接入方式
 
@@ -14,7 +14,7 @@ Rithmic 没有网页登录，应用通过 **R | Protocol API™**（WebSocket + 
 4. 输入 Rithmic 登录 ID 与密码。勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同写入 DPAPI / Keystore 加密文件，下次启动自动恢复；不勾选则仅本次运行有效。
 5. 登录成功后账户、行情和历史由服务器提供，连接后不会自动下单。
 
-Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FCM 系统）前通过 conformance 审核，且 `app_name` 需要在 Rithmic 登记；R | Protocol API 不提供给带实时行情的纸面交易试用账户（见 [rithmic.com FAQ](https://www.rithmic.com/faq)）。开发者可在 [signup.rithmic.com/sdk](https://signup.rithmic.com/sdk/sdk.html) 申请 R | Protocol 开发包。本实现默认 `app_name = UniTrading`、`app_version = 1.2.0`、`template_version = 5.55`（官方开发包 0.90.0.0 示例所用）。
+Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FCM 系统）前通过 conformance 审核，且 `app_name` 需要在 Rithmic 登记；R | Protocol API 不提供给带实时行情的纸面交易试用账户（见 [rithmic.com FAQ](https://www.rithmic.com/faq)）。开发者可在 [signup.rithmic.com/sdk](https://signup.rithmic.com/sdk/sdk.html) 申请 R | Protocol 开发包。本实现默认 `app_name = UniTrading`、`app_version = 1.3.0`、`template_version = 5.55`（官方开发包 0.90.0.0 示例所用）。
 
 ## 协议实现
 
@@ -69,7 +69,7 @@ $env:RITHMIC_PASSWORD = Read-Host 'Rithmic 密码' -MaskInput  # PowerShell 7；
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 ```
 
-可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.2.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）、`RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`（只跑连续历史检查：只登录行情和历史 plant，打印合约列表、别名回放、最近 52 个月份合约的日线、分钟数据深度和回放截断情况）。
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.3.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）、`RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`（只跑连续历史检查：只登录行情和历史 plant，打印合约列表、别名回放、最近 52 个月份合约的日线、分钟数据深度和回放截断情况）。
 
 逐请求检查绕过 `RithmicBroker`，不能证明应用流程可用。所以探针最后会退出这些连接，再用 `RithmicBroker`（应用实际使用的适配器）跑约 45 秒：连接、解析 `@<产品>` 连续合约、订阅行情、加载并跟踪 1 分钟图。这一段在任何系统上都只读，不调用下单接口；应用是否可用以 `[broker] RESULT` 这一行为准。可把 `RITHMIC_LISTEN_SECONDS` 设小以缩短前面的监听时间。
 

@@ -113,7 +113,7 @@ compose.desktop {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.2.0"
+            packageVersion = "1.3.0"
             // jlink keeps only listed modules; `suggestRuntimeModules` lists what the jars need beyond the defaults.
             modules("java.instrument", "java.management", "jdk.unsupported")
             windows { iconFile.set(project.file("icons/unitrading.ico")) }

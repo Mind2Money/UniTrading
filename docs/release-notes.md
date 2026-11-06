@@ -1,8 +1,13 @@
 # Unreleased
 
+# v1.3.0
+
 ## 简体中文
+
+🎉 UniTrading 更新至 **v1.3.0**！新增 Rithmic 接入，全部界面按 Material 3 重做。
+
 🔌 **Rithmic 接入**
-✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。Paper Trading 的登录、账户、行情、图表、下单、改单、撤单和成交配对已实测，平仓尚未验证。Rithmic 对生产系统要求先通过 conformance，公开分发前请自行确认合规。
+✅ 开启应用内 Rithmic 登录入口（登录页、设置、账户切换、空合约页）。Paper Trading 的登录、账户、行情、图表、下单、改单、撤单和成交配对已实测
 ✅ 连续合约优先使用账户可交易的交易所，失败时换下一个交易所，错误信息写明交易所；连续图表跟随到期合约的实时逐笔和 K 线
 ✅ 连续图表改用服务器的主力连续历史，包含换月前的 K 线，不再只显示当前到期合约自身稀疏的早期行情
 ✅ 登录 Rithmic 后自动加载 MES，直接进入主界面；随后在后台同步账户可交易的产品，添加品种时不用先搜索
@@ -26,9 +31,21 @@
 ✅ 设置页重新分组，桌面删除重复的“切换账户”弹窗
 ✅ 修复手机上 Rithmic 登录弹窗看不到 Live 选项的问题，修复持仓编号显示成 `#ition:9` 的问题
 
+⚠️ **注意**
+UniTrading 尚未通过 Rithmic 的 conformance 审核，Rithmic 的平仓尚未实测，请先用 Paper Trading 账户确认行为
+Tradovate 的真实下单、改价和成交回执尚未联调。Live 模式会把你确认的指令发送到真实账户，请先用 Demo 账户确认行为
+
+⬇️ **安装**
+1️⃣ Windows x64：下载 `UniTrading-1.3.0-windows-x64.zip`，解压后运行 `UniTrading\UniTrading.exe`。需要 WebView2 Runtime；安装包没有代码签名，首次运行可能出现 SmartScreen 提示
+2️⃣ Android 8.0 及以上：下载 `UniTrading-1.3.0-*.apk` 并安装
+3️⃣ Windows 的登录状态和设置保存在 `%LOCALAPPDATA%\UniTrading`，替换程序目录不受影响
+
 ## English
+
+🎉 UniTrading is now **v1.3.0**! It adds Rithmic and rebuilds every screen on Material 3.
+
 🔌 **Rithmic**
-✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Paper Trading login, accounts, market data, charts, placing, modifying and cancelling orders and fill pairing are verified; closing a position is not verified yet. Rithmic requires conformance for production systems, so confirm compliance before public distribution.
+✅ Enabled the in-app Rithmic login entries (welcome, settings, account switcher, empty-catalog). Paper Trading login, accounts, market data, charts, placing, modifying and cancelling orders and fill pairing are verified
 ✅ Continuous contracts prefer an exchange the account can trade, fall back to the next one, and name the exchange in errors; continuous charts follow live trades and bars of the dated contract
 ✅ Continuous charts use the server's front-month history, including bars from before each roll, instead of only the current dated contract and its thin early trading
 ✅ Rithmic login loads MES automatically and opens on the main screen, then syncs the account's tradable products in the background so the add-symbol list needs no search
@@ -51,6 +68,15 @@
 ✅ The quote list shows its column captions once, and account states are text labels
 ✅ Settings are regrouped, and the desktop's duplicate account-switch dialog is gone
 ✅ Fixed the Live option being unreachable in the Rithmic login dialog on phones, and position ids showing as `#ition:9`
+
+⚠️ **Heads up**
+UniTrading has not passed Rithmic's conformance review, and closing a position on Rithmic has not been verified live, so check behaviour on a Paper Trading account first
+Real Tradovate order placement, changes and fill receipts have not been verified against a live server. Live mode sends the commands you confirm to a real account, so check behaviour on a Demo account first
+
+⬇️ **Install**
+1️⃣ Windows x64: download `UniTrading-1.3.0-windows-x64.zip`, extract it and run `UniTrading\UniTrading.exe`. WebView2 Runtime is required; the package is not code-signed, so SmartScreen may warn on first launch
+2️⃣ Android 8.0 or later: download and install `UniTrading-1.3.0-*.apk`
+3️⃣ Windows logins and settings live in `%LOCALAPPDATA%\UniTrading`, so replacing the program folder keeps them
 
 # v1.2.0
 

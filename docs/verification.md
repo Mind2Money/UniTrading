@@ -1,6 +1,17 @@
 # 验证记录索引
 
-## 当前：1.2.0 / v1.2.0
+## 当前：1.3.0 / v1.3.0
+
+2026-11-06 发布前在 Windows、JDK 21 上核对 `7ba10fd` 加版本号改动。标签提交在此基础上只改本记录、发布说明和其他文档的文字。
+
+- 桌面回归 592 项：broker-api 6、demo-broker 34、tradovate-broker 213、composeApp 269、rithmic-broker 70，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.ps1` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。
+- 脚本测试：`test_build_local.py` 20 项、`test_release_notes.py` 5 项、`test_release_discord.py` 15 项通过。
+- Android：R8 release APK 构建通过；`Medium_Phone`（API 36）模拟器上 debug 与 R8 release 设备测试各 5 项通过。
+- Windows 包：`UniTrading.exe` 版本为 1.3.0，含登录 host。从仓库外目录启动，应用数据目录隔离，只放入授权记录，通过授权校验后显示登录页和 Tradovate、Rithmic 两个入口；这次检查没有连接任何账户。
+- Discord：webhook 查询成功，空消息被拒收（HTTP 400），没有发送真实消息。真实发送和 commit status 写入以 v1.3.0 的 CI 结果为准。
+- 未验证：真机、Tradovate 真实下单、改价和成交回执、Rithmic 平仓、iOS、MSI 安装包。
+
+## 1.2.0 / v1.2.0
 
 2026-11-05 发布前在 Windows、JDK 21 上核对 `4847806`。标签提交只在此基础上改动本记录与发布说明的文字。
 

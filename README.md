@@ -1,8 +1,8 @@
 # UniTrading
 
-UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录连接服务器账户（Rithmic 接入尚未完成，应用内入口已隐藏）。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
+UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
 
-**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.2.0，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
+**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.3.0，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
 ## 功能
 
@@ -83,7 +83,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :rithmic-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。1.2.0 常规套件为 534 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows 并创建 GitHub Release；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.3.0 常规套件为 592 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows、创建 GitHub Release 并发送 Discord 公告；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
 
 ### iOS（必须在 Mac 上）
 
@@ -121,14 +121,14 @@ Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码�
 
 ## Rithmic 登录
 
-> 应用内的 Rithmic 登录入口已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`）。Paper Trading 的登录、行情、图表、下单、改单、撤单和成交配对已实测，平仓尚未验证。Rithmic 对生产系统（含 Paper Trading）要求先通过 conformance，公开分发前请自行确认合规。
+> 应用内的 Rithmic 登录入口已开启（`TradingScreen.kt` 的 `RITHMIC_LOGIN_ENABLED = true`）。Paper Trading 的登录、行情、图表、下单、改单、撤单和成交配对已实测，平仓尚未验证。Rithmic 要求接入生产系统（含 Paper Trading）前通过 conformance，UniTrading 尚未通过。
 
 1. 登录页点击“登录 Rithmic”，或在设置 / 账户切换中选择“连接 Rithmic”。选择 Rithmic Test、Paper Trading 或 Live；Test 预填官方开发网关，Paper / Live 预填芝加哥生产网关 `wss://rprotocol.rithmic.com:443`（该网关的系统列表包含 Rithmic 01、Rithmic Paper Trading 与各 prop firm 系统），Rithmic 提供区域网关时可替换。
 2. 网关只接受 `wss://*.rithmic.com`。可先“查询”系统列表确认系统名称，再输入 Rithmic 登录 ID 和密码。
 3. 勾选“在本机加密保存密码”后，凭据与 Tradovate 会话一同加密保存并在启动时自动恢复；不勾选则只在本次运行内有效。
 4. 账户、交易路由、合约规格、Bid/Ask、历史 K 线、订单、成交和持仓均来自 R | Protocol 四个 plant。带 SL/TP 的新订单使用服务器静态括号单。
 
-**限制**：接入只用离线假服务器验证过协议与状态机，未连接真实 Rithmic 系统；生产系统需通过 Rithmic conformance。详见 [Rithmic 接入与验证](docs/rithmic.md)。
+**限制**：平仓只在离线假服务器上验证过；UniTrading 尚未通过 Rithmic conformance。详见 [Rithmic 接入与验证](docs/rithmic.md)。
 
 ## 外观与图表
 
