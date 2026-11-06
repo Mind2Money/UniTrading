@@ -103,3 +103,14 @@
 新增回归覆盖混用参数只返回当前日线、未成交远月只有当前日线、固定窗口仅含双时间字段、连续日线图表与成交量请求隔离及缓存迁移。专用只读诊断入口为 `./gradlew :composeApp:tradovateReadOnlyLoginProbe -PconfirmTradovateReadOnly=true -PprobeDailyDiagnostic=true`，交互式登录后只核实 @MGC，不调用交易端点。
 
 查询模式依据：[官方 Charting Best Practices](https://partner.ninjatrader.com/connect/overview/core-concepts/web-sockets/market-data/charting-best-practices) 的 Choosing a Time Range 将根数查询与固定窗口列为互斥策略。实际服务器仍可能附带较新日线，因此客户端始终按目标交易日筛选。
+
+## Rithmic 的连续历史（2026-11-06）
+
+以上成交量排名、交易日历和成交量缓存只属于 Tradovate 适配器。Rithmic 的 `@品种` 由服务器 front month（模板 113）决定下单合约：
+
+- 图表历史回放裸产品代码（如 `MNQ`）。它在搜索结果里名为 `Front Month for MNQ - MNQZ6.CME`，服务器在这个别名下保留换月前的 K 线。客户端不拼接、不复权，也不计算换月日。
+- 实时 K 线、逐笔、报价和订单仍使用到期合约。
+- 已到期合约不能单独回放（`rp_code 7 reference data not available`），所以没有别名时无法在客户端拼接。这时图表退回到期合约自身的历史，状态栏写明，结果不写入缓存，下次启动重新询问别名。
+- 此前缓存的 `@品种` 序列只含一张到期合约，而缓存序列只从末尾增长，所以 Rithmic 缓存命名空间改为 `rithmic-v2-`，旧文件不再读取。
+
+截图里的 `@MNQ` 此前回放的是 `MNQZ6` 本身：日线 198 根，从 2025-10-01 开始，早期成交量多为 1 手。探针结果见 [Rithmic 验证状态](rithmic.md#验证状态)。别名回放是否复权和别名的换月时间尚未核实；Tradovate 的 `@MES` 日线不复权，换月处保留价差（如 2025-09-15 跳空 +56.75 点）。

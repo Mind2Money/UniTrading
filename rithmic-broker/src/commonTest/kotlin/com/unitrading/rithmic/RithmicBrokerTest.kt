@@ -524,6 +524,80 @@ class RithmicBrokerTest {
         assertEquals(Candle(lastClose, 550100, 550300, 550000, 550250, 40), broker.history("@MES", Timeframe.M5).last())
     }
 
+    private class MemoryCandleStore : CandleCacheStore {
+        val values = mutableMapOf<String, String>()
+        override suspend fun read(key: String) = values[key]
+        override suspend fun write(key: String, value: String) { values[key] = value }
+    }
+
+    private suspend fun TestScope.chart(server: FakeRithmicServer, store: CandleCacheStore): RithmicBroker {
+        // disconnect() cancels the broker's scope, and these tests go on with a second broker.
+        val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+        val broker = RithmicBroker(credentials(), server, scope, { FAKE_TIME }, candleCacheStore = store)
+        broker.connect()
+        broker.searchInstruments("MES")
+        runCurrent()
+        broker.watch("@MES", Timeframe.M5)
+        runCurrent()
+        return broker
+    }
+
+    /** Expired months have no bars on the real server, so history across rolls exists only under the bare product code. */
+    @Test fun continuousChartReplaysTheFrontMonthAliasAndStaysLiveOnItsDatedContract() = runTest {
+        val server = FakeRithmicServer().apply { frontMonthAlias = true }
+        val broker = chart(server, MemoryCandleStore())
+        assertEquals(5, broker.history("@MES", Timeframe.M5).size)
+        val replay = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).single()
+        assertEquals("MES", replay.str(Rf.SYMBOL))
+        assertEquals("CME", replay.str(Rf.EXCHANGE))
+        assertEquals("MESZ6", server.requests(Rt.REQUEST_TIME_BAR_UPDATE).single().str(Rf.SYMBOL))
+    }
+
+    @Test fun continuousChartWithoutAnAliasShowsItsDatedContractAndKeepsThatOutOfTheCache() = runTest {
+        val store = MemoryCandleStore()
+        val server = FakeRithmicServer()
+        val first = chart(server, store)
+        assertEquals(3, first.history("@MES", Timeframe.M5).size)
+        assertTrue("MESZ6" in first.market.value.statusMessage, first.market.value.statusMessage)
+        first.watch("@MES", Timeframe.M15)
+        runCurrent()
+        // Back on a series that fell back in this session: straight to the dated contract, so its tail still loads.
+        first.watch("@MES", Timeframe.M5)
+        runCurrent()
+        assertEquals(listOf("MES", "MESZ6", "MES", "MESZ6", "MESZ6"), server.requests(Rt.REQUEST_TIME_BAR_REPLAY).map { it.str(Rf.SYMBOL) })
+        first.disconnect()
+        runCurrent()
+        assertTrue(store.values.isEmpty(), store.values.keys.joinToString())
+
+        // A later run asks the alias again, with nothing cached to hold it back to the tail.
+        val restored = FakeRithmicServer().apply { frontMonthAlias = true }
+        assertEquals(5, chart(restored, store).history("@MES", Timeframe.M5).size)
+    }
+
+    /** A series cached before the alias holds one dated contract, and a cached series only grows at its end. */
+    @Test fun continuousChartIgnoresASeriesCachedBeforeTheAlias() = runTest {
+        val store = MemoryCandleStore()
+        val old = Candle(FAKE_TIME - 86_400_000, 550000, 550000, 550000, 550000, 1)
+        CandleCache(store, "rithmic-${credentials().brokerId}", RITHMIC_CHART_BARS).write("@MES" to Timeframe.M5, listOf(old))
+        val broker = chart(FakeRithmicServer().apply { frontMonthAlias = true }, store)
+        assertEquals(5, broker.history("@MES", Timeframe.M5).size)
+        assertFalse(old in broker.history("@MES", Timeframe.M5))
+    }
+
+    @Test fun cachedContinuousChartExtendsFromTheAliasWithoutFallingBack() = runTest {
+        val store = MemoryCandleStore()
+        val server = FakeRithmicServer().apply { frontMonthAlias = true }
+        chart(server, store).disconnect()
+        runCurrent()
+        assertTrue(store.values.isNotEmpty())
+
+        // Nothing newer than the cache: an empty alias reply is no reason to replay the dated contract.
+        val later = FakeRithmicServer().apply { frontMonthAlias = true; aliasBars = 0 }
+        val broker = chart(later, store)
+        assertEquals(5, broker.history("@MES", Timeframe.M5).size)
+        assertEquals(listOf("MES"), later.requests(Rt.REQUEST_TIME_BAR_REPLAY).map { it.str(Rf.SYMBOL) })
+    }
+
     @Test fun continuousSymbolTradesTheFrontMonthContractTheServerNames() = runTest {
         val server = FakeRithmicServer()
         val broker = broker(server)
@@ -536,7 +610,7 @@ class RithmicBrokerTest {
         broker.watch("@MES", Timeframe.M5)
         runCurrent()
         assertEquals(3, broker.history("@MES", Timeframe.M5).size)
-        assertEquals("MESZ6", server.requests(Rt.REQUEST_TIME_BAR_REPLAY).single().str(Rf.SYMBOL))
+        assertEquals(listOf("MES", "MESZ6"), server.requests(Rt.REQUEST_TIME_BAR_REPLAY).map { it.str(Rf.SYMBOL) })
         assertTrue(broker.market.value.quotes.containsKey("MESZ6"))
         val session = broker.openSession("ACC1")
         assertFalse(session.preview(OrderRequest("@MES", Side.BUY, OrderKind.MARKET, 100)).valid)

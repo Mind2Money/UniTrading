@@ -34,6 +34,8 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - `RITHMIC_PLANTS`: subset of `order,pnl,ticker,history` (default: all)
  * - `RITHMIC_LISTEN_SECONDS`: how long the live subscriptions stay open (default: 75)
  * - `RITHMIC_PROBE_READONLY=1`: skip the order test and only read (no order is ever placed)
+ * - `RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`: run nothing else and print what stitching a continuous series rests on,
+ *   using only search, front-month, reference-data and replay requests on the ticker and history plants
  *
  * The order test places an order ONLY when the system is exactly `Rithmic Test` on the test gateway; on
  * any other system (Paper, Live) it is refused, so it can never reach a real account.
@@ -67,7 +69,9 @@ fun main() {
         listenMs = (env("RITHMIC_LISTEN_SECONDS")?.toLongOrNull() ?: 75L).coerceIn(0, 900) * 1_000,
         readOnly = env("RITHMIC_PROBE_READONLY") != null,
     )
+    val continuous = env("RITHMIC_CONTINUOUS_PROBE")?.split(',')?.map { it.trim().uppercase() }?.filter { it.isNotEmpty() }
     val code = runBlocking {
+        if (!continuous.isNullOrEmpty() && credentials != null) return@runBlocking probe.continuousHistory(continuous)
         val raw = probe.run()
         // One login holds one ticker session, so the adapter runs after the raw plants have logged out.
         if (raw == 0 && credentials != null) probe.brokerFlow() else raw
@@ -367,6 +371,113 @@ internal class RithmicProbe(
                 scope.cancel()
             }
             out("done: ${open.size} plant(s) logged out")
+        }
+    }
+
+    /** One replay with its duration and date range on a single line; the rows stay available to the caller. */
+    private suspend fun RithmicPlant.timed(label: String, symbol: String, listed: String, barType: Int, period: Int, start: Int, finish: Int, tune: ProtoWriter.() -> Unit = {}): List<ProtoMessage>? = step(name, label) {
+        val began = now()
+        val parts = request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
+            string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, listed); int32(Rf.BAR_TYPE, barType); int32(Rf.BAR_PERIOD, period)
+            int32(Rf.START_INDEX, start); int32(Rf.FINISH_INDEX, finish); int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS); tune()
+        }
+        val bars = parts.filter { it.has(Rf.BAR_MARKER) }
+        val first = bars.firstOrNull()?.long(Rf.BAR_MARKER)?.let(::markerText) ?: "-"
+        val last = bars.lastOrNull()?.long(Rf.BAR_MARKER)?.let(::markerText) ?: "-"
+        out("[$name] $label -> ${bars.size} bar(s) in ${now() - began} ms, rp_code=${parts.lastOrNull()?.rpCode()} first=$first last=$last")
+        bars
+    }
+
+    /** Whether the server holds a stitched series or expired months, how far back, and what a volume roll looks like. No account or order request. */
+    suspend fun continuousHistory(products: List<String>): Int {
+        try {
+            val ticker = login("ticker", RithmicEnums.INFRA_TICKER, aggregatedQuotes = false) ?: return 1
+            val history = login("history", RithmicEnums.INFRA_HISTORY) ?: return 1
+            products.forEachIndexed { index, product -> continuousProduct(ticker, history, product, limits = index == 0) }
+            return 0
+        } finally {
+            withContext(NonCancellable) {
+                open.forEach { plant -> runCatching { withTimeoutOrNull(3_000) { plant.close(logout = true) } } }
+                wire.close()
+                scope.cancel()
+            }
+            out("done: ${open.size} plant(s) logged out")
+        }
+    }
+
+    private suspend fun continuousProduct(ticker: RithmicPlant, history: RithmicPlant, product: String, limits: Boolean) {
+        out("=== continuous history: $product ===")
+        val rows = ticker.show("search by product (109) $product", Rt.REQUEST_SEARCH_SYMBOLS, limit = 0) {
+            string(Rf.SEARCH_TEXT, product); string(Rf.PRODUCT_CODE, product)
+            int32(Rf.INSTRUMENT_TYPE, RithmicEnums.SEARCH_FUTURE); int32(Rf.SEARCH_PATTERN, RithmicEnums.PATTERN_CONTAINS)
+        }.orEmpty().filter { it.str(Rf.PRODUCT_CODE)?.trim() == product }
+        val listed = rows.mapNotNull { it.str(Rf.EXCHANGE)?.trim() }.firstOrNull { it in setOf("CME", "CBOT", "COMEX", "NYMEX") } ?: exchange
+        rows.filter { it.str(Rf.EXCHANGE)?.trim() == listed }.sortedBy { it.str(Rf.EXPIRATION_DATE) ?: "" }.forEach {
+            out("[ticker]    listed ${it.str(Rf.SYMBOL)} expires=${it.str(Rf.EXPIRATION_DATE)} type=${it.str(Rf.INSTRUMENT_TYPE)} name=${it.str(Rf.SYMBOL_NAME)}")
+        }
+        val front = ticker.show("front month (113) $product@$listed", Rt.REQUEST_FRONT_MONTH) { string(Rf.SYMBOL, product); string(Rf.EXCHANGE, listed); bool(Rf.NEED_UPDATES, false) }
+            ?.lastOrNull { !it.str(Rf.TRADING_SYMBOL).isNullOrBlank() }?.str(Rf.TRADING_SYMBOL)?.trim()
+        val endSeconds = now() / 1_000
+        val today = yyyymmdd(now())
+        val daily = RithmicEnums.BAR_DAILY
+        val minute = RithmicEnums.BAR_MINUTE
+
+        // The bare product row is named "Front Month for ...": if it replays across rolls, the server already stitches.
+        history.timed("alias $product daily, 3 years", product, listed, daily, 1, yyyymmdd(now() - 3 * 365 * 86_400_000L), today)
+        history.timed("alias $product 60m, 120 days", product, listed, minute, 60, (endSeconds - 120 * 86_400).toInt(), endSeconds.toInt())
+
+        val months = "FGHJKMNQUVXZ"
+        var year = today / 10_000
+        var month = today / 100 % 100 + 3
+        if (month > 12) { month -= 12; year += 1 }
+        val contracts = linkedMapOf<String, List<ProtoMessage>>() // Newest month first.
+        val empty = mutableListOf<String>()
+        val since = yyyymmdd(now() - 7 * 365 * 86_400_000L)
+        repeat(52) {
+            val symbol = "$product${months[month - 1]}${year % 10}"
+            val bars = history.timed("$symbol daily", symbol, listed, daily, 1, since, today)
+            if (bars.isNullOrEmpty()) empty += symbol else {
+                contracts[symbol] = bars
+                val peak = bars.maxBy { it.long(Rf.BAR_VOLUME) ?: 0 }
+                out("[history]    $symbol volume total=${bars.sumOf { it.long(Rf.BAR_VOLUME) ?: 0 }} peak=${peak.long(Rf.BAR_VOLUME)} on ${peak.long(Rf.BAR_MARKER)}")
+            }
+            month -= 1
+            if (month == 0) { month = 12; year -= 1 }
+        }
+        out("[history] no daily bars for: ${empty.joinToString(" ").ifEmpty { "(none)" }}")
+
+        val age = contracts.keys.reversed().withIndex().associate { (index, symbol) -> symbol to index }
+        val perDate = java.util.TreeMap<Long, MutableList<Pair<String, Long>>>()
+        contracts.forEach { (symbol, bars) -> bars.forEach { bar -> perDate.getOrPut(bar.long(Rf.BAR_MARKER) ?: 0) { mutableListOf() } += symbol to (bar.long(Rf.BAR_VOLUME) ?: 0) } }
+        var current: String? = null
+        for ((date, volumes) in perDate) {
+            val leader = volumes.maxBy { it.second }.first
+            if (current == null || age.getValue(leader) > age.getValue(current!!)) {
+                out("[history] volume leader from $date: ${current ?: "-"} -> $leader (${volumes.sortedByDescending { it.second }.take(3).joinToString(" ") { "${it.first}=${it.second}" }})")
+                current = leader
+            }
+        }
+
+        contracts.entries.firstOrNull { (_, bars) -> (bars.last().long(Rf.BAR_MARKER) ?: 0) < today - 3 }?.key?.let { expired ->
+            ticker.show("reference data (14) expired $expired", Rt.REQUEST_REFERENCE_DATA) { string(Rf.SYMBOL, expired); string(Rf.EXCHANGE, listed) }
+            val twoDigit = expired.dropLast(1) + (year / 10 % 10) + expired.last()
+            history.timed("$twoDigit daily (two-digit year)", twoDigit, listed, daily, 1, since, today)
+        }
+
+        for ((symbol, bars) in contracts.entries.take(10)) {
+            val lastDate = bars.last().long(Rf.BAR_MARKER) ?: continue
+            val close = java.time.LocalDate.of((lastDate / 10_000).toInt(), (lastDate / 100 % 100).toInt(), (lastDate % 100).toInt()).toEpochDay() * 86_400 + 86_400
+            history.timed("$symbol 60m, final 25 days", symbol, listed, minute, 60, (close - 25 * 86_400).toInt(), close.toInt())
+            history.timed("$symbol 1m, final 2 days", symbol, listed, minute, 1, (close - 2 * 86_400).toInt(), close.toInt())
+        }
+
+        if (limits && front != null) {
+            history.timed("$front 1m, 30 days (truncation)", front, listed, minute, 1, (endSeconds - 30 * 86_400).toInt(), endSeconds.toInt())
+            history.timed("$front 1m, 30 days, last 3000", front, listed, minute, 1, (endSeconds - 30 * 86_400).toInt(), endSeconds.toInt()) {
+                int32(Rf.USER_MAX_COUNT, 3_000); int32(Rf.DIRECTION, 2)
+            }
+            history.timed("$front 240m, 400 days", front, listed, minute, 240, (endSeconds - 400 * 86_400).toInt(), endSeconds.toInt())
+            history.timed("$front 3-day, 400 days", front, listed, daily, 3, yyyymmdd(now() - 400 * 86_400_000L), today)
         }
     }
 

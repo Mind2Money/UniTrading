@@ -40,9 +40,9 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 | 成交 | 352 FILL、3512 | 保留最近 36 小时成交历史作为执行记录；不生成配对 `ClosedTrade` |
 | 持仓与资金 | 402/400，450/451 | 净额持仓、均价、开仓盈亏、账户余额 / 现金 / 已用购买力、当日盈亏 |
 | 合约规格 | 14 | 仅 USD 期货；tick 取 `min_qprice_change`（报价最小变动，行情/K 线/下单都用报价），`single_point_value` 为每报价点价值；`min_fprice_change` 是 f-price tick（ES 为 25.0，而报价 tick 为 0.25），不直接作 tick |
-| 搜索与主力 | 109、113 | 搜索先按 `product_code` 过滤，无结果再用 CONTAINS；`@产品代码` 连续合约映射到服务器返回的 front month，服务器无数据（Rithmic Test 即如此）时取该产品最近未到期合约。按产品搜索不带交易所，结果可能跨交易所：优先用账户有交易路由的交易所，被拒绝时换下一个，错误信息逐个写明交易所。连接后品种列表为空时自动搜索 `MES`（与 Tradovate 适配器一致），否则应用会停在手动搜索页。登录完成后在后台加载品种列表：账户有产品风控行（306）时就用这份列表，逐个查交易所、主力和规格；没有时退回 time-of-interest 产品（111）。最多 200 个，并行 2 路，被服务器拒绝的产品直接略过，不报错。Paper Trading 列出的裸产品行（如 `MES`，名称为 `Front Month for ...`）是 front month 别名，不是合约，不进入品种列表 |
+| 搜索与主力 | 109、113 | 搜索先按 `product_code` 过滤，无结果再用 CONTAINS；`@产品代码` 连续合约映射到服务器返回的 front month，服务器无数据（Rithmic Test 即如此）时取该产品最近未到期合约。按产品搜索不带交易所，结果可能跨交易所：优先用账户有交易路由的交易所，被拒绝时换下一个，错误信息逐个写明交易所。连接后品种列表为空时自动搜索 `MES`（与 Tradovate 适配器一致），否则应用会停在手动搜索页。登录完成后在后台加载品种列表：账户有产品风控行（306）时就用这份列表，逐个查交易所、主力和规格；没有时退回 time-of-interest 产品（111）。最多 200 个，并行 2 路，被服务器拒绝的产品直接略过，不报错。Paper Trading 列出的裸产品行（如 `MES`，名称为 `Front Month for ...`）是 front month 别名，不是合约，不进入品种列表，连续图表的历史由它回放 |
 | 行情 | 100，150/151 | BBO 作为 Bid/Ask，逐笔推进正在形成的 K 线；`clear_bits` 清空一侧时撤下报价 |
-| K 线 | 202、200/250 | 分钟 / 日线回放与订阅；分钟 `marker` 为收盘时间，日线用 `YYYYMMDD` |
+| K 线 | 202、200/250 | 分钟 / 日线回放与订阅；分钟 `marker` 为收盘时间，日线用 `YYYYMMDD`。`@产品代码` 的历史回放裸产品代码（front month 别名），服务器在别名下保留换月前的 K 线；已到期合约不能单独回放，所以客户端无法自行拼接。实时 K 线、逐笔和报价仍订阅到期合约。没有别名的系统（Rithmic Test）退回到期合约自身的历史，在状态栏说明，这份结果不写入缓存 |
 | 下单 | 312 / 330 | 市价、Limit、Stop Market；带 SL/TP 时用静态括号单（tick 距离） |
 | 改价、撤单、平仓 | 314、316、3504 | 仓位保护价修改作用于对应括号子单 |
 | 未成交入场单的括号 | 338/340、332/334 | 以 tick 档位显示和修改，每次一条 |
@@ -55,7 +55,7 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 - 同一合约存在多个括号子单时仓位保护进入只读，不猜测关联。
 - 受理不等于成交。请求超时、连接断开或缺少回执时结果标记为未知并暂停后续写入，等待订单 / 仓位推送或手动同步确认；不会自动重发。
 - 任一 plant 断开后自动重连最多三次，重新订阅行情与 K 线，不重放交易指令；服务器强制登出（并发会话超限）同样触发。
-- 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，应用请求约四倍图表宽度的时间窗。
+- 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，超出时只返回窗口内最早的 10,000 根，应用请求约四倍图表宽度的时间窗，不会超出。
 
 ## 联调探针
 
@@ -65,11 +65,11 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 $env:RITHMIC_GATEWAY = 'wss://rprotocol.rithmic.com:443'   # 省略则为 Rithmic Test 网关
 $env:RITHMIC_SYSTEM  = 'Rithmic Paper Trading'              # 省略则只打印该网关的系统列表
 $env:RITHMIC_USER    = '<登录 ID>'
-$env:RITHMIC_PASSWORD = '<密码>'
+$env:RITHMIC_PASSWORD = Read-Host 'Rithmic 密码' -MaskInput  # PowerShell 7；不要写在命令里，否则会明文留在终端
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 ```
 
-可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.2.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）。
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.2.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）、`RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`（只跑连续历史检查：只登录行情和历史 plant，打印合约列表、别名回放、最近 52 个月份合约的日线、分钟数据深度和回放截断情况）。
 
 逐请求检查绕过 `RithmicBroker`，不能证明应用流程可用。所以探针最后会退出这些连接，再用 `RithmicBroker`（应用实际使用的适配器）跑约 45 秒：连接、解析 `@<产品>` 连续合约、订阅行情、加载并跟踪 1 分钟图。这一段在任何系统上都只读，不调用下单接口；应用是否可用以 `[broker] RESULT` 这一行为准。可把 `RITHMIC_LISTEN_SECONDS` 设小以缩短前面的监听时间。
 
@@ -87,14 +87,14 @@ Rithmic 没有成交配对记录，历史列表由两项服务器事实配对：
 - 价格固定为 10、方向固定为买、数量固定为 1；不随行情浮动，不读取 bid/ask。
 
 ```powershell
-$env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'; $env:RITHMIC_PASSWORD = '<密码>'
+$env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'; $env:RITHMIC_PASSWORD = Read-Host 'Rithmic 密码' -MaskInput
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 # 只读、不下单：额外设 $env:RITHMIC_PROBE_READONLY = '1'
 ```
 
 ## 验证状态
 
-- 离线：`rithmic-broker` 66 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
+- 离线：`rithmic-broker` 70 项测试，覆盖 wire 编码与 protoc 字节一致性、分帧、多段回复、拒绝 / 无数据 / 超时、登录拒绝、心跳、强制登出、断线重连、连接流程、合约规格、报价过期与清空、K 线形成、市价 / 括号 / 止损单请求字段、拒绝与未知结果、平仓对账、改价撤单、括号子单保护、入场单括号档位、连续合约主力与历史来源。`composeApp` 增加 Rithmic 凭据保存与恢复测试。
 - 在线（不含凭据）：2026-11-05 对 `wss://rituz00100.rithmic.com:443` 与 `wss://rprotocol.rithmic.com:443` 的系统列表请求（模板 16/17）成功，分帧与字段编号在真实网关上成立；公开客户端里出现的 `ritpa11120.11.rithmic.com`（证书不含该主机名）与 `ritpz01000.01.rithmic.com`（连接超时）不可用。
 - 协议依据：2026-11-05 取得官方 R | Protocol API 开发包 0.90.0.0（template version 5.55，194 个 proto，Reference Guide 0.49）。用脚本逐项核对：139 个字段编号全部与官方 proto 一致（其中 10 个常量名与官方字段名不同但编号相同），模板 id 与 Reference Guide 的表一致；回复终止判定（`rq_handler_rp_code` 表示还有后续，`rp_code` 表示结束）和登录失败判定（`rp_code` 两项：错误码与文本）与指南一致。开发包 0.90 把 4 字节数量字段标为弃用并新增 8 字节 `*_64` 字段（`quantity_64 = 159017`、`fill_size_64 = 159024`、`trade_size_64 = 159008` 等）：解析优先读 `_64`，下单同时发送两种字段，与官方示例（只发 `quantity_64`）兼容。`AccountPnLPositionUpdate` 金额字段在官方 proto 中为字符串，`InstrumentPnLPositionUpdate` 的 `day_pnl` 为 double、`open_position_pnl` 为字符串，与实现一致。括号档位修改的 `level` 取当前 tick 数，与参考客户端 `async_rithmic` 的做法相同。开发包受 Rithmic 许可协议约束，不随仓库分发。
 - Rithmic Test 实测（2026-11-05，用户以开发包账号运行探针，两次）：四个 plant 登录成功（服务器 template_version 5.56，心跳 60 秒）；登录信息、账户、RMS（`max_order_quantity=40`、买卖限额 20、`status=active`）、21 条交易路由（globex/ice/simulator）、挂单、括号、成交历史（空，`rp_code` 7）、盈亏快照与各订阅均按预期返回；账户资金字段为十进制字符串，无值时为空字符串。
@@ -110,7 +110,8 @@ $env:RITHMIC_SYSTEM = 'Rithmic Test'; $env:RITHMIC_USER = '<开发包登录 ID>'
 - 回执修复后的第二笔真实订单（2026-11-06，`MNQZ6`，用户在应用内下单）：不再报结果未知，持仓和止损、止盈都正常显示。修改止盈时对话框提示“仓位已关闭或保护价已更新”：持仓的开仓时间取自每次盈亏推送，版本号随之不断变化，已修复，尚未在真实改单上复测。
 - 用户截图确认（2026-11-06）：第二笔 `MNQZ6` 止盈后，历史列表显示为一条配对记录（26990.50 → 26943.50，止盈，净 +92.50），下单预估的双边手续费为 1.50，余额 25023.00 与两笔成交相符（手续费每次成交 0.75）。这笔持仓的止盈改到 26943.50 后成交，改价已在服务器生效。
 - 带括号的限价入场单（`MNQZ6`，买入 26112.50）下单成功，但入场价和保护价都不可改：可改判断用状态白名单，服务器实际返回的状态不在名单内，具体文字未捕获。已改为只有改单、撤单在途才锁定，提示里显示服务器原始状态。修复后（提交 8701a64）用户确认挂单可以修改；之后的窗口截图显示挂单已清空，历史仍为 2 条，余额 25023.00 未变，说明测试单已撤销且没有成交。
-- **未验证**：平仓回执（探针的 MES@10 测试尚未运行）；添加品种列表里按 306 加载的产品；`account_balance` 是否含浮动盈亏；`is_tradable` 的字符串取值（没有数据）。
+- 连续历史探针（2026-11-06，用户运行，Paper Trading，只读）：`@MNQ` 图表此前只回放 `MNQZ6`，日线 198 根，从 2025-10-01 开始，早期成交量多为 1 手。裸产品代码能跨换月回放：`MNQ`、`MGC`、`MCL` 的 3 年日线窗口分别返回 754、752、748 根，都从 2023-11-07 开始，120 天 60 分钟窗口分别返回 1974、1976、1975 根。已到期月份（三个产品各往回 52 个月）全部返回 `rp_code 7 reference data not available`，仍在挂牌的月份正常。`MNQZ6` 的 30 天 1 分钟回放恰好返回 10000 根，范围是窗口最早的 10-07 到 10-16；加 `direction=LAST` 和 `user_max_count=3000` 返回最新 3000 根，时间仍为正序。这些请求绕过 `RithmicBroker`，别名回放是否复权、别名的换月时间都没有核实。
+- **未验证**：平仓回执（探针的 MES@10 测试尚未运行）；添加品种列表里按 306 加载的产品；`account_balance` 是否含浮动盈亏；`is_tradable` 的字符串取值（没有数据）；`@产品代码` 的别名历史在应用内的实际结果。
 
 ```bash
 ./gradlew :rithmic-broker:desktopTest

@@ -32,8 +32,9 @@ internal class FakeRithmicServer : RithmicWire {
     var foreignListings = emptyMap<String, String>()
     /** Exchanges this login has no entitlement for. */
     var deniedExchanges = emptySet<String>()
-    /** Rithmic Paper Trading lists a bare product row as a front-month alias. */
+    /** Rithmic Paper Trading lists a bare product row as a front-month alias, and replays it across rolls. */
     var frontMonthAlias = false
+    var aliasBars = 5
     var tradeRoutesListed = true
     var fillHistoryListed = true
     /** Products answering the product-code request, by exchange. */
@@ -158,9 +159,13 @@ internal class FakeRithmicServer : RithmicWire {
             }
             Rt.REQUEST_TIME_BAR_UPDATE -> reply(Rt.RESPONSE_TIME_BAR_UPDATE)
             Rt.REQUEST_TIME_BAR_REPLAY -> {
+                val symbol = m.str(Rf.SYMBOL) ?: ""
+                val alias = frontMonthAlias && symbol == "MES"
+                // The answer the real server gives for an expired month, and on a system without an alias.
+                if (!alias && symbol !in knownSymbols) { reply(Rt.RESPONSE_TIME_BAR_REPLAY, codes = listOf("7", "reference data not available")); return }
                 val period = (m.int(Rf.BAR_PERIOD) ?: 1) * 60L
                 val lastClose = FAKE_TIME / 1_000 / period * period
-                parts(Rt.RESPONSE_TIME_BAR_REPLAY, (bars downTo 1).map { back -> {
+                parts(Rt.RESPONSE_TIME_BAR_REPLAY, ((if (alias) aliasBars else bars) downTo 1).map { back -> {
                     string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); int32(Rf.BAR_TYPE, RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, (period / 60).toString())
                     int32(Rf.BAR_MARKER, (lastClose - (back - 1) * period).toInt()); int64(Rf.BAR_VOLUME, 100L * back)
                     double(Rf.OPEN_PRICE, 5499.0); double(Rf.HIGH_PRICE, 5501.0); double(Rf.LOW_PRICE, 5498.5); double(Rf.CLOSE_PRICE, 5500.0)
