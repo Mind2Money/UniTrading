@@ -1,5 +1,17 @@
 # Unreleased
 
+## 简体中文
+
+📈 **图表**
+✅ 加载历史 K 线时图表停在最新时间：Tradovate 首次打开时第一页整页出现，不再从右往左逐批长出来，更早的 K 线在后台并入
+✅ 平移或缩放过的图表不再随历史加载一路往回退，始终停在原来的 K 线上
+
+## English
+
+📈 **Charts**
+✅ Charts stay on the latest time while history loads: on Tradovate the first page appears whole instead of growing from right to left, and older bars join in the background
+✅ A panned or zoomed chart no longer drifts back as history loads; it stays on the same bars
+
 # v1.3.0
 
 ## 简体中文

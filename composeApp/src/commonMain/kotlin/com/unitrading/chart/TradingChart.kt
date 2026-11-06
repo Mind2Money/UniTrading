@@ -86,7 +86,7 @@ fun TradingChart(
     val compact = chrome.compact
     var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
     var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<PriceScale?>(null) }
-    var previousTotal by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles.size) }
+    var previousCandles by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles) }
     var showHistory by remember { mutableStateOf(true) }
     var showPositions by remember { mutableStateOf(true) }
     var showOrders by remember { mutableStateOf(true) }
@@ -202,9 +202,9 @@ fun TradingChart(
         }
     }
     LaunchedEffect(selectedPosition?.id, selectedPosition?.version, positions.map { it.id }, orderVersions) { drag = null }
-    LaunchedEffect(candles.size) {
-        if (viewport.offset != 0.0) viewport = viewport.copy(offset = viewport.offset + candles.size - previousTotal).bounded(candles.size)
-        previousTotal = candles.size
+    LaunchedEffect(candles.size, candles.lastOrNull()?.timeMs) {
+        viewport = viewport.following(previousCandles, candles)
+        previousCandles = candles
     }
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.

@@ -53,6 +53,23 @@ class ChartGeometryTest {
         assertEquals(spreadLabelCenters(listOf(50f, 60f), 0f, 30f, 25f), spreadLabelCenters(listOf(50f, 60f), 0f, 30f, 25f, listOf(0f, 100f), listOf(0f, 0f)))
         assertEquals(spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 200f, 25f), spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 200f, 25f, listOf(0f, 0f, 0f), listOf(0f, 0f, 0f)))
     }
+    @Test fun seriesChangesKeepTheBarsOnScreen() {
+        fun bars(range: IntRange) = range.map { Candle(it.toLong(), 100, 100, 100, 100) }
+        val moved = ChartViewport(offset = 30.0)
+        assertEquals(moved, moved.following(bars(100..199), bars(0..199)), "older history lands off-screen")
+        assertEquals(32.0, moved.following(bars(0..99), bars(0..101)).offset, "new bars push the view back")
+        assertEquals(31.0, moved.following(bars(0..1999), bars(1..2000)).offset, "a full series drops its oldest bar")
+        assertEquals(60.0, ChartViewport(offset = 20.0).following(bars(0..49) + bars(90..99), bars(0..99)).offset, "a filled gap right of the view counts")
+        assertEquals(20.0, ChartViewport(offset = 20.0).following(bars(0..9) + bars(50..99), bars(0..99)).offset, "a filled gap left of the view does not")
+        val latest = ChartViewport()
+        assertEquals(latest, latest.following(bars(100..199), bars(0..199)))
+        assertEquals(latest, latest.following(bars(0..99), bars(0..101)))
+        val space = ChartViewport(offset = -5.0)
+        assertEquals(space, space.following(bars(100..199), bars(0..199)))
+        assertEquals(-4.0, space.following(bars(0..99), bars(0..100)).offset, "the next bar fills the space after the newest one")
+        assertEquals(moved, moved.following(emptyList(), bars(0..199)))
+        assertEquals(0.0, moved.following(bars(0..99), emptyList()).offset, "an emptied series cannot leave the view past its end")
+    }
     @Test fun viewportCannotEscapeHistory() {
         assertEquals(IntRange.EMPTY, visibleRange(0, 100, 0))
         assertEquals(0..9, visibleRange(10, 100, 10000))

@@ -1038,7 +1038,8 @@ class TradovateBroker(
             if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
-        history = history + (key to bars)
+        // The server replays a page newest day first; shown packet by packet, a chart would fill from right to left.
+        if (chart.str("s") != "db" || chart.bool("eoh") == true) history = history + (key to bars)
         if (page.load.complete && bars.isNotEmpty()) {
             cachedHistory[key] = bars
             dirtyHistory[key] = bars

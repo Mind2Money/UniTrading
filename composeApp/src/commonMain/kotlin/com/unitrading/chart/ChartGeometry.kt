@@ -49,6 +49,16 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
         return copy(count = next, offset = offset + (count - next) / 2).bounded(total)
     }
     fun bounded(total: Int) = copy(offset = offset.coerceIn(-count * .8, (total - count * .2).coerceAtLeast(0.0)))
+    /**
+     * The view once the series changes from [previous] to [next]: offset 0 stays on the newest bar, any other keeps its
+     * bars on screen. Only bars added right of the view move it, because [offset] counts from the newest bar; older
+     * history lands on the left and changes nothing.
+     */
+    fun following(previous: List<Candle>, next: List<Candle>): ChartViewport {
+        if (offset == 0.0 || previous.isEmpty()) return bounded(next.size)
+        val edge = previous[(ceil(previous.size - offset).toInt() - 1).coerceIn(0, previous.lastIndex)].timeMs
+        return copy(offset = offset + next.count { it.timeMs > edge } - previous.count { it.timeMs > edge }).bounded(next.size)
+    }
 }
 
 fun visibleRange(total: Int, count: Int, offset: Int): IntRange {

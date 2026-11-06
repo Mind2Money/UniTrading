@@ -337,6 +337,28 @@ class IncrementalChartTest {
         assertEquals(CHART_BARS, CandleCache(store, NAMESPACE).read("MESZ6" to Timeframe.M5, CACHE_NOW).size)
     }
 
+    /** The server replays a page newest day first; showing each packet would draw the chart from right to left. */
+    @Test fun replayedPagesReachTheChartWhole() = runTest {
+        val wire = Wire().apply { automatic = false; sameId = true }
+        val broker = ready(wire)
+        fun times() = broker.history("MESZ6", Timeframe.M5).map { (CACHE_NOW - it.timeMs) / BAR_STEP }
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.bars(wire.historicalId, CACHE_NOW, source = "db")
+        wire.bars(wire.historicalId, CACHE_NOW - BAR_STEP, source = "db"); runCurrent()
+        assertEquals(emptyList(), times())
+        wire.bars(wire.historicalId, CACHE_NOW, source = "s"); runCurrent()
+        assertEquals(listOf(1L, 0L), times(), "the marker after the replay shows the page")
+        wire.eoh(); runCurrent()
+        wire.bars(wire.historicalId, CACHE_NOW - 2 * BAR_STEP, source = "db"); runCurrent()
+        assertEquals(listOf(1L, 0L), times())
+        wire.bars(wire.liveId, CACHE_NOW, "5501", ""); runCurrent()
+        assertEquals(listOf(2L, 1L, 0L), times(), "a live update carries what has arrived")
+        assertEquals(5_501_000_000L, broker.history("MESZ6", Timeframe.M5).last().close)
+        wire.bars(wire.historicalId, CACHE_NOW - 3 * BAR_STEP, source = "db"); runCurrent()
+        wire.eoh(); runCurrent()
+        assertEquals(listOf(3L, 2L, 1L, 0L), times(), "the end of a page shows it")
+    }
+
     @Test fun freshChartStopsWhereTheServerHistoryEnds() = runTest {
         val store = Store()
         val wire = Wire().apply { serverBars = List(300) { CACHE_NOW - it * BAR_STEP }; pageLimit = 100 }
