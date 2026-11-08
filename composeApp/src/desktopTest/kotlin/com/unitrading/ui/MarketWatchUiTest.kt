@@ -126,7 +126,9 @@ class MarketWatchUiTest {
         compose.onNodeWithTag("market-back").performClick()
         compose.onNodeWithTag("symbol-XAUUSD").assertExists()
         compose.onNodeWithTag("market-edit").performClick()
-        compose.onNodeWithTag("market-up-XAUUSD").performClick()
+        compose.onNodeWithTag("market-drag-XAUUSD", useUnmergedTree = true).performMouseInput {
+            moveTo(center); press(); moveBy(androidx.compose.ui.geometry.Offset(0f, -height.toFloat())); release()
+        }
         capture("edit-watch-list")
         compose.onNodeWithTag("market-edit-done").performClick()
         assertTrue(compose.onNodeWithTag("symbol-XAUUSD").fetchSemanticsNode().boundsInRoot.top <

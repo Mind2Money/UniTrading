@@ -1,5 +1,15 @@
 # Unreleased
 
+## 简体中文
+
+📈 **行情**
+✅ 编辑自选改为拖动调整顺序，去掉上移、下移箭头：鼠标按住整行，手机按住左侧手柄，拖到列表边缘自动滚动
+
+## English
+
+📈 **Market watch**
+✅ Reorder the watch list by dragging instead of up and down arrows: hold a row with the mouse or its left handle on a phone; the list scrolls when you reach its edge
+
 # v1.3.1
 
 ## 简体中文

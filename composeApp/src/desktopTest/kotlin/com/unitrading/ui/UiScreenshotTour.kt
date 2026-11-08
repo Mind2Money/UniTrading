@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
@@ -173,6 +174,22 @@ class UiScreenshotTour {
     })
 
     @Test fun desktopLight() = desktop(1600, 1000, { _ -> shot("desktop-58-light") }, ThemePreset.LIGHT)
+
+    /** The sidebar shows fewer rows than the list holds, which is where a drag has to scroll. */
+    @Test fun desktopWatchListDrag() = desktop(1440, 900, { runtime ->
+        val symbols = (1..16).map { "WATCH$it" }
+        runtime.marketWatch.update(runtime.registry.plugins.first().descriptor.id, symbols)
+        settle()
+        tap("market-edit")
+        shot("desktop-59a-market-edit")
+        compose.onNodeWithTag("market-row-WATCH2").performMouseInput { moveTo(center); press(); moveBy(Offset(0f, height * 2.7f)) }
+        settle()
+        shot("desktop-59b-market-edit-dragging")
+        compose.onNodeWithTag("market-row-WATCH2").performMouseInput { release() }
+        settle()
+        shot("desktop-59c-market-edit-dropped")
+        check(runtime.marketWatch.lists.value.values.single() == symbols.toMutableList().apply { add(4, removeAt(1)) })
+    })
 
     @Test fun tabletPortrait() = runDesktopComposeUiTest(width = 800, height = 1200) {
         compose = this

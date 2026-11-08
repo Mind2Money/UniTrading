@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,6 +56,7 @@ internal fun MarketWatch(
     val remote = plugin.descriptor.environment != BrokerEnvironment.LOCAL_DEMO
     val symbols = lists[broker].orEmpty()
     val activity = remember(account) { marketActivities(account) }
+    val quotes = rememberLazyListState()
     LaunchedEffect(preferences, broker, catalog.instruments.isEmpty()) {
         preferences.initialize(broker, catalog.instruments, selected)
     }
@@ -139,9 +141,11 @@ internal fun MarketWatch(
                     }
                 }
             }
+        } else if (editing && symbols.isNotEmpty()) {
+            WatchListEditor(symbols, { update(it) }, Modifier.weight(1f).fillMaxWidth().testTag("market-quotes"), quotes.firstVisibleItemIndex)
         } else {
             if (!editing && symbols.isNotEmpty()) QuoteListHeader()
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("market-quotes")) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("market-quotes"), quotes) {
                 if (symbols.isEmpty()) item {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         EmptyState("暂无自选品种", "添加品种后在这里查看实时买卖价。", icon = AppIcons.TrendingUp)
@@ -150,19 +154,7 @@ internal fun MarketWatch(
                 }
                 items(symbols, key = { it }) { symbol ->
                     val instrument = catalog.instruments.firstOrNull { it.symbol == symbol }
-                    if (editing) {
-                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(symbol, Modifier.weight(1f), style = type.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            val index = symbols.indexOf(symbol)
-                            ActionIcon(AppIcons.ArrowUpward, "上移 $symbol", "market-up-$symbol", enabled = index > 0) {
-                                update(symbols.toMutableList().apply { removeAt(index); add(index - 1, symbol) })
-                            }
-                            ActionIcon(AppIcons.ArrowDownward, "下移 $symbol", "market-down-$symbol", enabled = index < symbols.lastIndex) {
-                                update(symbols.toMutableList().apply { removeAt(index); add(index + 1, symbol) })
-                            }
-                            ActionIcon(AppIcons.RemoveCircle, "移除 $symbol", "market-remove-$symbol", tint = colors.Loss) { update(symbols - symbol) }
-                        }
-                    } else if (instrument != null) {
+                    if (instrument != null) {
                         // An unconfirmed continuous row keeps its last confirmed contract's prices; orders still wait.
                         key(plugin, instrument.priceSymbol, account.accountId) {
                             MarketQuoteRow(instrument, market.quotes[instrument.priceSymbol],
