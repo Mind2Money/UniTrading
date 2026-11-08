@@ -61,7 +61,7 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
 | 测试门禁 | 全部测试移到本地；运行 `pwsh -File scripts/build-local.ps1` 执行四模块 desktop 测试、桌面打包及 Android release 构建。CI 无测试门禁，签名只依赖 Android 编译；没有 Android instrumentation job |
 | iOS | 本地 Apple Silicon Mac 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检，见[本地构建](local-build.md)；iOS 不使用 macOS hosted runner |
-| macOS 桌面包 | `v*` tag 或手动运行时在 `macos-latest` 打包；失败会阻止 GitHub Release，见[本地构建](local-build.md#发布版本) |
+| macOS 桌面包 | `v*` tag 时在 `macos-latest` 打包；失败会阻止 GitHub Release，见[本地构建](local-build.md#发布版本) |
 | 并发 | 同一 PR 的新运行取消旧运行；push 和手动运行按 run ID 独立分组，旧运行不会串行阻塞后续构建 |
 | 超时 | Android 构建、Windows 和 macOS 打包各 35 分钟，签名 / 通知 / Release 各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
 

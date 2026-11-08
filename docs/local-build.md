@@ -157,13 +157,7 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
 打包后的应用从 `app/resources/` 读取。JDK 模块由 `nativeDistributions.modules` 声明，新增依赖后用 `:composeApp:suggestRuntimeModules` 检查。
 
-macOS 包只有 Apple Silicon，ad-hoc 签名，未公证。`build-macos` 失败会阻止 Release，Windows 回归也覆盖不到 macOS 代码；改动钥匙串存储、`native-auth/TradovateLogin.swift` 或打包配置后，打 tag 前先手动验证这个 job：
-
-```bash
-gh workflow run build.yml --ref <分支>
-```
-
-手动运行只用于验证打包，不签名 APK，也不推 Telegram，不能代替发布用的 push 运行。
+macOS 包只有 Apple Silicon，ad-hoc 签名，未公证，只在推 `v*` 标签时打包。`build-macos` 失败会阻止 Release；Windows 回归覆盖不到 macOS 代码，这些改动要到标签运行才会被编译和测试。
 
 ### Discord 公告
 

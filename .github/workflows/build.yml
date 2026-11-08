@@ -251,12 +251,12 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # ─── macOS 桌面包（v* tag；手动运行可单独验证）──────────────────────────────
+  # ─── macOS 桌面包（仅 v* tag）────────────────────────────────────────────────
   # Apple Silicon, ad-hoc signed and not notarized. The only tests here are the
   # ones that exercise macOS code, which the Windows regression cannot run.
   build-macos:
     name: macOS 桌面包
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-latest
     timeout-minutes: 35
     steps:
