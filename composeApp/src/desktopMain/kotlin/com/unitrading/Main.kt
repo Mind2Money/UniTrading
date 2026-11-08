@@ -2,22 +2,28 @@ package com.unitrading
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.LicenseController
+import com.unitrading.app.ReleaseUpdater
+import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
+import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import kotlin.system.exitProcess
 
 class DesktopSnapshotStore(private val directory: Path = defaultDataDirectory()) : SnapshotStore {
     override fun read(key: String): String? {
@@ -44,17 +50,29 @@ class DesktopSnapshotStore(private val directory: Path = defaultDataDirectory())
 private fun defaultDataDirectory(): Path = (System.getProperty("unitrading.dataDir") ?: System.getenv("UNITRADING_DATA_DIR"))?.let(Path::of)
     ?: userDataRoot().resolve("UniTrading").resolve("demo-v1")
 
-fun main(args: Array<String>) = application {
+fun main(args: Array<String>) {
+    // An update starts the copy it unpacked with this argument to check it, so it comes before anything else.
+    if ("--version" in args) { println(System.getProperty("jpackage.app-version") ?: "source"); return }
+    // The helper copy of a new version, opened by the version it replaces, puts the new version in place and exits.
+    if (args.isEmpty()) SelfUpdate.pendingJob(System.getProperty("jpackage.app-path")?.let(::File))?.let { exitProcess(SelfUpdate.install(it)) }
+    // Only HttpURLConnection reads this, and only the update uses it; the brokers' Ktor sockets keep their own route.
+    System.setProperty("java.net.useSystemProxies", "true")
+    desktopApplication(args)
+}
+
+private fun desktopApplication(args: Array<String>) = application {
     val localDemo = "--local-demo" in args
     val runtime = remember {
         if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
     }
+    val updateTarget = remember { if (localDemo) null else UpdateLayout.locate(System.getProperty("jpackage.app-path"))?.let { DesktopUpdateTarget(it) } }
+    val updates = remember { updateTarget?.let { target -> System.getProperty("jpackage.app-version")?.let { version -> ReleaseUpdater(version, target, blocked = { runtime.registry.updateBlock() }) } } }
     // One activation per OS user, shared by both modes; the local demo is gated like the real terminal.
     val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
-    Window(onCloseRequest = {
+    fun shutdown() {
         if (!closing) {
             closing = true
             scope.launch {
@@ -65,8 +83,10 @@ fun main(args: Array<String>) = application {
                 else closing = false
             }
         }
-    }, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
+    }
+    LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { shutdown() } } }
+    Window(onCloseRequest = ::shutdown, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
         state = rememberWindowState(width = 1440.dp, height = 940.dp), icon = rememberVectorPainter(AppIcons.LogoTile)) {
-        LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }) }
+        LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
     }
 }

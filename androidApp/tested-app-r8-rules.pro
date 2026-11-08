@@ -13,6 +13,10 @@
 # Application, Compose and AndroidX APIs the device tests call directly.
 -keep class com.unitrading.android.AndroidCredentialStore { *; }
 -keep class com.unitrading.android.TradingRuntimeModel { *; }
+-keep class com.unitrading.android.ApkUpdateTarget { *; }
+-keep class com.unitrading.app.ReleasePackage { *; }
+-keep class com.unitrading.app.UpdateFailure { *; }
+-keep class androidx.core.content.FileProvider { *; }
 -keep class com.unitrading.app.MemorySnapshotStore { *; }
 -keep class com.unitrading.app.LicenseKt { *; }
 -keep class com.unitrading.app.LicenseKey { *; }

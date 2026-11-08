@@ -48,6 +48,8 @@ internal object AppIcons {
     val Search by lazy { icon("Search", paths = arrayOf("M15.5 14h-0.79l-0.28 -0.27C15.41 12.59 16 11.11 16 9.5C16 5.91 13.09 3 9.5 3S3 5.91 3 9.5S5.91 16 9.5 16c1.61 0 3.09 -0.59 4.23 -1.57l0.27 0.28v0.79l5 4.99L20.49 19l-4.99 -5zM9.5 14C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5S14 7.01 14 9.5S11.99 14 9.5 14z")) }
     val ArrowBack by lazy { icon("ArrowBack", mirrored = true, paths = arrayOf("M20 11H7.83l5.59 -5.59L12 4l-8 8l8 8l1.41 -1.41L7.83 13H20v-2z")) }
     val DragIndicator by lazy { icon("DragIndicator", paths = arrayOf("M11 18c0 1.1 -0.9 2 -2 2s-2 -0.9 -2 -2s0.9 -2 2 -2s2 0.9 2 2zM9 10c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM9 4c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM15 8c1.1 0 2 -0.9 2 -2s-0.9 -2 -2 -2s-2 0.9 -2 2s0.9 2 2 2zM15 10c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM15 16c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2z")) }
+    val Download by lazy { icon("Download", paths = arrayOf("M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7l7 -7z")) }
+    val OpenInNew by lazy { icon("OpenInNew", mirrored = true, paths = arrayOf("M19 19H5V5h7V3H5c-1.11 0 -2 0.9 -2 2v14c0 1.1 0.89 2 2 2h14c1.1 0 2 -0.9 2 -2v-7h-2v7zM14 3v2h3.59l-9.83 9.83l1.41 1.41L19 6.41V10h2V3h-7z")) }
     val Send by lazy { icon("Send", mirrored = true, paths = arrayOf("M2.01 21L23 12L2.01 3L2 10l15 2l-15 2z")) }
     val ExpandMore by lazy { icon("ExpandMore", paths = arrayOf("M16.59 8.59L12 13.17L7.41 8.59L6 10l6 6l6 -6l-1.41 -1.41z")) }
     val ExpandLess by lazy { icon("ExpandLess", paths = arrayOf("M12 8l-6 6l1.41 1.41L12 10.83l4.59 4.58L18 14l-6 -6z")) }

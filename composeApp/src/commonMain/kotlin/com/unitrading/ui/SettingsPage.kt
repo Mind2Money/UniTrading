@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import com.unitrading.app.AppUpdates
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 
@@ -46,6 +47,7 @@ internal fun SettingsPage(
     onClose: (() -> Unit)? = null,
     onConnectRithmic: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
+    updates: AppUpdates? = null,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
@@ -140,6 +142,8 @@ internal fun SettingsPage(
                     "settings-pause-demo", { runtime.paused.value = !paused })
                 SettingsRow("重置所有模拟账户", "清空本地模拟交易并恢复初始资金", AppIcons.DeleteSweep, "settings-reset-demo", onReset, destructive = true)
             }
+
+            if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
 }

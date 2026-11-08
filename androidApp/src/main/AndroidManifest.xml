@@ -6,6 +6,8 @@
     <!-- The notice is owned by a dataSync foreground service so the account keeps streaming in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Settings can install a newer release of this app; the system asks the user to allow it and to confirm each install. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application android:label="UniTrading" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".TradovateLoginActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
@@ -15,5 +17,9 @@
             </intent-filter>
         </activity>
         <service android:name=".LivePnlService" android:foregroundServiceType="dataSync" android:exported="false" />
+        <!-- Lends the downloaded update to the system installer; serves only the update folder of the app's cache. -->
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_files" />
+        </provider>
     </application>
 </manifest>

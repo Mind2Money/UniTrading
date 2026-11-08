@@ -17,6 +17,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.unitrading.app.LicenseController
+import com.unitrading.app.ReleaseUpdater
+import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
 import com.unitrading.ui.LicenseGate
@@ -48,7 +50,7 @@ class MainActivity : ComponentActivity() {
                     else SystemBarStyle.dark(Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
             }
-            LicenseGate(model.license, model.runtime.theme) { TradingScreen(model.runtime, login) }
+            LicenseGate(model.license, model.runtime.theme) { TradingScreen(model.runtime, login, updates = model.updates) }
         }
     }
 
@@ -64,10 +66,14 @@ class TradingRuntimeModel(application: Application) : AndroidViewModel(applicati
     val license = LicenseController(AndroidCredentialStore(application, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS))
     /** Live P&L notice; runs for the lifetime of the task and is cleared when the model is dropped. */
     val notifier = LivePnlNotifier(application)
+    /** Held here so a running download survives configuration changes. */
+    val updates = ReleaseUpdater(application.packageManager.getPackageInfo(application.packageName, 0).versionName.orEmpty(), ApkUpdateTarget(application), blocked = { runtime.registry.updateBlock() })
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     init { scope.launch { runtime.livePnl.run(notifier) } }
     override fun onCleared() {
         scope.cancel()
+        // A later model clears the download folder, so this one must not keep writing there or open the installer.
+        updates.close()
         runtime.registry.plugins.forEach { it.disconnect() }
         super.onCleared()
     }

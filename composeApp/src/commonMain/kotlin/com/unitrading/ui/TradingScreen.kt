@@ -44,7 +44,7 @@ fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
 }
 
 @Composable
-fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundPlayer: TradeSoundPlayer? = null) {
+fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundPlayer: TradeSoundPlayer? = null, updates: AppUpdates? = null) {
     val player = remember(soundPlayer) { soundPlayer ?: platformTradeSoundPlayer() }
     LaunchedEffect(runtime, player) { TradeSoundController(player).run(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
@@ -559,7 +559,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() })
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
                         }
                     }
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
@@ -597,7 +597,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic)
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
                         }
                     }
                 }

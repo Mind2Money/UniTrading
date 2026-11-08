@@ -9,6 +9,8 @@ plugins {
     alias(libs.plugins.android.multiplatform.library)
 }
 kotlin {
+    // Called explicitly because jvmAndAndroidMain below adds a dependsOn edge of its own.
+    applyDefaultHierarchyTemplate()
     jvm("desktop") { compilerOptions.jvmTarget.set(JvmTarget.JVM_17) }
     android {
         namespace = "com.unitrading.shared"
@@ -25,6 +27,10 @@ kotlin {
     }
     jvmToolchain(21)
     sourceSets {
+        // The update's download and state machine need java.io and java.net, which the desktop and Android share and iOS lacks.
+        val jvmAndAndroidMain by creating { dependsOn(commonMain.get()) }
+        getByName("desktopMain").dependsOn(jvmAndAndroidMain)
+        getByName("androidMain").dependsOn(jvmAndAndroidMain)
         commonMain.dependencies {
             api(project(":broker-api"))
             api(project(":tradovate-broker"))

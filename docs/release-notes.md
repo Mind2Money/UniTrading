@@ -13,6 +13,11 @@
 📈 **图表**
 ✅ 指标设置同样改为拖动调整顺序：鼠标按住卡片标题，手机按住左侧手柄
 
+🆕 **应用内更新**
+✅ 「设置 → 关于与更新」可以检查新版本并一键更新：Windows 自动下载、校验、替换程序并重启；Android 下载校验后打开系统安装界面，第一次需要在系统页面允许本应用安装未知应用
+✅ 账户有持仓或挂单、或账户状态无法确认时不能更新；登录状态和设置保存在程序目录之外，更新不受影响
+⚠️ 这个版本本身仍要手动下载一次，之后的版本才能在应用内更新
+
 ## English
 
 💻 **macOS**
@@ -25,6 +30,11 @@
 
 📈 **Charts**
 ✅ Indicator settings reorder the same way: hold a card title with the mouse or its left handle on a phone
+
+🆕 **In-app updates**
+✅ Settings → About & updates checks for a new version and updates in one press: Windows downloads, verifies, replaces the program and restarts; Android downloads, verifies and opens the system installer, and the first time asks you to allow installs from this app in a system screen
+✅ Updating is unavailable while an account has open positions or working orders, or while its state cannot be confirmed; logins and settings live outside the program folder and are not affected
+⚠️ This version itself still needs one manual download; later versions can update in the app
 
 # v1.3.1
 
