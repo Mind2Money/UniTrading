@@ -43,7 +43,7 @@ class MarketWatchConcurrencyTest {
             ))
         }
 
-        override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
+        override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
             path == "contract/suggest?t=SLOW&l=100" -> {
                 slowSearchRequests++
                 try { slowSearchGate?.await() }
@@ -67,7 +67,7 @@ class MarketWatchConcurrencyTest {
                     json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day - 1}T23:30Z","endTime":"2026-12-${day}T23:00Z"}""")
                 } })
             }
-            else -> delegate.request(environment, token, method, path, body)
+            else -> delegate.request(hosts, token, method, path, body)
         }
 
         private suspend fun history(id: Long, symbol: String) {

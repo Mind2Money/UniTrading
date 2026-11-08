@@ -30,7 +30,7 @@ fun main(args: Array<String>) = runBlocking {
             .first { it.environment == TradovateEnvironment.DEMO && "tradovate-demo-${it.userId}" == preferred }
         check(credentials.expiresAtMs!! > System.currentTimeMillis())
         phase = "orders-before"
-        val before = wire.request(credentials.environment, credentials.accessToken, "GET", "order/list")
+        val before = wire.request(credentials.hosts, credentials.accessToken, "GET", "order/list")
         val connected = TradovateBroker(credentials, wire)
         broker = connected
         phase = "connect"
@@ -51,7 +51,7 @@ fun main(args: Array<String>) = runBlocking {
         val maximum = requireNotNull(capacity.maximumLotsHundredths) { "Capacity unavailable" }
         check(maximum > spec.minLotsHundredths) { "This diagnostic requires at least two selectable quantities" }
         phase = "orders-after"
-        val after = wire.request(credentials.environment, credentials.accessToken, "GET", "order/list")
+        val after = wire.request(credentials.hosts, credentials.accessToken, "GET", "order/list")
         check(before == after) { "Server orders changed during read-only verification" }
         connected.disconnect()
         broker = null

@@ -13,7 +13,7 @@ class ReadOnlyProbeSafetyTest {
             "order/cancelorder", "order/liquidateposition", "orderstrategy/startorderstrategy", "order/dryrun")
         try {
             for (path in blocked) assertFailsWith<IllegalStateException> {
-                wire.request(TradovateEnvironment.DEMO, "synthetic-token-never-sent", "POST", path, null)
+                wire.request(TradovateEnvironment.DEMO.defaultHosts, "synthetic-token-never-sent", "POST", path, null)
             }
             assertEquals(blocked.size, wire.refusedWrites)
             assertEquals(0, wire.capacityChecks)
@@ -26,7 +26,7 @@ class ReadOnlyProbeSafetyTest {
             "order/cancelorder", "order/liquidateposition", "orderstrategy/startorderstrategy")
         try {
             for (path in writes) assertFailsWith<IllegalStateException> {
-                wire.request(TradovateEnvironment.DEMO, "synthetic-token-never-sent", "POST", path, null)
+                wire.request(TradovateEnvironment.DEMO.defaultHosts, "synthetic-token-never-sent", "POST", path, null)
             }
             assertEquals(writes.size, wire.refusedWrites)
             assertEquals(0, wire.capacityChecks)

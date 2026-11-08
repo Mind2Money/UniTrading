@@ -21,11 +21,11 @@ class MarketWatchBrokerTest {
         val delegate = MockTradovateWire()
         fun json(text: String) = Json.parseToJsonElement(text).jsonObject
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when (path) {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when (path) {
                 "contract/suggest?t=ES&l=100" -> JsonArray(listOf(json("""{"id":202,"name":"ESZ6","contractMaturityId":302}""")))
                 "contractMaturity/item?id=302" -> json("""{"id":302,"productId":402,"expirationMonth":202612}""")
                 "product/item?id=402" -> json("""{"id":402,"name":"ES","description":"E-mini S&P 500","currencyId":1,"productType":"Futures","tickSize":0.25,"valuePerPoint":50}""")
-                else -> delegate.request(environment, token, method, path, body)
+                else -> delegate.request(hosts, token, method, path, body)
             }
         }
         val broker = ready(wire)
@@ -70,7 +70,7 @@ class MarketWatchBrokerTest {
         val release = CompletableDeferred<Unit>()
         fun json(text: String) = Json.parseToJsonElement(text).jsonObject
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when (path) {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when (path) {
                 "contract/suggest?t=ES&l=100" -> JsonArray(listOf(202, 203, 205, 206).map { id ->
                     json("""{"id":$id,"name":"ESZ$id","contractMaturityId":${id + 100}}""")
                 })
@@ -86,7 +86,7 @@ class MarketWatchBrokerTest {
                 }
                 "contractMaturity/item?id=304" -> json("""{"id":304,"productId":404,"expirationMonth":202612}""")
                 "product/item?id=404" -> json("""{"id":404,"name":"NQ","description":"E-mini Nasdaq","currencyId":1,"productType":"Futures","tickSize":0.25,"valuePerPoint":20}""")
-                else -> delegate.request(environment, token, method, path, body)
+                else -> delegate.request(hosts, token, method, path, body)
             }
         }
         val broker = ready(wire)
@@ -116,7 +116,7 @@ class MarketWatchBrokerTest {
         var wrongMaturity = true
         fun json(text: String) = Json.parseToJsonElement(text).jsonObject
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
                 path.startsWith("contract/suggest?t=ES") -> {
                     discoveryRequests++
                     if (path == "contract/suggest?t=ESZ6&l=100") secondDiscovery.complete(Unit)
@@ -135,7 +135,7 @@ class MarketWatchBrokerTest {
                     productRequests++
                     json("""{"id":402,"name":"ES","description":"E-mini S&P 500","currencyId":1,"productType":"Futures","tickSize":0.25,"valuePerPoint":50}""")
                 }
-                else -> delegate.request(environment, token, method, path, body)
+                else -> delegate.request(hosts, token, method, path, body)
             }
         }
         val broker = ready(wire)

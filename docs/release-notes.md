@@ -6,11 +6,17 @@
 ✅ 加载历史 K 线时图表停在最新时间：Tradovate 首次打开时第一页整页出现，不再从右往左逐批长出来，更早的 K 线在后台并入
 ✅ 平移或缩放过的图表不再随历史加载一路往回退，始终停在原来的 K 线上
 
+🔌 **Tradovate 连接**
+✅ 修复 Lucid 账户登录后提示 “Tradovate HTTP 307”、读不到账户的问题：现在按 Tradovate 登录回复指定的服务器连接账户和行情，已保存的登录也会自动转到新服务器
+
 ## English
 
 📈 **Charts**
 ✅ Charts stay on the latest time while history loads: on Tradovate the first page appears whole instead of growing from right to left, and older bars join in the background
 ✅ A panned or zoomed chart no longer drifts back as history loads; it stays on the same bars
+
+🔌 **Tradovate connection**
+✅ Fixed Lucid logins stopping at "Tradovate HTTP 307" with no accounts: accounts and market data now connect to the servers Tradovate's login reply names, and saved logins move to the new servers automatically
 
 # v1.3.0
 

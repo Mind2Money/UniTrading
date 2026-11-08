@@ -138,6 +138,7 @@ class SavedTradovateAccounts(
                 } catch (cancel: CancellationException) { throw cancel }
                 catch (error: Exception) {
                     if (error is TradovateRemoteException && error.status in listOf(401, 403)) "$label 授权已失效，请重新登录"
+                    else if (error is TradovateRemoteException && error.status in 300..399) "$label 服务器地址已变更，请重新登录"
                     else if (error is RithmicRemoteException && error.code != "closed") "$label 登录被拒绝：${error.message}"
                     else "$label 暂时无法连接，已保留登录，可重试恢复"
                 } finally { if (!registered) candidate?.disconnect() }

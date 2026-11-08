@@ -96,6 +96,28 @@ namespace UniTrading.NativeAuth
             return true;
         }
 
+        private static readonly string[] RoutingKeys = { "demo", "live", "mdDemo", "mdLive" };
+
+        // The login reply's routing as received: the app decides which hosts it accepts and explains a refusal.
+        private static object Routing(object raw)
+        {
+            var hosts = raw as Dictionary<string, object>;
+            if (hosts == null)
+            {
+                var list = raw as object[];
+                return Object.Equals(raw, "") || list != null && list.Length == 0 ? null : "<invalid>";
+            }
+            var routing = new Dictionary<string, object>();
+            foreach (var key in RoutingKeys)
+            {
+                object value;
+                if (!hosts.TryGetValue(key, out value) || value == null || Object.Equals(value, "")) continue;
+                var host = value as string;
+                routing[key] = host != null && host.Length <= 253 ? host : "<invalid>";
+            }
+            return routing;
+        }
+
         private static Dictionary<string, object> Normalize(Dictionary<string, object> input, string environment)
         {
             if (input == null || !IsEnvironment(environment)) return null;
@@ -139,6 +161,11 @@ namespace UniTrading.NativeAuth
                 var expected = environment == "demo" ? "wss://md-demo.tradovateapi.com/v1/websocket" : "wss://md.tradovateapi.com/v1/websocket";
                 if (url != expected && !(environment == "demo" && url == "wss://md.tradovateapi.com/v1/websocket")) return null;
                 output["marketUrl"] = url;
+            }
+            if (input.TryGetValue("apiHosts", out raw) && raw != null)
+            {
+                var routing = Routing(raw);
+                if (routing != null) output["apiHosts"] = routing;
             }
             return output;
         }
@@ -579,6 +606,22 @@ namespace UniTrading.NativeAuth
                 var wrapped = "{\"d\":{\"access_token\":\"" + token + "\",\"user_id\":123,\"expires_in\":3600}}";
                 var aliases = LoginPolicy.NormalizeResponse("https://tv-demo.tradovateapi.com/v1/auth/session", trader, "demo", wrapped);
                 check(aliases != null && aliases.ContainsKey("accessToken") && aliases.ContainsKey("userId") && aliases.ContainsKey("expires_in"));
+                var routed = LoginPolicy.NormalizeResponse("https://live.tradovateapi.com/v1/auth/accesstokenrequest", trader, "demo", response.Replace("\"userId\":123",
+                    "\"apiHosts\":{\"demo\":\"demo-api.org.ninjatrader.com\",\"mdDemo\":\"md-demo-api.org.ninjatrader.com\",\"live\":null,\"reportingDemo\":\"rpt.org.ninjatrader.com\"},\"userId\":123"));
+                var routes = routed != null ? routed["apiHosts"] as Dictionary<string, object> : null;
+                check(routes != null && routes.Count == 2 && Object.Equals(routes["demo"], "demo-api.org.ninjatrader.com") && Object.Equals(routes["mdDemo"], "md-demo-api.org.ninjatrader.com"));
+                check(LoginPolicy.Serialize(routed).Contains("md-demo-api.org.ninjatrader.com") && !LoginPolicy.Serialize(routed).Contains("rpt.org"));
+                var routedMessage = message.Substring(0, message.Length - 1) + ",\"apiHosts\":{\"demo\":\"demo-api.org.ninjatrader.com\"}}";
+                check(((Dictionary<string, object>)LoginPolicy.NormalizeMessage(trader, trader, "demo", routedMessage)["apiHosts"]).Count == 1);
+                var unusable = LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response.Replace("\"userId\":123", "\"apiHosts\":\"elsewhere\",\"userId\":123"));
+                check(unusable != null && Object.Equals(unusable["apiHosts"], "<invalid>"));
+                var numeric = LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response.Replace("\"userId\":123", "\"apiHosts\":{\"demo\":5},\"userId\":123"));
+                check(numeric != null && Object.Equals(((Dictionary<string, object>)numeric["apiHosts"])["demo"], "<invalid>"));
+                foreach (var empty in new[] { "null", "\"\"", "[]" })
+                {
+                    var unrouted = LoginPolicy.NormalizeResponse(endpoint, trader, "demo", response.Replace("\"userId\":123", "\"apiHosts\":" + empty + ",\"userId\":123"));
+                    check(unrouted != null && !unrouted.ContainsKey("apiHosts"));
+                }
                 var first = new LoginCompletion();
                 check(!first.ShouldComplete(999999));
                 first.Capture(100, false);

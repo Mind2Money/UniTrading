@@ -16,6 +16,9 @@ private fun fakeToken(user: Long = 42) = "eyJhbGciOiJub25lIn0." + Base64.UrlSafe
 internal class MockTradovateWire : TradovateWire {
     data class Request(val method: String, val path: String, val body: JsonObject?)
     val requests = mutableListOf<Request>()
+    val requestHosts = mutableListOf<TradovateHosts>()
+    /** REST calls to these hosts get the redirect a moved organisation's users get from the default hosts. */
+    var redirecting: TradovateHosts? = null
     val socketUrls = mutableListOf<String>()
     val account = MockSocket(false)
     val market = MockSocket(true)
@@ -41,8 +44,10 @@ internal class MockTradovateWire : TradovateWire {
       "cashBalances":[{"id":1,"accountId":100,"currencyId":1,"amount":25000,"timestamp":"$TEST_INSTANT"}],
       "positions":[],"orders":[],"orderVersions":[],"fills":[]
     }""")
-    override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+    override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         requests.add(Request(method, path, body))
+        requestHosts.add(hosts)
+        if (hosts == redirecting && !path.startsWith("auth/")) throw TradovateRemoteException(307, "Tradovate HTTP 307")
         if (path == "order/dryrun") return capacityCheck(requireNotNull(body))
         if (path == "fillPair/list") return snapshot["fillPairs"] ?: JsonArray(emptyList())
         if (path.startsWith("fillFee/deps")) return feeResponses[path.substringAfter("masterid=").toLong()] ?: JsonArray(emptyList())
@@ -196,10 +201,10 @@ class TradovateTests {
         assertEquals(expected, broker.history("MESZ6", Timeframe.M5).single().timeMs)
     }
     @Test fun sharedAuthenticationHostDoesNotChangeSelectedTradingEnvironment() {
-        assertEquals("https://live.tradovateapi.com/v1/auth/renewaccesstoken", tradovateRequestUrl(TradovateEnvironment.DEMO, "auth/renewaccesstoken"))
-        assertEquals("https://live.tradovateapi.com/v1/auth/me", tradovateRequestUrl(TradovateEnvironment.DEMO, "auth/me"))
-        assertEquals("https://demo.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.DEMO, "order/placeorder"))
-        assertEquals("https://live.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.LIVE, "order/placeorder"))
+        assertEquals("https://live.tradovateapi.com/v1/auth/renewaccesstoken", tradovateRequestUrl(TradovateEnvironment.DEMO.defaultHosts, "auth/renewaccesstoken"))
+        assertEquals("https://live.tradovateapi.com/v1/auth/me", tradovateRequestUrl(TradovateEnvironment.DEMO.defaultHosts, "auth/me"))
+        assertEquals("https://demo.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.DEMO.defaultHosts, "order/placeorder"))
+        assertEquals("https://live.tradovateapi.com/v1/order/placeorder", tradovateRequestUrl(TradovateEnvironment.LIVE.defaultHosts, "order/placeorder"))
     }
     @Test fun capturedAccountSessionWithoutMarketTokenConnectsDemoAccountsAndQuotes() = runTest {
         val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)

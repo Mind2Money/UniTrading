@@ -12,7 +12,7 @@ import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.serialization.json.*
 
 interface TradovateWire {
-    suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject? = null): JsonElement
+    suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject? = null): JsonElement
     suspend fun socket(url: String): TradovateWireSocket
     fun close()
 }
@@ -23,12 +23,16 @@ interface TradovateWireSocket {
 }
 class TradovateRemoteException(val status: Int, message: String) : Exception(message)
 
-internal fun tradovateRequestUrl(environment: TradovateEnvironment, path: String): String {
+/** Authentication and renewal stay on this host for every environment; a login's hosts never change it. */
+private const val AUTH_URL = "https://live.tradovateapi.com/v1"
+
+internal fun tradovateRequestUrl(hosts: TradovateHosts, path: String): String {
     require(path.matches(Regex("[a-zA-Z]+/[a-zA-Z]+(?:\\?[^#\\r\\n]*)?")))
     val endpoint = path.substringBefore('?')
-    val base = if (endpoint in setOf("auth/me", "auth/renewaccesstoken")) environment.authUrl else {
+    val base = if (endpoint in setOf("auth/me", "auth/renewaccesstoken")) AUTH_URL else {
         require(!endpoint.startsWith("auth/")) { "不支持的认证端点" }
-        environment.restUrl
+        require(allowedTradovateHost(hosts.api)) { "不支持的交易主机" }
+        hosts.restUrl
     }
     return "$base/$path"
 }
@@ -39,15 +43,16 @@ class KtorTradovateWire : TradovateWire {
         install(WebSockets)
         install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 15_000 }
     }
-    override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+    override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
         require(path.matches(Regex("[a-zA-Z]+/[a-zA-Z]+(?:\\?[^#\\r\\n]*)?")))
         try {
-            val response = client.request(tradovateRequestUrl(environment, path)) {
+            val response = client.request(tradovateRequestUrl(hosts, path)) {
                 this.method = HttpMethod.parse(method)
                 bearerAuth(token)
                 contentType(ContentType.Application.Json)
                 if (body != null) setBody(body.toString())
             }
+            if (response.status.value in 300..399) throw TradovateRemoteException(response.status.value, "Tradovate HTTP ${response.status.value}：服务器要求改用其他地址，请重新登录")
             if (response.status.value !in 200..299) throw TradovateRemoteException(response.status.value, "Tradovate HTTP ${response.status.value}，请检查授权、连接或请求频率")
             val text = response.bodyAsText()
             require(text.length <= 8_000_000) { "服务端响应过大" }
@@ -60,7 +65,7 @@ class KtorTradovateWire : TradovateWire {
         catch (_: Exception) { throw TradovateRemoteException(0, "Tradovate 请求未取得确定结果；请核对服务端状态，勿重复提交") }
     }
     override suspend fun socket(url: String): TradovateWireSocket {
-        require(url in setOf(TradovateEnvironment.DEMO.socketUrl, TradovateEnvironment.LIVE.socketUrl, TradovateEnvironment.DEMO.marketUrl, TradovateEnvironment.LIVE.marketUrl))
+        require(allowedTradovateSocket(url))
         val session = client.webSocketSession { url(url) }
         return object : TradovateWireSocket {
             override suspend fun send(text: String) { session.send(Frame.Text(text)) }

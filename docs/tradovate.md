@@ -7,8 +7,10 @@
 - 页面为 `https://trader.tradovate.com/welcome`，由官方网页执行签名与登录，MFA/验证码保持原流程。
 - 只读取本应用弹出的登录窗口返回的 `accessToken`、`mdAccessToken` 等会话字段；不扫描 Chrome/Edge 的用户资料，不从密码输入框读取账号密码。
 - 认证与续期使用共享 `live.tradovateapi.com`；账户和行情仍连接用户选择的 Demo/Live 环境。认证域名不代表交易环境。
+- 部分机构的环境由 Tradovate 迁到了独立主机，登录回复用未公开的 `apiHosts` 字段指明（Tradovate 网页端也按它切换）。例如 Lucid 的 Demo 在 `demo-api.lucid.ninjatrader.com` 和 `md-demo-api.lucid.ninjatrader.com`，默认 Demo 主机对这些用户的请求返回 HTTP 307。登录按回复选择该环境的交易主机（`demo`/`live`：REST 和账户流）和行情主机（`mdDemo`/`mdLive`），缺项或为空时用默认主机，主机随登录加密保存。规则见 [`TradovateHosts.kt`](../tradovate-broker/src/commonMain/kotlin/com/unitrading/tradovate/TradovateHosts.kt)：只接受 `*.tradovateapi.com` 和 `*.ninjatrader.com` 的小写纯主机名；其他值或另一环境的交易主机会拒绝登录并说明字段名，不回退到默认主机。
+- HTTP 跳转一律不跟随，主机不取自跳转目标。旧版本保存的登录没有主机信息，读取账户列表收到跳转时，只采用认证主机续期回复里的 `apiHosts` 并重试一次；回复没有给出主机时提示重新登录。运行中的会话不换主机，续期回复里的不同主机到下次连接才生效。
 - 取得有效账户会话后自动返回应用，无须等待额外的 `mdAccessToken` 或点击“完成登录”。行情使用账户访问令牌连接对应 md 网关，是否有权限以服务器响应为准。
-- 仅从固定 Tradovate HTTPS/WSS 端点读取数据和提交用户确认的命令，不经过压缩包内第三方服务。
+- 仅从 Tradovate 默认主机或登录回复指定且通过校验的主机（HTTPS/WSS）读取数据和提交用户确认的命令，不经过压缩包内第三方服务。
 - Native API 权限仍由 Tradovate 决定。官方网页登录成功不保证该账户可使用 API、实时行情或某种订单。
 
 ## 记住密码和自动填充

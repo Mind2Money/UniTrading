@@ -64,7 +64,7 @@ class NativePlatformBridge {
         if (cancelled) continuation.resumeWithException(IllegalStateException("已取消登录"))
         else {
             val result = runCatching { accumulator?.result() ?: error("missing session") }
-            result.fold(continuation::resume) { continuation.resumeWithException(IllegalStateException("官方登录尚未完成或会话无效")) }
+            result.fold(continuation::resume) { continuation.resumeWithException(it as? TradovateRemoteException ?: IllegalStateException("官方登录尚未完成或会话无效")) }
         }
     }
 

@@ -18,12 +18,12 @@ class ParallelStartupTest {
         val release = CompletableDeferred<Unit>()
         val started = mutableSetOf<String>()
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
                 if (path.startsWith("contractMaturity/") || path.startsWith("cashBalance/")) {
                     started += if (path.startsWith("cashBalance/")) "balance-${body?.long("accountId")}" else "metadata"
                     release.await()
                 }
-                return if (path.startsWith("contractMaturity/")) maturity else delegate.request(environment, token, method, path, body)
+                return if (path.startsWith("contractMaturity/")) maturity else delegate.request(hosts, token, method, path, body)
             }
         }
         val broker = TradovateBroker(session(), wire, backgroundScope)
@@ -51,9 +51,9 @@ class ParallelStartupTest {
         var peak = 0
         var products = 0
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
                 if (!path.startsWith("contractMaturity/") && !path.startsWith("product/"))
-                    return delegate.request(environment, token, method, path, body)
+                    return delegate.request(hosts, token, method, path, body)
                 active++
                 peak = maxOf(peak, active)
                 try {
@@ -78,12 +78,12 @@ class ParallelStartupTest {
         val delegate = MockTradovateWire()
         var active = 0
         val wire = object : TradovateWire by delegate {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
                 if (path.startsWith("cashBalance/")) {
                     active++
                     try { awaitCancellation() } finally { active-- }
                 }
-                return delegate.request(environment, token, method, path, body)
+                return delegate.request(hosts, token, method, path, body)
             }
         }
         val broker = TradovateBroker(session(), wire, backgroundScope)

@@ -82,7 +82,7 @@ class ReconciliationRecoveryTest {
         }
         var active = initial
         val wire = object : TradovateWire {
-            override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?) = active.request(environment, token, method, path, body)
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?) = active.request(hosts, token, method, path, body)
             override suspend fun socket(url: String) = active.socket(url)
             override fun close() { initial.close(); recovered.close() }
         }

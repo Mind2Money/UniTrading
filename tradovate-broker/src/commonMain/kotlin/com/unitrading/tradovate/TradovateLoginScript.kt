@@ -27,6 +27,13 @@ object TradovateLoginScript {
             if (typeof userId === 'number' || typeof userId === 'string') msg.userId = userId;
             const duration = Number(data.expires_in);
             if (Number.isInteger(duration) && duration > 0 && duration <= 604800) msg.expires_in = duration;
+            const routes = data.apiHosts;
+            if (routes && typeof routes === 'object' && !Array.isArray(routes)) {
+              msg.apiHosts = {};
+              for (const key of ['demo','live','mdDemo','mdLive']) {
+                if (routes[key]) msg.apiHosts[key] = typeof routes[key] === 'string' ? routes[key].slice(0,254) : '<invalid>';
+              }
+            } else if (routes && routes.length !== 0) msg.apiHosts = '<invalid>';
             if (!msg.accessToken && !msg.mdAccessToken) return;
             const payload = JSON.stringify(msg);
             if (payload === last) return;

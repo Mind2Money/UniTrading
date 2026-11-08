@@ -42,7 +42,7 @@ class ContinuousContractsTest {
             json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30Z","openTime":"2026-12-${day-1}T23:00Z","closeTime":"2026-12-${day}T23:29Z","endTime":"2026-12-${day}T23:00Z"}""")
         } }
         init { delegate.snapshot = JsonObject(delegate.snapshot + mapOf("contractMaturities" to JsonArray(maturities), "contracts" to JsonArray(contracts))) }
-        override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
+        override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
             path.startsWith("contractMaturity/deps") -> {
                 mappingRequests++
                 if (failMapping) error("offline")
@@ -51,7 +51,7 @@ class ContinuousContractsTest {
             path.startsWith("contract/ldeps") -> JsonArray(contracts)
             path.startsWith("contractMaturity/items") -> { maturityBatchRequests++; JsonArray(maturities) }
             path.startsWith("tradingSession/ldeps") -> JsonArray(sessions.filter { !omitFutureSessions || timestamp(it.str("endTime")!!)!! <= clock })
-            else -> delegate.request(environment, token, method, path, body)
+            else -> delegate.request(hosts, token, method, path, body)
         }
         override suspend fun socket(url: String): TradovateWireSocket {
             val socket = delegate.socket(url)
@@ -407,7 +407,7 @@ class ContinuousContractsTest {
         val leader = selectVolumeLeader(400, "MES", wire.clock, read = { path ->
             if (path.startsWith("tradingSession/ldeps")) JsonArray(wire.sessions.filter {
                 it.long("contractMaturityId") != 301L || timestamp(it.str("endTime")!!)!! <= wire.clock
-            }) else wire.request(TradovateEnvironment.DEMO, "test", "GET", path, null) as JsonArray
+            }) else wire.request(TradovateEnvironment.DEMO.defaultHosts, "test", "GET", path, null) as JsonArray
         }, volume = { symbol, session ->
             assertTrue(session.refreshCompletedVolume)
             counts++
@@ -560,7 +560,7 @@ class ContinuousContractsTest {
     @Test fun volumeLeaderIgnoresIsFrontAndRejectsTiesMissingAndForeignData() = runTest {
         val wire = Wire()
         suspend fun select(root: String = "MES", volumes: Map<String, Long>) = selectVolumeLeader(400, root, wire.clock,
-            { wire.request(TradovateEnvironment.DEMO, "test", "GET", it, null) as JsonArray },
+            { wire.request(TradovateEnvironment.DEMO.defaultHosts, "test", "GET", it, null) as JsonArray },
             { symbol, session -> assertEquals(20261229, session.day); volumes.getValue(symbol) })
         assertEquals("MESH7", select(volumes = mapOf("MESZ6" to 10, "MESH7" to 1000)).contract.str("name"))
         assertFailsWith<IllegalArgumentException> { select(volumes = mapOf("MESZ6" to 10, "MESH7" to 10)) }

@@ -75,6 +75,19 @@ function fixture(origin = 'https://trader.tradovate.com', topLevel = true) {
   }
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(shared.messages.length,count);
+  const routed = fixture();
+  routed.setResponse({accessToken:token,userId:42,orgName:'Org',apiHosts:{live:'live.tradovateapi.com',demo:'demo-api.org.ninjatrader.com',mdDemo:'md-demo-api.org.ninjatrader.com',mdLive:null,reportingDemo:'must-not-leave'}});
+  await routed.context.fetch('https://live.tradovateapi.com/v1/auth/accesstokenrequest');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(routed.messages.at(-1).apiHosts,{demo:'demo-api.org.ninjatrader.com',live:'live.tradovateapi.com',mdDemo:'md-demo-api.org.ninjatrader.com'});
+  assert.ok(!JSON.stringify(routed.messages).includes('must-not-leave'));
+  for (const [apiHosts, expected] of [['elsewhere','<invalid>'],[['demo'],'<invalid>'],[{demo:5},{demo:'<invalid>'}],[null,undefined],['',undefined],[[],undefined]]) {
+    const unusual = fixture();
+    unusual.setResponse({accessToken:token,userId:42,apiHosts});
+    await unusual.context.fetch('https://live.tradovateapi.com/v1/auth/accesstokenrequest');
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(unusual.messages.at(-1).apiHosts,expected);
+  }
   for (const c of [fixture('https://evil.example'), fixture('https://trader.tradovate.com',false)]) {
     const other=new c.context.WebSocket('wss://demo.tradovateapi.com/v1/websocket');
     other.send('authorize\n1\n\n'+token);

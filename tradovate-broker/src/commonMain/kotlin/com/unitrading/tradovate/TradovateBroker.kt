@@ -128,14 +128,14 @@ class TradovateBroker(
         check(!stopped)
         lock.withLock { connecting = true; publish() }
         continuousEvidence.load(now())
-        if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession()
+        if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession(followHosts = true)
         connected = false
         marketReady = false
         continuousRoutes = continuousRoutes.mapValues { (_, route) -> route.copy(checkedAt = null, validUntil = 0) }
         problem = "登录会话已交接，正在读取 ${credentials.environment.wire} 授权账户列表"
         onProgress(problem)
         publish()
-        val discovery = rest("GET", "account/list") as? JsonArray
+        val discovery = discoverAccounts() as? JsonArray
             ?: throw TradovateRemoteException(0, "服务器账户列表格式无效")
         val discoveredIds = discovery.map { row ->
             (row as? JsonObject)?.long("id")?.takeIf { it > 0 }
@@ -143,7 +143,7 @@ class TradovateBroker(
         }.toSet()
         authorizedAccounts = discoveredIds
         onProgress("服务器已返回 ${discoveredIds.size} 个授权账户，正在连接账户流…")
-        val account = TradovateSocket(wire.socket(credentials.environment.socketUrl), scope, ::accountEvent) { message ->
+        val account = TradovateSocket(wire.socket(credentials.hosts.socketUrl), scope, ::accountEvent) { message ->
             connected = false
             problem = message
             publish()
@@ -280,15 +280,38 @@ class TradovateBroker(
         }
     }
 
-    private suspend fun renewSession() {
+    /**
+     * A login saved before its organisation moved gets a redirect here. Only the authenticated reply from the fixed
+     * authentication host may route the session; a redirect's target never does.
+     */
+    private suspend fun discoverAccounts(): JsonElement = try { rest("GET", "account/list") }
+    catch (moved: TradovateRemoteException) {
+        if (moved.status !in 300..399) throw moved
+        val previous = credentials.hosts
+        try { renewSession(followHosts = true) }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { throw moved }
+        if (credentials.hosts == previous) throw moved
+        rest("GET", "account/list")
+    }
+
+    /** [followHosts] only before a connection starts: a running session stays on the hosts its sockets use. */
+    private suspend fun renewSession(followHosts: Boolean = false) {
         val renewed = rest("GET", "auth/renewaccesstoken").jsonObject
         val token = renewed.str("accessToken") ?: error("renewal denied")
         val expiry = renewed.str("expirationTime")?.let(::timestamp)
             ?: jwtClaims(token)?.long("exp")?.takeIf { it in 1..253_402_300_799L }?.times(1_000)
         check(expiry != null && expiry > now()) { "renewal expiry missing or invalid" }
         credentials = TradovateSession(credentials.environment, token, renewed.str("mdAccessToken") ?: credentials.mdAccessToken,
-            credentials.userId, credentials.userName, expiry, credentials.marketUrl)
+            credentials.userId, credentials.userName, expiry, credentials.marketUrl, if (followHosts) renewalHosts(renewed) else credentials.hosts)
         onSessionRenewed(credentials)
+    }
+
+    /** A renewal that names no usable hosts keeps the session's own, and its new token. */
+    private fun renewalHosts(reply: JsonObject): TradovateHosts {
+        val named = reply["apiHosts"] as? JsonObject
+        if (named.isNullOrEmpty()) return credentials.hosts
+        return try { selectTradovateHosts(credentials.environment, named) } catch (_: TradovateRemoteException) { credentials.hosts }
     }
 
     private suspend fun connectMarket() {
@@ -296,7 +319,7 @@ class TradovateBroker(
         val token = credentials.accessToken
         lock.withLock { quoteSides.clear(); quotes = emptyMap() }
         try {
-            val socket = TradovateSocket(wire.socket(credentials.environment.marketUrl), scope, ::marketEvent) {
+            val socket = TradovateSocket(wire.socket(credentials.hosts.marketUrl), scope, ::marketEvent) {
                 marketReady = false; problem = "行情已断开，交易已暂停"; publish(); scheduleReconnect()
             }
             marketSocket = socket
@@ -1173,7 +1196,7 @@ class TradovateBroker(
             }
             lastRequestMs = Clock.System.now().toEpochMilliseconds()
         }
-        wire.request(credentials.environment, credentials.accessToken, method, path, body)
+        wire.request(credentials.hosts, credentials.accessToken, method, path, body)
     }
 
     override fun openSession(accountId: String): AccountSession {

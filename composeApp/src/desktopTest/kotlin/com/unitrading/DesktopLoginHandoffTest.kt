@@ -1,6 +1,8 @@
 package com.unitrading
 
 import com.unitrading.tradovate.TradovateEnvironment
+import com.unitrading.tradovate.TradovateHosts
+import com.unitrading.tradovate.TradovateRemoteException
 import kotlinx.coroutines.*
 import org.junit.Assume.assumeTrue
 import java.nio.file.Files
@@ -41,6 +43,26 @@ class DesktopLoginHandoffTest {
             assertTrue(phases.any { it.contains("网页登录成功") })
             assertTrue(phases.any { it.contains("1 秒后自动返回") })
             assertFalse(phases.any { it.contains(session.accessToken) })
+        } finally { remove(directory) }
+    }
+    private fun routedLogin(apiHosts: String) = """
+        const token = 'eyJhbGciOiJub25lIn0.' + Buffer.from(JSON.stringify({sub:42,exp:4102444800})).toString('base64url') + '.test-only-signature';
+        console.log('TOKEN ' + JSON.stringify({kind:'auth',environment:'demo',accessToken:token,userId:42,apiHosts:$apiHosts}));
+        console.log('DONE');
+    """.trimIndent()
+    @Test fun aRoutedLoginReachesTheAppWithItsHosts() : Unit = runBlocking {
+        val (directory, executable) = files(routedLogin("{demo:'demo-api.org.ninjatrader.com',mdDemo:'md-demo-api.org.ninjatrader.com'}"))
+        try {
+            val login = DesktopTradovateLogin({ ProcessBuilder("node", executable.toString()).start() }, executable, directory.resolve("profile"))
+            val session = withTimeout(5_000) { login.signIn(TradovateEnvironment.DEMO) }
+            assertEquals(TradovateHosts("demo-api.org.ninjatrader.com", "md-demo-api.org.ninjatrader.com"), session.hosts)
+        } finally { remove(directory) }
+    }
+    @Test fun aRefusedHostReachesTheLoginDialogWithItsReason() : Unit = runBlocking {
+        val (directory, executable) = files(routedLogin("{demo:'demo-api.evil.example'}"))
+        try {
+            val login = DesktopTradovateLogin({ ProcessBuilder("node", executable.toString()).start() }, executable, directory.resolve("profile"))
+            assertTrue(assertFailsWith<TradovateRemoteException> { withTimeout(5_000) { login.signIn(TradovateEnvironment.DEMO) } }.message!!.contains("apiHosts.demo"))
         } finally { remove(directory) }
     }
     @Test fun cancellationAfterTokenDoesNotCreateALoggedInSession() : Unit = runBlocking {

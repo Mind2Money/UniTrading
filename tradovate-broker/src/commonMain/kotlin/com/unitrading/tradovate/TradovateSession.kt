@@ -4,14 +4,13 @@ import kotlinx.serialization.json.*
 import kotlin.io.encoding.Base64
 import kotlin.time.Clock
 
-/** Only fixed Tradovate endpoints may ever receive a session token. */
+/** Each environment's default hosts. A session token goes only to these or to hosts a login reply named and [selectTradovateHosts] accepted. */
 enum class TradovateEnvironment(val wire: String, val host: String, val marketHost: String) {
     DEMO("demo", "demo.tradovateapi.com", "md-demo.tradovateapi.com"),
     LIVE("live", "live.tradovateapi.com", "md.tradovateapi.com");
-    val restUrl get() = "https://$host/v1"
-    val authUrl get() = "https://live.tradovateapi.com/v1"
     val socketUrl get() = "wss://$host/v1/websocket"
     val marketUrl get() = "wss://$marketHost/v1/websocket"
+    val defaultHosts get() = TradovateHosts(host, marketHost)
 }
 
 @kotlinx.serialization.Serializable
@@ -23,12 +22,15 @@ class TradovateSession(
     val userName: String,
     val expiresAtMs: Long?,
     val marketUrl: String = environment.marketUrl,
+    /** Absent from records saved before logins carried their hosts. */
+    val hosts: TradovateHosts = environment.defaultHosts,
 ) {
     init {
         require(accessToken.length in 20..32_768 && accessToken.matches(Regex("[A-Za-z0-9._~+/=-]+"))) { "登录令牌格式无效" }
         require(mdAccessToken == null || mdAccessToken.length in 20..32_768 && mdAccessToken.matches(Regex("[A-Za-z0-9._~+/=-]+")))
         require(userId > 0)
         require(marketUrl == environment.marketUrl || environment == TradovateEnvironment.DEMO && marketUrl == "wss://md.tradovateapi.com/v1/websocket")
+        require(environment.accepts(hosts)) { "登录主机无效" }
     }
     override fun toString() = "TradovateSession(${environment.wire}, credentials=redacted)"
 }
@@ -45,6 +47,8 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
     private var name = ""
     private var expires: Long? = null
     private var mdUrl = environment.marketUrl
+    private var hosts = environment.defaultHosts
+    private var refusedHosts: String? = null
     val ready get() = access != null && id != null && expires?.let { it > Clock.System.now().toEpochMilliseconds() } == true
 
     fun accept(message: String, origin: String, mainFrame: Boolean): Boolean {
@@ -57,7 +61,8 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
             val claims = jwtClaims(value)
             val candidate = data.long("userId") ?: claims?.long("sub") ?: claims?.long("userId")
             if (candidate != null && candidate > 0) {
-                if (id != null && id != candidate) md = null
+                if (id != null && id != candidate) { md = null; hosts = environment.defaultHosts; refusedHosts = null }
+                route(data["apiHosts"])
                 access = value
                 id = candidate
                 name = data.str("userName") ?: data.str("name") ?: claims?.str("name") ?: ""
@@ -70,10 +75,17 @@ class LoginAccumulator(private val environment: TradovateEnvironment) {
         data.str("marketUrl")?.takeIf { it == environment.marketUrl || environment == TradovateEnvironment.DEMO && it == "wss://md.tradovateapi.com/v1/websocket" }?.let { mdUrl = it }
         return ready
     }
+    /** Tokens seen on a socket name no hosts, so only a reply that does changes them. */
+    private fun route(apiHosts: JsonElement?) {
+        if (apiHosts == null || apiHosts is JsonNull || apiHosts is JsonObject && apiHosts.isEmpty()) return
+        try { hosts = selectTradovateHosts(environment, apiHosts); refusedHosts = null }
+        catch (refused: TradovateRemoteException) { refusedHosts = refused.message }
+    }
     fun result(): TradovateSession {
         check(ready) { "尚未收到有效登录会话，请完成官方网页登录" }
         check(expires != null && expires!! > Clock.System.now().toEpochMilliseconds()) { "登录令牌已过期或缺少有效期，请重新登录" }
-        return TradovateSession(environment, access!!, md, id!!, name, expires, mdUrl)
+        refusedHosts?.let { throw TradovateRemoteException(0, it) }
+        return TradovateSession(environment, access!!, md, id!!, name, expires, mdUrl, hosts)
     }
 }
 

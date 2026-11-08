@@ -115,7 +115,8 @@ class TradovateLoginActivity : ComponentActivity() {
                 WebViewCompat.getProfile(web).cookieManager.flush()
                 delivered = LoginTransfer.pending?.complete(session) == true
                 finish()
-            } catch (_: Exception) { status.text = "登录会话不完整或已过期，请重新登录" }
+            } catch (refused: TradovateRemoteException) { status.text = refused.message }
+            catch (_: Exception) { status.text = "登录会话不完整或已过期，请重新登录" }
         }
         WebViewCompat.addWebMessageListener(web, "UniTradingAuth", setOf("https://trader.tradovate.com")) { view, message, sourceOrigin, isMainFrame, _ ->
             val currentOrigin = runCatching { Uri.parse(view.url).let { "${it.scheme}://${it.host}" } }.getOrNull()

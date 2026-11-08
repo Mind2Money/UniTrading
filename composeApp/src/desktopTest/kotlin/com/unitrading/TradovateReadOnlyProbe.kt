@@ -85,14 +85,14 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
             }
         }
     }
-    override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?): JsonElement {
-        check(environment == TradovateEnvironment.DEMO)
+    override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+        check(hosts == TradovateEnvironment.DEMO.defaultHosts)
         val endpoint = path.substringBefore('?')
         val allowed = method == "GET" && endpoint in setOf("auth/me", "auth/renewaccesstoken", "account/list", "contract/item", "contract/suggest", "contract/ldeps", "contractMaturity/item", "contractMaturity/items", "contractMaturity/deps", "tradingSession/ldeps", "product/item", "currency/item", "fillPair/list", "fill/items", "order/items", "fillFee/deps") ||
             method == "POST" && endpoint == "cashBalance/getcashbalancesnapshot" ||
             allowCapacityChecks && (method == "POST" && endpoint == "order/dryrun" || method == "GET" && endpoint == "order/list")
         if (!allowed) { refusedWrites++; error("Read-only diagnostic rejected a non-read request") }
-        return delegate.request(environment, token, method, path, body).also { response ->
+        return delegate.request(hosts, token, method, path, body).also { response ->
             if (captureDailyEvidence && method == "GET" && endpoint in setOf("contract/suggest", "contract/ldeps", "contractMaturity/deps", "tradingSession/ldeps")) {
                 evidence("public-metadata", buildJsonObject { put("path", path); put("response", response) })
             }

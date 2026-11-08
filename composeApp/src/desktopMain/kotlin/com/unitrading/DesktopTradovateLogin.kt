@@ -62,6 +62,8 @@ class DesktopTradovateLogin(
                     if (!done || code != 0) error("官方网页登录未完成")
                     val result = accumulator.result()
                     if (continuation.isActive) continuation.resume(result)
+                } catch (refused: TradovateRemoteException) {
+                    if (continuation.isActive) continuation.resumeWithException(refused)
                 } catch (_: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(IllegalStateException("官方网页登录未完成或会话无效"))
                 } finally {

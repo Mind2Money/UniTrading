@@ -90,6 +90,24 @@ class SavedTradovateAccountsTest {
         assertFalse(reopened.plugins.any { it.descriptor.id == rithmic().brokerId })
     }
 
+    @Test fun aLoginsHostsSurviveARestart() = runTest {
+        val hosts = TradovateHosts("demo-api.org.ninjatrader.com", "md-demo-api.org.ninjatrader.com")
+        val store = Store()
+        manager(registry(), store).signIn(TradovateSession(TradovateEnvironment.DEMO, "fake-token-for-tests-only-12345", null, 42, "test", now + 3_600_000, hosts = hosts)) {}
+        val restored = mutableListOf<TradovateHosts>()
+        SavedTradovateAccounts(registry(), store, { now }) { s, _, _ -> restored += s.hosts; plugin(s) }.restore()
+        assertEquals(listOf(hosts), restored)
+    }
+
+    @Test fun aRedirectedRestoreAsksForALoginInsteadOfARetry() = runTest {
+        val store = Store()
+        manager(registry(), store).signIn(session()) {}
+        val accounts = SavedTradovateAccounts(registry(), store, { now }) { _, _, _ -> throw TradovateRemoteException(307, "synthetic redirect") }
+        accounts.restore()
+        assertTrue(accounts.message.value!!.contains("服务器地址已变更"))
+        assertEquals(1, accounts.savedCount.value)
+    }
+
     @Test fun restartRestoresAllUsersAndEnvironmentsAndSelectedAccount() = runTest {
         val store = Store()
         val first = manager(registry(), store)

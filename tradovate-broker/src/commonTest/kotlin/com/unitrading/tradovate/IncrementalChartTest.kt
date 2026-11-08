@@ -42,8 +42,8 @@ class IncrementalChartTest {
         var pageLimit = 2_000
         var failBackfillAfter: Int? = null
         private var backfillRequests = 0
-        override suspend fun request(environment: TradovateEnvironment, token: String, method: String, path: String, body: JsonObject?) =
-            delegate.request(environment, token, method, path, body)
+        override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?) =
+            delegate.request(hosts, token, method, path, body)
         override suspend fun socket(url: String): TradovateWireSocket {
             val socket = delegate.socket(url)
             if (!url.contains("md")) return socket

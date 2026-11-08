@@ -45,6 +45,7 @@ DONE
 - JS 通过顶层页面的 `window.chrome.webview.postMessage(JSON.stringify(...))` 发送上述 `kind: auth` 对象。
 - host 监听固定官方域名的 `/v1/auth/*` 与 `/auth/*` 单层认证响应，兼容响应包装及标准 token 别名。认证使用共享 live 域名，不据此改变用户选择的 Demo/Live 交易环境；不读取请求密码。
 - 只接受来源与当前顶层文档均为 **HTTPS `trader.tradovate.com`、443 端口** 的消息；认证响应来源限定 live/demo/tv/tv-demo 的 `tradovateapi.com` 主机，不接受任意域名。
+- 认证响应的 `apiHosts` 只转交 `demo`、`live`、`mdDemo`、`mdLive` 四项，非字符串或过长的值标记为 `<invalid>`。是否接受由应用的 `TradovateHosts.kt` 判断，host 不做连接。
 - 输入最多 128 KiB，token 长度为 20 至 32768 且不允许空白/控制字符；未知字段不转发。环境不符、失败/挑战响应和非法消息被忽略。
 - 收到账户 token 后自动进入交接，不等待独立行情 token。首次保留最多 60 秒供浏览器保存密码；发现密码库文件的大小/修改时间变化（不读取内容）后等待 1.5 秒，已有完成标记或续期会话也只等待 1.5 秒。
 - “立即返回”可跳过等待；登录后直接关闭窗口也完成交接。明确点击“取消登录”仍丢弃会话。
