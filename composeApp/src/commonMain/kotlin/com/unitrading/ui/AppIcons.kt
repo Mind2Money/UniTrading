@@ -47,8 +47,6 @@ internal object AppIcons {
     val Delete by lazy { icon("Delete", paths = arrayOf("M16 9v10H8V9h8m-1.5 -6h-5l-1 1H5v2h14V4h-3.5l-1 -1zM18 7H6v12c0 1.1 0.9 2 2 2h8c1.1 0 2 -0.9 2 -2V7z")) }
     val Search by lazy { icon("Search", paths = arrayOf("M15.5 14h-0.79l-0.28 -0.27C15.41 12.59 16 11.11 16 9.5C16 5.91 13.09 3 9.5 3S3 5.91 3 9.5S5.91 16 9.5 16c1.61 0 3.09 -0.59 4.23 -1.57l0.27 0.28v0.79l5 4.99L20.49 19l-4.99 -5zM9.5 14C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5S14 7.01 14 9.5S11.99 14 9.5 14z")) }
     val ArrowBack by lazy { icon("ArrowBack", mirrored = true, paths = arrayOf("M20 11H7.83l5.59 -5.59L12 4l-8 8l8 8l1.41 -1.41L7.83 13H20v-2z")) }
-    val ArrowUpward by lazy { icon("ArrowUpward", paths = arrayOf("M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8 -8l-8 8z")) }
-    val ArrowDownward by lazy { icon("ArrowDownward", paths = arrayOf("M20 12l-1.41 -1.41L13 16.17V4h-2v12.17l-5.58 -5.59L4 12l8 8l8 -8z")) }
     val DragIndicator by lazy { icon("DragIndicator", paths = arrayOf("M11 18c0 1.1 -0.9 2 -2 2s-2 -0.9 -2 -2s0.9 -2 2 -2s2 0.9 2 2zM9 10c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM9 4c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM15 8c1.1 0 2 -0.9 2 -2s-0.9 -2 -2 -2s-2 0.9 -2 2s0.9 2 2 2zM15 10c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2zM15 16c-1.1 0 -2 0.9 -2 2s0.9 2 2 2s2 -0.9 2 -2s-0.9 -2 -2 -2z")) }
     val Send by lazy { icon("Send", mirrored = true, paths = arrayOf("M2.01 21L23 12L2.01 3L2 10l15 2l-15 2z")) }
     val ExpandMore by lazy { icon("ExpandMore", paths = arrayOf("M16.59 8.59L12 13.17L7.41 8.59L6 10l6 6l6 -6l-1.41 -1.41z")) }

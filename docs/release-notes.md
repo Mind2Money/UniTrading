@@ -10,6 +10,9 @@
 📈 **行情**
 ✅ 编辑自选改为拖动调整顺序，去掉上移、下移箭头：鼠标按住整行，手机按住左侧手柄，拖到列表边缘自动滚动
 
+📈 **图表**
+✅ 指标设置同样改为拖动调整顺序：鼠标按住卡片标题，手机按住左侧手柄
+
 ## English
 
 💻 **macOS**
@@ -19,6 +22,9 @@
 
 📈 **Market watch**
 ✅ Reorder the watch list by dragging instead of up and down arrows: hold a row with the mouse or its left handle on a phone; the list scrolls when you reach its edge
+
+📈 **Charts**
+✅ Indicator settings reorder the same way: hold a card title with the mouse or its left handle on a phone
 
 # v1.3.1
 

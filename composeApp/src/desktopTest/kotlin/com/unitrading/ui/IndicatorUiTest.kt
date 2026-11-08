@@ -83,6 +83,23 @@ class IndicatorUiTest {
         return bestRow
     }
 
+    @Test fun draggingACardReordersTheIndicatorsAndSavingKeepsTheOrder() {
+        render()
+        openIndicators()
+        compose.onNodeWithTag("add-indicator-EXPMA").performClick()
+        compose.onNodeWithTag("add-indicator-RSI").performClick()
+        val distance = compose.onNodeWithTag("indicator-1").fetchSemanticsNode().boundsInRoot.top -
+            compose.onNodeWithTag("indicator-0").fetchSemanticsNode().boundsInRoot.top
+        compose.onNodeWithTag("indicator-drag-1", useUnmergedTree = true).performMouseInput {
+            moveTo(center); press(); moveBy(Offset(0f, -distance)); release()
+        }
+        // Only the RSI card has reference lines, so these fields prove which card is first now.
+        compose.onNodeWithTag("indicator-reference-value-0-0").assertExists()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isNotEmpty() }
+        assertEquals(listOf(com.unitrading.chart.IndicatorKind.RSI, com.unitrading.chart.IndicatorKind.EXPMA), runtime.indicators.settings.value.indicators.map { it.kind })
+    }
+
     @Test fun indicatorsAreAddedCustomisedPersistedAndDrawn() {
         render()
         assertEquals("0", chartState()["panes"])

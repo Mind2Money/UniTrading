@@ -2,10 +2,8 @@ package com.unitrading.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -83,13 +81,14 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
     var busy by remember { mutableStateOf(false) }
     var editingColor by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var editingReferenceColor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    val viewport = rememberReorderViewport()
     val settings = drafts.toSettings()
     val colors = TradingColors
     fun update(index: Int, value: IndicatorDraft) { drafts = drafts.mapIndexed { i, d -> if (i == index) value else d } }
     FormDialog("图表指标", "保存", settings != null && !busy, {
         scope.launch { busy = true; try { if (settings != null && controller.apply(settings)) onDismiss() } finally { busy = false } }
     }, onDismiss, "indicator-settings", "indicators-cancel", "indicators-save", dismissEnabled = !busy) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f).then(viewport.scrolling).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("保存后对所有品种和周期生效。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
             Text("添加指标", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -100,11 +99,11 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
                 }
             }
             if (drafts.isEmpty()) EmptyState("尚未添加指标", "点击上方指标，可添加多个并分别设置参数和线条颜色。", icon = AppIcons.Tune)
-            drafts.forEachIndexed { index, draft ->
-                IndicatorEditor(index, draft, drafts.size,
+            else ReorderableColumn(viewport, drafts, { it.id }, { it.kind.label }, { drafts = it }, spacing = 12.dp, heldShape = MaterialTheme.shapes.medium) { card ->
+                val index = card.index
+                IndicatorEditor(index, card.value, card.grip,
                     onChange = { update(index, it) },
-                    onMove = { delta -> drafts = drafts.toMutableList().also { list -> list.add(index + delta, list.removeAt(index)) } },
-                    onRemove = { drafts = drafts.filterIndexed { i, _ -> i != index } },
+                    onRemove = { if (!card.dragging) drafts = drafts.filterIndexed { i, _ -> i != index } },
                     onPickColor = { line -> editingColor = index to line },
                     onPickReferenceColor = { row -> editingReferenceColor = index to row })
             }
@@ -136,9 +135,8 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
 private fun IndicatorEditor(
     index: Int,
     draft: IndicatorDraft,
-    total: Int,
+    grip: Modifier,
     onChange: (IndicatorDraft) -> Unit,
-    onMove: (Int) -> Unit,
     onRemove: () -> Unit,
     onPickColor: (String) -> Unit,
     onPickReferenceColor: (Int) -> Unit,
@@ -150,12 +148,14 @@ private fun IndicatorEditor(
     Surface(Modifier.fillMaxWidth().testTag("indicator-$index"), shape = MaterialTheme.shapes.medium, color = scheme.surfaceContainerHighest) {
         Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(config?.label ?: draft.kind.label, style = type.titleSmall)
-                    Text(draft.kind.title + if (draft.kind.pane == IndicatorPane.OVERLAY) " · 叠加在 K 线上" else " · 独立副图", style = type.bodySmall, color = colors.Muted)
+                // The icon lines up with the fields below; its touch target overhangs the card padding.
+                Row(Modifier.weight(1f).offset(x = (-12).dp).then(grip), verticalAlignment = Alignment.CenterVertically) {
+                    ReorderGrip("indicator-drag-$index")
+                    Column(Modifier.weight(1f)) {
+                        Text(config?.label ?: draft.kind.label, style = type.titleSmall)
+                        Text(draft.kind.title + if (draft.kind.pane == IndicatorPane.OVERLAY) " · 叠加在 K 线上" else " · 独立副图", style = type.bodySmall, color = colors.Muted)
+                    }
                 }
-                ActionIcon(AppIcons.ArrowUpward, "上移 ${draft.kind.label}", enabled = index > 0) { onMove(-1) }
-                ActionIcon(AppIcons.ArrowDownward, "下移 ${draft.kind.label}", enabled = index < total - 1) { onMove(1) }
                 ActionIcon(AppIcons.Delete, "移除 ${draft.kind.label}", "remove-indicator-$index", onClick = onRemove)
             }
             Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
