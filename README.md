@@ -2,7 +2,7 @@
 
 UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
 
-**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.3.0，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
+**Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.3.1，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
 ## 功能
 
@@ -83,7 +83,7 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :rithmic-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。1.3.0 常规套件为 592 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows、创建 GitHub Release 并发送 Discord 公告；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.3.1 常规套件为 619 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows、创建 GitHub Release 并发送 Discord 公告；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
 
 ### iOS（必须在 Mac 上）
 

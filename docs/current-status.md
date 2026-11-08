@@ -1,6 +1,6 @@
 # 当前实现与验证状态
 
-当前版本 1.3.0 / Android versionCode 8（2026-11-06）。下方全量核对的日期：2026-10-29，业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计仅核对实现并更新文档。
+当前版本 1.3.1 / Android versionCode 9（2026-11-08）。下方全量核对的日期：2026-10-29，业务代码基线：`2dcf7e1`，应用 1.1.4，Android versionCode 6；原生 WebView2 登录 host 独立版本为 1.1.1。本次审计仅核对实现并更新文档。
 
 ## 功能与代码对应
 
@@ -71,7 +71,7 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 
 ## 验证证据及限制
 
-- 1.3.0 发布前回归 592 项，模拟器设备测试 debug / R8 各 5 项，打包后的 Windows 应用已实际启动，见[验证记录](verification.md)。以下条目是 2026-10-29 核对的结果。
+- 1.3.1 发布前回归 619 项，打包后的 Windows 应用已实际启动，见[验证记录](verification.md)。以下条目是 2026-10-29 核对的结果。
 - 1.1.4 常规测试为 **127 项**：broker-api 3、demo-broker 28、tradovate-broker 48、composeApp 48，0 失败、0 跳过。
 - 本次审计重跑上述测试，并额外运行 3 个显式启用的诊断探针，合计 130 项；探针确认 A1 的缺陷现状，**通过不表示缺陷已修复**。命令及用例见[审计](implementation-audit.md)。
 - Android 1.1.4 已有模拟器触摸 UI 证据：导航、主题保存/Activity 重建、两轴缩放；1.1.3 另有 Keystore 加密、篡改拒绝和跨进程读取测试。本次未重新操作设备。

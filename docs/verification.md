@@ -1,6 +1,17 @@
 # 验证记录索引
 
-## 当前：1.3.0 / v1.3.0
+## 当前：1.3.1 / v1.3.1
+
+2026-11-08 发布前在 Windows、JDK 21 上核对 `76757c6` 加版本号改动。标签提交在此基础上只改本记录、发布说明和其他文档的文字。
+
+- 桌面回归 619 项：broker-api 6、demo-broker 34、tradovate-broker 232、composeApp 277、rithmic-broker 70，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.ps1` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。
+- 脚本测试：`test_build_local.py` 20 项、`test_release_notes.py` 5 项、`test_release_discord.py` 15 项通过。
+- Android：本机 R8 release 构建因 Windows 提交内存耗尽、JVM 崩溃而未完成，R8 APK 以 `main` 和标签的 CI 结果为准；debug Kotlin 编译通过；没有运行模拟器设备测试。
+- Windows 包：`UniTrading.exe` 版本为 1.3.1，含登录 host（自测 60 项通过）。从仓库外目录启动，应用数据目录隔离，放入授权记录和已保存登录的副本，通过授权校验后显示登录页和 Tradovate、Rithmic 两个入口，已保存的 2 个登录能读出。Tradovate 会话已过期，没有连接；Rithmic 的已保存登录被拒绝（permission denied），原因未查明。
+- Lucid 主机：`demo-api.lucid.ninjatrader.com` 和 `md-demo-api.lucid.ninjatrader.com` 的 WebSocket 握手返回 101，前者不带令牌的 REST 请求返回 404，与默认 Demo 主机相同。
+- 未验证：真实 Lucid 登录、续期回复是否带 `apiHosts`、真机、Tradovate 真实下单、改价和成交回执、Rithmic 平仓、iOS、MSI 安装包。
+
+## 1.3.0 / v1.3.0
 
 2026-11-06 发布前在 Windows、JDK 21 上核对 `7ba10fd` 加版本号改动。标签提交在此基础上只改本记录、发布说明和其他文档的文字。
 

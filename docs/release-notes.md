@@ -1,22 +1,30 @@
 # Unreleased
 
+# v1.3.1
+
 ## 简体中文
+
+🎉 UniTrading 更新至 **v1.3.1**！修复 Lucid 账户连接失败，图表加载历史时不再移动。
+
+🔌 **Tradovate 连接**
+✅ 修复 Lucid 账户登录后提示 “Tradovate HTTP 307”、读不到账户的问题：现在按 Tradovate 登录回复指定的服务器连接账户和行情
+⚠️ 此修复尚未用真实 Lucid 账户实测；更新后仍提示 307 时，请重新登录一次
 
 📈 **图表**
 ✅ 加载历史 K 线时图表停在最新时间：Tradovate 首次打开时第一页整页出现，不再从右往左逐批长出来，更早的 K 线在后台并入
 ✅ 平移或缩放过的图表不再随历史加载一路往回退，始终停在原来的 K 线上
 
-🔌 **Tradovate 连接**
-✅ 修复 Lucid 账户登录后提示 “Tradovate HTTP 307”、读不到账户的问题：现在按 Tradovate 登录回复指定的服务器连接账户和行情，已保存的登录也会自动转到新服务器
-
 ## English
+
+🎉 UniTrading is now **v1.3.1**! It fixes Lucid accounts failing to connect and keeps charts in place while history loads.
+
+🔌 **Tradovate connection**
+✅ Fixed Lucid logins stopping at "Tradovate HTTP 307" with no accounts: accounts and market data now connect to the servers Tradovate's login reply names
+⚠️ This fix has not been run with a real Lucid account yet; if 307 still appears after updating, sign in again
 
 📈 **Charts**
 ✅ Charts stay on the latest time while history loads: on Tradovate the first page appears whole instead of growing from right to left, and older bars join in the background
 ✅ A panned or zoomed chart no longer drifts back as history loads; it stays on the same bars
-
-🔌 **Tradovate connection**
-✅ Fixed Lucid logins stopping at "Tradovate HTTP 307" with no accounts: accounts and market data now connect to the servers Tradovate's login reply names, and saved logins move to the new servers automatically
 
 # v1.3.0
 
