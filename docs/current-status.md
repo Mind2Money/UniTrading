@@ -26,6 +26,7 @@
 | 实时盈亏通知 | 已实现；Android 设备测试在 CI 运行，iOS 未构建验证 | `LivePnlController`、`LivePnlNotifier` + `LivePnlService` dataSync 前台服务（Android 16+ 在系统允许时提升为 Live Update / 超级岛，更早版本常驻通知）、`AppleLivePnl` + `UniTradingWidgets` 扩展（iOS 16.2+ Live Activity / 灵动岛）；仅进程存活时刷新，90 秒无刷新自动过期，见[实时盈亏通知](live-pnl-notifications.md) |
 | 十字线、图层及时间缺口 | 部分实现 | 悬停、点击或长按显示虚线十字线：底轴标注所指 K 线时间（UTC），右轴标注所指价格，横线落在副图内时标注该指标值；方向键移动时只保留竖线。保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
 | iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |
+| macOS 桌面 | 已实现，未在真实 Mac 上实测登录 | Apple Silicon、macOS 13+。CI 编译打包并运行钥匙串与登录组件策略测试；授权、Tradovate 网页登录、Rithmic、已保存登录都没有在 Mac 上跑过。ad-hoc 签名、未公证，登录窗口不保存密码 |
 | Rithmic R \| Protocol 接入 | 已实现，应用内入口已开启（`RITHMIC_LOGIN_ENABLED=true`）；探针在 Rithmic Test 与 Paper Trading（TPT）实测登录、账户、行情、历史；`RithmicBroker` 只读流程已在 Paper Trading 上通过，用户已在应用内完成下单、改单和撤单，并确认行情、图表和历史配对；平仓未实测 | `rithmic-broker`、`RithmicConnectionDialog`、`SavedTradovateAccounts.signInRithmic`；四个 plant、静态括号单、净额持仓；验证范围见[Rithmic 接入](rithmic.md) |
 | 本地 Demo | 保留实现，默认关闭 | `demo-broker` 仍是 `composeApp` 的编译依赖，未从产物完全移除；离线测试显式启用 `includeDemoBrokers = true` |
 
@@ -59,9 +60,10 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 | 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
 | 测试门禁 | 全部测试移到本地；运行 `pwsh -File scripts/build-local.ps1` 执行四模块 desktop 测试、桌面打包及 Android release 构建。CI 无测试门禁，签名只依赖 Android 编译；没有 Android instrumentation job |
-| iOS | 本地 Apple Silicon Mac 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检，见[本地构建](local-build.md)；不再启动 macOS hosted runner |
+| iOS | 本地 Apple Silicon Mac 运行 ARM64 模拟器 Kotlin 测试及 Xcode 平台/UI 自检，见[本地构建](local-build.md)；iOS 不使用 macOS hosted runner |
+| macOS 桌面包 | `v*` tag 或手动运行时在 `macos-latest` 打包；失败会阻止 GitHub Release，见[本地构建](local-build.md#发布版本) |
 | 并发 | 同一 PR 的新运行取消旧运行；push 和手动运行按 run ID 独立分组，旧运行不会串行阻塞后续构建 |
-| 超时 | Android 构建与 Windows 打包各 35 分钟，签名 / 通知 / Release 各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
+| 超时 | Android 构建、Windows 和 macOS 打包各 35 分钟，签名 / 通知 / Release 各 10 分钟；Telegram 步骤 5 分钟，连接 15 秒，上传 APK 180 秒、消息 60 秒；本地单个构建命令默认 45 分钟 |
 
 上述 job 超时从 runner 开始执行后计时，不能限制 GitHub 分配 runner 前的排队时间。各次 push 可并行执行，仍受账户 runner 并发额度限制，通知可能按完成顺序到达。
 

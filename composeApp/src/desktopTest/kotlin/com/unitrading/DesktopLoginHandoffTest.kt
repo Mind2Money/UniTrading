@@ -22,7 +22,7 @@ class DesktopLoginHandoffTest {
     """.trimIndent()
 
     private fun files(body: String): Pair<Path, Path> {
-        assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        assumeTrue(isWindows || isMacOs)
         val directory = Files.createTempDirectory("unitrading-login-pipe-")
         val executable = directory.resolve("fixture.cjs")
         Files.writeString(executable, body)

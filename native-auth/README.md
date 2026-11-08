@@ -63,3 +63,18 @@ DONE
 ## 验证状态
 
 构建脚本默认执行不联网的 policy self-test，覆盖环境、origin、端口、URI 用户信息、字段清理、消息大小、token 长度、错误响应和敏感 URL 展示规则。该测试仅验证离线策略。真实 Tradovate 登录和浏览器密码保存需在正式登录窗口中单独验证。
+
+## macOS
+
+`TradovateLogin.swift` 是 macOS 上对应的 host（Apple Silicon，macOS 13 及以上），用 WKWebView 打开同一个官方登录页，向 Kotlin 输出相同的 `TOKEN` / `STATUS` / `ERROR` / `DONE` 行。与 Windows 的差异：
+
+- 只靠注入脚本拿到认证响应，WKWebView 没有 WebResourceResponseReceived 这样的接口。
+- 没有密码管理器，收到会话后约 1.5 秒自动返回，不输出 `STATUS PASSWORD_SAVE`。
+- `--profile` 只为保持相同的命令行；网站数据按环境由 WebKit 保存。
+
+```bash
+bash native-auth/build-macos.sh
+native-auth/build/1.1.1/UniTrading.TradovateLogin --self-test
+```
+
+`build-macos.sh` 编译后先跑离线自测，通过才写到输出目录。真实登录需要在 Mac 上单独验证。

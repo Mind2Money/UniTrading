@@ -151,11 +151,19 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
 4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
 5. 先推 `main`，确认 workflow 能解析、Android 构建通过，再推标签。两次 push 各自触发一次 CI，Telegram 会收到两条消息。
 
-标签 CI 依次构建并签名 APK、打包 Windows，全部成功后创建 GitHub Release，附带签名 APK、Windows zip 和 R8 mapping。
+标签 CI 构建并签名 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带签名 APK、Windows zip、macOS zip 和 R8 mapping。
 标签必须等于 `v<versionName>`，否则 Android 构建失败，不会创建 Release。重跑失败的 job 时，已有 Release 的正文和附件会被覆盖更新。
 
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
 打包后的应用从 `app/resources/` 读取。JDK 模块由 `nativeDistributions.modules` 声明，新增依赖后用 `:composeApp:suggestRuntimeModules` 检查。
+
+macOS 包只有 Apple Silicon，ad-hoc 签名，未公证。`build-macos` 失败会阻止 Release，Windows 回归也覆盖不到 macOS 代码；改动钥匙串存储、`native-auth/TradovateLogin.swift` 或打包配置后，打 tag 前先手动验证这个 job：
+
+```bash
+gh workflow run build.yml --ref <分支>
+```
+
+手动运行只用于验证打包，不签名 APK，也不推 Telegram，不能代替发布用的 push 运行。
 
 ### Discord 公告
 
@@ -197,6 +205,7 @@ iOS 执行四个模块的 Kotlin Native 模拟器测试，随后构建模拟器�
 entitlements 与签名，安装到模拟器并运行 native platform/UI self-test。
 两个原生自测均有 90 秒超时并检查 PASS 标记。日志与 Xcode DerivedData 写入本次输出目录。
 只生成模拟器应用；真机签名及 iOS 发布不在原 CI 范围内。
+macOS 上的 desktop 目标需要 Xcode 命令行工具（`swiftc`）来编译登录组件。
 Windows 显式指定 ios 会失败，不会跳过后报告全平台成功。
 
 ## 本次本机验证

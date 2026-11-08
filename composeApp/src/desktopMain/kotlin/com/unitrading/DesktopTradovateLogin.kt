@@ -16,13 +16,14 @@ class DesktopTradovateLogin(
     private val profileOverride: Path? = null,
 ) : TradovateLogin {
     override suspend fun signIn(environment: TradovateEnvironment, onProgress: (String) -> Unit): TradovateSession {
-        require(System.getProperty("os.name").startsWith("Windows")) { "当前桌面网页登录组件仅支持 Windows" }
-        val root = profileOverride ?: Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "browser")
+        require(isWindows || isMacOs) { "当前桌面网页登录组件仅支持 Windows 和 macOS" }
+        val root = profileOverride ?: userDataRoot().resolve("UniTrading").resolve("browser")
+        val host = if (isMacOs) "UniTrading.TradovateLogin" else "UniTrading.TradovateLogin.exe"
         val executable = listOfNotNull(
             executableOverride,
-            System.getProperty("compose.application.resources.dir")?.let { Path.of(it, "tradovate-login", "1.1.1", "UniTrading.TradovateLogin.exe") },
-            Path.of("native-auth", "build", "1.1.1", "UniTrading.TradovateLogin.exe"),
-            Path.of("..", "native-auth", "build", "1.1.1", "UniTrading.TradovateLogin.exe"),
+            System.getProperty("compose.application.resources.dir")?.let { Path.of(it, "tradovate-login", "1.1.1", host) },
+            Path.of("native-auth", "build", "1.1.1", host),
+            Path.of("..", "native-auth", "build", "1.1.1", host),
         ).firstOrNull { Files.isRegularFile(it) } ?: error("登录组件未构建，请运行 buildTradovateLoginHost")
         val script = withContext(Dispatchers.IO) {
             Files.createDirectories(root)

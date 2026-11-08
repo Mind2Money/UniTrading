@@ -42,7 +42,7 @@ class DesktopSnapshotStore(private val directory: Path = defaultDataDirectory())
 }
 
 private fun defaultDataDirectory(): Path = (System.getProperty("unitrading.dataDir") ?: System.getenv("UNITRADING_DATA_DIR"))?.let(Path::of)
-    ?: Path.of(System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "UniTrading", "demo-v1")
+    ?: userDataRoot().resolve("UniTrading").resolve("demo-v1")
 
 fun main(args: Array<String>) = application {
     val localDemo = "--local-demo" in args
@@ -50,7 +50,7 @@ fun main(args: Array<String>) = application {
         if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
     }
-    // One activation per Windows user, shared by both modes; the local demo is gated like the real terminal.
+    // One activation per OS user, shared by both modes; the local demo is gated like the real terminal.
     val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }

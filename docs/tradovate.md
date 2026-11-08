@@ -23,6 +23,10 @@
 
 需要系统 Microsoft Edge WebView2 Runtime 和 Windows .NET Framework 4.x。`:composeApp:run` 会自动构建/准备 native host；无需 .NET SDK。
 
+### macOS
+
+登录窗口是独立的 Swift + WKWebView 程序（`native-auth/TradovateLogin.swift`，Apple Silicon，macOS 13 及以上），与 Windows host 用同一套管道协议。Demo 和 Live 各用一份网站数据（macOS 14 起；13 上两者共用）。WKWebView 没有密码管理器，账号密码每次手动输入或粘贴；收到会话后约 1.5 秒自动返回。
+
 ### Android
 
 使用 Android WebView 的独立 Demo/Live profile 与系统 Autofill 框架。收到会话后自动提交保存上下文、等待系统提示处理并返回主界面。**自动保存/填充依赖用户启用一个系统密码服务**；WebView 不自带独立密码管理器。未启用时登录窗会显示说明和系统设置入口。
@@ -58,7 +62,7 @@
 
 - 密码由浏览器/系统密码服务保存；Kotlin 和 native host 不读取密码字段。
 - 1.1.3 起会话通过重定向进程管道或限定 origin 的 Android WebMessage 交接后，在本机加密保存，不写入 Demo JSON、命令行、日志或剪贴板。
-- Windows 使用当前用户 DPAPI，文件位于 `%LOCALAPPDATA%/UniTrading/credentials-v1/tradovate.dpapi`；设置 `UNITRADING_DATA_DIR` 时改为该目录下的 `credentials-v1`。Android 使用 Keystore AES-256-GCM，密文位于应用 `noBackupFilesDir`。
+- Windows 使用当前用户 DPAPI，文件位于 `%LOCALAPPDATA%/UniTrading/credentials-v1/tradovate.dpapi`；设置 `UNITRADING_DATA_DIR` 时改为该目录下的 `credentials-v1`。macOS 的文件在 `~/Library/Application Support/UniTrading/credentials-v1`（文件名相同），内容为 AES-256-GCM，随机密钥存在登录钥匙串（按数据目录和文件各一把，不同步到 iCloud），通过系统 `security` 工具读写，避免 ad-hoc 签名的应用每次更新后弹出钥匙串授权。Android 使用 Keystore AES-256-GCM，密文位于应用 `noBackupFilesDir`。
 - 重启按用户 ID 和 Demo/Live 环境恢复有效会话，从服务器重新同步账户，恢复上次选择的交易商/账户。运行中续期同步保存；临近过期的会话先续期再读取账户。过期、撤销的登录需要重新认证；网络故障保留凭据并提供重试入口。
 - “账户 / 切换账户”提供“清除已保存登录”，确认后删除应用会话并断开连接；不撤单、不平仓、不清空浏览器密码。正常退出和“断开 Tradovate”保留会话，重启仍可恢复。
 - 旧版本只保存浏览器资料，升级后须成功登录一次才能建立应用会话存档。iOS 尚无登录组件，也未接入凭据存储。

@@ -1,6 +1,6 @@
 # UniTrading
 
-UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows Desktop 与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
+UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows、macOS 桌面与 Android 共用交易界面；iOS 保留工程骨架，尚未在 Mac/Xcode 编译或运行。
 
 **Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.3.1，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 
@@ -34,7 +34,7 @@ broker-api/    共享模型、定点计算、BrokerPlugin / AccountSession
 demo-broker/   模拟报价、K线聚合、撮合、账户账本和快照
 tradovate-broker/  登录会话、REST/WS 协议、净额期货账户与服务器订单
 rithmic-broker/    R | Protocol API（protobuf over WebSocket）登录、行情、历史与订单
-native-auth/   Windows WebView2 登录 host 与安全策略测试
+native-auth/   Windows WebView2 / macOS WKWebView 登录 host 与安全策略测试
 composeApp/    Compose 共享界面、图表、桌面/iOS 入口
 androidApp/    Android Activity 和应用配置
 iosApp/        SwiftUI 容器、Xcode 工程
@@ -62,6 +62,16 @@ Android SDK 使用 Android Studio 管理。将 SDK 路径写入本机 `local.pro
 ```
 
 `run` 会先将运行所需的类、依赖与应用资源复制到系统临时目录的独立 `unitrading-run-*` 快照。应用运行期间，后续编译和测试不会替换本次启动所用的文件。正常退出后清理快照。源代码改动需重新启动应用才能生效。
+
+### macOS 桌面
+
+GitHub Release 提供 Apple Silicon 的 `UniTrading-<版本>-macos-arm64.zip`，需要 macOS 13 及以上。应用只有 ad-hoc 签名，没有 Apple 公证，解压后先移除隔离属性再打开：
+
+```bash
+xattr -cr UniTrading.app
+```
+
+从源码运行需要 Xcode 命令行工具（`swiftc`），命令与 Windows 相同。macOS 版尚未在真实 Mac 上完成登录实测，见[当前状态](docs/current-status.md)。
 
 ### Android 调试 APK
 
@@ -107,13 +117,13 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 4. 账户与品种由服务器加载；在行情栏输入合约前缀（如 MES），点击“查询服务器合约”。只支持已加载规格的 USD 线性期货。
 5. 数量单位为整数“张”；按服务器净额持仓显示，禁止将 0.01 手直接映射成期货订单。
 
-Windows 需要 WebView2 Runtime 与系统 .NET Framework。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 需要较新 System WebView；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
+Windows 需要 WebView2 Runtime 与系统 .NET Framework；macOS 使用系统 WKWebView。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 需要较新 System WebView；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
 
-Windows 和 Android 登录后会在本机加密保存会话，重启自动恢复仍有效的登录及上次选择的账户；续期后的会话同步更新。Windows 使用当前用户的 DPAPI，Android 使用 Keystore 密钥与 AES-GCM。支持保存多个用户及独立的 Demo/Live 登录；账户页可以重试恢复或清除全部已保存登录。会话过期或被服务器撤销后仍需重新认证。
+Windows、macOS 和 Android 登录后会在本机加密保存会话，重启自动恢复仍有效的登录及上次选择的账户；续期后的会话同步更新。Windows 使用当前用户的 DPAPI，macOS 使用登录钥匙串中的密钥与 AES-GCM，Android 使用 Keystore 密钥与 AES-GCM。支持保存多个用户及独立的 Demo/Live 登录；账户页可以重试恢复或清除全部已保存登录。会话过期或被服务器撤销后仍需重新认证。
 
 登录与重开时，账户授权和完整快照校验通过后，在后台线程池并行加载合约规格、资金快照与行情连接。合约和资金各最多并行处理 4 项，每个连接同时在途的 REST 请求最多 4 个，保留请求间至少 750 毫秒的节流；共用合约资料复用缓存。重开最多同时恢复 3 个已保存登录，优先启动上次选择的登录，完成的连接立即显示。取消操作会取消本次并行加载；单个登录失败不阻止其他登录恢复。并行初始化完成前暂停交易。
 
-Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务。密码和令牌不会写入 Demo 存档、命令行或日志。旧版本从未保存应用会话，升级到 1.1.3 后需要登录一次，之后才能自动恢复。
+Windows 记住密码使用 WebView2 自有 profile；Android 使用系统密码服务；macOS 登录窗口不保存密码。密码和令牌不会写入 Demo 存档、命令行或日志。旧版本从未保存应用会话，升级到 1.1.3 后需要登录一次，之后才能自动恢复。
 
 **限制**：网页登录成功不保证 API 或实时行情权限；订单受理后仍须等待成交确认。超时导致结果未知时，应用不会自动重发，并暂停当前会话的后续交易指令，需先到官网核对。已受理后缺失事件、重连或仓位删除的对账仍有[已确认缺口](docs/implementation-audit.md)。已有保护价仅在服务器关系和数量唯一匹配时允许修改；OSO 用于新入场订单携带保护，已有净仓补加/删除保护及复杂关联需在官网处理。
 

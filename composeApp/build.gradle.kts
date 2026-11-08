@@ -51,19 +51,27 @@ kotlin {
     }
 }
 val isWindows = System.getProperty("os.name").startsWith("Windows")
+val isMac = System.getProperty("os.name").startsWith("Mac")
 // Compose packages only appResources/{common,<os>,<os>-<arch>}. `run` and the probes read this folder as the resources dir.
-val desktopAppResources = layout.buildDirectory.dir("appResources/windows")
+val desktopAppResources = layout.buildDirectory.dir(if (isMac) "appResources/macos" else "appResources/windows")
 val buildTradovateLoginHost = tasks.register<Exec>("buildTradovateLoginHost") {
-    onlyIf { isWindows }
-    inputs.files(rootProject.file("native-auth/TradovateLogin.cs"), rootProject.file("native-auth/build.ps1"))
-    outputs.file(rootProject.file("native-auth/build/1.1.1/UniTrading.TradovateLogin.exe"))
-    commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rootProject.file("native-auth/build.ps1").absolutePath,
-        "-OutputDir", rootProject.file("native-auth/build/1.1.1").absolutePath)
+    onlyIf { isWindows || isMac }
+    val output = rootProject.file("native-auth/build/1.1.1")
+    if (isMac) {
+        inputs.files(rootProject.file("native-auth/TradovateLogin.swift"), rootProject.file("native-auth/build-macos.sh"))
+        outputs.file(output.resolve("UniTrading.TradovateLogin"))
+        commandLine("bash", rootProject.file("native-auth/build-macos.sh").absolutePath, output.absolutePath)
+    } else {
+        inputs.files(rootProject.file("native-auth/TradovateLogin.cs"), rootProject.file("native-auth/build.ps1"))
+        outputs.file(output.resolve("UniTrading.TradovateLogin.exe"))
+        commandLine("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", rootProject.file("native-auth/build.ps1").absolutePath,
+            "-OutputDir", output.absolutePath)
+    }
 }
 val stageTradovateLoginHost = tasks.register<Copy>("stageTradovateLoginHost") {
     dependsOn(buildTradovateLoginHost)
-    onlyIf { isWindows }
-    from(rootProject.file("native-auth/build/1.1.1")) { include("*.exe", "*.dll", "*.txt") }
+    onlyIf { isWindows || isMac }
+    from(rootProject.file("native-auth/build/1.1.1")) { include("*.exe", "*.dll", "*.txt", "UniTrading.TradovateLogin") }
     into(desktopAppResources.map { it.dir("tradovate-login/1.1.1") })
 }
 val desktopTestCompilation = kotlin.targets.getByName("desktop").compilations.getByName("test")
@@ -105,7 +113,7 @@ tasks.register<JavaExec>("tradovateReadOnlyCapacityProbe") {
     }
 }
 
-tasks.matching { it.name in setOf("run", "prepareAppResources", "createDistributable", "packageMsi", "packageExe") }.configureEach { dependsOn(stageTradovateLoginHost) }
+tasks.matching { it.name in setOf("run", "prepareAppResources", "createDistributable", "packageMsi", "packageExe", "packageDmg") }.configureEach { dependsOn(stageTradovateLoginHost) }
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
@@ -117,6 +125,11 @@ compose.desktop {
             // jlink keeps only listed modules; `suggestRuntimeModules` lists what the jars need beyond the defaults.
             modules("java.instrument", "java.management", "jdk.unsupported")
             windows { iconFile.set(project.file("icons/unitrading.ico")) }
+            macOS {
+                bundleID = "com.unitrading.desktop"
+                iconFile.set(project.file("icons/unitrading.icns"))
+                minimumSystemVersion = "13.0"
+            }
         }
     }
 }

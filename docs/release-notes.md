@@ -2,10 +2,20 @@
 
 ## 简体中文
 
+💻 **macOS 版**
+✅ 新增 Apple Silicon 的 macOS 桌面版（macOS 13 及以上），支持 Tradovate 和 Rithmic 登录，授权记录和已保存登录由系统钥匙串保护
+⚠️ 尚未在真实 Mac 上实测登录。安装包未经 Apple 公证，解压后先执行 `xattr -cr UniTrading.app` 再打开
+⚠️ macOS 登录窗口不能记住密码，每次需要手动输入
+
 📈 **行情**
 ✅ 编辑自选改为拖动调整顺序，去掉上移、下移箭头：鼠标按住整行，手机按住左侧手柄，拖到列表边缘自动滚动
 
 ## English
+
+💻 **macOS**
+✅ New macOS desktop build for Apple Silicon (macOS 13 or later) with Tradovate and Rithmic sign-in; the license record and saved logins are protected by the system keychain
+⚠️ Sign-in has not been run on a real Mac yet. The package is not notarized by Apple: after unzipping, run `xattr -cr UniTrading.app` before opening it
+⚠️ The macOS login window cannot remember passwords; enter yours each time
 
 📈 **Market watch**
 ✅ Reorder the watch list by dragging instead of up and down arrows: hold a row with the mouse or its left handle on a phone; the list scrolls when you reach its edge
