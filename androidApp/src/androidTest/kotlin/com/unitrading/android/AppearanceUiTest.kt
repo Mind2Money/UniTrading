@@ -205,12 +205,13 @@ class AppearanceUiTest {
             tapAt(plot.left + plot.width() * .6f, plot.top + plot.height() * .35f)
             awaitNode("线条颜色", description = true)
             screenshot("android-drawing-selected")
-            tap("设置", description = true)
+            // The chart's own description also mentions 设置 and comes first; the quick bar is the last match.
+            tap("设置", description = true, last = true)
             awaitText("趋势线 设置")
             screenshot("android-drawing-settings")
             tap("确定")
             awaitNode("移除", description = true)
-            tap("移除", description = true)
+            tap("移除", description = true, last = true)
             tap("画图工具", description = true)
             // Standard sheet shares the chart window; IME must not dismiss the editor.
             automation.serviceInfo = automation.serviceInfo.apply {
