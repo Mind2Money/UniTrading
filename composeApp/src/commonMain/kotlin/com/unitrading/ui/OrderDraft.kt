@@ -69,18 +69,13 @@ internal data class OrderDraft(
             quote ?: return this
             if (side == Side.BUY) quote.bid else quote.ask
         } else instrument.parsePrice(entry) ?: return this
+        val distance = maxOf(instrument.minStopTicks * 8, 80L) * instrument.tickSize
         return copy(
             stopLossEnabled = true, takeProfitEnabled = true,
-            stopLoss = instrument.formatPrice(referenceProtection(instrument, side, base, true)),
-            takeProfit = instrument.formatPrice(referenceProtection(instrument, side, base, false)),
+            stopLoss = instrument.formatPrice(if (side == Side.BUY) maxOf(instrument.tickSize, base - distance) else base + distance),
+            takeProfit = instrument.formatPrice(if (side == Side.BUY) base + distance * 2 else maxOf(instrument.tickSize, base - distance * 2)),
         )
     }
-}
-
-/** A starting price for a stop loss or take profit on a [side] entry at [base]; the target is twice as far as the stop. */
-internal fun referenceProtection(instrument: Instrument, side: Side, base: Long, stop: Boolean): Long {
-    val distance = maxOf(instrument.minStopTicks * 8, 80L) * instrument.tickSize * (if (stop) 1 else 2)
-    return if ((side == Side.BUY) == stop) maxOf(instrument.tickSize, base - distance) else base + distance
 }
 
 internal data class PendingEntryEdit(val order: PendingOrder, val entry: String)

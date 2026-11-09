@@ -3,6 +3,9 @@ package com.unitrading.chart
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import com.unitrading.broker.OrderKind
+import com.unitrading.broker.OrderRequest
+import com.unitrading.broker.Side
 import kotlin.test.*
 
 class OrderLabelLayoutTest {
@@ -39,11 +42,11 @@ class OrderLabelLayoutTest {
     private val scale = PriceScale(0.0, 400.0, 0f, 400f)
     private val plot = Rect(0f, 0f, 500f, 400f)
     private val close = LineAction.CloseDraft
-    private val add = LineAction.SetDraftProtection(true, true)
+    private val pull = EditableLine.DraftProtection(OrderRequest("X", Side.BUY, OrderKind.LIMIT, 100, 100), true, 100)
     private val cells = listOf(
         LineCell(CellKind.TITLE, "ab"),
-        LineCell(CellKind.ADD_TARGET, "TP", add, "add target"),
-        LineCell(CellKind.ADD_STOP, "SL", add, "add stop"),
+        LineCell(CellKind.ADD_TARGET, "TP", hint = "add target", drag = pull),
+        LineCell(CellKind.ADD_STOP, "SL", hint = "add stop", drag = pull),
         LineCell(CellKind.VALUE, "1"),
         LineCell(CellKind.VALUE, "abc"),
         LineCell(CellKind.CLOSE, action = close, hint = "close"),
@@ -91,13 +94,25 @@ class OrderLabelLayoutTest {
     }
 
     @Test fun aDragPicksTheTagUnderThePointerOrTheNearestLine() {
-        val first = EditableLine.Draft(com.unitrading.broker.OrderRequest("X", com.unitrading.broker.Side.BUY, com.unitrading.broker.OrderKind.LIMIT, 100, 100))
-        val second = EditableLine.Draft(com.unitrading.broker.OrderRequest("X", com.unitrading.broker.Side.SELL, com.unitrading.broker.OrderKind.LIMIT, 100, 300))
+        val first = EditableLine.Draft(OrderRequest("X", Side.BUY, OrderKind.LIMIT, 100, 100))
+        val second = EditableLine.Draft(OrderRequest("X", Side.SELL, OrderKind.LIMIT, 100, 300))
         val lines = listOf(line(100, edit = first), line(300, edit = second))
         val tags = layout(*lines.toTypedArray())
-        assertEquals(LineGrab(first, true), grabAt(tags[0].bounds.center, tags, lines, scale, 22f))
+        assertEquals(LineGrab(first, true), grabAt(tags[0].cells.first().bounds.center, tags, lines, scale, 22f))
         assertEquals(LineGrab(second, false), grabAt(Offset(20f, scale.y(300) + 10f), tags, lines, scale, 22f))
         assertNull(grabAt(Offset(20f, scale.y(200)), tags, lines, scale, 22f))
+    }
+
+    @Test fun aDragFromATpOrSlButtonPullsOutItsLineAndFingersGetATallerTarget() {
+        val lines = listOf(line(200))
+        val tags = layout(lines.single())
+        val button = tags.single().cells[1].bounds
+        assertEquals("add target", tags.buttonAt(button.center)?.cell?.hint)
+        assertEquals(LineGrab(pull, false), grabAt(button.center, tags, lines, scale, 22f))
+        val below = Offset(button.center.x, button.bottom + 6f)
+        assertNull(grabAt(below, tags, lines, scale, 2f))
+        assertEquals(LineGrab(pull, false), grabAt(below, tags, lines, scale, 2f, slop = 8f))
+        assertNull(grabAt(tags.single().cells.last().bounds.center, tags, lines, scale, 2f), "The close button pulls out nothing")
     }
 
     @Test fun aContextMenuNeedsALineWithSomethingToOffer() {

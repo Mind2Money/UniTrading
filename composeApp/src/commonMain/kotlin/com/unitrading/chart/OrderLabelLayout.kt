@@ -60,15 +60,16 @@ internal fun layoutOrderTags(lines: List<OrderLine>, scale: PriceScale, plot: Re
     }
 }
 
-/** The button under [point]; [slop] makes it taller for fingers. The tag drawn last wins a tie, as it is on top. */
+/** The button under [point], pressed or dragged from; [slop] makes it taller for fingers. The tag drawn last wins a tie, as it is on top. */
 internal fun List<PlacedTag>.buttonAt(point: Offset, slop: Float = 0f): PlacedCell? = asReversed().firstNotNullOfOrNull { tag ->
-    tag.cells.firstOrNull { it.cell.action != null && point.x >= it.bounds.left && point.x < it.bounds.right && point.y >= it.bounds.top - slop && point.y < it.bounds.bottom + slop }
+    tag.cells.firstOrNull { (it.cell.action != null || it.cell.drag != null) && point.x >= it.bounds.left && point.x < it.bounds.right && point.y >= it.bounds.top - slop && point.y < it.bounds.bottom + slop }
 }
 
 internal data class LineGrab(val line: EditableLine, val onTag: Boolean)
 
-/** What a drag from [point] picks up: an editable line's tag, or the nearest editable line within [tolerance]. The line drawn last wins a tie. */
-internal fun grabAt(point: Offset, tags: List<PlacedTag>, lines: List<OrderLine>, scale: PriceScale, tolerance: Float): LineGrab? {
+/** What a drag from [point] picks up: the new line of a TP or SL button, an editable line's tag, or the nearest editable line within [tolerance]. The line drawn last wins a tie. */
+internal fun grabAt(point: Offset, tags: List<PlacedTag>, lines: List<OrderLine>, scale: PriceScale, tolerance: Float, slop: Float = 0f): LineGrab? {
+    tags.buttonAt(point, slop)?.cell?.drag?.let { return LineGrab(it, false) }
     tags.lastOrNull { it.line.edit != null && it.bounds.contains(point) }?.let { return LineGrab(it.line.edit!!, true) }
     val nearest = lines.asReversed().mapNotNull { it.edit }.minByOrNull { abs(scale.y(it.price) - point.y) } ?: return null
     return LineGrab(nearest, false).takeIf { abs(scale.y(nearest.price) - point.y) < tolerance }

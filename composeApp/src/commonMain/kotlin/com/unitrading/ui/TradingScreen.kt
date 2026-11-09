@@ -425,23 +425,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     when (action) {
                         is LineAction.ClosePosition -> reviewTrade(Confirmation.Close(action.position))
                         is LineAction.CancelOrder -> reviewTrade(Confirmation.Cancel(action.order))
-                        is LineAction.AddProtection -> {
-                            val p = action.position
-                            val price = referenceProtection(instrument, p.side, quote?.let { if (p.side == Side.BUY) it.bid else it.ask } ?: p.entryPrice, action.stop)
-                            editProtection(p, if (action.stop) price else p.stopLoss, if (action.stop) p.takeProfit else price)
-                        }
                         is LineAction.RemoveProtection -> action.position.let { p ->
                             editProtection(p, p.stopLoss.takeUnless { action.stop }, p.takeProfit.takeIf { action.stop }, fromChart = true)
-                        }
-                        is LineAction.AddPendingProtection -> {
-                            val r = action.order.request
-                            val price = referenceProtection(instrument, r.side, r.entryPrice ?: return, action.stop)
-                            editPendingProtection(action.order, if (action.stop) price else r.stopLoss, if (action.stop) r.takeProfit else price)
                         }
                         is LineAction.RemovePendingProtection -> action.order.request.let { r ->
                             editPendingProtection(action.order, r.stopLoss.takeUnless { action.stop }, r.takeProfit.takeIf { action.stop }, fromChart = true)
                         }
-                        is LineAction.SetDraftProtection -> changeDraft(draft.withProtectionEnabled(instrument, quote, action.stop, action.enabled))
+                        is LineAction.RemoveDraftProtection -> changeDraft(draft.withProtectionEnabled(instrument, quote, action.stop, false))
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }

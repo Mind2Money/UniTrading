@@ -68,7 +68,7 @@ internal fun DrawScope.drawOrderTag(tag: PlacedTag, style: OrderTagStyle, lineEn
                     else -> edge.copy(alpha = .14f)
                 }
                 drawRect(fill, placed.bounds.topLeft, placed.bounds.size)
-                if (placed.cell.action != null && placed.bounds == hovered?.bounds)
+                if (placed.bounds == hovered?.bounds)
                     drawRect((if (kind == CellKind.CLOSE) colors.Loss else colors.Ink).copy(alpha = .28f), placed.bounds.topLeft, placed.bounds.size)
             }
             group.zipWithNext().filter { (left, _) -> left.cell.kind != CellKind.TITLE }.forEach { (left, _) ->

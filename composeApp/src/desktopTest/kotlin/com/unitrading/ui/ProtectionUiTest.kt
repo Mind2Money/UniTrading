@@ -19,7 +19,7 @@ import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
 
-private class OfflineProtectionBroker(unresolved: Boolean = false) : BrokerPlugin {
+private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false) : BrokerPlugin {
     val spec = Instrument("TESTZ6", "Offline futures", "离线测试", 2, 25, 1_250_000, minLotsHundredths = 100,
         lotStepHundredths = 100, quantityUnit = "张", quantityDecimals = 0, estimatesIncludeFees = false)
     val time = 1_798_589_000_000L
@@ -30,9 +30,9 @@ private class OfflineProtectionBroker(unresolved: Boolean = false) : BrokerPlugi
     override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
     override val market = MutableStateFlow(MarketSnapshot(mapOf(spec.symbol to Quote(550500, 550525, time)), time, connected = true))
     val position = Position("100:200", spec.symbol, Side.BUY, 100, 550000, time - 300000,
-        stopLoss = if (unresolved) null else 549000, takeProfit = if (unresolved) null else 552000, marginMicros = 0,
-        protectionEditable = !unresolved, feesKnown = false, stopLossOrderId = if (unresolved) null else "702", takeProfitOrderId = if (unresolved) null else "701")
-    val orders = listOf(
+        stopLoss = if (unresolved || unprotected) null else 549000, takeProfit = if (unresolved || unprotected) null else 552000, marginMicros = 0,
+        protectionEditable = !unresolved, feesKnown = false, stopLossOrderId = if (unresolved || unprotected) null else "702", takeProfitOrderId = if (unresolved || unprotected) null else "701")
+    val orders = if (unprotected) emptyList() else listOf(
         PendingOrder("701", OrderRequest(spec.symbol, Side.SELL, OrderKind.LIMIT, 100, 552000), time,
             role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.TAKE_PROFIT, positionId = if (unresolved) null else position.id, editable = !unresolved),
         PendingOrder("702", OrderRequest(spec.symbol, Side.SELL, OrderKind.STOP, 100, 549000), time,
@@ -82,6 +82,26 @@ class ProtectionUiTest {
         val at = button(hint)
         chart().performTouchInput { click(at) }
         compose.waitForIdle()
+    }
+    /** Presses a TP or SL button, drags [dy] pixels and lets go, returning the price under the pointer at the drop. */
+    private fun dragButton(hint: String, dy: Float, tick: Long): Long {
+        val at = button(hint)
+        val state = chartState()
+        val price = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(), 18f * .6f, state.getValue("plotBottom").toFloat()).price(at.y + dy, tick)
+        chart().performTouchInput { down(at); moveBy(Offset(0f, dy / 4)); moveBy(Offset(0f, dy * 3 / 4)); up() }
+        compose.waitForIdle()
+        return price
+    }
+
+    @Test fun protectionIsDraggedOutOfItsButtonAndATapAddsNothing() {
+        val broker = OfflineProtectionBroker(unprotected = true)
+        render(broker)
+        tapButton("拖动设置止盈")
+        compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
+        val price = dragButton("拖动设置止盈", -40f, broker.spec.tickSize)
+        compose.onNodeWithTag("protection-dialog").assertExists()
+        compose.onNodeWithTag("protect-tp").assertTextContains(broker.spec.formatPrice(price))
+        assertEquals(0, broker.protectionCalls, "Nothing reaches the broker before the confirmation")
     }
 
     @Test fun positionRowCarriesItsRecognizedProtectionAndThePendingSectionDoesNot() {
@@ -180,12 +200,16 @@ class ProtectionUiTest {
         assertTrue(axis.getValue("high").toDouble() - axis.getValue("low").toDouble() > zoomed.getValue("high").toDouble() - zoomed.getValue("low").toDouble())
     }
     @Test fun aDraftTagTurnsProtectionOnAndCanBeDiscarded() {
-        render(OfflineProtectionBroker())
+        val broker = OfflineProtectionBroker()
+        render(broker)
         compose.onNodeWithTag("legend-buy").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("order-tp-enabled").assertIsOff()
-        tapButton("添加止盈")
+        tapButton("拖动设置止盈")
+        compose.onNodeWithTag("order-tp-enabled").assertIsOff()
+        val price = dragButton("拖动设置止盈", -60f, broker.spec.tickSize)
         compose.onNodeWithTag("order-tp-enabled").assertIsOn()
+        compose.onNodeWithTag("order-tp").assertTextContains(broker.spec.formatPrice(price))
         tapButton("取消止盈")
         compose.onNodeWithTag("order-tp-enabled").assertIsOff()
         tapButton("关闭下单预览")

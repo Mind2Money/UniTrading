@@ -33,7 +33,7 @@ class OrderLinesTest {
         // 200 ticks at $1 a tick, less a $3 commission each way.
         assertEquals(-206_000_000, stop.pnl)
         assertEquals(listOf("SL", "-206.00 USD", "1.00"), stop.texts())
-        assertEquals(LineAction.SetDraftProtection(true, false), stop.closeAction())
+        assertEquals(LineAction.RemoveDraftProtection(true), stop.closeAction())
         assertEquals(394_000_000, target.pnl)
         assertTrue(lines.any { it.edit is EditableLine.Draft && it.price == 108_500L })
     }
@@ -47,7 +47,9 @@ class OrderLinesTest {
         assertNull(line.edit, "A market draft has no entry price to drag")
         assertEquals(listOf("卖出", "TP", "2", "市价"), line.texts(), "The tag reads as on TradingView, offering only the protection it lacks")
         assertEquals(LineAction.CloseDraft, line.closeAction())
-        assertEquals(LineAction.SetDraftProtection(false, true), line.cells.single { it.kind == CellKind.ADD_TARGET }.action)
+        val target = line.cells.single { it.kind == CellKind.ADD_TARGET }
+        assertEquals(EditableLine.DraftProtection(draft, false, 5_500_000_000), target.drag, "The button pulls out a line that starts at the entry")
+        assertNull(target.action, "Pressing it alone adds nothing")
         assertTrue(line.preview, "A draft is not at the broker yet")
     }
 
@@ -134,7 +136,7 @@ class OrderLinesTest {
         assertEquals(listOf("买入", "毛 +5.00 USD", "TP", "SL", "1"), line(bare).texts())
         assertEquals(LineAction.ClosePosition(bare), line(bare).closeAction())
         assertEquals("平仓 买入 1 张 #200", line(bare).closeHint())
-        assertEquals(LineAction.AddProtection(bare, false), line(bare).cells.single { it.kind == CellKind.ADD_TARGET }.action)
+        assertEquals(EditableLine.Protection(bare, false, bare.entryPrice), line(bare).cells.single { it.kind == CellKind.ADD_TARGET }.drag)
         val halfDone = bare.copy(takeProfit = 5_510_000_000)
         assertEquals(listOf("买入", "毛 +5.00 USD", "SL", "1"), line(halfDone).texts())
         for ((position, options) in listOf(bare to all.copy(addProtection = false), bare.copy(protectionEditable = false) to all))
@@ -161,9 +163,27 @@ class OrderLinesTest {
         assertEquals(LineTone.BUY, line.tone)
         assertEquals(LineAction.CancelOrder(plain), line.closeAction())
         assertEquals("撤单 买入限价 1 张 #700", line.closeHint())
-        assertEquals(LineAction.AddPendingProtection(plain, true), line.cells.single { it.kind == CellKind.ADD_STOP }.action)
+        assertEquals(EditableLine.PendingProtection(plain, true, 5_500_000_000), line.cells.single { it.kind == CellKind.ADD_STOP }.drag)
         assertEquals(listOf("买入", "1", "限价"), pending(listOf(plain), options = all.copy(addProtection = false)).single().texts())
         assertEquals(listOf("买入", "1", "限价"), pending(listOf(plain.copy(editable = false))).single().texts())
+    }
+
+    @Test fun aNewProtectionFollowsThePointerOutOfItsButton() {
+        val other = bare.copy(id = "100:300", side = Side.SELL)
+        for (selected in listOf(bare, other)) {
+            val drag = LineDrag(EditableLine.Protection(bare, true, bare.entryPrice), scale, 5_490_000_000)
+            val moving = orderLines(mes, listOf(bare, other), selected, emptyList(), null, null, null, drag, all).single { it.moving }
+            assertEquals(5_490_000_000, moving.price)
+            assertEquals(-50_000_000, moving.pnl, "Measured from the position it was pulled out of, selected or not")
+            assertEquals(LineTone.STOP, moving.tone)
+        }
+        val plain = entry.copy(request = entry.request.copy(stopLoss = null, takeProfit = null), stopLossOrderId = null, takeProfitOrderId = null)
+        val drag = LineDrag(EditableLine.PendingProtection(plain, false, 5_500_000_000), scale, 5_510_000_000)
+        val moving = pending(listOf(plain), drag).single { it.moving }
+        assertEquals(5_510_000_000, moving.price)
+        assertEquals(50_000_000, moving.pnl)
+        assertEquals(LineTone.TARGET, moving.tone)
+        assertTrue(pending(listOf(plain)).none { it.tone == LineTone.TARGET }, "Nothing is drawn until a drag starts")
     }
 
     @Test fun anOrderOfUnknownPurposeCanStillBeCancelledFromTheChart() {

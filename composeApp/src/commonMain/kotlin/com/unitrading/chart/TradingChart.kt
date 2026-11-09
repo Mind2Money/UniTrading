@@ -194,7 +194,7 @@ fun TradingChart(
     val currentTags by rememberUpdatedState(orderTags)
     val hoveredButton = hoverPoint?.let { orderTags.buttonAt(it) }
     val chartCursor = when {
-        hoveredButton != null -> PointerIcon.Hand
+        hoveredButton?.cell?.action != null -> PointerIcon.Hand
         drag != null || hoverPoint?.let { it.x in left..right && it.y in top..plotBottom && grabAt(it, orderTags, lines, scale, 22 * density.density) != null } == true -> panelResizeCursor(false)
         else -> PointerIcon.Default
     }
@@ -292,10 +292,10 @@ fun TradingChart(
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓、撤单或设置止损止盈，右键打开同样的操作。"
+                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。"
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
-                            set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null }.associate { it.cell.hint to it.bounds })
+                            set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
                         .pointerHoverIcon(chartCursor)
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
@@ -379,7 +379,7 @@ fun TradingChart(
                                         else -> ChartDragMode.NONE
                                     }
                                     val s = currentScale
-                                    val grab = if (mode == ChartDragMode.PLOT) grabAt(point, currentTags, currentLines, s, 22 * density.density) else null
+                                    val grab = if (mode == ChartDragMode.PLOT) grabAt(point, currentTags, currentLines, s, 22 * density.density, if (compact) 8 * density.density else 0f) else null
                                     if (grab != null) {
                                         labelDragOffset = if (grab.onTag) point.y - s.y(grab.line.price) else 0f
                                         drag = LineDrag(grab.line, s, grab.line.price)
