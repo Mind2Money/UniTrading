@@ -467,7 +467,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onSide = { side ->
                             val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
                                 OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
-                            changeDraft(base.withSide(side, instrument, quote)); if (compact) orderPanelState = MobileOrderPanelState.EDITING else if (!wide) showOrder = true },
+                            changeDraft(base.withSide(side, instrument, quote))
+                            when {
+                                compact -> orderPanelState = MobileOrderPanelState.EDITING
+                                !wide -> showOrder = true
+                                // The form is what this button is for, so a folded order panel opens.
+                                !runtime.desktopLayout.preferences.value.orderOpen -> {
+                                    runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                                    scope.launch { runtime.desktopLayout.save() }
+                                }
+                            }
+                        },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
@@ -500,16 +510,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             },
                             market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch) },
                             chart = chart,
-                            order = { m -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                            order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                 { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = environment,
-                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation) },
+                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
+                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize") },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
                                     onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
-                            })
+                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}")
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }

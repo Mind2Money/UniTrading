@@ -16,24 +16,33 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
+import com.unitrading.app.DesktopPanel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+/**
+ * The chart with the trade list under it, then the order ticket and the accounts and market panel, as on TradingView.
+ * The icon column at the right edge folds any of the three panels; the chart takes the room they leave.
+ */
 @Composable
 internal fun DesktopWorkspace(
     controller: DesktopLayoutController,
@@ -42,13 +51,15 @@ internal fun DesktopWorkspace(
     accounts: @Composable () -> Unit,
     market: @Composable (Modifier) -> Unit,
     chart: @Composable (Modifier) -> Unit,
-    order: @Composable (Modifier) -> Unit,
+    order: @Composable (Modifier, minimize: () -> Unit) -> Unit,
     terminal: @Composable (Modifier) -> Unit,
+    terminalSummary: String = "",
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
     val scope = rememberCoroutineScope()
     fun save() { scope.launch { controller.save() } }
+    fun setOpen(panel: DesktopPanel, open: Boolean) { controller.setOpen(panel, open); save() }
     val defaults = DesktopLayoutPreferences()
     Column(modifier.testTag("desktop-workspace")) {
         error?.let { message ->
@@ -60,34 +71,77 @@ internal fun DesktopWorkspace(
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred)
             Row(Modifier.fillMaxSize()) {
-                Column(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Shell).testTag("desktop-sidebar")) {
-                    Column(Modifier.fillMaxWidth().height(layout.accounts.value.dp).testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
-                    PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,
-                        onChange = { controller.update(preferred.copy(accountsHeight = it)) }, onFinish = ::save,
-                        onReset = { controller.update(preferred.copy(accountsHeight = defaults.accountsHeight)); save() })
-                    market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
-                }
-                PanelResizeHandle("左侧栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar,
-                    onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
-                    onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(Modifier.weight(1f).fillMaxWidth()) {
-                        chart(Modifier.weight(1f).fillMaxHeight().testTag("desktop-chart"))
-                        if (wide) {
-                            PanelResizeHandle("下单栏宽度", "resize-order", horizontal = true, dimension = layout.order, direction = -1f,
-                                onChange = { controller.update(preferred.copy(orderWidth = it)) }, onFinish = ::save,
-                                onReset = { controller.update(preferred.copy(orderWidth = defaults.orderWidth)); save() })
-                            order(Modifier.width(layout.order.value.dp).fillMaxHeight().testTag("desktop-order"))
+                    chart(Modifier.weight(1f).fillMaxWidth().testTag("desktop-chart"))
+                    if (preferred.terminalOpen) {
+                        PanelResizeHandle("交易区高度", "resize-terminal", horizontal = false, dimension = layout.terminal, direction = -1f,
+                            onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
+                            onReset = { controller.update(preferred.copy(terminalHeight = defaults.terminalHeight)); save() })
+                        Column(Modifier.fillMaxWidth().height(layout.terminal.value.dp).testTag("desktop-terminal")) {
+                            TerminalBar(terminalSummary, open = true) { setOpen(DesktopPanel.TERMINAL, false) }
+                            terminal(Modifier.weight(1f).fillMaxWidth())
+                        }
+                    } else {
+                        DividerLine()
+                        Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false) { setOpen(DesktopPanel.TERMINAL, true) } }
+                    }
+                }
+                if (wide && preferred.orderOpen) {
+                    PanelResizeHandle("下单栏宽度", "resize-order", horizontal = true, dimension = layout.order, direction = -1f,
+                        onChange = { controller.update(preferred.copy(orderWidth = it)) }, onFinish = ::save,
+                        onReset = { controller.update(preferred.copy(orderWidth = defaults.orderWidth)); save() })
+                    order(Modifier.width(layout.order.value.dp).fillMaxHeight().testTag("desktop-order")) { setOpen(DesktopPanel.ORDER, false) }
+                }
+                if (preferred.marketOpen) {
+                    PanelResizeHandle("行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
+                        onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
+                        onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
+                    Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Shell).testTag("desktop-sidebar")) {
+                        Column(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxWidth().height(layout.accounts.value.dp).testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
+                            PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,
+                                onChange = { controller.update(preferred.copy(accountsHeight = it)) }, onFinish = ::save,
+                                onReset = { controller.update(preferred.copy(accountsHeight = defaults.accountsHeight)); save() })
+                            market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
+                        }
+                        // In its own box: ActionIcon applies its modifier inside the tooltip, where alignment means nothing.
+                        Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
+                            ActionIcon(AppIcons.Close, "收起行情面板", "desktop-market-minimize", Modifier.size(32.dp), tint = TradingColors.Muted, iconSize = 18.dp) {
+                                setOpen(DesktopPanel.MARKET, false)
+                            }
                         }
                     }
-                    PanelResizeHandle("交易区高度", "resize-terminal", horizontal = false, dimension = layout.terminal, direction = -1f,
-                        onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
-                        onReset = { controller.update(preferred.copy(terminalHeight = defaults.terminalHeight)); save() })
-                    terminal(Modifier.fillMaxWidth().height(layout.terminal.value.dp).testTag("desktop-terminal"))
+                }
+                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().background(TradingColors.Shell).padding(top = 4.dp).testTag("desktop-panel-rail"),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RailToggle(AppIcons.TrendingUp, "行情面板", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
+                    if (wide) RailToggle(AppIcons.Add, "下单面板", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
+                    RailToggle(AppIcons.ReceiptLong, "交易面板", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                 }
             }
         }
     }
+}
+
+/** The trade list's title bar. [summary] keeps the counts in view while the list is folded down to this bar. */
+@Composable
+private fun TerminalBar(summary: String, open: Boolean, onToggle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(PANEL_BAR.dp).background(TradingColors.Surface).padding(start = 16.dp, end = 4.dp).testTag("desktop-terminal-bar"),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("交易", style = MaterialTheme.typography.titleSmall, maxLines = 1)
+        Text(summary, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", Modifier.size(32.dp),
+            tint = TradingColors.Muted, iconSize = 20.dp, onClick = onToggle)
+    }
+}
+
+/** One panel's switch in the icon column, filled while the panel is open. */
+@Composable
+private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, onToggle: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    ActionIcon(icon, if (open) "收起$name" else "展开$name", tag, Modifier.size(40.dp).background(if (open) scheme.secondaryContainer else Color.Transparent, MaterialTheme.shapes.small),
+        tint = if (open) scheme.onSecondaryContainer else TradingColors.Muted, iconSize = 22.dp, onClick = onToggle)
 }
 
 /** A visible eight-dp grip; dragging, keyboard arrows and accessibility all adjust the same bounded dimension. */

@@ -10,16 +10,27 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** Preferred panel dimensions in dp. Window constraints affect display, never overwrite these preferences. */
+/** The panels the desktop workspace can fold away. */
+enum class DesktopPanel { MARKET, ORDER, TERMINAL }
+
+/** Preferred panel dimensions in dp, and which panels are open. Window constraints affect display, never overwrite these preferences. */
 @Serializable
 data class DesktopLayoutPreferences(
     val sidebarWidth: Float = 320f,
     val orderWidth: Float = 296f,
     val accountsHeight: Float = 260f,
     val terminalHeight: Float = 220f,
+    val marketOpen: Boolean = true,
+    val orderOpen: Boolean = true,
+    val terminalOpen: Boolean = true,
 ) {
     fun validate() = require(listOf(sidebarWidth, orderWidth, accountsHeight, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
         "面板尺寸超出范围"
+    }
+    fun withOpen(panel: DesktopPanel, open: Boolean) = when (panel) {
+        DesktopPanel.MARKET -> copy(marketOpen = open)
+        DesktopPanel.ORDER -> copy(orderOpen = open)
+        DesktopPanel.TERMINAL -> copy(terminalOpen = open)
     }
 }
 
@@ -37,6 +48,7 @@ class DesktopLayoutController(private val store: SnapshotStore) {
 
     fun update(value: DesktopLayoutPreferences) { value.validate(); state.value = value }
     fun reset() = update(DesktopLayoutPreferences())
+    fun setOpen(panel: DesktopPanel, open: Boolean) = update(state.value.withOpen(panel, open))
 
     /** Called after dragging finishes. Serialize writes, read the latest state, and never roll back newer UI changes. */
     suspend fun save(): Boolean = saveMutex.withLock {

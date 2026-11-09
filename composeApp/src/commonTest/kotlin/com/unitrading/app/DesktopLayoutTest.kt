@@ -20,6 +20,24 @@ class DesktopLayoutTest {
         assertEquals("unchanged", store.read("chart-v1"))
     }
 
+    @Test fun foldedPanelsPersistAndALayoutSavedBeforeThemOpensWithEverythingShown() = runTest {
+        val store = MemorySnapshotStore()
+        store.write("desktop-layout-v1", """{"orderWidth":260.0,"accountsHeight":196.125,"terminalHeight":179.875}""")
+        val controller = DesktopLayoutController(store)
+        assertNull(controller.error.value)
+        assertEquals(DesktopLayoutPreferences(orderWidth = 260f, accountsHeight = 196.125f, terminalHeight = 179.875f), controller.preferences.value)
+        controller.setOpen(DesktopPanel.MARKET, false)
+        controller.setOpen(DesktopPanel.TERMINAL, false)
+        assertTrue(controller.save())
+        val reopened = DesktopLayoutController(store).preferences.value
+        assertFalse(reopened.marketOpen)
+        assertTrue(reopened.orderOpen)
+        assertFalse(reopened.terminalOpen)
+        assertEquals(260f, reopened.orderWidth)
+        controller.reset()
+        assertTrue(controller.preferences.value.marketOpen && controller.preferences.value.terminalOpen)
+    }
+
     @Test fun corruptionFallsBackAndFailedSavesKeepTheCurrentLayoutForRetry() = runTest {
         var disk = "{bad"
         var fail = true

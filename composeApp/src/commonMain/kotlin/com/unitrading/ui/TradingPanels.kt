@@ -85,6 +85,8 @@ internal fun OrderTicket(
     onRefreshCapacity: (() -> Unit)? = null,
     skipConfirmation: Boolean = false,
     onClose: (() -> Unit)? = null,
+    closeLabel: String = "返回图表",
+    closeTag: String = "close-order-dialog",
 ) {
     Column(modifier) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 16.dp, end = if (onClose == null) 16.dp else 4.dp),
@@ -95,7 +97,7 @@ internal fun OrderTicket(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             EnvironmentBadge(environment)
-            if (onClose != null) ActionIcon(AppIcons.Close, "返回图表", "close-order-dialog", onClick = onClose)
+            if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose)
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = true)
