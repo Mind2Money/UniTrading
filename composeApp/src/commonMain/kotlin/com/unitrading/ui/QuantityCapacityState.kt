@@ -1,42 +1,60 @@
 package com.unitrading.ui
 
 import androidx.compose.runtime.*
+import com.unitrading.app.CachedCapacity
+import com.unitrading.app.OrderCapacityCache
 import com.unitrading.broker.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.conflate
 
 internal data class QuantityCapacityState(val maximum: Long? = null, val message: String? = null, val loading: Boolean = false)
 
-/** Quantity and protection edits do not restart the server search. Changed account/order context does. */
+/**
+ * Cache then network: the last limit the server gave for this account, contract and side shows at once, and a check runs
+ * behind it. Only a different answer from the server replaces it; a failed check changes nothing. The check runs when the
+ * order context or the account's positions and orders change, never on a quantity or protection edit or a balance update.
+ */
 @Composable
-internal fun rememberQuantityCapacity(session: AccountSession, instrument: Instrument, draft: OrderDraft,
+internal fun rememberQuantityCapacity(cache: OrderCapacityCache, brokerId: String, session: AccountSession, instrument: Instrument, draft: OrderDraft,
     account: AccountSnapshot, ready: Boolean, localDemo: Boolean): Pair<QuantityCapacityState, (() -> Unit)?> {
     if (localDemo) return QuantityCapacityState(instrument.maxLotsHundredths) to null
     val entry = if (draft.kind == OrderKind.MARKET) null else instrument.parsePrice(draft.entry)
-    val context = listOf(session, instrument.symbol, instrument.executionSymbol, draft.side, draft.kind, entry, account.positions, account.orders,
-        account.balanceMicros, account.marginMicros, account.balanceKnown, account.marginKnown, ready)
+    val symbol = instrument.executionSymbol
+    val cacheKey = symbol?.let { OrderCapacityCache.key(brokerId, session.account.id, it, draft.side) }
+    val cached = cache.entries.collectAsState().value[cacheKey.orEmpty()]
+    val holdings = account.positions.map { listOf(it.symbol, it.side, it.lotsHundredths) } +
+        account.orders.map { listOf(it.id, it.request.side, it.request.lotsHundredths, it.filledLotsHundredths) }
+    val latestHoldings by rememberUpdatedState(holdings)
+    val context = listOf(session, instrument.symbol, symbol, draft.side, draft.kind, entry, ready)
     var refresh by remember { mutableIntStateOf(0) }
-    var capacity by remember(context, refresh) { mutableStateOf(QuantityCapacityState(message = "正在确认可下单数量", loading = true)) }
-    var checkedEquity by remember(context, refresh) { mutableStateOf<Long?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
+    // Why there is no limit to show yet; a limit already known outranks it.
+    var unavailable by remember(context, refresh) { mutableStateOf<String?>(null) }
     LaunchedEffect(context, refresh) {
-        if (!ready || instrument.executionSymbol == null || (draft.kind != OrderKind.MARKET && entry == null)) {
-            capacity = QuantityCapacityState(message = if (!ready) "账户或行情尚未就绪" else "请先输入有效的订单价格")
+        if (symbol == null || cacheKey == null || !ready || (draft.kind != OrderKind.MARKET && entry == null)) {
+            unavailable = if (!ready) "账户或行情尚未就绪" else "请先输入有效的订单价格"
+            refreshing = false
             return@LaunchedEffect
         }
-        delay(400) // Coalesce typing and account pushes; never query on each slider movement or quote tick.
-        val result = try { session.orderCapacity(OrderRequest(instrument.executionSymbol!!, draft.side, draft.kind, instrument.minLotsHundredths, entry,
-            sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })) }
-            catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
-        checkedEquity = session.state.value.equityMicros.takeIf { session.state.value.equityKnown }
-        capacity = QuantityCapacityState(result.maximumLotsHundredths, result.message)
-        if (result.maximumLotsHundredths != null) {
-            delay(60_000)
-            capacity = QuantityCapacityState(message = "数量上限已过期，请刷新")
+        // Conflated, not restarted: an account push during a check must not throw the check away.
+        snapshotFlow { latestHoldings }.conflate().collect {
+            delay(400) // Coalesce typing and account pushes.
+            val request = OrderRequest(symbol, draft.side, draft.kind, instrument.minLotsHundredths, entry, sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })
+            val result = try { session.orderCapacity(request, cache.entries.value[cacheKey]?.maximum) }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
+            val maximum = result.maximumLotsHundredths
+            if (maximum != null) cache.put(cacheKey, CachedCapacity(maximum, result.message)) else unavailable = result.message ?: "可下单数量未知"
+            refreshing = false
         }
     }
-    val fundsDecreased = checkedEquity?.let { !account.equityKnown || account.equityMicros < it } == true
-    return (if (fundsDecreased) QuantityCapacityState(message = "可用资金已变化，请刷新数量上限") else capacity) to { refresh++ }
+    val state = when {
+        cached != null -> QuantityCapacityState(cached.maximum, cached.message, loading = refreshing)
+        unavailable != null -> QuantityCapacityState(message = unavailable)
+        else -> QuantityCapacityState(message = "正在确认可下单数量", loading = true)
+    }
+    return state to { refreshing = true; refresh++ }
 }
 
 internal fun OrderPreview.withCapacity(request: OrderRequest?, capacity: QuantityCapacityState): OrderPreview {

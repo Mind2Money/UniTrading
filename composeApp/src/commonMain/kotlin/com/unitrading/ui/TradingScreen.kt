@@ -188,7 +188,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
         val request = draft.request(instrument)
-        val (capacity, refreshCapacity) = rememberQuantityCapacity(session, instrument, draft, account,
+        val (capacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
             market.tradingReady, localDemo)
         val preview = remember(session, instrument, request, market.revision, account, capacity) {
             request?.let(session::preview)?.withCapacity(request, capacity)

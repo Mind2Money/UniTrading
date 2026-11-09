@@ -27,8 +27,11 @@ interface AccountSession {
     val account: AccountInfo
     val state: StateFlow<AccountSnapshot>
     fun preview(request: OrderRequest): OrderPreview
-    /** Read-only server risk check. Null maximum means unavailable, never unlimited. Quantity in the request is ignored. */
-    suspend fun orderCapacity(request: OrderRequest): OrderCapacity = OrderCapacity()
+    /**
+     * Read-only server risk check. Null maximum means unavailable, never unlimited. Quantity in the request is ignored.
+     * [lastKnown] is the limit the caller last got, which a broker may use to confirm an unchanged limit cheaply.
+     */
+    suspend fun orderCapacity(request: OrderRequest, lastKnown: Long? = null): OrderCapacity = OrderCapacity()
     fun previewOrderModification(orderId: String, entryPrice: Long): OrderPreview
     suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long): TradeResult
     /** Estimate for a pending entry whose stop loss and take profit become [stopLoss] and [takeProfit]. */

@@ -1206,7 +1206,7 @@ class TradovateBroker(
             override val account = info
             override val state: StateFlow<AccountSnapshot> = flow.asStateFlow()
             override fun preview(request: OrderRequest) = estimate(accountId, request)
-            override suspend fun orderCapacity(request: OrderRequest): OrderCapacity = capacityLock.withLock {
+            override suspend fun orderCapacity(request: OrderRequest, lastKnown: Long?): OrderCapacity = capacityLock.withLock {
                 try { validateContinuous(request) }
                 catch (e: IllegalArgumentException) { return@withLock OrderCapacity(message = e.message) }
                 if (!market.value.tradingReady || account.readOnly || accountId in incompleteAccounts)
@@ -1216,7 +1216,7 @@ class TradovateBroker(
                 if (request.kind != OrderKind.MARKET && request.entryPrice?.let { it > 0 && it % contractSpecs.getValue(contractId).tickSize == 0L } != true)
                     return@withLock OrderCapacity(message = "请先输入有效的订单价格")
                 val revision = lock.withLock { book.revision }
-                val result = discoverOrderCapacity { quantity ->
+                val result = discoverOrderCapacity(lastKnown) { quantity ->
                     // Keep this endpoint below its documented 500/hour budget, with >=1s between calls.
                     val time = now()
                     capacityChecks.removeAll { time - it >= 3_600_000 }

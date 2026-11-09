@@ -25,8 +25,9 @@ private fun JsonObject.hasRiskEvaluation(): Boolean {
  * Other failures cannot establish a quantity bound (e.g. NoQuote/Unauthorized/timeout).
  * Recheck both sides of the boundary to catch risk/margin changes during the search.
  */
-internal suspend fun discoverOrderCapacity(check: suspend (Long) -> JsonObject): OrderCapacity {
+internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspend (Long) -> JsonObject): OrderCapacity {
     var acceptedAny = false
+    val ceiling = Int.MAX_VALUE.toLong()
     suspend fun accepts(quantity: Long): Boolean {
         val response = check(quantity)
         require(response.str("errorText").isNullOrBlank()) { "服务器数量校验失败" }
@@ -42,10 +43,12 @@ internal suspend fun discoverOrderCapacity(check: suspend (Long) -> JsonObject):
         }
     }
     return try {
+        // The limit last found is usually still right: two checks prove it where a search takes about a dozen, a second each.
+        val known = lastKnown?.div(100)?.takeIf { it in 1 until ceiling }
+        if (known != null && accepts(known) && !accepts(known + 1)) return OrderCapacity(known * 100)
         if (!accepts(1)) return OrderCapacity(0, "当前资金或账户限额不足以开仓")
         var low = 1L
         var high = 2L
-        val ceiling = Int.MAX_VALUE.toLong()
         while (accepts(high)) {
             low = high
             if (high == ceiling) return OrderCapacity(ceiling * 100)

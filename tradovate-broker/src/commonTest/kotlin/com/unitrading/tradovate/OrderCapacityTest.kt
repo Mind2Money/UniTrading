@@ -25,6 +25,23 @@ class OrderCapacityTest {
         assertEquals(0, discoverOrderCapacity { JsonObject(implicitSuccess() + result("NotEnoughLiquidity")) }.maximumLotsHundredths)
     }
 
+    @Test fun anUnchangedLimitIsConfirmedWithTwoChecks() = runTest {
+        val calls = mutableListOf<Long>()
+        assertEquals(500, discoverOrderCapacity(500) { quantity ->
+            calls.add(quantity)
+            if (quantity <= 5) implicitSuccess() else result("MaxPosLimitReached")
+        }.maximumLotsHundredths)
+        assertEquals(listOf(5L, 6L), calls)
+    }
+
+    @Test fun aChangedLimitFallsBackToTheFullSearch() = runTest {
+        for ((known, actual) in listOf(500L to 3L, 300L to 9L, 0L to 4L, null to 4L)) {
+            assertEquals(actual * 100, discoverOrderCapacity(known) { quantity -> result(if (quantity <= actual) "Success" else "MaxPosLimitReached") }.maximumLotsHundredths)
+        }
+        assertEquals(0, discoverOrderCapacity(500) { result("MaxPosLimitReached") }.maximumLotsHundredths)
+        assertNull(discoverOrderCapacity(500) { result("NoQuote") }.maximumLotsHundredths, "Uncertainty is not a confirmation")
+    }
+
     @Test fun missingReasonStillRequiresACompleteNumericRiskEvaluation() = runTest {
         val success = implicitSuccess()
         val details = success["details"]!!.jsonObject

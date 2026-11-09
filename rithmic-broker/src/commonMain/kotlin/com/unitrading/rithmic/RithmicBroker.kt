@@ -1006,7 +1006,7 @@ class RithmicBroker(
             override val account = info
             override val state: StateFlow<AccountSnapshot> = flow.asStateFlow()
             override fun preview(request: OrderRequest) = estimate(accountId, request)
-            override suspend fun orderCapacity(request: OrderRequest): OrderCapacity {
+            override suspend fun orderCapacity(request: OrderRequest, lastKnown: Long?): OrderCapacity {
                 if (!market.value.tradingReady) return OrderCapacity(message = "账户或行情尚未就绪，无法确认可下单数量")
                 val limit = lock.withLock { orderLimit(accountId, request.symbol) }
                 return if (limit != null) OrderCapacity(checkedMultiply(limit, 100), "服务器风控的单笔最大数量") else OrderCapacity(message = "服务器未提供数量上限，以下单校验为准")
