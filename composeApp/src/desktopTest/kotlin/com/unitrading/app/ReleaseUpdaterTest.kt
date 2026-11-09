@@ -45,6 +45,18 @@ class ReleaseUpdaterTest {
         assertEquals(UpdateCheck.Ahead("v1.4.0"), checked(updater(target, version = "1.5.0").also { it.checkNow() }))
     }
 
+    @Test fun aRunThatCannotReplaceItselfStillFindsNewReleases() {
+        val updates = ReleaseUpdater("1.3.1", CheckOnlyUpdateTarget, { null }, { latest })
+        assertEquals(UpdateInstall.MANUAL, updates.install)
+        assertNull(updates.checkedAtMs.value)
+        updates.checkNow()
+        val found = assertIs<UpdateCheck.Available>(checked(updates))
+        assertEquals("v1.4.0", found.release.version)
+        assertNull(found.release.packageFile, "It has no file of its own, so the page offers the download instead")
+        assertNotNull(updates.checkedAtMs.value)
+        updates.close()
+    }
+
     @Test fun aFailedCheckKeepsItsReason() = withFolder { root ->
         val target = FakeTarget(root)
         assertEquals(UpdateCheck.Failed("UPDATE_RATE_LIMITED"), checked(updater(target, latest = { throw UpdateFailure("UPDATE_RATE_LIMITED", "limited") }).also { it.checkNow() }))

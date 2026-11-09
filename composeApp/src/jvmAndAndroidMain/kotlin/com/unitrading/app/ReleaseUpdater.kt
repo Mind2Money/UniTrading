@@ -141,6 +141,17 @@ interface UpdateTarget {
     fun lastOutcome(): UpdateProgress
 }
 
+/** For a run that cannot replace itself: the check still works and finds no file of its own, so the settings page links to the download. */
+object CheckOnlyUpdateTarget : UpdateTarget {
+    override val install = UpdateInstall.MANUAL
+    override fun assetName(version: String) = Regex("(?!)")
+    override fun archive(release: ReleasePackage): File { throw UpdateFailure("UPDATE_DOWNLOAD", "This run cannot update itself") }
+    override fun prepare(archive: File, release: ReleasePackage) { throw UpdateFailure("UPDATE_PACKAGE", "This run cannot update itself") }
+    override fun clear() = true
+    override suspend fun handOff(release: ReleasePackage) { throw UpdateFailure("UPDATE_HANDOFF", "This run cannot update itself") }
+    override fun lastOutcome(): UpdateProgress = UpdateProgress.Idle
+}
+
 /** State of one update, kept here so it survives leaving the settings page. */
 class ReleaseUpdater(
     override val currentVersion: String,
@@ -152,11 +163,13 @@ class ReleaseUpdater(
 ) : AppUpdates {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val checkState = MutableStateFlow<UpdateCheck>(UpdateCheck.Idle)
+    private val checkedAt = MutableStateFlow<Long?>(null)
     private val state = MutableStateFlow(target.lastOutcome())
     private var work: Job? = null
     private var prepared: ReleasePackage? = null
     override val install get() = target.install
     override val check = checkState.asStateFlow()
+    override val checkedAtMs = checkedAt.asStateFlow()
     override val progress = state.asStateFlow()
 
     // The update helper may still be on its way out when the new version starts.
@@ -166,13 +179,15 @@ class ReleaseUpdater(
         if (checkState.value == UpdateCheck.Checking) return
         checkState.value = UpdateCheck.Checking
         scope.launch {
-            checkState.value = try {
+            val result = try {
                 val release = parseLatestRelease(latest(), target::assetName)
                 val order = compareVersions(release.version, currentVersion)
                 if (order > 0) UpdateCheck.Available(release) else if (order < 0) UpdateCheck.Ahead(release.version) else UpdateCheck.Current(release.version)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: UpdateFailure) { UpdateCheck.Failed(failure.code) }
             catch (_: Exception) { UpdateCheck.Failed("UPDATE_UNAVAILABLE") }
+            checkedAt.value = System.currentTimeMillis()
+            checkState.value = result
         }
     }
 

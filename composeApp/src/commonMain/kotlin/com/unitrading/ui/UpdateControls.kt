@@ -10,12 +10,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
 import com.unitrading.broker.BrokerRegistry
+import com.unitrading.chart.dateTime
 import kotlinx.coroutines.delay
 
-/** Version, update check and one-press update. Nothing here checks or downloads until the user presses a row. */
+/** Version, update check and, where the app can replace itself, one-press update. Nothing here checks or downloads until the user presses a row. */
 @Composable
 internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: Boolean) {
     val check by updates.check.collectAsState()
+    val checkedAt by updates.checkedAtMs.collectAsState()
     val progress by updates.progress.collectAsState()
     // Positions span every account of every broker with no one flow to watch; this runs only while settings are open.
     val block by produceState(registry.updateBlock(), registry) { while (true) { value = registry.updateBlock(); delay(1_000) } }
@@ -24,10 +26,12 @@ internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: 
     val available = release?.packageFile
     val working = progress is UpdateProgress.Downloading || progress is UpdateProgress.Preparing || progress is UpdateProgress.Restarting
     val restarts = updates.install == UpdateInstall.RESTART
+    val manual = updates.install == UpdateInstall.MANUAL
     val canProceed = block == null && !busy
 
-    SettingsRow("检查更新", "当前版本 ${updates.currentVersion} · ${checkText(check)}", AppIcons.Sync, "update-check", updates::checkNow,
+    SettingsRow("检查更新", "当前版本 ${updates.currentVersion} · ${checkText(check, manual)}", AppIcons.Sync, "update-check", updates::checkNow,
         enabled = check != UpdateCheck.Checking && !working)
+    checkedAt?.takeIf { check != UpdateCheck.Checking }?.let { UpdateNote("检查时间 ${dateTime(it)} UTC", "update-checked-at", TradingColors.Muted) }
     when (val current = progress) {
         is UpdateProgress.Downloading -> UpdateWorkRow("正在下载 ${current.version}", "${megabytes(current.received)} / ${megabytes(current.total)}",
             current.received.toFloat() / current.total, updates::cancel)
@@ -43,6 +47,7 @@ internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: 
     val waiting = progress is UpdateProgress.Ready || (available != null && !working)
     val note = when {
         waiting -> block?.let(::blockText)
+        release != null && manual -> "这种运行方式不能在应用内更新，请到发布页下载新版本。"
         release != null && available == null -> "这个版本没有可核实的安装包，请到发布页手动下载。"
         else -> null
     }
@@ -53,8 +58,9 @@ internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: 
         else -> {}
     }
     release?.let {
-        SettingsRow("发布页", "查看 ${it.version} 更新说明或手动下载", AppIcons.OpenInNew, "update-release-page", { runCatching { links.openUri(it.pageUrl) } })
+        SettingsRow(if (available == null) "前往下载 ${it.version}" else "发布页", "查看 ${it.version} 更新说明或手动下载", AppIcons.OpenInNew, "update-release-page", { runCatching { links.openUri(it.pageUrl) } })
     }
+    SettingsRow("更新日志", "在 GitHub 查看各版本的更新内容", AppIcons.ReceiptLong, "update-changelog", { runCatching { links.openUri(ReleasePages) } })
     UpdateNote("只在点击时读取 GitHub 上的公开发布信息，不发送账户数据；不会在后台检查或下载。", "update-privacy", TradingColors.Muted)
 }
 
@@ -82,10 +88,11 @@ private fun megabytes(bytes: Long): String {
     return "${tenths / 10}.${tenths % 10} MB"
 }
 
-private fun checkText(check: UpdateCheck): String = when (check) {
+/** From source the version number says nothing about how recent the checkout is, so [manual] runs do not claim to be current. */
+private fun checkText(check: UpdateCheck, manual: Boolean): String = when (check) {
     UpdateCheck.Idle -> "尚未检查"
     UpdateCheck.Checking -> "正在检查…"
-    is UpdateCheck.Current -> "已是最新版本"
+    is UpdateCheck.Current -> if (manual) "没有更高的正式版本" else "已是最新版本"
     is UpdateCheck.Ahead -> "高于最新正式版 ${check.latest}"
     is UpdateCheck.Available -> "发现新版本 ${check.release.version}"
     is UpdateCheck.Failed -> when (check.code) {

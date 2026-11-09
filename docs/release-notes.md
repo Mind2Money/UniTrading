@@ -33,6 +33,7 @@
 🆕 **应用内更新**
 ✅ 「设置 → 关于与更新」可以检查新版本并一键更新：Windows 自动下载、校验、替换程序并重启；Android 下载校验后打开系统安装界面，第一次需要在系统页面允许本应用安装未知应用
 ✅ 账户有持仓或挂单、或账户状态无法确认时不能更新；登录状态和设置保存在程序目录之外，更新不受影响
+✅ 从源码运行、本地模拟和 macOS 版也能在「关于与更新」里手动检查，发现新版本时打开发布页下载；检查后显示检查时间，并加了更新日志入口
 ⚠️ 这个版本本身仍要手动下载一次，之后的版本才能在应用内更新
 
 ## English
@@ -68,6 +69,7 @@
 🆕 **In-app updates**
 ✅ Settings → About & updates checks for a new version and updates in one press: Windows downloads, verifies, replaces the program and restarts; Android downloads, verifies and opens the system installer, and the first time asks you to allow installs from this app in a system screen
 ✅ Updating is unavailable while an account has open positions or working orders, or while its state cannot be confirmed; logins and settings live outside the program folder and are not affected
+✅ Source runs, the local demo and the macOS build can also check by hand under About & updates and open the release page when a newer version exists; a check now shows when it ran, and there is a changelog link
 ⚠️ This version itself still needs one manual download; later versions can update in the app
 
 # v1.3.1

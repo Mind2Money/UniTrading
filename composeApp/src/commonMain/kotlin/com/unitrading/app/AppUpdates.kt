@@ -41,13 +41,18 @@ sealed interface UpdateProgress {
     data class Failed(val code: String, val version: String) : UpdateProgress
 }
 
-/** Windows replaces its own files and restarts; on Android the system installer takes over and the user confirms there. */
-enum class UpdateInstall { RESTART, SYSTEM_INSTALLER }
+/**
+ * Windows replaces its own files and restarts; on Android the system installer takes over and the user confirms there.
+ * [MANUAL] is a run that cannot replace itself, from source or the macOS package: it checks and links to the download.
+ */
+enum class UpdateInstall { RESTART, SYSTEM_INSTALLER, MANUAL }
 
 interface AppUpdates {
     val currentVersion: String
     val install: UpdateInstall
     val check: StateFlow<UpdateCheck>
+    /** When the last check finished; null before the first one. */
+    val checkedAtMs: StateFlow<Long?>
     val progress: StateFlow<UpdateProgress>
     /** Reads the public release metadata. Only ever called from an explicit press. */
     fun checkNow()
@@ -80,7 +85,7 @@ fun BrokerRegistry.updateBlock(): UpdateBlock? {
 
 private const val Repository = "Mind2Money/UniTrading"
 internal const val LatestReleaseUrl = "https://api.github.com/repos/$Repository/releases/latest"
-private const val ReleasePages = "https://github.com/$Repository/releases"
+internal const val ReleasePages = "https://github.com/$Repository/releases"
 private const val AssetApi = "https://api.github.com/repos/$Repository/releases/assets/"
 private const val MaxPackageBytes = 2L shl 30
 private val PlainVersion = Regex("^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$")

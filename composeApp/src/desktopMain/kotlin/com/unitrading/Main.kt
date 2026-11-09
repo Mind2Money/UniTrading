@@ -10,7 +10,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.LicenseController
+import com.unitrading.app.CheckOnlyUpdateTarget
 import com.unitrading.app.ReleaseUpdater
+import com.unitrading.rithmic.RithmicCredentials
 import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
@@ -67,7 +69,11 @@ private fun desktopApplication(args: Array<String>) = application {
         else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
     }
     val updateTarget = remember { if (localDemo) null else UpdateLayout.locate(System.getProperty("jpackage.app-path"))?.let { DesktopUpdateTarget(it) } }
-    val updates = remember { updateTarget?.let { target -> System.getProperty("jpackage.app-version")?.let { version -> ReleaseUpdater(version, target, blocked = { runtime.registry.updateBlock() }) } } }
+    // A run that cannot replace itself (from source, --local-demo, the macOS package) still checks for new versions.
+    val updates = remember {
+        val packaged = System.getProperty("jpackage.app-version")
+        ReleaseUpdater(packaged ?: RithmicCredentials.DEFAULT_APP_VERSION, updateTarget?.takeIf { packaged != null } ?: CheckOnlyUpdateTarget, blocked = { runtime.registry.updateBlock() })
+    }
     // One activation per OS user, shared by both modes; the local demo is gated like the real terminal.
     val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()

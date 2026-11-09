@@ -30,6 +30,7 @@ class UpdateControlsTest {
     private class FakeUpdates(override val install: UpdateInstall = UpdateInstall.RESTART) : AppUpdates {
         override val currentVersion = "1.3.1"
         override val check = MutableStateFlow<UpdateCheck>(UpdateCheck.Idle)
+        override val checkedAtMs = MutableStateFlow<Long?>(null)
         override val progress = MutableStateFlow<UpdateProgress>(UpdateProgress.Idle)
         var checks = 0
         var cancels = 0
@@ -71,6 +72,33 @@ class UpdateControlsTest {
         compose.onNodeWithTag("update-release-page").assertDoesNotExist()
         compose.onNodeWithTag("update-check").performClick()
         assertEquals(1, updates.checks)
+    }
+
+    @Test fun aRunThatCannotReplaceItselfChecksAndLinksToTheDownload() {
+        val updates = FakeUpdates(UpdateInstall.MANUAL).also { it.check.value = UpdateCheck.Available(AppRelease("v1.4.0", page, null)) }
+        show(updates)
+        compose.onNodeWithTag("update-check").assertTextContains("发现新版本 v1.4.0", substring = true)
+        compose.onNodeWithTag("update-install").assertDoesNotExist()
+        compose.onNodeWithTag("update-blocked").assertTextContains("不能在应用内更新", substring = true)
+        compose.onNodeWithTag("update-release-page").assertTextContains("前往下载 v1.4.0", substring = true).performClick()
+        assertEquals(listOf(page), opened)
+    }
+
+    @Test fun aSourceRunDoesNotClaimToBeCurrent() {
+        show(FakeUpdates(UpdateInstall.MANUAL).also { it.check.value = UpdateCheck.Current("v1.3.1") })
+        compose.onNodeWithTag("update-check").assertTextContains("没有更高的正式版本", substring = true)
+    }
+
+    @Test fun theChangelogIsAlwaysThereAndACheckShowsWhenItRan() {
+        val updates = FakeUpdates()
+        show(updates)
+        compose.onNodeWithTag("update-checked-at").assertDoesNotExist()
+        updates.check.value = UpdateCheck.Current("v1.3.1")
+        updates.checkedAtMs.value = 1_794_240_000_000
+        compose.waitForIdle()
+        compose.onNodeWithTag("update-checked-at").assertTextContains("检查时间 2026-11-09 16:00 UTC", substring = true)
+        compose.onNodeWithTag("update-changelog").performClick()
+        assertEquals(listOf("https://github.com/Mind2Money/UniTrading/releases"), opened)
     }
 
     @Test fun aCheckInProgressCannotBeRepeated() {
