@@ -41,7 +41,7 @@ internal fun rememberQuantityCapacity(cache: OrderCapacityCache, brokerId: Strin
         snapshotFlow { latestHoldings }.conflate().collect {
             delay(400) // Coalesce typing and account pushes.
             val request = OrderRequest(symbol, draft.side, draft.kind, instrument.minLotsHundredths, entry, sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })
-            val result = try { session.orderCapacity(request, cache.entries.value[cacheKey]?.maximum) }
+            val result = try { session.orderCapacity(request, cache.hint(brokerId, session.account.id, symbol, draft.side)) }
                 catch (cancel: CancellationException) { throw cancel }
                 catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
             val maximum = result.maximumLotsHundredths

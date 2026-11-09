@@ -25,6 +25,23 @@ class OrderCapacityTest {
         assertEquals(0, discoverOrderCapacity { JsonObject(implicitSuccess() + result("NotEnoughLiquidity")) }.maximumLotsHundredths)
     }
 
+    @Test fun contractLookupsDuringASearchDoNotVoidIt() = runTest {
+        val wire = MockTradovateWire()
+        val broker = TradovateBroker(TradovateSession(TradovateEnvironment.DEMO, "test-access-token-1234567890", null, 42, "test", 4102444800000),
+            wire, backgroundScope, { 1_798_589_000_000L })
+        broker.connect()
+        broker.watch("MESZ6", Timeframe.M5)
+        runCurrent()
+        var pushes = 0
+        wire.capacityCheck = { body ->
+            val id = 900 + pushes++
+            backgroundScope.launch { wire.account.entity("contract", Json.parseToJsonElement("""{"id":$id,"name":"MESH$id","contractMaturityId":1}""").jsonObject) }
+            result(if (body.array("orders").single().long("orderQty")!! <= 5) "Success" else "MaxPosLimitReached")
+        }
+        assertEquals(500, broker.openSession("100").orderCapacity(OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).maximumLotsHundredths)
+        assertTrue(pushes > 3, "The lookups really happened during the search")
+    }
+
     @Test fun anUnchangedLimitIsConfirmedWithTwoChecks() = runTest {
         val calls = mutableListOf<Long>()
         assertEquals(500, discoverOrderCapacity(500) { quantity ->

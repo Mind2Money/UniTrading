@@ -20,6 +20,7 @@
 ✅ 按住标签上的 TP、SL 按钮拖到目标价即可添加止盈止损，草稿松手回填表单，持仓和挂单松手后确认
 ✅ 点 × 可直接在图表上平仓、撤单或撤销止损止盈，“关联待确认”的单也能撤；在线上点鼠标右键打开同样的操作。默认仍弹确认框，开启“跳过交易确认”后点击即执行
 ✅ 下单数量上限先显示上次的结果，后台向服务器核对，只有服务器返回不同的上限才更新，不再卡在“计算中”，也不再过期后要手动刷新
+✅ 修复 Tradovate 数量上限经常算不出来的问题：加载合约资料时查询不再被作废；数量上限未知时手数加减按钮仍可用
 ✅ 支持鼠标滚轮：在图表上滚动缩放时间，在右侧价格轴上滚动缩放价格，Shift + 滚轮或触控板横向滑动平移
 ⚠️ Tradovate 和 Rithmic 的已有持仓、挂单仍不能在这里新增或删除止损止盈，线上不显示 TP、SL 按钮，下单草稿不受影响
 
@@ -56,6 +57,7 @@
 ✅ Hold a tag's TP or SL button and drag it to a price to add a target or stop: a draft fills the form on release, a position or order asks for confirmation
 ✅ Press × to close a position, cancel an order or cancel a stop or target right on the chart, including orders marked as unresolved; right-click a line for the same actions. A confirmation still appears unless you turned confirmations off
 ✅ The order quantity limit now shows the last known value at once and checks the server in the background, changing only when the server answers differently; no more waiting on "calculating" or refreshing an expired limit
+✅ Fixed the Tradovate quantity limit often failing to resolve: loading contract details no longer voids the check, and the quantity buttons work while the limit is unknown
 ✅ Mouse wheel support: scroll over the chart to zoom time, over the price axis to zoom price; Shift + wheel or a sideways trackpad swipe pans
 ⚠️ Tradovate and Rithmic positions and orders still cannot add or remove stops and targets here, so their lines show no TP and SL buttons; order drafts are not affected
 

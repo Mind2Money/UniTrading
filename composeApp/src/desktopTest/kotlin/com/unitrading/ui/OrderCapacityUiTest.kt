@@ -77,6 +77,24 @@ class OrderCapacityUiTest {
         assertEquals(CachedCapacity(300), OrderCapacityCache(store).entries.value.values.single(), "The next launch starts from it")
     }
 
+    @Test fun thePlusButtonWorksUntilTheServerGivesALimit() {
+        var form by mutableStateOf(OrderDraft(quantity = "1"))
+        var capacity by mutableStateOf(QuantityCapacityState(message = "正在确认可下单数量", loading = true))
+        compose.setContent { TradingTheme { Box(Modifier.requiredSize(420.dp, 700.dp)) {
+            OrderForm(mes, null, BrokerCapabilities(), form, { form = it }, null, false, {}, capacity = capacity, onRefreshCapacity = {})
+        } } }
+        val plus = compose.onNodeWithTag("quantity-increase")
+        for (state in listOf(capacity, QuantityCapacityState(message = "可下单数量暂时无法确认，请刷新"), QuantityCapacityState(0, "当前资金或账户限额不足以开仓"))) {
+            compose.runOnIdle { form = OrderDraft(quantity = "1"); capacity = state }
+            plus.assertIsEnabled().performClick()
+            compose.runOnIdle { assertEquals("2", form.quantity, "$state") }
+            compose.onNodeWithTag("quantity-decrease").assertIsEnabled().performClick()
+            compose.runOnIdle { assertEquals("1", form.quantity) }
+        }
+        compose.runOnIdle { form = OrderDraft(quantity = "3"); capacity = QuantityCapacityState(300) }
+        plus.assertIsNotEnabled()
+    }
+
     @Test fun aReturningOrderContextShowsItsLimitBeforeTheCheckAnswers() {
         render()
         awaitChecks(1)
@@ -85,6 +103,7 @@ class OrderCapacityUiTest {
         compose.runOnIdle { draft = draft.copy(side = Side.SELL) }
         compose.runOnIdle { assertNull(state.maximum, "Each side has its own limit"); assertTrue(state.loading) }
         awaitChecks(2)
+        assertEquals(500L, session.lastKnown.last(), "The other side's limit is tried first")
         compose.waitUntil(5_000) { state.maximum == 800L }
         session.answer = OrderCapacity(500)
         compose.runOnIdle { draft = draft.copy(side = Side.BUY) }
@@ -106,6 +125,21 @@ class OrderCapacityUiTest {
         compose.runOnIdle { assertEquals(QuantityCapacityState(500), state, "Still shown while the check runs") }
         awaitChecks(2)
         assertEquals(500L, session.lastKnown.last())
+    }
+
+    @Test fun aSearchStartsFromTheClosestLimitKnown() = kotlinx.coroutines.test.runTest {
+        fun key(account: String, symbol: String, side: Side) = OrderCapacityCache.key("b", account, symbol, side)
+        fun hint(side: Side = Side.BUY) = cache.hint("b", "A1", "MGCZ6", side)
+        assertNull(hint())
+        cache.put(key("A2", "MGCZ6", Side.BUY), CachedCapacity(900))
+        assertNull(hint(), "Another account says nothing about this one")
+        cache.put(key("A1", "MESZ6", Side.BUY), CachedCapacity(200))
+        cache.put(key("A1", "MNQZ6", Side.SELL), CachedCapacity(15000))
+        assertEquals(15000, hint(), "The account's largest, for an account-wide limit")
+        cache.put(key("A1", "MGCZ6", Side.SELL), CachedCapacity(700))
+        assertEquals(700, hint(), "The other side of this contract is closer")
+        cache.put(key("A1", "MGCZ6", Side.BUY), CachedCapacity(0))
+        assertEquals(0, hint(), "This side's own answer comes first")
     }
 
     @Test fun aCorruptCacheFileIsIgnoredAndAnUnchangedAnswerWritesNothing() = kotlinx.coroutines.test.runTest {

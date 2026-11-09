@@ -66,7 +66,8 @@ internal fun OrderForm(
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val less = draft.steppedQuantity(instrument, false)
-                val more = draft.steppedQuantity(instrument, true, capacity.maximum)
+                // Only a limit the server has given stops the plus button: the broker still checks every order.
+                val more = draft.steppedQuantity(instrument, true, capacity.maximum?.takeIf { it > 0 } ?: instrument.maxLotsHundredths)
                 QuantityStep(false, !busy && less != null) { less?.let { onDraft(draft.copy(quantity = it)) } }
                 PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)

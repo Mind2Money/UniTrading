@@ -34,6 +34,17 @@ class OrderCapacityCache(private val store: SnapshotStore) {
         catch (_: Exception) { /* Only a convenience: the value stays for this run and the next launch asks the server. */ }
     }
 
+    /**
+     * The limit worth confirming before a full search, which takes up to a minute while the app is starting: this side's,
+     * the other side's, or the largest known for the account, since an account-wide order limit applies to every contract.
+     */
+    fun hint(brokerId: String, accountId: String, symbol: String, side: Side): Long? {
+        val known = state.value
+        val other = if (side == Side.BUY) Side.SELL else Side.BUY
+        return (known[key(brokerId, accountId, symbol, side)] ?: known[key(brokerId, accountId, symbol, other)])?.maximum
+            ?: known.filterKeys { it.startsWith("$brokerId/$accountId/") }.values.maxOfOrNull { it.maximum }
+    }
+
     companion object {
         private const val KEY = "order-capacity-v1"
         fun key(brokerId: String, accountId: String, symbol: String, side: Side) = "$brokerId/$accountId/$symbol/$side"

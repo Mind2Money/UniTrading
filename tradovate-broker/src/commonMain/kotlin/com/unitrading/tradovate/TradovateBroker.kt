@@ -1172,6 +1172,18 @@ class TradovateBroker(
         publish()
     }
 
+    /**
+     * The account state a quantity limit depends on. A limit found while this changes is thrown away; book.revision would
+     * not do, as it also moves for every contract lookup and history row, which voided nearly every search of a dozen seconds.
+     */
+    private fun capacityBasis(accountId: Long): List<Any?> = listOf(
+        book.list("position").filter { it.long("accountId") == accountId }.map { it.long("contractId") to it.long("netPos") },
+        book.list("order").filter { it.long("accountId") == accountId && activeOrder(it) }.map { order ->
+            listOf(order.long("id"), order.str("ordStatus"), order.long("id")?.let { book.orderVersion(it) }?.long("orderQty"))
+        },
+        book.list("cashBalance").filter { it.long("accountId") == accountId }.map { it.long("id") to it["amount"] },
+    )
+
     private fun latestUsdCashBalance(accountId: Long): JsonObject? = book.list("cashBalance")
         .filter { it.long("accountId") == accountId && book.item("currency", it.long("currencyId") ?: 0)?.str("name") == "USD" }
         .maxByOrNull { it.str("timestamp") ?: "" }
@@ -1215,7 +1227,7 @@ class TradovateBroker(
                     ?: return@withLock OrderCapacity(message = "合约规格尚未加载")
                 if (request.kind != OrderKind.MARKET && request.entryPrice?.let { it > 0 && it % contractSpecs.getValue(contractId).tickSize == 0L } != true)
                     return@withLock OrderCapacity(message = "请先输入有效的订单价格")
-                val revision = lock.withLock { book.revision }
+                val basis = lock.withLock { capacityBasis(accountId.toLong()) }
                 val result = discoverOrderCapacity(lastKnown) { quantity ->
                     // Keep this endpoint below its documented 500/hour budget, with >=1s between calls.
                     val time = now()
@@ -1225,12 +1237,12 @@ class TradovateBroker(
                     // Dryrun evaluates server-side risk without sending an order. A quiet/closed
                     // market's last local quote must not prevent quantity selection; estimate()
                     // still enforces fresh quotes before any actual trading command.
-                    check(!stopped && market.value.tradingReady && lock.withLock { book.revision == revision }) { "账户状态已变化" }
+                    check(!stopped && market.value.tradingReady && lock.withLock { capacityBasis(accountId.toLong()) == basis }) { "账户状态已变化" }
                     validateContinuous(request)
                     capacityChecks.add(now())
                     rest("POST", "order/dryrun", capacityBody(accountId.toLong(), contractId, request, quantity)).jsonObject
                 }
-                if (!market.value.tradingReady || lock.withLock { book.revision != revision })
+                if (!market.value.tradingReady || lock.withLock { capacityBasis(accountId.toLong()) != basis })
                     OrderCapacity(message = "账户状态已变化，请刷新数量上限")
                 else result
             }
