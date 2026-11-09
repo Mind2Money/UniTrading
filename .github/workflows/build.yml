@@ -296,8 +296,13 @@ jobs:
             exit 1
           fi
           host="$app/Contents/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin"
-          test -x "$host"
-          "$host" --self-test | grep -E '^SELF_TEST PASS [0-9]+$'
+          if [ ! -x "$host" ]; then
+            echo "::error::Login host is missing or not executable: $host"
+            ls -l "$(dirname "$host")" || true
+            exit 1
+          fi
+          self_test="$("$host" --self-test)" || { echo "::error::Packaged login host failed its self-test: $self_test"; exit 1; }
+          echo "$self_test"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           mkdir -p dist

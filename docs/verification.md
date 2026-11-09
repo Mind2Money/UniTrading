@@ -2,12 +2,13 @@
 
 ## 当前：1.4.0 / v1.4.0
 
-2026-11-10 发布前在 Windows、JDK 21 上核对 `6c834ec` 加版本号改动。标签提交在此基础上只改本记录、发布说明和其他文档的文字。
+2026-11-10 发布前在 Windows、JDK 21 上核对 `6c834ec` 加版本号改动。之后只改了本记录、发布说明和其他文档的文字，以及下面 macOS 条目所述的构建脚本和 CI 检查。
 
 - 桌面回归 919 项：broker-api 28、demo-broker 36、tradovate-broker 248、composeApp 504、rithmic-broker 103，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.py` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。脚本末尾归档报告时，临时目录路径过长（WinError 206）使脚本返回非零，测试、打包和 R8 三个阶段都通过。
 - 脚本测试：`test_build_local.py` 20 项、`test_release_notes.py` 5 项、`test_release_discord.py` 15 项通过；Discord 公告用 `--dry-run` 预览，没有发送。
 - Android：R8 release APK 构建通过，没有运行模拟器设备测试。
 - Windows 包：`UniTrading.exe` 版本为 1.4.0，含登录 host（自测 60 项通过）。从仓库外目录启动，应用数据目录隔离，只放入授权记录和 TradingV 主题设置，通过授权校验后显示登录页和 Tradovate、Rithmic 两个入口；这次检查没有连接任何账户。
+- macOS：首次标签运行（`a4b13db`）中专属测试和打包通过，打包后的登录 host 检查失败：Compose 按字节复制 `appResources`，host 丢失可执行位，登录窗口无法启动。`createDistributable` 的收尾步骤已恢复可执行位；这个步骤只能在标签运行里验证。
 - 界面：`UiScreenshotTour` 渲染了手机、平板和桌面页面；本地模拟的真实窗口核对了 TradingV 配色和右侧导航栏。
 - 未验证：真机、真实账户行情下的新配色和订单流布局、Tradovate 真实下单、改价和成交回执、Rithmic 平仓、iOS、macOS 包的启动和登录、MSI 安装包。
 

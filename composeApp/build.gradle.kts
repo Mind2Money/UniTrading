@@ -121,6 +121,15 @@ tasks.register<JavaExec>("tradovateReadOnlyCapacityProbe") {
 }
 
 tasks.matching { it.name in setOf("run", "prepareAppResources", "createDistributable", "packageMsi", "packageExe", "packageDmg") }.configureEach { dependsOn(stageTradovateLoginHost) }
+// Compose copies app resources byte by byte, so the packaged login host loses its executable bit.
+val packagedMacLoginHost = layout.buildDirectory.file("compose/binaries/main/app/UniTrading.app/Contents/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin")
+if (isMac) tasks.matching { it.name == "createDistributable" }.configureEach {
+    doLast {
+        val host = packagedMacLoginHost.get().asFile
+        check(host.setExecutable(true, false)) { "Cannot make $host executable" }
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
