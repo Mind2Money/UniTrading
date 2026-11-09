@@ -38,6 +38,7 @@ internal fun MarketWatch(
     selected: String, onSymbol: (String) -> Unit, modifier: Modifier = Modifier,
     preferences: MarketWatchPreferences = remember { MarketWatchPreferences(MemorySnapshotStore()) },
     subtitle: String? = null,
+    panel: Boolean = false,
     barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
@@ -83,8 +84,8 @@ internal fun MarketWatch(
     NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = adding || editing,
         onBackCompleted = { if (adding) stepBack() else editing = false })
     Column(modifier.background(colors.Surface).testTag("market-watch")) {
-        if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back")
-        else PageTopBar(if (editing) "编辑自选" else "行情", subtitle.takeUnless { editing }, actions = {
+        if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back", panel = panel)
+        else PageTopBar(if (editing) "编辑自选" else "行情", subtitle.takeUnless { editing }, panel = panel, actions = {
             barActions()
             if (editing) ActionIcon(AppIcons.Check, "完成编辑", "market-edit-done") { editing = false }
             else {

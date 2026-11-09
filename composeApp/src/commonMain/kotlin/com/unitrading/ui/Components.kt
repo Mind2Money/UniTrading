@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,8 +84,9 @@ internal fun ActionIcon(
 @Composable
 internal fun PageTopBar(
     title: String, subtitle: String? = null, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null, backTag: String? = null,
-    actions: @Composable RowScope.() -> Unit = {},
+    panel: Boolean = false, actions: @Composable RowScope.() -> Unit = {},
 ) {
+    if (panel) { PanelHeader(title, modifier, subtitle, onBack, backTag, actions); return }
     TopAppBar(
         title = {
             Column {
@@ -98,6 +100,30 @@ internal fun PageTopBar(
         actions = actions, expandedHeight = 56.dp, windowInsets = WindowInsets(0, 0, 0, 0),
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent, scrolledContainerColor = Color.Transparent),
     )
+}
+
+/**
+ * Title row of a desktop panel: one height, inset and type size for every panel. The actions take the quieter icon colour
+ * of a Material top bar.
+ */
+@Composable
+internal fun PanelHeader(
+    title: String, modifier: Modifier = Modifier, subtitle: String? = null, onBack: (() -> Unit)? = null, backTag: String? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(modifier.fillMaxWidth().heightIn(min = PANEL_BAR.dp).padding(start = if (onBack == null) 16.dp else 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        CompositionLocalProvider(LocalContentColor provides scheme.onSurfaceVariant) {
+            if (onBack != null) ActionIcon(AppIcons.ArrowBack, "返回", backTag, onClick = onBack)
+        }
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        CompositionLocalProvider(LocalContentColor provides scheme.onSurfaceVariant) { actions() }
+    }
 }
 
 /** A figure with its caption, as used in the account summary and the status bar. */

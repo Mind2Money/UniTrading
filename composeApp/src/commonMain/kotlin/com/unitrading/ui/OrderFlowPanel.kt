@@ -60,12 +60,7 @@ internal fun OrderFlowPanel(
     val colors = TradingColors
     CompositionLocalProvider(LocalContentColor provides colors.Ink) {
     Column(modifier.fillMaxSize().background(colors.Surface).testTag("order-flow-panel")) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("订单流", style = MaterialTheme.typography.titleMedium)
-                Text(contract ?: instrument.tradeSymbolStatus ?: "主力待确认", style = MaterialTheme.typography.labelSmall,
-                    color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        PanelHeader("订单流", subtitle = contract ?: instrument.tradeSymbolStatus ?: "主力待确认") {
             StatusBadge(if (snapshot.connected) "实时" else "等待数据", if (snapshot.connected) colors.Profit else colors.Muted)
             ActionIcon(AppIcons.Close, "关闭订单流", "close-order-flow", onClick = onClose)
         }

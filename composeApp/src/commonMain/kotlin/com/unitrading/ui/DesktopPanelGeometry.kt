@@ -7,8 +7,8 @@ internal const val PANEL_DIVIDER = 8f
 /** The icon column at the window's right edge that folds and unfolds the panels. */
 internal const val PANEL_RAIL = 48f
 
-/** The trade list's title bar, which is all that stays when the list is folded. */
-internal const val PANEL_BAR = 40f
+/** The title row every desktop panel shares; it is all that stays of the trade list when folded. */
+internal const val PANEL_BAR = 48f
 private const val CHART_MIN_WIDTH = 320f
 
 internal data class PanelDimension(val value: Float, val min: Float, val max: Float)

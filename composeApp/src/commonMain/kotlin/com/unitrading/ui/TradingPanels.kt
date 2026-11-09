@@ -34,11 +34,12 @@ internal fun BrokerAccountChooser(
     accountId: String,
     onBroker: (String) -> Unit,
     onAccount: (String) -> Unit,
+    panel: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val type = MaterialTheme.typography
     Column(Modifier.padding(bottom = 8.dp)) {
-        ListSubheader("交易商与账户")
+        if (panel) PanelHeader("交易商与账户") else ListSubheader("交易商与账户")
         Box(Modifier.padding(horizontal = 16.dp)) {
             OutlinedButton({ expanded = true }, Modifier.fillMaxWidth().testTag("broker-picker"), shape = MaterialTheme.shapes.small,
                 contentPadding = PaddingValues(start = 16.dp, end = 8.dp)) {
@@ -89,15 +90,9 @@ internal fun OrderTicket(
     closeTag: String = "close-order-dialog",
 ) {
     Column(modifier) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 16.dp, end = if (onClose == null) 16.dp else 4.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text("新建订单", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                Text("${instrument.symbol} · ${instrument.currency} 结算", color = TradingColors.Muted, style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+        PanelHeader("新建订单", subtitle = "${instrument.symbol} · ${instrument.currency} 结算") {
             EnvironmentBadge(environment)
-            if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose)
+            if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = true)

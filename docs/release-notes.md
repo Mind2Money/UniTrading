@@ -51,6 +51,7 @@
 🖥️ **桌面布局**
 ✅ 面板改为 TradingView 式排版：图表在左、交易区在图表下方，下单面板和行情面板依次排在右侧，最右侧一列图标
 ✅ 行情、下单、交易三个面板都能收起和展开，图表自动占用空出的位置，状态本机保存；可以用最右侧图标，也可以用面板自己的收起按钮。“重置布局”恢复全部面板
+✅ 下单、账户、行情、交易、订单流面板的标题统一了字号、行高、左边距和按钮样式
 
 🆕 **应用内更新**
 ✅ 「设置 → 关于与更新」可以检查新版本并一键更新：Windows 自动下载、校验、替换程序并重启；Android 下载校验后打开系统安装界面，第一次需要在系统页面允许本应用安装未知应用
@@ -109,6 +110,7 @@
 🖥️ **Desktop layout**
 ✅ Panels now follow TradingView's arrangement: the chart on the left with the trade list under it, then the order panel, the market panel and a column of icons on the right
 ✅ The market, order and trade panels can each be folded and reopened, from the icon column or their own button; the chart takes the free space and the state is remembered. Reset layout brings every panel back
+✅ The order, account, market, trades and order flow panels now share one title size, row height, left inset and button style
 
 🆕 **In-app updates**
 ✅ Settings → About & updates checks for a new version and updates in one press: Windows downloads, verifies, replaces the program and restarts; Android downloads, verifies and opens the system installer, and the first time asks you to allow installs from this app in a system screen

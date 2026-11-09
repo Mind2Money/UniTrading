@@ -8,10 +8,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
 import com.unitrading.app.MemorySnapshotStore
@@ -38,6 +41,19 @@ class DesktopWorkspaceTest {
     private fun drag(tag: String, delta: Offset) = compose.onNodeWithTag(tag).performTouchInput { swipe(center, center + delta) }
     private fun awaitSaved() = compose.waitUntil(5_000) {
         DesktopLayoutController(store).preferences.value == runtime.desktopLayout.preferences.value
+    }
+
+    /** Every panel names itself at one size and one inset, and says so to screen readers. */
+    @Test fun panelTitlesShareOneSizeAndInset() {
+        render()
+        mapOf("新建订单" to "desktop-order", "交易商与账户" to "desktop-sidebar", "行情" to "desktop-sidebar", "交易" to "desktop-terminal").forEach { (title, panel) ->
+            val node = compose.onNode(hasText(title) and hasAnyAncestor(hasTestTag(panel)) and isHeading(), useUnmergedTree = true).fetchSemanticsNode()
+            val layout = mutableListOf<TextLayoutResult>().also { node.config[SemanticsActions.GetTextLayoutResult].action!!(it) }.single()
+            assertEquals(16.sp, layout.layoutInput.style.fontSize, title)
+            assertEquals(16f * .6f, node.boundsInRoot.left - bounds(panel).left, .6f, "$title starts at the shared inset")
+        }
+        assertTrue(bounds("desktop-terminal-bar").height >= PANEL_BAR * .6f - .5f)
+        assertTrue(bounds("desktop-market-minimize").bottom <= bounds("desktop-sidebar").top + PANEL_BAR * .6f + .5f, "The fold button sits in the title row")
     }
 
     @Test fun allFourDividersResizeTheirPanelsAndPersistWithoutTrading() {

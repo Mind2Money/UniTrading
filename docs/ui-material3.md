@@ -30,6 +30,16 @@
 - 破坏性操作用 `error`。方向用 `Up` / `Down`：下单按钮、确认按钮、最小化面板的提交箭头都随买卖方向变色，强调色不表示方向。
 - Live 环境徽标使用 `error`，Demo 使用 `tertiary`，本地模拟使用 `primary`（`EnvironmentBadge`）。
 
+### 标题层级
+
+| 层级 | 组件 | 字阶 | 颜色 |
+| --- | --- | --- | --- |
+| 页面标题（手机、平板） | `PageTopBar` | `titleLarge` | `onSurface` |
+| 面板标题（桌面面板、下单窗） | `PanelHeader` | `titleMedium`，副标题 `bodySmall` | `onSurface`，副标题和操作图标 `onSurfaceVariant` |
+| 分组标题（面板、设置卡片内） | `ListSubheader` | `titleSmall` | `primary` |
+
+面板标题行最小高 48dp（`PANEL_BAR`），左边距 16dp，操作按钮是标准 `ActionIcon`。桌面新增面板用 `PanelHeader`，不要自己写标题行。
+
 ### 字阶
 
 - 使用 `TradingTypography`（M3 基线 15 级），全部开启等宽数字（`tnum`），价格和金额天然对齐。
@@ -53,6 +63,7 @@
 | 组件 | 用途 |
 | --- | --- |
 | `PageTopBar` | 手机每页唯一的标题，副标题放账户；可带返回和操作 |
+| `PanelHeader` | 桌面面板的标题行，同一高度、左边距和字阶 |
 | `ActionIcon` | 图标按钮 |
 | `StatusBadge` / `EnvironmentBadge` | 状态与环境标签 |
 | `SegmentedChoice` | 2–5 个互斥的短选项 |

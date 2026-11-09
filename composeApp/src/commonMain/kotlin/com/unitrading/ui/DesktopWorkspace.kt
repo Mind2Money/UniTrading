@@ -31,7 +31,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
@@ -105,8 +104,8 @@ internal fun DesktopWorkspace(
                             market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
                         }
                         // In its own box: ActionIcon applies its modifier inside the tooltip, where alignment means nothing.
-                        Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-                            ActionIcon(AppIcons.Close, "收起行情面板", "desktop-market-minimize", Modifier.size(32.dp), tint = TradingColors.Muted, iconSize = 18.dp) {
+                        Box(Modifier.align(Alignment.TopEnd).padding(end = 4.dp)) {
+                            ActionIcon(AppIcons.Close, "收起行情面板", "desktop-market-minimize", tint = MaterialTheme.colorScheme.onSurfaceVariant) {
                                 setOpen(DesktopPanel.MARKET, false)
                             }
                         }
@@ -127,12 +126,8 @@ internal fun DesktopWorkspace(
 /** The trade list's title bar. [summary] keeps the counts in view while the list is folded down to this bar. */
 @Composable
 private fun TerminalBar(summary: String, open: Boolean, onToggle: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(PANEL_BAR.dp).background(TradingColors.Surface).padding(start = 16.dp, end = 4.dp).testTag("desktop-terminal-bar"),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("交易", style = MaterialTheme.typography.titleSmall, maxLines = 1)
-        Text(summary, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", Modifier.size(32.dp),
-            tint = TradingColors.Muted, iconSize = 20.dp, onClick = onToggle)
+    PanelHeader("交易", Modifier.background(TradingColors.Surface).testTag("desktop-terminal-bar"), summary.ifBlank { null }) {
+        ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)
     }
 }
 
