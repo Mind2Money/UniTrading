@@ -140,7 +140,7 @@ private class AccountFigures(account: AccountSnapshot, colors: TradingPalette) {
 @Composable
 internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier, note: String? = null, connected: Boolean = true) {
     val figures = AccountFigures(account, TradingColors)
-    Row(modifier.fillMaxWidth().background(TradingColors.Shell).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+    Row(modifier.fillMaxWidth().background(TradingColors.Surface).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             Metric("今日盈亏 USD（券商）", figures.daily, color = figures.dailyColor, valueTag = "daily-pnl-value")
@@ -231,10 +231,10 @@ internal fun TradeTerminal(
                     OutlinedButton({ onClose(p) }, enabled = !busy, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("平仓") }
                 }
                 Column(Modifier.fillMaxWidth().testTag("position-${p.id}")
-                    .background(if (selectedPosition == p.id) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                    .background(if (selectedPosition == p.id) colors.Selection else Color.Transparent)
                     .clickable { onSelectPosition(p) }.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusBadge(p.side.label(), if (p.side == Side.BUY) colors.Up else colors.Down)
+                        StatusBadge(p.side.label(), if (p.side == Side.BUY) colors.UpText else colors.DownText)
                         Column(Modifier.weight(1f)) {
                             Text("${p.symbol} · ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit}", style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("入场 ${instrument.formatPrice(p.entryPrice)} · #${shortId(p.id)}", color = colors.Muted, style = type.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -312,7 +312,7 @@ internal fun TradeTerminal(
                     }.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (t.directionKnown) StatusBadge(t.side.label(), if (t.side == Side.BUY) colors.Up else colors.Down) else StatusBadge("买卖配对", colors.Muted)
+                            if (t.directionKnown) StatusBadge(t.side.label(), if (t.side == Side.BUY) colors.UpText else colors.DownText) else StatusBadge("买卖配对", colors.Muted)
                             Text("${t.symbol} · ${instrument.formatQuantity(t.lotsHundredths)} ${instrument.quantityUnit}", style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Text("${instrument.formatPrice(t.entryPrice)} ${if (t.directionKnown) "→" else "/"} ${instrument.formatPrice(t.exitPrice)}", color = colors.Muted, style = type.bodySmall)

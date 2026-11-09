@@ -175,6 +175,14 @@ class UiScreenshotTour {
 
     @Test fun desktopLight() = desktop(1600, 1000, { _ -> shot("desktop-58-light") }, ThemePreset.LIGHT)
 
+    @Test fun desktopTradingV() = desktop(1920, 1080, { _ ->
+        shot("desktop-64-tradingv")
+        tap("open-settings")
+        shotAll("desktop-65-tradingv-settings")
+        compose.onNodeWithTag("open-theme").performScrollTo().performClick(); settle()
+        shotAll("desktop-66-tradingv-theme")
+    }, ThemePreset.TRADINGV)
+
     /** The sidebar shows fewer rows than the list holds, which is where a drag has to scroll. */
     @Test fun desktopWatchListDrag() = desktop(1440, 900, { runtime ->
         val symbols = (1..16).map { "WATCH$it" }

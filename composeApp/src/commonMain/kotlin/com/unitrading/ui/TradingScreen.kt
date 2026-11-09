@@ -100,7 +100,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         BrokerAccountChooser(registry, plugin, "", ::selectBroker, {})
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(query, { query = it }, Modifier.weight(1f), label = { Text("搜索服务器合约，如 MES") }, singleLine = true)
-                            Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected) { Text("查询合约") }
+                            Button({ emptyScope.launch { try { plugin.searchInstruments(query) } catch (_: Exception) { searchError = "合约搜索失败，请检查连接和权限" } } }, enabled = feed.connected, colors = brandButtonColors()) { Text("查询合约") }
                         }
                         searchError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                         ListSubheader("连接")
@@ -508,7 +508,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 if (rail) MobileNavigationRail(mobileTab, selectTab)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     if (desktop) {
-                        Row(Modifier.fillMaxWidth().height(48.dp).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
+                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AppLogo(24.dp)
                             Text("UniTrading", style = MaterialTheme.typography.titleMedium)
@@ -521,7 +521,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                             ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
                             ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
-                            if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
+                            if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
                         }
                         DividerLine()
                     }
@@ -539,7 +539,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch) },
                             chart = chart,
                             order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Shell), environment = environment,
+                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize") },
                             terminal = { m ->
@@ -639,7 +639,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 if (desktop && showSettings) {
                     Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Shell) {
+                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
                             if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
@@ -675,8 +675,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacity) }
                     val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
                     val confirmColor = when (action) {
-                        is Confirmation.Place -> if (action.request.side == Side.BUY) colors.Up else colors.Down
-                        else -> MaterialTheme.colorScheme.error
+                        is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)
+                        else -> actionFill(MaterialTheme.colorScheme.error)
                     }
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
@@ -734,7 +734,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val newPrice = price ?: return@Button
                             pendingEdit = null
                             perform { session.modifyOrder(requestId(), order.id, order.version, newPrice) }
-                        }, Modifier.testTag("confirm-pending-entry"), enabled = !busy && validVersion && estimate?.valid == true) { Text(if (skipConfirmation) "应用改价" else "确认改价") } },
+                        }, Modifier.testTag("confirm-pending-entry"), enabled = !busy && validVersion && estimate?.valid == true, colors = brandButtonColors()) { Text(if (skipConfirmation) "应用改价" else "确认改价") } },
                         dismissButton = { TextButton({ pendingEdit = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
@@ -782,7 +782,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         confirmButton = { Button({
                             protection = null
                             perform { session.modifyProtection(requestId(), p.id, p.version, sl, tp) }
-                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && priceError == null && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
+                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && priceError == null && !busy, colors = brandButtonColors()) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
                         dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
                     )
                 }

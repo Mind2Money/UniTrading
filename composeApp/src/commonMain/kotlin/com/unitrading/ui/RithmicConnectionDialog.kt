@@ -115,7 +115,7 @@ internal fun RithmicConnectionDialog(
                     error = "$progress\n${e.message ?: "登录失败，请检查网关、系统名称和凭据"}"
                 } finally { busy = false }
             }
-        }, enabled = !busy && !restoring, modifier = Modifier.testTag("rithmic-connect")) { Text("登录") } },
+        }, enabled = !busy && !restoring, modifier = Modifier.testTag("rithmic-connect"), colors = brandButtonColors()) { Text("登录") } },
         dismissButton = { TextButton(::dismiss, Modifier.testTag("cancel-rithmic-login")) { Text(if (busy) "取消连接" else "取消") } },
     )
 }

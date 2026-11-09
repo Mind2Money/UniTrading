@@ -119,7 +119,7 @@ internal fun OrderForm(
                 Text("${draft.side.label()} · ${draft.kind.label()} · ${draft.quantity} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
             }
-            val sideColor = if (draft.side == Side.BUY) colors.Up else colors.Down
+            val sideColor = actionFill(if (draft.side == Side.BUY) colors.Up else colors.Down)
             Button({ focus.clearFocus(); onSubmit() }, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("review-order"),
                 enabled = preview?.valid == true && !busy,
                 colors = ButtonDefaults.buttonColors(containerColor = sideColor, contentColor = contentOn(sideColor))) {
@@ -148,7 +148,7 @@ internal fun OrderSideButton(side: Side, price: String, selected: Boolean, modif
         border = BorderStroke(if (selected) 2.dp else 1.dp, color.copy(alpha = if (selected) 1f else .4f))) {
         Column(Modifier.heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(side.label(), color = color, style = MaterialTheme.typography.labelLarge)
+                Text(side.label(), color = if (side == Side.SELL) colors.DownText else colors.UpText, style = MaterialTheme.typography.labelLarge)
                 Text(if (side == Side.SELL) "BID" else "ASK", color = colors.Muted, style = MaterialTheme.typography.labelSmall)
             }
             Text(price, color = colors.Ink, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)

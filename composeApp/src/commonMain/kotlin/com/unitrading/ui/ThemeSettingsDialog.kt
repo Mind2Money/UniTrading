@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 fun TradingPalette.color(role: ThemeColor): Color = when (role) {
     ThemeColor.PAGE -> Shell; ThemeColor.SURFACE -> Surface; ThemeColor.CHART -> Chart; ThemeColor.GRID -> Grid
     ThemeColor.UP -> Up; ThemeColor.DOWN -> Down; ThemeColor.PROFIT -> Profit; ThemeColor.LOSS -> Loss
-    ThemeColor.ACCENT -> Accent; ThemeColor.TEXT -> Ink; ThemeColor.MUTED -> Muted; ThemeColor.STOP -> Stop; ThemeColor.TARGET -> Target
+    ThemeColor.ACCENT -> Key; ThemeColor.TEXT -> Ink; ThemeColor.MUTED -> Muted; ThemeColor.STOP -> Stop; ThemeColor.TARGET -> Target
 }
 fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
 

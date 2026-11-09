@@ -56,7 +56,7 @@ internal fun TradovateConnectionDialog(runtime: TradingRuntime, login: Tradovate
                     error = if (e is TradovateRemoteException) "$progress\n${e.message}" else "$progress\n登录信息未能传回应用，请关闭旧登录窗口后重试。"
                 } finally { busy = false }
             }
-        }, enabled = !busy && !restoring && login != null) { Text("打开官方登录页") } },
+        }, enabled = !busy && !restoring && login != null, colors = brandButtonColors()) { Text("打开官方登录页") } },
         dismissButton = { TextButton(::dismiss, Modifier.testTag("cancel-login")) { Text(if (busy) "取消连接" else "取消") } },
     )
 }

@@ -130,8 +130,8 @@ private fun ToolbarChip(label: String, onClick: () -> Unit, tag: String, modifie
     AssistChip(onClick, { Text(label, maxLines = 1) }, modifier.testTag(tag),
         leadingIcon = leading?.let { icon -> { Icon(icon, contentDescription = null, Modifier.size(AssistChipDefaults.IconSize)) } },
         trailingIcon = trailing?.let { icon -> { Icon(icon, contentDescription = null, Modifier.size(AssistChipDefaults.IconSize)) } },
-        colors = AssistChipDefaults.assistChipColors(containerColor = if (active) scheme.secondaryContainer else scheme.surface.copy(alpha = .9f),
-            labelColor = scheme.onSurface, leadingIconContentColor = scheme.onSurfaceVariant, trailingIconContentColor = scheme.onSurfaceVariant),
+        colors = AssistChipDefaults.assistChipColors(containerColor = if (active) scheme.secondaryContainer else scheme.surfaceContainerHigh.copy(alpha = .94f),
+            labelColor = if (active) scheme.onSecondaryContainer else scheme.onSurface, leadingIconContentColor = scheme.onSurfaceVariant, trailingIconContentColor = scheme.onSurfaceVariant),
         border = BorderStroke(1.dp, scheme.outlineVariant))
 }
 
@@ -321,19 +321,19 @@ internal fun ChartLegend(
         if (readout != null) Text(readout, Modifier.testTag("chart-readout"), style = type.labelSmall)
         if (!collapsed) {
             if (readout == null && bar != null) {
-                val tone = if (bar.close >= bar.open) colors.Up else colors.Down
+                val tone = if (bar.close >= bar.open) colors.UpText else colors.DownText
                 val change = barChange(bar, previous)
                 FlowRow(Modifier.testTag("chart-readout").padding(end = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     listOf("开" to bar.open, "高" to bar.high, "低" to bar.low, "收" to bar.close).forEach { (label, value) -> Figure(label, instrument.formatPrice(value), tone) }
-                    Text(change.label(instrument), style = type.labelSmall, color = if (change.diff >= 0) colors.Up else colors.Down)
+                    Text(change.label(instrument), style = type.labelSmall, color = if (change.diff >= 0) colors.UpText else colors.DownText)
                     Figure("量", formatVolume(bar.volume), colors.Ink)
                     Text("${dateTime(bar.timeMs)} UTC", style = type.labelSmall, color = colors.Muted)
                 }
             }
             if (!compact) Row(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.Down, Modifier.testTag("legend-sell")) { onSide(Side.SELL) }
+                TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.DownText, Modifier.testTag("legend-sell")) { onSide(Side.SELL) }
                 Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", style = type.labelSmall, color = colors.Muted)
-                TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.Up, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
+                TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.UpText, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
             }
         }
     }
@@ -343,7 +343,7 @@ internal fun ChartLegend(
 @Composable
 private fun ToolbarPill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Surface(modifier, shape = MaterialTheme.shapes.small, color = scheme.surface.copy(alpha = .9f), border = BorderStroke(1.dp, scheme.outlineVariant), content = content)
+    Surface(modifier, shape = MaterialTheme.shapes.small, color = scheme.surfaceContainerHigh.copy(alpha = .94f), border = BorderStroke(1.dp, scheme.outlineVariant), content = content)
 }
 
 @Composable

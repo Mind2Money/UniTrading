@@ -96,7 +96,7 @@ internal fun DesktopWorkspace(
                     PanelResizeHandle("行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
                         onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
                         onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
-                    Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Shell).testTag("desktop-sidebar")) {
+                    Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-sidebar")) {
                         Column(Modifier.fillMaxSize()) {
                             Column(Modifier.fillMaxWidth().height(layout.accounts.value.dp).testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
                             PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,

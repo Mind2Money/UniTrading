@@ -66,7 +66,7 @@ internal fun PendingProtectionDialog(
             preview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
         } },
         confirmButton = { Button({ onConfirm(sl, tp) }, Modifier.testTag("confirm-pending-protection"),
-            enabled = validInput && validVersion && capabilityError == null && preview?.valid == true && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
+            enabled = validInput && validVersion && capabilityError == null && preview?.valid == true && !busy, colors = brandButtonColors()) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
         dismissButton = { TextButton(onDismiss, enabled = !busy) { Text("取消") } },
     )
 }

@@ -64,7 +64,7 @@ internal fun SettingsPage(
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
-    Column(modifier.background(colors.Shell).testTag("settings-page")) {
+    Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
             barActions()
             if (onClose != null) ActionIcon(AppIcons.Close, "关闭设置", "close-settings", onClick = onClose)

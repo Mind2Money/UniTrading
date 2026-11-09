@@ -55,7 +55,7 @@ internal fun MobileTradeBar(
                 metric.testTag("panel-positions").padding(horizontal = 8.dp, vertical = 6.dp), if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink)
             Metric("今日盈亏 · 券商", account.dailyPnl?.let { money(it.totalMicros, true) } ?: "—",
                 metric.testTag("panel-daily-pnl").padding(horizontal = 8.dp, vertical = 6.dp), colors.pnl(account.dailyPnl?.totalMicros))
-            Button(onOpen, Modifier.heightIn(min = 48.dp).testTag("open-order"), contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+            Button(onOpen, Modifier.heightIn(min = 48.dp).testTag("open-order"), colors = brandButtonColors(), contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
                 Icon(AppIcons.Add, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                 Text("下单")
@@ -260,6 +260,6 @@ private fun MobileOrderTypes(instrument: Instrument, quote: Quote?, capabilities
             // The entry belongs to the side it was placed for: a resting price is rebuilt for the other side.
             val sided = draft.withSide(side, instrument, quote)
             onDraft(if (side == draft.side || draft.kind == OrderKind.MARKET) sided else sided.copy(kind = OrderKind.MARKET).withKind(instrument, quote, draft.kind))
-        }, Modifier.weight(2f), enabled, height = 36.dp, activeColor = { if (it == Side.BUY) colors.Up else colors.Down })
+        }, Modifier.weight(2f), enabled, height = 36.dp, activeColor = { if (it == Side.BUY) colors.UpText else colors.DownText })
     }
 }

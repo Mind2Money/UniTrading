@@ -6,9 +6,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -24,9 +26,16 @@ import com.unitrading.broker.BrokerEnvironment
 /** Small tonal label for a state or a role; colour never carries the meaning alone, the text does. */
 @Composable
 internal fun StatusBadge(text: String, color: Color = MaterialTheme.colorScheme.primary, modifier: Modifier = Modifier) {
-    Text(text, modifier.background(color.copy(alpha = .14f), MaterialTheme.shapes.extraSmall).padding(horizontal = 6.dp, vertical = 2.dp),
-        color = color, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    // Opaque, so the label reads the same on a selected row as on the panel.
+    val container = lerp(MaterialTheme.colorScheme.surface, color, .18f)
+    val ink = remember(color, container) { color.readableOn(container) }
+    Text(text, modifier.background(container, MaterialTheme.shapes.extraSmall).padding(horizontal = 6.dp, vertical = 2.dp),
+        color = ink, style = MaterialTheme.typography.labelSmall, maxLines = 1)
 }
+
+/** Colours of a screen's or dialog's main action. */
+@Composable
+internal fun brandButtonColors() = ButtonDefaults.buttonColors(containerColor = TradingColors.Brand, contentColor = TradingColors.OnBrand)
 
 internal fun BrokerEnvironment.badgeLabel() = when {
     this == BrokerEnvironment.LOCAL_DEMO -> "本地模拟"
@@ -48,9 +57,9 @@ internal fun EnvironmentBadge(environment: BrokerEnvironment, modifier: Modifier
 /** Brand mark: the rising candles on a primary tile. */
 @Composable
 internal fun AppLogo(size: Dp = 32.dp, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-    Box(modifier.size(size).background(colors.primary, RoundedCornerShape(size * .28f)), contentAlignment = Alignment.Center) {
-        Icon(AppIcons.Logo, contentDescription = null, tint = colors.onPrimary, modifier = Modifier.size(size * .78f))
+    val colors = TradingColors
+    Box(modifier.size(size).background(colors.Brand, RoundedCornerShape(size * .28f)), contentAlignment = Alignment.Center) {
+        Icon(AppIcons.Logo, contentDescription = null, tint = colors.OnBrand, modifier = Modifier.size(size * .78f))
     }
 }
 

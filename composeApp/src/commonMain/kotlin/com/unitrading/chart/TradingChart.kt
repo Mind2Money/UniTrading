@@ -488,7 +488,7 @@ fun TradingChart(
                         drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
                         drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 4f)))
-                        priceTags.add(PriceTag(it.bid, colors.Shell, colors.Accent, priority = 2))
+                        priceTags.add(PriceTag(it.bid, colors.OnBrand, colors.Brand, priority = 2))
                     }
                     if (showHistory) executions.forEach { execution ->
                         val x = x(execution.timeMs)

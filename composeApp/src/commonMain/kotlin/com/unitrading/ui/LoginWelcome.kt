@@ -37,7 +37,7 @@ internal fun LoginWelcome(runtime: TradingRuntime, onLogin: () -> Unit, onTheme:
                 Spacer(Modifier.height(12.dp))
                 if (restoring) LinearProgressIndicator(Modifier.fillMaxWidth())
                 message?.let { Text(it, Modifier.testTag("saved-login-status"), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
-                Button(onLogin, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login")) { Text("登录 Tradovate") }
+                Button(onLogin, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login"), colors = brandButtonColors()) { Text("登录 Tradovate") }
                 if (onLoginRithmic != null) OutlinedButton(onLoginRithmic, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login-rithmic")) { Text("登录 Rithmic") }
                 if (savedCount > 0 || message != null) SavedLoginControls(runtime.savedLogins) {}
                 TextButton(onTheme, Modifier.testTag("open-theme")) {

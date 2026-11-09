@@ -7,6 +7,25 @@
 ### 颜色
 
 - 所有 M3 颜色角色由 `tradingColorScheme` 从调色板推导，用户自定义颜色会带动全部容器色。组件取 `MaterialTheme.colorScheme`；涨跌、盈亏、止损止盈这些行情语义取 `TradingColors`。
+- 色调（tone）就是 CIE L*，两个色调的差决定对比度，与色相无关（`ColorTones.kt`）。强调色角色都是主题强调色（`ThemeColor.ACCENT`，字段 `Key`）的固定色调：
+
+  | 角色 | 深色 | 浅色 | TradingV |
+  | --- | --- | --- | --- |
+  | `primary`（即 `Accent`） | 80 | 40 | 72 |
+  | `onPrimary` | 18 | 100 | 18 |
+  | `primaryContainer` | 30 | 90 | 关键色本身 #2962FF |
+  | `secondaryContainer` / `onSecondaryContainer` | 22 / 88 | 90 / 12 | 22 / 88 |
+  | 选中行 `Selection` | 16 | 92 | 13 |
+
+- 面板层级从 `Surface` 的色调按固定距离移动，深色 +3 / +5.5 / +9 / +14，浅色 −2 / −4 / −6.5 / −10，对应 `surfaceContainerLow` 到 `surfaceContainerHighest`。
+- 按用途取色：
+  - 文字、图标、细线用 `Accent`；涨跌文字用 `UpText` / `DownText`，它们按选中行背景提亮过。
+  - `Up` / `Down` 只用于填充：K 线和买卖按钮，按钮再经 `actionFill` 保证白字可读。
+  - 页面主操作用 `brandButtonColors()`（`Brand` / `OnBrand`）。
+  - 选中的列表行用 `Selection`，选中的控件用 `secondaryContainer`。行背景要压暗，上面还有红绿价格。
+- `Key` 只在主题对话框和推导时使用，不直接上色。深色下鲜艳的关键色做文字对比度不够，TradingV 的 #2962FF 在面板上只有 3.8:1。
+- TradingV 的颜色取自 TradingView 深色页面的实际令牌：页面 #000、面板 #131313、强调文字 #82B1FF 一带、选中 #142E61 一带。文字比 TradingView 自己的 #B8B8B8 / #8C8C8C 提高一档。
+- `MaterialThemeTest` 校验全部预设和任意强调色下的文字、按钮对比度，改配色先跑它。
 - `AlertDialog`、菜单、Sheet 使用组件默认的容器角色，不再手动指定背景。
 - 破坏性操作用 `error`。方向用 `Up` / `Down`：下单按钮、确认按钮、最小化面板的提交箭头都随买卖方向变色，强调色不表示方向。
 - Live 环境徽标使用 `error`，Demo 使用 `tertiary`，本地模拟使用 `primary`（`EnvironmentBadge`）。
@@ -99,7 +118,7 @@ B3 和 C8 改变了之前按 MT5 录像做的设计：5 项类型栏拆成类型
 
 ## 视觉回归
 
-`UiScreenshotTour` 走完全部页面（手机、横屏、平板、桌面，深色、浅色、TradingV），输出到本机 `artifacts/ui-tour/`：
+`UiScreenshotTour` 走完全部页面（手机、横屏、平板、桌面，深色、浅色、TradingV，桌面 TradingV 含设置和主题页），输出到本机 `artifacts/ui-tour/`：
 
 ```bash
 ./gradlew.bat :composeApp:desktopTest --tests com.unitrading.ui.UiScreenshotTour

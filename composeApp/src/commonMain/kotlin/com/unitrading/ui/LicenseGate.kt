@@ -100,7 +100,7 @@ private fun LicenseScreen(license: LicenseController, state: LicenseState) {
                         trailingIcon = {
                             ActionIcon(if (revealed) AppIcons.VisibilityOff else AppIcons.Visibility, if (revealed) "隐藏授权码" else "显示授权码", "license-reveal") { revealed = !revealed }
                         })
-                    Button(::submit, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("license-submit"), enabled = canSubmit) {
+                    Button(::submit, Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("license-submit"), enabled = canSubmit, colors = brandButtonColors()) {
                         Text(if (verifying) "正在验证…" else "验证并进入")
                     }
                     if (verifying) LinearProgressIndicator(Modifier.fillMaxWidth())

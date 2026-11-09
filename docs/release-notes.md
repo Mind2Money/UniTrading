@@ -7,6 +7,10 @@
 ✅ 宽屏将图表与分析并排显示；小窗口和手机使用独立分析页，支持返回和横向滚动切换工具
 ⚠️ 统计来自本次订阅的最近 20,000 笔真实成交，不含历史回补；重连、换合约或关闭分析后重新打开会重新采集。未知主动方向单独列出，不计入 Delta；DOM 取决于账户 L2 行情权限，尚未核实边界的聚合快照降级为买一卖一
 
+🎨 **配色**
+✅ 按 Material 3 的色调体系重做主色：按钮、选中项和强调文字都由同一个主题强调色推导，换强调色时整套颜色一起变化，文字和按钮对比度都达到可读标准
+✅ TradingV 主题保留 TradingView 的黑色页面、#2962FF 主按钮和青红 K 线；面板从纯黑改为 #131313，文字提亮，选中行上的红绿价格、工具栏和各类按钮都更容易看清
+
 💻 **macOS 版**
 ✅ 新增 Apple Silicon 的 macOS 桌面版（macOS 13 及以上），支持 Tradovate 和 Rithmic 登录，授权记录和已保存登录由系统钥匙串保护
 ⚠️ 尚未在真实 Mac 上实测登录。安装包未经 Apple 公证，解压后先执行 `xattr -cr UniTrading.app` 再打开
@@ -60,6 +64,10 @@
 ✅ Added Bid × Ask footprints, traded volume profiles with POC and a 70% value area, Delta / CVD, a filterable tape with display pause, and a read-only multi-level DOM after Rithmic sign-in
 ✅ Wide windows show the chart and analysis side by side; smaller windows and phones use a dedicated analysis page with back navigation and horizontally scrollable tools
 ⚠️ Statistics cover the most recent 20,000 live trades collected during this subscription, without historical backfill. Reconnecting, changing contracts, or reopening analysis starts a new window. Unknown aggressor volume stays separate from Delta; DOM requires account L2 permissions, and aggregated snapshots with unverified replacement boundaries fall back to top of book
+
+🎨 **Colors**
+✅ Rebuilt the main colors on Material 3 tones: buttons, selections and accent text all derive from one theme accent, so changing it recolors the whole set, and text and buttons meet readable contrast
+✅ The TradingV theme keeps TradingView's black page, #2962FF main buttons and teal and red candles. Panels move from pure black to #131313, text is brighter, and red and green prices on selected rows, the toolbars and every kind of button are easier to read
 
 💻 **macOS**
 ✅ New macOS desktop build for Apple Silicon (macOS 13 or later) with Tradovate and Rithmic sign-in; the license record and saved logins are protected by the system keychain

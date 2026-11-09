@@ -205,8 +205,8 @@ internal fun MarketQuoteRow(
 ) {
     val colors = TradingColors
     val markers = listOf(
-        ActivityMarker("多", activity.longPositions, colors.Up),
-        ActivityMarker("空", activity.shortPositions, colors.Down),
+        ActivityMarker("多", activity.longPositions, colors.UpText),
+        ActivityMarker("空", activity.shortPositions, colors.DownText),
         ActivityMarker("挂", activity.entries, colors.Accent),
         ActivityMarker("SL", activity.stops, colors.Stop),
         ActivityMarker("TP", activity.targets, colors.Target),
@@ -221,13 +221,13 @@ internal fun MarketQuoteRow(
     SideEffect { previous = quote; lastBidDirection = bidDirection; lastAskDirection = askDirection }
     fun quoteColor(direction: Int) = when {
         !connected || quote == null -> colors.Muted
-        direction > 0 -> colors.Up
-        direction < 0 -> colors.Down
+        direction > 0 -> colors.UpText
+        direction < 0 -> colors.DownText
         else -> colors.Ink
     }
     val type = MaterialTheme.typography
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("symbol-${instrument.symbol}")
-        .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+        .background(if (selected) colors.Selection else Color.Transparent)
         .clickable(onClickLabel = "打开 ${instrument.symbol} 图表", onClick = onClick)
         .semantics { stateDescription = activity.description; this.selected = selected }) {
         val stacked = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.15f
