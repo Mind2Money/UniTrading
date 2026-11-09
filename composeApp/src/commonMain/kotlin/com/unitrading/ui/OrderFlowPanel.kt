@@ -58,13 +58,15 @@ internal fun OrderFlowPanel(
         analyzeOrderFlow(snapshot.trades, timeframe, ticks, instrument.tickSize.coerceAtLeast(1))
     }
     val colors = TradingColors
+    BoxWithConstraints(modifier.fillMaxSize()) {
+    val shortPanel = maxHeight < 420.dp
     CompositionLocalProvider(LocalContentColor provides colors.Ink) {
-    Column(modifier.fillMaxSize().background(colors.Surface).testTag("order-flow-panel")) {
+    Column(Modifier.fillMaxSize().background(colors.Surface).testTag("order-flow-panel")) {
         PanelHeader("订单流", subtitle = contract ?: instrument.tradeSymbolStatus ?: "主力待确认") {
             StatusBadge(if (snapshot.connected) "实时" else "等待数据", if (snapshot.connected) colors.Profit else colors.Muted)
             ActionIcon(AppIcons.Close, "关闭订单流", "close-order-flow", onClick = onClose)
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp)) {
+        if (!shortPanel) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp)) {
             Text(if (snapshot.truncated) "滚动窗口 · 最近 ${snapshot.trades.size} 笔（上限 20,000）"
                 else "本次订阅 · ${snapshot.trades.size} 笔（上限 20,000）",
                 style = MaterialTheme.typography.labelSmall, color = colors.Muted)
@@ -113,9 +115,13 @@ internal fun OrderFlowPanel(
         }
         DividerLine()
         val first = snapshot.trades.minOfOrNull { it.timeMs } ?: snapshot.startedAtMs
-        Text("${first?.let { "起点 ${dateTime(it)} UTC · " } ?: ""}无历史回补 · 数量为张 · 未知方向不计入 Delta",
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).testTag("orderflow-window"),
-            style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+        val window = "${if (shortPanel) "${if (snapshot.truncated) "滚动窗口" else "本次订阅"} ${snapshot.trades.size}/20,000 笔 · " else ""}" +
+            "${first?.let { "起点 ${dateTime(it)} UTC · " } ?: ""}无历史回补 · 数量为张 · 未知方向不计入 Delta"
+        Text(window,
+            Modifier.fillMaxWidth().then(if (shortPanel) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+                .padding(horizontal = 12.dp, vertical = 5.dp).testTag("orderflow-window"),
+            style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = if (shortPanel) 1 else Int.MAX_VALUE)
+    }
     }
     }
 }
@@ -159,8 +165,9 @@ private fun FlowFootprint(analysis: OrderFlowAnalysis, instrument: Instrument, m
     val scroll = rememberScrollState()
     LaunchedEffect(bars.lastOrNull()?.timeMs) { scroll.scrollTo(scroll.maxValue) }
     Column(modifier.testTag("orderflow-footprint")) {
-        Text("Bid 卖 × Ask 买 · 蓝底为 POC · 最近 12 根", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+        Text("Bid 卖 × Ask 买 · 蓝底为 POC · 最近 12 根",
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1)
         Column(Modifier.weight(1f).fillMaxWidth()) {
             // Every strip shares one horizontal offset; only the bar cells move. Prices remain
             // in the same LazyColumn row as their cells, so vertical scrolling cannot drift.

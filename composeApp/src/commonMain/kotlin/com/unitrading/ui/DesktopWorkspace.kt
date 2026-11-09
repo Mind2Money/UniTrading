@@ -14,6 +14,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -23,7 +26,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -31,6 +33,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
@@ -40,7 +43,7 @@ import kotlin.math.roundToInt
 
 /**
  * The chart with the trade list under it, then the order ticket and the accounts and market panel, as on TradingView.
- * The icon column at the right edge folds any of the three panels; the chart takes the room they leave.
+ * The Material rail folds the surrounding panels and opens order flow in the chart area's right half.
  */
 @Composable
 internal fun DesktopWorkspace(
@@ -53,6 +56,9 @@ internal fun DesktopWorkspace(
     order: @Composable (Modifier, minimize: () -> Unit) -> Unit,
     terminal: @Composable (Modifier) -> Unit,
     terminalSummary: String = "",
+    orderFlow: (@Composable (Modifier) -> Unit)? = null,
+    orderFlowOpen: Boolean = false,
+    onOrderFlowOpenChange: (Boolean) -> Unit = {},
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -68,10 +74,26 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred)
+            val flowOpen = orderFlow != null && orderFlowOpen
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred, flowOpen)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    chart(Modifier.weight(1f).fillMaxWidth().testTag("desktop-chart"))
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().testTag("desktop-chart-area")) {
+                        val flowWidth = orderFlowPanelDimension(maxWidth.value, preferred.orderFlowFraction)
+                        val splitWidth = (maxWidth.value - PANEL_DIVIDER).coerceAtLeast(0f)
+                        Row(Modifier.fillMaxSize()) {
+                            chart(Modifier.weight(1f).fillMaxHeight().testTag("desktop-chart"))
+                            if (flowOpen) {
+                                PanelResizeHandle("订单流宽度", "resize-order-flow", horizontal = true, dimension = flowWidth, direction = -1f,
+                                    onChange = { if (splitWidth > 0f) controller.update(preferred.copy(orderFlowFraction = it / splitWidth)) },
+                                    onFinish = ::save,
+                                    onReset = { controller.update(preferred.copy(orderFlowFraction = defaults.orderFlowFraction)); save() })
+                                Box(Modifier.width(flowWidth.value.dp).fillMaxHeight().testTag("desktop-order-flow")) {
+                                    orderFlow?.invoke(Modifier.fillMaxSize())
+                                }
+                            }
+                        }
+                    }
                     if (preferred.terminalOpen) {
                         PanelResizeHandle("交易区高度", "resize-terminal", horizontal = false, dimension = layout.terminal, direction = -1f,
                             onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
@@ -112,11 +134,17 @@ internal fun DesktopWorkspace(
                     }
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().background(TradingColors.Shell).padding(top = 4.dp).testTag("desktop-panel-rail"),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    RailToggle(AppIcons.TrendingUp, "行情面板", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
-                    if (wide) RailToggle(AppIcons.Add, "下单面板", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
-                    RailToggle(AppIcons.ReceiptLong, "交易面板", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
+                NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("desktop-panel-rail"),
+                    windowInsets = WindowInsets(0, 0, 0, 0),
+                    header = { Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium) }) {
+                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                    RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
+                    if (wide) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
+                    RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
+                    if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
+                        onOrderFlowOpenChange(!flowOpen)
+                    }
+                    }
                 }
             }
         }
@@ -131,12 +159,16 @@ private fun TerminalBar(summary: String, open: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** One panel's switch in the icon column, filled while the panel is open. */
+/** A native rail destination whose pill marks an open panel. Several panels can stay open, so each also reports as a toggle. */
 @Composable
 private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, onToggle: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    ActionIcon(icon, if (open) "收起$name" else "展开$name", tag, Modifier.size(40.dp).background(if (open) scheme.secondaryContainer else Color.Transparent, MaterialTheme.shapes.small),
-        tint = if (open) scheme.onSecondaryContainer else TradingColors.Muted, iconSize = 22.dp, onClick = onToggle)
+    Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
+        NavigationRailItem(open, onToggle, { Icon(icon, contentDescription = null) },
+            Modifier.testTag(tag).semantics {
+                toggleableState = if (open) ToggleableState.On else ToggleableState.Off
+                stateDescription = if (open) "已展开" else "已收起"
+            }, label = { Text(name, maxLines = 1) }, alwaysShowLabel = true)
+    }
 }
 
 /** A visible eight-dp grip; dragging, keyboard arrows and accessibility all adjust the same bounded dimension. */

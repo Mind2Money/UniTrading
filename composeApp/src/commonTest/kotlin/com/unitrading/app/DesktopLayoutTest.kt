@@ -9,7 +9,7 @@ class DesktopLayoutTest {
         val store = MemorySnapshotStore()
         store.write("chart-v1", "unchanged")
         val controller = DesktopLayoutController(store)
-        val custom = DesktopLayoutPreferences(310f, 370f, 180f, 300f)
+        val custom = DesktopLayoutPreferences(310f, 370f, 180f, 300f, orderFlowFraction = .65f)
         controller.update(custom)
         assertNull(store.read("desktop-layout-v1"), "dragging only updates memory")
         assertTrue(controller.save())
@@ -49,6 +49,8 @@ class DesktopLayoutTest {
         assertEquals(DesktopLayoutPreferences(), controller.preferences.value)
         assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(sidebarWidth = Float.NaN)) }
         assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(orderWidth = -1f)) }
+        assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(orderFlowFraction = Float.NaN)) }
+        assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(orderFlowFraction = 1f)) }
         val custom = DesktopLayoutPreferences(sidebarWidth = 320f)
         controller.update(custom)
         assertFalse(controller.save())

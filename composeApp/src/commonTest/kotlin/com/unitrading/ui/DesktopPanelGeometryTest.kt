@@ -4,6 +4,54 @@ import com.unitrading.app.DesktopLayoutPreferences
 import kotlin.test.*
 
 class DesktopPanelGeometryTest {
+    @Test fun orderFlowStartsAtHalfOfTheContentWidthAndKeepsADraggableRange() {
+        val half = orderFlowPanelDimension(1008f, .5f)
+        assertEquals(500f, half.value)
+        assertEquals(240f, half.min)
+        assertEquals(760f, half.max)
+        assertEquals(250f, orderFlowPanelDimension(1008f, .25f).value)
+        assertEquals(750f, orderFlowPanelDimension(1008f, .75f).value)
+        assertEquals(half.min, orderFlowPanelDimension(1008f, 0f).value)
+        assertEquals(half.max, orderFlowPanelDimension(1008f, 1f).value)
+    }
+
+    @Test fun orderFlowClampsBothSidesWhenTheWindowShrinksAndRestoresTheFraction() {
+        val fraction = .75f
+        val original = orderFlowPanelDimension(1008f, fraction)
+        for (width in listOf(1500f, 1008f, 488f, 400f, 8f, 0f)) {
+            val available = (width - PANEL_DIVIDER).coerceAtLeast(0f)
+            val flow = orderFlowPanelDimension(width, fraction)
+            val chart = available - flow.value
+            assertTrue(flow.value in flow.min..flow.max, "Order-flow width is bounded at $width dp")
+            assertTrue(chart in flow.min..flow.max, "The chart keeps the same minimum at $width dp")
+            assertTrue(flow.value >= 0f && chart >= 0f)
+            if (available < 480f) assertEquals(available / 2f, flow.value)
+        }
+        assertEquals(original, orderFlowPanelDimension(1008f, fraction))
+    }
+
+    @Test fun invalidOrderFlowFractionsCannotEscapeMeasuredBounds() {
+        assertEquals(240f, orderFlowPanelDimension(1008f, -1f).value)
+        assertEquals(760f, orderFlowPanelDimension(1008f, 2f).value)
+        assertEquals(500f, orderFlowPanelDimension(1008f, Float.NaN).value)
+    }
+
+    @Test fun orderFlowKeepsTwoCompactHalvesWithoutChangingDefaultSidePanels() {
+        for ((width, wide) in listOf(900f to false, 1240f to true, 1600f to true)) {
+            val preferred = DesktopLayoutPreferences()
+            val before = desktopPanelGeometry(width, 650f, wide, preferred)
+            val open = desktopPanelGeometry(width, 650f, wide, preferred, orderFlowOpen = true)
+            assertEquals(before.sidebar.value, open.sidebar.value, "Default market width stays in place at $width dp")
+            assertEquals(before.order.value, open.order.value)
+            assertEquals(before.accounts.value, open.accounts.value)
+            assertEquals(before.terminal.value, open.terminal.value)
+            val huge = desktopPanelGeometry(width, 650f, wide,
+                DesktopLayoutPreferences(sidebarWidth = 4000f, orderWidth = 4000f), orderFlowOpen = true)
+            val gaps = PANEL_DIVIDER * if (wide) 2 else 1
+            assertTrue(width - huge.sidebar.value - huge.order.value - gaps - PANEL_RAIL >= 488f)
+        }
+    }
+
     @Test fun oversizedPreferencesKeepTheChartAndMarketUsable() {
         val huge = DesktopLayoutPreferences(4000f, 4000f, 4000f, 4000f)
         for ((width, wide) in listOf(900f to false, 1240f to true, 1600f to true)) {

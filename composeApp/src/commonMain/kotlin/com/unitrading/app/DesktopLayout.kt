@@ -23,9 +23,15 @@ data class DesktopLayoutPreferences(
     val marketOpen: Boolean = true,
     val orderOpen: Boolean = true,
     val terminalOpen: Boolean = true,
+    val orderFlowFraction: Float = .5f,
 ) {
-    fun validate() = require(listOf(sidebarWidth, orderWidth, accountsHeight, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
-        "面板尺寸超出范围"
+    fun validate() {
+        require(listOf(sidebarWidth, orderWidth, accountsHeight, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
+            "面板尺寸超出范围"
+        }
+        require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {
+            "订单流面板比例超出范围"
+        }
     }
     fun withOpen(panel: DesktopPanel, open: Boolean) = when (panel) {
         DesktopPanel.MARKET -> copy(marketOpen = open)

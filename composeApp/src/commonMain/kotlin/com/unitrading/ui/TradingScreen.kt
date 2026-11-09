@@ -469,8 +469,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         removeProtection = plugin.capabilities.removeProtection,
                     )
                     val drawings = runtime.drawings
-                    Row(m) {
-                    if (!compact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { runtime.indicators.apply(com.unitrading.app.IndicatorSettings()) } })
+                    BoxWithConstraints(m) {
+                    val chartCompact = compact || (showOrderFlow && maxWidth < 600.dp)
+                    val chartShort = chartCompact && maxHeight < 550.dp
+                    Row(Modifier.fillMaxSize()) {
+                    if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { runtime.indicators.apply(com.unitrading.app.IndicatorSettings()) } })
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
                         Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
@@ -492,7 +495,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                         },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
-                        chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
+                        chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOpen, drawings = drawings, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -502,6 +505,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     barStatus()
                                 }
                             }))
+                    }
                     }
                 }
                 Row(Modifier.fillMaxSize()) {
@@ -516,22 +520,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text(session.account.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (!localDemo) ConnectionStatusControl(market, compact = false, busy, syncAction)
                             if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
-                            if (orderFlowSupported) TextButton({ showOrderFlow = !showOrderFlow }, Modifier.testTag("open-order-flow")) {
-                                Text(if (showOrderFlow) "返回工作区" else "订单流")
-                            }
-                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
+                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
                             ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                             if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
                         }
                         DividerLine()
                     }
-                    if (showOrderFlow) {
-                        if (desktop && wide) Row(Modifier.weight(1f).fillMaxWidth()) {
-                            chart(Modifier.weight(1f).fillMaxHeight())
-                            VerticalDivider()
-                            OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxHeight()) { showOrderFlow = false }
-                        } else OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
-                    } else if (desktop) {
+                    if (desktop) {
                         DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
                             accounts = {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, panel = true)
@@ -548,7 +543,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
-                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}")
+                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
+                            orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it })
+                    } else if (showOrderFlow) {
+                        OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
                     } else {
                         when (mobileTab) {
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }
