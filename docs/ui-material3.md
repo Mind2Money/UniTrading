@@ -25,6 +25,7 @@
 ### 图标
 
 - 所有界面图标来自 `AppIcons`，禁止 Unicode 字符、Canvas 手绘和手写 path。文字中的 `→`、`·` 属于排版，不算图标。
+- 例外：图表画图工具的按钮用 `DrawingIcons` 里的线条示意图，因为 Material Icons 没有干草叉、斐波那契扇、艾略特波浪这类字形，每个图标画的就是该工具的形状。
 - `AppIcons` 是官方 Material Icons（Apache-2.0）的子集。完整依赖 `material-icons-extended` 在桌面是 37.7MB 的 jar，所以只内置用到的字形。新增图标时，把官方 path 数据加进该文件。
 - 只有图标的按钮用 `ActionIcon`：48dp 触控区、悬停或长按显示 Tooltip、读屏文字。图表内紧凑控件可缩小外框，但保留 Tooltip 和读屏文字。
 

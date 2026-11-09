@@ -458,9 +458,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         addProtection = plugin.capabilities.addProtection,
                         removeProtection = plugin.capabilities.removeProtection,
                     )
+                    val drawings = runtime.drawings
+                    Row(m) {
+                    if (!compact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { runtime.indicators.apply(com.unitrading.app.IndicatorSettings()) } })
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
-                        m, environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
+                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
                         instruments = watchInstruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
@@ -481,9 +484,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOpen, toolbarEnd = {
+                            ordering = compact && orderOpen, drawings = drawings, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { barStatus() }
                             }))
+                    }
                 }
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab)

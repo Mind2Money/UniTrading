@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
+import com.unitrading.chart.drawing.*
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -93,6 +94,7 @@ fun TradingChart(
     var showPositions by remember { mutableStateOf(true) }
     var showOrders by remember { mutableStateOf(true) }
     var showData by remember { mutableStateOf(false) }
+    LaunchedEffect(chrome.drawings?.hideTrading) { chrome.drawings?.hideTrading?.let { hide -> showPositions = !hide; showOrders = !hide } }
     var crosshair by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Int?>(null) }
     /** Pointer row of the crosshair; null after keyboard moves, which keep only the vertical line. */
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
@@ -152,6 +154,7 @@ fun TradingChart(
     }
     val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)
+    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.minutes * 60_000L, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
     val currentVisible by rememberUpdatedState(visible)
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
@@ -180,6 +183,11 @@ fun TradingChart(
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
         OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection), quote)
     val currentLines by rememberUpdatedState(lines)
+    drawingLayer?.bindChart(
+        orderLineAt = { point -> currentLines.any { it.edit != null && abs(currentScale.y(it.price) - point.y) <= 8 * density.density } },
+        onZoomRange = { from, to -> viewport = zoomedViewport(from, to, currentTotal); manualScale = null },
+        indicatorValuesAt = { index -> overlays.flatMap { item -> item.series.mapNotNull { series -> series.values.getOrNull(index)?.takeUnless { it.isNaN() } } } },
+    )
     val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
     // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
     val legendShown = !chrome.ordering || readout != null
@@ -291,6 +299,7 @@ fun TradingChart(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                        .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
                             contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。"
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
@@ -473,6 +482,7 @@ fun TradingChart(
                         drawRect(color, Offset(center - width / 2, y), Size(width, height))
                     }
                     drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
+                    drawingLayer?.let { drawLayerDrawings(it, textMeasurer, colors.Chart) }
                     quote?.let {
                         val y = scale.y(it.bid)
                         drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
@@ -534,6 +544,7 @@ fun TradingChart(
                         textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawLine(colors.Border, Offset(right, top), Offset(right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
+                    drawingLayer?.let { drawLayerMarks(it, labelStyle, textMeasurer, right + 4.dp.toPx(), this.size.width, bottom + 1f) }
                     val tagGap = labelHeight + labelPadding * 2 + 2.dp.toPx()
                     val capacity = ((plotBottom - top) / tagGap).toInt().coerceAtLeast(1)
                     val tags = priceTags.filter { scale.y(it.price) in top..plotBottom }.sortedByDescending { it.priority }.distinctBy { it.price }.take(capacity).sortedBy { scale.y(it.price) }
@@ -564,11 +575,11 @@ fun TradingChart(
                             }
                         }
                     }
-                    crosshair?.let { index ->
+                    crosshair?.takeIf { drawingLayer?.showsCrosshair != false }?.let { index ->
                         val candle = visible.getOrNull(index) ?: return@let
                         val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
-                        val line = colors.Ink.copy(alpha = .55f)
+                        val line = colors.Ink.copy(alpha = if (drawingLayer?.showsCrosshairLines != false) .55f else 0f)
                         drawLine(line, Offset(x, top), Offset(x, bottom), 1f, pathEffect = dash)
                         val timeLabel = crosshairTimeLabel(candle.timeMs, timeframe)
                         val timeWidth = textMeasurer.measure(timeLabel, labelStyle).size.width + labelPadding * 2
@@ -617,7 +628,7 @@ fun TradingChart(
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
                     compact = compact,
                 )
-                paneLayout.forEachIndexed { index, pane ->
+                paneLayout.takeUnless { chrome.drawings?.lockIndicators == true }.orEmpty().forEachIndexed { index, pane ->
                     key(pane.id) {
                         val chartHeight = bottom - top
                         val minimum = minimumPaneFraction(paneLayout.size, chartHeight, minimumPaneHeight)
@@ -638,6 +649,7 @@ fun TradingChart(
                         )
                     }
                 }
+                drawingLayer?.let { DrawingChartOverlays(it, compact) }
             }
             selectedPosition?.protectionNote?.let { note ->
                 Text(note, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
@@ -666,6 +678,8 @@ class ChartChrome(
     val onLegendCollapsed: (Boolean) -> Unit = {},
     val ordering: Boolean = false,
     val toolbarEnd: @Composable () -> Unit = {},
+    /** The left toolbar's drawings for this chart; null leaves the chart without them. */
+    val drawings: ChartDrawings? = null,
 )
 
 fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toString().take(16).replace('T', ' ')

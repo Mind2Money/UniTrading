@@ -55,6 +55,8 @@ internal object AppIcons {
     val ExpandLess by lazy { icon("ExpandLess", paths = arrayOf("M12 8l-6 6l1.41 1.41L12 10.83l4.59 4.58L18 14l-6 -6z")) }
     val ChevronRight by lazy { icon("ChevronRight", paths = arrayOf("M10 6L8.59 7.41L13.17 12l-4.58 4.59L10 18l6 -6l-6 -6z")) }
     val ChevronLeft by lazy { icon("ChevronLeft", paths = arrayOf("M15.41 7.41L14 6l-6 6l6 6l1.41 -1.41L10.83 12l4.58 -4.59z")) }
+    val Undo by lazy { icon("Undo", mirrored = true, paths = arrayOf("M12.5 8c-2.65 0 -5.05 0.99 -6.9 2.6L2 7v9h9l-3.62 -3.62c1.39 -1.16 3.16 -1.88 5.12 -1.88c3.54 0 6.55 2.31 7.6 5.5l2.37 -0.78C21.08 11.03 17.15 8 12.5 8z")) }
+    val Redo by lazy { icon("Redo", mirrored = true, paths = arrayOf("M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0 -8.58 3.03 -9.96 7.22L3.9 16c1.05 -3.19 4.05 -5.5 7.6 -5.5c1.95 0 3.73 0.72 5.12 1.88L13 16h9V7L18.4 10.6z")) }
     val Sync by lazy { icon("Sync", paths = arrayOf("M12 4L12 1L8 5l4 4L12 6c3.31 0 6 2.69 6 6c0 1.01 -0.25 1.97 -0.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0 -4.42 -3.58 -8 -8 -8zM12 18c-3.31 0 -6 -2.69 -6 -6c0 -1.01 0.25 -1.97 0.7 -2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4 -4l-4 -4v3z")) }
     val Tune by lazy { icon("Tune", paths = arrayOf("M3 17v2h6v-2L3 17zM3 5v2h10L13 5L3 5zM13 21v-2h8v-2h-8v-2h-2v6h2zM7 9v2L3 11v2h4v2h2L9 9L7 9zM21 13v-2L11 11v2h10zM15 9h2L17 7h4L21 5h-4L17 3h-2v6z")) }
     val Layers by lazy { icon("Layers", paths = arrayOf("M11.99 18.54l-7.37 -5.73L3 14.07l9 7l9 -7l-1.63 -1.27zM12 16l7.36 -5.73L21 9l-9 -7l-9 7l1.63 1.27L12 16zM12 4.53L17.74 9L12 13.47L6.26 9L12 4.53z")) }

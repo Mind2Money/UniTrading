@@ -110,6 +110,17 @@ class AppearanceUiTest {
         val item = awaitNode(text, last = last, description = description)
         tapNode(item)
     }
+    private fun tapAt(x: Float, y: Float) {
+        val down = SystemClock.uptimeMillis()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+            val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0)
+            event.source = InputDevice.SOURCE_TOUCHSCREEN
+            check(automation.injectInputEvent(event, true)); event.recycle()
+            SystemClock.sleep(40)
+        }
+        SystemClock.sleep(350)
+        idle()
+    }
     private fun tapNode(item: AccessibilityNodeInfo) {
         val bounds = Rect().also(item::getBoundsInScreen)
         val down = SystemClock.uptimeMillis()
@@ -185,6 +196,22 @@ class AppearanceUiTest {
             swipe(bounds.left + bounds.width() * .25f, bounds.bottom - 15f * density, bounds.left + bounds.width() * .6f, bounds.bottom - 15f * density)
             assertNotEquals(zoomed, awaitChartChange(zoomed))
             screenshot("android-chart-zoom-v114")
+            // The drawing toolbar and its settings are large composables, the kind ART's verifier has rejected before.
+            tap("画图工具", description = true)
+            tap("趋势线 选项", description = true)
+            tap("趋势线")
+            val plot = Rect().also(awaitNode("拖动图表平移", description = true)::getBoundsInScreen)
+            tapAt(plot.left + plot.width() * .25f, plot.top + plot.height() * .65f)
+            tapAt(plot.left + plot.width() * .6f, plot.top + plot.height() * .35f)
+            awaitNode("线条颜色", description = true)
+            screenshot("android-drawing-selected")
+            tap("设置", description = true)
+            awaitText("趋势线 设置")
+            screenshot("android-drawing-settings")
+            tap("确定")
+            awaitNode("移除", description = true)
+            tap("移除", description = true)
+            tap("画图工具", description = true)
             // Standard sheet shares the chart window; IME must not dismiss the editor.
             automation.serviceInfo = automation.serviceInfo.apply {
                 flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS

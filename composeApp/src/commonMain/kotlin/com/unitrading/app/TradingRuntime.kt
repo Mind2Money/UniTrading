@@ -37,6 +37,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val marketWatch: MarketWatchPreferences by lazy { MarketWatchPreferences(store) }
     /** Chart indicator stack; also read lazily, when the first chart asks for it. */
     val indicators: IndicatorController by lazy { IndicatorController(store) }
+    /** Chart drawings of every symbol, read when the first chart opens. */
+    val drawings: com.unitrading.chart.drawing.ChartDrawings by lazy { com.unitrading.chart.drawing.ChartDrawings(store) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */
     val livePnl: LivePnlController by lazy { LivePnlController(store) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->

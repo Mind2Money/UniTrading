@@ -11,6 +11,10 @@
 ✅ 编辑自选改为拖动调整顺序，去掉上移、下移箭头：鼠标按住整行，手机按住左侧手柄，拖到列表边缘自动滚动
 
 📈 **图表**
+✅ 新增 TradingView 式左侧画图工具栏：趋势线、通道、干草叉、斐波那契、江恩、形态、艾略特波浪、周期、多空仓位、仓位预测、成交量分布图、测量、几何形状、文字注释和图标，共一百多个工具
+✅ 磁铁吸附、继续绘图、锁定、隐藏、一键移除、框选放大和收藏工具都可用；绘图按品种保存，切换周期和重启后保留
+✅ 选中绘图后可拖动控制点或整体移动，修改颜色、线宽、层级和坐标；支持撤销重做、克隆、复制粘贴和快捷键（Alt+T、Alt+F 等）
+⚠️ 绘图只能放在 K 线主窗格；帖子和观点只保存链接与文字；贴纸用表情符号代替；手机上点图表左缘的小按钮展开工具栏
 ✅ 指标设置同样改为拖动调整顺序：鼠标按住卡片标题，手机按住左侧手柄
 ✅ 持仓、挂单和下单草稿的线上标签改为 TradingView 式样：方向、盈亏、TP、SL、数量、类型和 ×，标签落在价格线上，价格轴读数用同一颜色；持仓和止损止盈的预计盈亏保留
 ✅ 按住标签上的 TP、SL 按钮拖到目标价即可添加止盈止损，草稿松手回填表单，持仓和挂单松手后确认
@@ -41,6 +45,10 @@
 ✅ Reorder the watch list by dragging instead of up and down arrows: hold a row with the mouse or its left handle on a phone; the list scrolls when you reach its edge
 
 📈 **Charts**
+✅ New TradingView-style drawing toolbar on the left of the chart: trend lines, channels, pitchforks, Fibonacci, Gann, patterns, Elliott waves, cycles, long and short positions, forecasts, volume profiles, measuring, shapes, text notes and icons, over a hundred tools
+✅ Magnet, keep drawing, lock, hide, remove all, zoom to a range and favourite tools all work; drawings are saved per symbol and survive interval changes and restarts
+✅ Select a drawing to drag its points or move it whole and change colour, width, levels and coordinates; undo, redo, clone, copy, paste and shortcuts such as Alt+T and Alt+F are supported
+⚠️ Drawings go on the main price pane only; posts and ideas keep your link and text; stickers are emoji; on phones the toolbar opens from the small tab on the left edge of the chart
 ✅ Indicator settings reorder the same way: hold a card title with the mouse or its left handle on a phone
 ✅ Position, order and draft lines now carry TradingView-style tags: side, profit or loss, TP, SL, quantity, type and ×, sitting on the price line with a matching price-axis tag; estimated results for positions, stops and targets are kept
 ✅ Hold a tag's TP or SL button and drag it to a price to add a target or stop: a draft fills the form on release, a position or order asks for confirmation

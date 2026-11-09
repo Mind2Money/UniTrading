@@ -1,0 +1,359 @@
+package com.unitrading.chart.drawing
+
+import androidx.compose.ui.geometry.Offset
+import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.broker.Timeframe
+import kotlinx.coroutines.Dispatchers
+import kotlin.test.*
+
+class ChartDrawingsTest {
+    private val ctx = testContext()
+    private val store = MemorySnapshotStore()
+    private val drawings = ChartDrawings(store, Dispatchers.Unconfined).apply { bind("TEST") }
+    private var clock = 10_000L
+
+    private fun info(point: Offset, pressed: Boolean = true, ctrl: Boolean = false, shift: Boolean = false, touch: Boolean = false): PointerInfo {
+        clock += 1000
+        return PointerInfo(point, ctrl, shift, touch, pressed, clock)
+    }
+    private fun down(point: Offset, ctrl: Boolean = false, shift: Boolean = false, lines: Boolean = false) = drawings.pointerDown(info(point, ctrl = ctrl, shift = shift), ctx, emptyList()) { lines }
+    private fun move(point: Offset, pressed: Boolean = false) = drawings.pointerMove(info(point, pressed = pressed), ctx, emptyList())
+    private fun up(point: Offset, zoom: (Double, Double) -> Unit = { _, _ -> }) = drawings.pointerUp(info(point, pressed = false), ctx, emptyList(), zoom)
+    private fun click(point: Offset, ctrl: Boolean = false) { down(point, ctrl = ctrl); up(point) }
+    /** Renders a frame, so hit testing sees the current drawings. */
+    private fun frame() = drawings.frame(ctx)
+
+    private fun line(from: Offset, to: Offset, tool: DrawingTool = DrawingTool.TREND_LINE) { drawings.chooseTool(tool); click(from); move(to); click(to); frame() }
+
+    @Test fun twoClicksPlaceATrendLineAndDisarmTheTool() {
+        drawings.chooseTool(DrawingTool.TREND_LINE)
+        val a = at(10, 39_000)
+        val b = at(30, 40_000)
+        assertTrue(down(a))
+        up(a)
+        assertEquals(0, drawings.drawings.size, "the first click only starts it")
+        move(b)
+        assertEquals(c(b), drawings.draft!!.points[1], "the preview follows the mouse")
+        assertTrue(down(b))
+        up(b)
+        assertEquals(1, drawings.drawings.size)
+        assertEquals(listOf(c(a), c(b)), drawings.drawings[0].points)
+        assertNull(drawings.tool)
+        assertEquals(drawings.drawings[0].id, drawings.selectedId)
+    }
+    private fun c(point: Offset) = ctx.coords.pointAt(point)
+
+    @Test fun pressDragReleaseDrawsTwoAnchorsInOneMotion() {
+        drawings.chooseTool(DrawingTool.RECTANGLE)
+        val a = at(10, 39_000)
+        val b = at(30, 40_000)
+        down(a)
+        move(b, pressed = true)
+        up(b)
+        assertEquals(1, drawings.drawings.size)
+        assertEquals(c(b), drawings.drawings[0].points[1])
+    }
+
+    @Test fun threePointToolsTakeThreeClicks() {
+        drawings.chooseTool(DrawingTool.PARALLEL_CHANNEL)
+        click(at(10, 39_000)); click(at(30, 40_000))
+        assertEquals(0, drawings.drawings.size)
+        assertNotNull(drawings.draft)
+        click(at(20, 39_000))
+        assertEquals(3, drawings.drawings.single().points.size)
+    }
+
+    @Test fun oneClickToolsFinishAtOnceAndPositionsGetTheirLevels() {
+        drawings.chooseTool(DrawingTool.HORIZONTAL_LINE)
+        click(at(50, 39_500))
+        assertEquals(1, drawings.drawings.single().points.size)
+        drawings.chooseTool(DrawingTool.LONG_POSITION)
+        click(at(50, 39_500))
+        assertEquals(4, drawings.drawings.last().points.size)
+    }
+
+    @Test fun keepDrawingStaysArmed() {
+        drawings.keepDrawing = true
+        drawings.chooseTool(DrawingTool.VERTICAL_LINE)
+        click(at(10, 39_000)); click(at(20, 39_000))
+        assertEquals(2, drawings.drawings.size)
+        assertEquals(DrawingTool.VERTICAL_LINE, drawings.tool)
+        assertTrue(drawings.escape())
+        assertNull(drawings.tool)
+    }
+
+    @Test fun anOpenPathEndsOnDoubleClickWithoutItsRubberBand() {
+        drawings.chooseTool(DrawingTool.PATH)
+        click(at(10, 39_000)); click(at(20, 40_000)); click(at(30, 39_000))
+        assertEquals(0, drawings.drawings.size)
+        val end = at(40, 40_000)
+        drawings.pointerDown(PointerInfo(end, false, false, false, true, 50_000), ctx, emptyList()) { false }
+        drawings.pointerUp(PointerInfo(end, false, false, false, false, 50_010), ctx, emptyList()) { _, _ -> }
+        drawings.pointerDown(PointerInfo(end, false, false, false, true, 50_100), ctx, emptyList()) { false }
+        assertEquals(4, drawings.drawings.single().points.size)
+    }
+
+    @Test fun aPolylineClosesOnItsFirstPoint() {
+        drawings.chooseTool(DrawingTool.POLYLINE)
+        val first = at(10, 39_000)
+        click(first); click(at(20, 40_000)); click(at(30, 39_000))
+        click(first + Offset(2f, 2f))
+        val shape = drawings.drawings.single()
+        assertEquals(3, shape.points.size)
+        assertEquals(1.0, shape.param("closed"))
+    }
+
+    @Test fun enterFinishesAnOpenTool() {
+        drawings.chooseTool(DrawingTool.GHOST_FEED)
+        click(at(10, 39_000)); click(at(20, 40_000))
+        assertTrue(drawings.finishOpen(ctx))
+        assertEquals(2, drawings.drawings.single().points.size)
+    }
+
+    @Test fun aFreehandStrokeKeepsItsSamples() {
+        drawings.chooseTool(DrawingTool.BRUSH)
+        down(at(10, 39_000))
+        (11..20).forEach { move(at(it, 39_000 + it * 10L), pressed = true) }
+        up(at(20, 39_200))
+        assertTrue(drawings.drawings.single().points.size >= 10)
+    }
+
+    @Test fun textToolsAskForTextAndADismissedEmptyNoteGoesAway() {
+        drawings.chooseTool(DrawingTool.TEXT)
+        click(at(10, 39_000))
+        val id = assertNotNull(drawings.textEditId)
+        assertEquals(id, drawings.drawings.single().id)
+        drawings.closeText(cancelled = true)
+        assertTrue(drawings.drawings.isEmpty())
+    }
+
+    @Test fun measureLeavesAReadoutThatTheNextClickClears() {
+        drawings.chooseTool(DrawingTool.MEASURE)
+        click(at(10, 39_000)); click(at(30, 40_000))
+        assertTrue(drawings.drawings.isEmpty())
+        assertNotNull(drawings.measured)
+        assertFalse(down(at(60, 39_000)))
+        assertNull(drawings.measured)
+    }
+
+    @Test fun shiftStartsAMeasurement() {
+        val a = at(10, 39_000)
+        assertTrue(down(a, shift = true))
+        up(a)
+        assertEquals(DrawingTool.MEASURE, drawings.tool)
+    }
+
+    @Test fun pressingEmptyChartPassesThroughAndDeselects() {
+        line(at(10, 39_000), at(30, 40_000))
+        assertNotNull(drawings.selectedId)
+        assertFalse(down(at(80, 41_500)), "the chart keeps its pan")
+        assertNull(drawings.selectedId)
+    }
+
+    @Test fun pressesOutsideThePlotAreIgnored() {
+        drawings.chooseTool(DrawingTool.TREND_LINE)
+        assertFalse(down(Offset(1500f, 100f)))
+        assertNull(drawings.draft)
+    }
+
+    @Test fun draggingABodyMovesTheWholeDrawingWithUndoAndRedo() {
+        val a = at(10, 39_000)
+        val b = at(30, 40_000)
+        line(a, b)
+        val before = drawings.drawings.single().points
+        val grab = at(20, 39_500)
+        assertTrue(down(grab))
+        assertTrue(move(grab + Offset(ctx.coords.step * 5, 0f), pressed = true))
+        up(grab)
+        val moved = drawings.drawings.single().points
+        assertEquals(before.map { ctx.coords.timeAt(ctx.coords.index(it.timeMs) + 5) }, moved.map { it.timeMs })
+        drawings.undo()
+        assertEquals(before, drawings.drawings.single().points)
+        drawings.redo()
+        assertEquals(moved, drawings.drawings.single().points)
+    }
+
+    @Test fun draggingAHandleMovesOneAnchor() {
+        val a = at(10, 39_000)
+        val b = at(30, 40_000)
+        line(a, b)
+        down(b)
+        val target = at(40, 39_000)
+        move(target, pressed = true)
+        up(target)
+        assertEquals(listOf(c(a), c(target)), drawings.drawings.single().points)
+    }
+
+    @Test fun lockedDrawingsDoNotMoveAndLetTheChartPan() {
+        line(at(10, 39_000), at(30, 40_000))
+        drawings.lockDrawings = true
+        frame()
+        assertFalse(down(at(20, 39_500)))
+        assertEquals(drawings.drawings.single().id, drawings.selectedId, "still selectable")
+        drawings.lockDrawings = false
+        drawings.toggleLock(drawings.drawings.single().id)
+        frame()
+        assertFalse(down(at(20, 39_500)))
+    }
+
+    @Test fun anOrderLineUnderADrawingStaysReachable() {
+        line(at(10, 39_000), at(30, 40_000))
+        assertFalse(down(at(20, 39_500), lines = true))
+        assertTrue(down(at(30, 40_000), lines = true), "a selected drawing's handles win")
+    }
+
+    @Test fun ctrlDragClonesAndCtrlClickDoesNot() {
+        line(at(10, 39_000), at(30, 40_000))
+        val grab = at(20, 39_500)
+        down(grab, ctrl = true)
+        up(grab)
+        assertEquals(1, drawings.drawings.size)
+        frame()
+        down(grab, ctrl = true)
+        move(grab + Offset(50f, 0f), pressed = true)
+        up(grab)
+        assertEquals(2, drawings.drawings.size)
+    }
+
+    @Test fun theEraserRemovesWhatItTouches() {
+        line(at(10, 39_000), at(30, 40_000))
+        drawings.chooseCursor(ChartCursor.ERASER)
+        frame()
+        assertFalse(down(at(80, 41_500)))
+        assertEquals(1, drawings.drawings.size)
+        assertTrue(down(at(20, 39_500)))
+        assertTrue(drawings.drawings.isEmpty())
+    }
+
+    @Test fun removeAllKeepsLockedDrawingsUnlessAskedNotTo() {
+        line(at(10, 39_000), at(30, 40_000))
+        line(at(40, 39_000), at(50, 40_000))
+        drawings.toggleLock(drawings.drawings[0].id)
+        drawings.removeAllDrawings()
+        assertEquals(1, drawings.drawings.size)
+        drawings.removeLockedToo = true
+        drawings.removeAllDrawings()
+        assertTrue(drawings.drawings.isEmpty())
+    }
+
+    @Test fun hiddenDrawingsAreNeitherPaintedNorHit() {
+        line(at(10, 39_000), at(30, 40_000))
+        drawings.hideDrawings = true
+        assertTrue(frame().scenes.isEmpty())
+        drawings.select(null)
+        assertFalse(down(at(20, 39_500)))
+        drawings.hideDrawings = false
+        drawings.update(drawings.drawings.single().copy(hiddenIntervals = setOf(IntervalBucket.HOURS)))
+        assertTrue(frame().scenes.isEmpty())
+        assertEquals(1, drawings.frame(testContext(timeframe = Timeframe(5))).scenes.size, "still on the minute charts")
+    }
+
+    @Test fun strongMagnetPlacesAnchorsOnBarValuesAndCtrlFlipsIt() {
+        drawings.magnet = MagnetMode.STRONG
+        drawings.chooseTool(DrawingTool.HORIZONTAL_LINE)
+        val bar = ctx.coords.candles[20]
+        click(at(20, bar.high + 40))
+        assertEquals(bar.high.toDouble(), drawings.drawings.last().points[0].price)
+        drawings.chooseTool(DrawingTool.HORIZONTAL_LINE)
+        click(at(20, 41_500), ctrl = true)
+        assertEquals(41_500.0, drawings.drawings.last().points[0].price)
+    }
+
+    @Test fun theZoomToolReportsTheBoxedBars() {
+        drawings.toggleZoom()
+        val from = at(20, 39_000)
+        val to = at(40, 40_000)
+        down(from)
+        move(to, pressed = true)
+        var range: Pair<Double, Double>? = null
+        assertTrue(up(to) { a, b -> range = a to b })
+        assertEquals(20.0 to 40.0, range!!.let { (a, b) -> kotlin.math.round(a) to kotlin.math.round(b) })
+        assertFalse(drawings.zooming)
+    }
+
+    @Test fun theDemonstrationPenFadesAway() {
+        drawings.chooseCursor(ChartCursor.DEMONSTRATION)
+        val a = at(10, 39_000)
+        assertTrue(down(a))
+        move(a + Offset(30f, 0f), pressed = true)
+        drawings.pointerUp(PointerInfo(a, false, false, false, false, 1000), ctx, emptyList()) { _, _ -> }
+        assertEquals(1, drawings.demoStrokes.size)
+        drawings.tickDemo(1600)
+        assertTrue(drawings.demoStrokes.single().opacity in 0f..1f)
+        drawings.tickDemo(9000)
+        assertTrue(drawings.demoStrokes.isEmpty())
+    }
+
+    @Test fun cloneRemoveOrderAndMenu() {
+        line(at(10, 39_000), at(30, 40_000))
+        val first = drawings.drawings.single().id
+        drawings.clone(first)
+        assertEquals(2, drawings.drawings.size)
+        val copy = drawings.selectedId!!
+        drawings.moveOrder(copy, -1)
+        assertEquals(copy, drawings.drawings.first().id)
+        frame()
+        assertTrue(drawings.openMenuAt(at(20, 39_500), ctx) { false })
+        assertNotNull(drawings.menuAt)
+        assertFalse(drawings.openMenuAt(at(90, 41_500), ctx) { false }, "not over a drawing")
+        drawings.hide(first)
+        assertEquals(1, frame().scenes.size)
+        drawings.remove(first)
+        assertEquals(1, drawings.drawings.size)
+    }
+
+    @Test fun rightClickCancelsAPlacement() {
+        drawings.chooseTool(DrawingTool.TREND_LINE)
+        click(at(10, 39_000))
+        assertTrue(drawings.openMenuAt(at(90, 41_500), ctx) { false })
+        assertNull(drawings.draft)
+        assertNull(drawings.tool)
+    }
+
+    @Test fun eachSymbolKeepsItsOwnDrawingsAndTheyComeBackAfterARestart() {
+        line(at(10, 39_000), at(30, 40_000))
+        drawings.bind("OTHER")
+        assertTrue(drawings.drawings.isEmpty())
+        assertNull(drawings.selectedId)
+        line(at(40, 39_000), at(50, 40_000), DrawingTool.RECTANGLE)
+        drawings.magnet = MagnetMode.WEAK
+        drawings.toggleFavorite(DrawingTool.FIB_RETRACEMENT)
+        val reopened = ChartDrawings(store, Dispatchers.Unconfined)
+        reopened.bind("TEST")
+        assertEquals(DrawingTool.TREND_LINE, reopened.drawings.single().tool)
+        reopened.bind("OTHER")
+        assertEquals(DrawingTool.RECTANGLE, reopened.drawings.single().tool)
+        assertEquals(MagnetMode.WEAK, reopened.magnet)
+        assertEquals(listOf(DrawingTool.FIB_RETRACEMENT), reopened.favorites)
+    }
+
+    @Test fun anUnreadableFileIsSetAsideNotOverwritten() {
+        store.write("chart-drawings-v1", "{broken")
+        val reopened = ChartDrawings(store, Dispatchers.Unconfined)
+        assertNotNull(reopened.notice)
+        assertEquals("{broken", store.read("chart-drawings-v1-unreadable"))
+        assertEquals("{broken", store.read("chart-drawings-v1"), "left alone until something is saved")
+    }
+
+    @Test fun defaultsApplyToNewDrawings() {
+        line(at(10, 39_000), at(30, 40_000))
+        val styled = drawings.drawings.single().let { it.copy(style = it.style.copy(color = "#FF0000", width = 4f)) }
+        drawings.setAsDefault(styled)
+        line(at(40, 39_000), at(50, 40_000))
+        assertEquals("#FF0000", drawings.drawings.last().style.color)
+    }
+
+    @Test fun toolChoiceRemembersTheGroupAndTogglesOff() {
+        assertEquals(DrawingTool.TREND_LINE, drawings.recentTool(ToolGroup.TREND))
+        drawings.chooseTool(DrawingTool.PITCHFORK)
+        assertEquals(DrawingTool.PITCHFORK, drawings.recentTool(ToolGroup.TREND))
+        drawings.chooseTool(DrawingTool.PITCHFORK)
+        assertNull(drawings.tool, "choosing the armed tool again disarms it")
+    }
+
+    @Test fun everyToolIsInTheToolbarOnce() {
+        val listed = ToolGroup.entries.flatMap { it.tools } + DrawingTool.ICON + DrawingTool.MEASURE
+        assertEquals(DrawingTool.entries.toSet(), listed.toSet())
+        assertEquals(listed.size, listed.toSet().size)
+    }
+}
