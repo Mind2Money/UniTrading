@@ -334,14 +334,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
-            // A bracket of an unfilled entry is repriced through that entry's stop loss / take profit.
-            val bracket = current.takeIf { it.isProtection && it.positionId == null }
-            val entry = bracket?.let { b -> session.state.value.orders.firstOrNull { it.role == OrderRole.ENTRY && b.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) } }
-            if (bracket != null && entry != null) {
-                editPendingProtection(entry, if (bracket.role == OrderRole.STOP_LOSS) price else entry.request.stopLoss,
-                    if (bracket.role == OrderRole.TAKE_PROFIT) price else entry.request.takeProfit, fromChart)
-                return
-            }
             if (!current.editable) {
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return

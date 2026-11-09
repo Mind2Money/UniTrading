@@ -162,7 +162,7 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
             val group = "oco:${minOf(id, peerId)}:${maxOf(id, peerId)}"
             for ((rowId, role) in listOf(id to roles[0]!!, peerId to roles[1]!!)) {
                 relations[rowId] = OrderRelation(role, group, parents.singleOrNull(), activated,
-                    if (activated) null else "当前没有可确认的同向净仓保护关联")
+                    when { activated -> null; !parentActivated -> "入场尚未成交，保护单等待激活"; else -> "当前没有可确认的同向净仓保护关联" })
             }
         }
     }

@@ -18,7 +18,7 @@
 ⚠️ Tradovate 和 Rithmic 的已有持仓、挂单仍不能在这里新增或删除止损止盈，线上不显示 TP、SL 按钮，下单草稿不受影响
 
 📋 **交易列表**
-✅ 已识别的止损、止盈单合并到所属持仓下显示价格、数量和预计盈亏，可直接撤销，挂单区只列其余订单
+✅ 已识别的止损、止盈单合并到所属持仓下，未成交挂单匹配到的止损、止盈合并到该挂单下，显示价格、数量和预计盈亏并可直接撤销，不再各占一行
 
 🆕 **应用内更新**
 ✅ 「设置 → 关于与更新」可以检查新版本并一键更新：Windows 自动下载、校验、替换程序并重启；Android 下载校验后打开系统安装界面，第一次需要在系统页面允许本应用安装未知应用
@@ -43,7 +43,7 @@
 ⚠️ Tradovate and Rithmic positions and orders still cannot add or remove stops and targets here, so their lines show no TP and SL buttons; order drafts are not affected
 
 📋 **Trade list**
-✅ Recognized stop and target orders now sit under their position with price, quantity and estimated result, and can be cancelled there; the pending section lists only the remaining orders
+✅ Recognized stop and target orders now sit under their position, and those matched to an unfilled order under that order, with price, quantity and estimated result; each can be cancelled there instead of taking a row of its own
 
 🆕 **In-app updates**
 ✅ Settings → About & updates checks for a new version and updates in one press: Windows downloads, verifies, replaces the program and restarts; Android downloads, verifies and opens the system installer, and the first time asks you to allow installs from this app in a system screen

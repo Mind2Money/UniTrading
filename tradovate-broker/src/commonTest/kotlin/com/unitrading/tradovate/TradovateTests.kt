@@ -444,6 +444,7 @@ class TradovateTests {
         assertEquals("701" to "702", entry.stopLossOrderId to entry.takeProfitOrderId)
         assertEquals(5_480_000_000L to 5_510_000_000L, entry.request.stopLoss to entry.request.takeProfit)
         assertTrue(entry.protectionEditable)
+        assertEquals("入场尚未成交，保护单等待激活", account.state.value.orders.single { it.id == "701" }.note)
         val preview = account.previewOrderProtection("700", 5_485_000_000, 5_510_000_000)
         assertTrue(preview.valid, preview.errors.toString())
         assertEquals(-25_000_000, preview.stopLossPnlMicros)

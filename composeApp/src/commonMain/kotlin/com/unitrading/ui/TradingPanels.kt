@@ -168,6 +168,19 @@ internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modif
     }
 }
 
+/** Where the trade list shows each working order: a stop or target on the position or unfilled entry it belongs to, anything else in [rows]. */
+internal class TerminalOrders(val onPosition: Map<String, List<PendingOrder>>, val onEntry: Map<String, List<PendingOrder>>, val rows: List<PendingOrder>)
+
+internal fun terminalOrders(account: AccountSnapshot): TerminalOrders {
+    val exits = account.orders.filter { it.isProtection }.sortedBy { it.role }
+    val onPosition = exits.filter { exit -> account.positions.any { it.id == exit.positionId } }
+    val entries = account.orders.filter { it.role == OrderRole.ENTRY }
+    // A bracket already protecting the filled part of its entry stays with the position.
+    val onEntry = (exits - onPosition.toSet()).mapNotNull { exit -> entries.firstOrNull { exit.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) }?.let { it.id to exit } }
+    val placed = (onPosition + onEntry.map { it.second }).toSet()
+    return TerminalOrders(onPosition.groupBy { it.positionId!! }, onEntry.groupBy({ it.first }, { it.second }), account.orders - placed)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TradeTerminal(
@@ -193,9 +206,7 @@ internal fun TradeTerminal(
     val colors = TradingColors
     val type = MaterialTheme.typography
     val missing = "合约规格暂不可用，目录恢复后才能操作。"
-    // A recognized stop loss or take profit is listed on its position, so the pending section holds only what is left.
-    val protections = account.orders.filter { order -> order.isProtection && account.positions.any { it.id == order.positionId } }.sortedBy { it.role }.groupBy { it.positionId }
-    val pending = account.orders.filterNot { order -> protections[order.positionId]?.contains(order) == true }
+    val orderGroups = terminalOrders(account)
     Box(modifier.background(colors.Surface)) {
         LazyColumn(Modifier.fillMaxSize().testTag("trade-terminal"), state = listState) {
             if (header != null) item(key = "header", contentType = "header") { header() }
@@ -206,7 +217,7 @@ internal fun TradeTerminal(
                 val q = market.quotes[p.symbol]
                 val pnl = q?.let { positionPnl(instrument, p, it) }
                 val protection = "SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"} · TP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}"
-                val orders = protections[p.id].orEmpty()
+                val orders = orderGroups.onPosition[p.id].orEmpty()
                 val actions: @Composable RowScope.() -> Unit = {
                     TextButton({ onProtect(p) }, Modifier.testTag("protect-position-${p.id}"), enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("止损/止盈") }
                     OutlinedButton({ onClose(p) }, enabled = !busy, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("平仓") }
@@ -225,7 +236,9 @@ internal fun TradeTerminal(
                         if (!compact) actions()
                     }
                     if (orders.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        orders.forEach { ProtectionChip(it, p, instrument, busy, onCancel) }
+                        orders.forEach { order ->
+                            ProtectionChip(order, instrument, order.request.entryPrice?.let { estimatedExitPnl(instrument, p, order.request.lotsHundredths, it) }, !p.feesKnown, busy, onCancel)
+                        }
                     }
                     (listOfNotNull(p.protectionNote) + orders.mapNotNull { it.note }).distinct().forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
                     if (compact) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -235,15 +248,12 @@ internal fun TradeTerminal(
                 }
                 DividerLine()
             }
-            item(key = "section-orders", contentType = "section") { TerminalSectionHeader("挂单", pending.size, "terminal-section-orders") }
-            if (pending.isEmpty()) item(key = "empty-orders") { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。", icon = AppIcons.ReceiptLong) }
-            items(pending, key = { "order-${it.id}" }, contentType = { "order" }) { order ->
+            item(key = "section-orders", contentType = "section") { TerminalSectionHeader("挂单", orderGroups.rows.size, "terminal-section-orders") }
+            if (orderGroups.rows.isEmpty()) item(key = "empty-orders") { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。", icon = AppIcons.ReceiptLong) }
+            items(orderGroups.rows, key = { "order-${it.id}" }, contentType = { "order" }) { order ->
                 val r = order.request
                 val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, missing); return@items }
-                fun bracketsEditable(entry: PendingOrder) = plugin.capabilities.modifyPendingProtection && entry.editable && entry.protectionEditable
-                // A bracket of an unfilled entry is repriced through that entry.
-                val entry = if (order.isProtection && order.positionId == null)
-                    account.orders.firstOrNull { it.role == OrderRole.ENTRY && order.id in listOf(it.stopLossOrderId, it.takeProfitOrderId) } else null
+                val brackets = orderGroups.onEntry[order.id].orEmpty()
                 Column(Modifier.fillMaxWidth().testTag("pending-order-${order.id}").padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(Modifier.testTag("order-role-${order.id}")) {
@@ -258,18 +268,24 @@ internal fun TradeTerminal(
                             Modifier.weight(1f), style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text("${order.role.editLabel()} ${r.entryPrice?.let(instrument::formatPrice)}" +
-                        (if (order.role == OrderRole.ENTRY && (r.stopLoss != null || r.takeProfit != null))
+                        (if (order.role == OrderRole.ENTRY && brackets.isEmpty() && (r.stopLoss != null || r.takeProfit != null))
                             " · SL ${r.stopLoss?.let(instrument::formatPrice) ?: "—"} · TP ${r.takeProfit?.let(instrument::formatPrice) ?: "—"}" else "") +
                         (if (plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO) " · 未占用保证金" else " · 服务器委托"), color = colors.Muted, style = type.bodySmall)
+                    if (brackets.isNotEmpty()) FlowRow(Modifier.padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        brackets.forEach { bracket ->
+                            val pnl = r.entryPrice?.let { entry -> bracket.request.entryPrice?.let { exit -> estimatedExitPnl(instrument, r.side, bracket.request.lotsHundredths, entry, exit) } }
+                            ProtectionChip(bracket, instrument, pnl, !instrument.estimatesIncludeFees, busy, onCancel)
+                        }
+                    }
                     if (order.filledLotsHundredths > 0) Text("已成交 ${instrument.formatQuantity(order.filledLotsHundredths)} ${instrument.quantityUnit}", color = colors.Muted, style = type.bodySmall)
-                    order.note?.let { Text(it, color = colors.Muted, style = type.bodySmall) }
+                    (listOfNotNull(order.note) + brackets.mapNotNull { it.note }).distinct().forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton({ onEditOrder(order) }, enabled = !busy && (order.editable &&
-                            (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders) || entry?.let(::bracketsEditable) == true),
+                        TextButton({ onEditOrder(order) }, enabled = !busy && order.editable &&
+                            (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders),
                             modifier = Modifier.testTag("edit-order-${order.id}")) { Text(order.role.editLabel()) }
                         if (order.role == OrderRole.ENTRY && plugin.capabilities.modifyPendingProtection &&
                             (r.stopLoss != null || r.takeProfit != null || plugin.capabilities.addProtection)) {
-                            TextButton({ onProtectOrder(order) }, enabled = !busy && bracketsEditable(order), modifier = Modifier.testTag("protect-order-${order.id}")) { Text("止损/止盈") }
+                            TextButton({ onProtectOrder(order) }, enabled = !busy && order.editable && order.protectionEditable, modifier = Modifier.testTag("protect-order-${order.id}")) { Text("止损/止盈") }
                         }
                         OutlinedButton({ onCancel(order) }, enabled = !busy, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("撤单") }
                     }
@@ -321,20 +337,19 @@ internal fun TradeTerminal(
     }
 }
 
-/** A stop loss or take profit on its position's row: price, size, the result if it fills, and the button that cancels it. */
+/** A stop loss or take profit on the row it belongs to: price, size, the result if it fills ([pnl], [gross] without fees), and the button that cancels it. */
 @Composable
-private fun ProtectionChip(order: PendingOrder, position: Position, instrument: Instrument, busy: Boolean, onCancel: (PendingOrder) -> Unit) {
+private fun ProtectionChip(order: PendingOrder, instrument: Instrument, pnl: Long?, gross: Boolean, busy: Boolean, onCancel: (PendingOrder) -> Unit) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     val r = order.request
     val stop = order.role == OrderRole.STOP_LOSS
-    val pnl = r.entryPrice?.let { estimatedExitPnl(instrument, position, r.lotsHundredths, it) }
     val filled = if (order.filledLotsHundredths > 0) " · 已成交 ${instrument.formatQuantity(order.filledLotsHundredths)}" else ""
     Surface(Modifier.testTag("pending-order-${order.id}"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.testTag("order-role-${order.id}")) { StatusBadge(order.role.label(), if (stop) colors.Stop else colors.Target) }
             Text("${r.entryPrice?.let(instrument::formatPrice) ?: "—"} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}$filled", style = type.bodySmall, maxLines = 1)
-            Text(resultLabel(pnl, !position.feesKnown), color = colors.pnl(pnl), style = type.bodySmall, maxLines = 1)
+            Text(resultLabel(pnl, gross), color = colors.pnl(pnl), style = type.bodySmall, maxLines = 1)
             ActionIcon(AppIcons.Close, "撤销${if (stop) "止损" else "止盈"} #${shortId(order.id)}", "cancel-order-${order.id}", Modifier.size(32.dp), enabled = !busy,
                 tint = MaterialTheme.colorScheme.error, iconSize = 16.dp) { onCancel(order) }
         }

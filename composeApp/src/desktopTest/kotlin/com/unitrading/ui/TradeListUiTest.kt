@@ -17,6 +17,7 @@ import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class TradeListUiTest {
@@ -32,13 +33,20 @@ class TradeListUiTest {
     private val account = AccountSnapshot("test", 0, positions = listOf(position),
         orders = listOf(order, order.copy(id = "tp", role = OrderRole.TAKE_PROFIT, request = order.request.copy(kind = OrderKind.LIMIT, entryPrice = 112000))),
         trades = listOf(trade), events = listOf(ActivityEvent(at, "仅在设置页显示的活动")))
+    private val entry = PendingOrder("entry", OrderRequest(spec.symbol, Side.BUY, OrderKind.LIMIT, 10, 110000, 109000, 112000), at, stopLossOrderId = "b-sl", takeProfitOrderId = "b-tp")
+    private val waiting = "入场尚未成交，保护单等待激活"
+    private val brackets = listOf(
+        PendingOrder("b-tp", OrderRequest(spec.symbol, Side.SELL, OrderKind.LIMIT, 10, 112000), at, role = OrderRole.TAKE_PROFIT, editable = false, note = waiting),
+        PendingOrder("b-sl", OrderRequest(spec.symbol, Side.SELL, OrderKind.STOP, 10, 109000), at, role = OrderRole.STOP_LOSS, editable = false, note = waiting),
+    )
     private var selectedTrade: ClosedTrade? = null
+    private var cancelled: PendingOrder? = null
 
     private fun renderTerminal(snapshot: AccountSnapshot = account, width: Int = 400, height: Int = 740, fontScale: Float = 1f) {
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
                 TradingTheme {
-                    TradeTerminal(plugin, snapshot, plugin.market.value, null, true, {}, { selectedTrade = it }, {}, {}, {}, {}, false,
+                    TradeTerminal(plugin, snapshot, plugin.market.value, null, true, {}, { selectedTrade = it }, {}, {}, { cancelled = it }, {}, false,
                         Modifier.requiredSize(width.dp, height.dp))
                 }
             }
@@ -68,6 +76,34 @@ class TradeListUiTest {
         list.performScrollToNode(hasTestTag("locate-trade-same-id"))
         compose.onNodeWithTag("locate-trade-same-id").performClick()
         assertEquals(trade, selectedTrade)
+    }
+
+    @Test fun anEntryCarriesItsMatchedStopAndTarget() {
+        renderTerminal(AccountSnapshot("entry", 0, orders = listOf(entry) + brackets))
+        compose.onNodeWithText("挂单 1").assertIsDisplayed()
+        for ((id, label) in listOf("b-sl" to "SL 止损", "b-tp" to "TP 止盈")) {
+            compose.onNode(hasTestTag("pending-order-$id") and hasAnyAncestor(hasTestTag("pending-order-entry"))).assertIsDisplayed()
+            compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("order-role-$id"))).assertIsDisplayed()
+            compose.onNodeWithTag("edit-order-$id").assertDoesNotExist()
+        }
+        val stop = assertNotNull(estimatedExitPnl(spec, Side.BUY, 10, 110000, 109000))
+        compose.onNodeWithText(com.unitrading.chart.resultLabel(stop, !spec.estimatesIncludeFees)).assertIsDisplayed()
+        compose.onAllNodesWithText(waiting).assertCountEquals(1)
+        capture("entry-with-brackets")
+        compose.onNodeWithTag("cancel-order-b-sl").performClick()
+        assertEquals(brackets[1], cancelled)
+    }
+
+    @Test fun ordersGoToWhatTheyBelongToAndAnyOtherStaysARow() {
+        val filled = brackets[1].copy(positionId = position.id)
+        val orphan = PendingOrder("orphan", OrderRequest(spec.symbol, Side.SELL, OrderKind.STOP, 10, 108000), at, role = OrderRole.STOP_LOSS, editable = false)
+        val unknown = orphan.copy(id = "unknown", role = OrderRole.UNRESOLVED)
+        val groups = terminalOrders(AccountSnapshot("all", 0, positions = listOf(position), orders = listOf(entry, brackets[0], filled, orphan, unknown)))
+        assertEquals(listOf(filled), groups.onPosition[position.id], "A bracket protecting a fill stays with the position")
+        assertEquals(listOf(brackets[0]), groups.onEntry["entry"])
+        assertEquals(listOf(entry, orphan, unknown), groups.rows)
+        val sorted = terminalOrders(AccountSnapshot("sorted", 0, orders = listOf(entry) + brackets))
+        assertEquals(listOf(brackets[1], brackets[0]), sorted.onEntry["entry"], "The stop reads first")
     }
 
     @Test fun longListReachesOrdersAndHistoryOnSmallScreenWithLargeText() {
