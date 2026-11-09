@@ -226,6 +226,26 @@ class ProtectionBrokerIntegrationTest {
         assertFalse(session.modifyOrder("wrong-entry-route", stop.id, stop.version, 5_491_000_000).accepted)
         assertTrue(wire.requests.none { it.path.startsWith("order/") })
     }
+    @Test fun anUnlinkedExitLeavesRecognizedProtectionOnThePositionButLocked() = runTest {
+        val wire = MockTradovateWire()
+        val broker = broker(wire)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        inject(wire); runCurrent()
+        val extra = order(703, "Stop")
+        wire.account.entity("order", extra.first); wire.account.entity("orderVersion", extra.second); runCurrent()
+        val state = broker.openSession("100").state.value
+        val p = state.positions.single()
+        assertNull(p.stopLossOrderId, "The stop can no longer be singled out")
+        assertFalse(p.protectionEditable)
+        val roles = state.orders.associateBy { it.id }
+        assertEquals(OrderRole.UNRESOLVED, roles.getValue("703").role)
+        assertNull(roles.getValue("703").positionId, "An order the app cannot place stays out of the position")
+        for (id in listOf("701", "702")) {
+            assertEquals(p.id, roles.getValue(id).positionId, "Still recognized as this position's protection")
+            assertFalse(roles.getValue(id).editable)
+        }
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
     @Test fun changedLinksInvalidateProtectionEditsAndDoNotTriggerAutomaticCommands() = runTest {
         val wire = MockTradovateWire()
         val broker = broker(wire)

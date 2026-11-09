@@ -18,16 +18,34 @@ internal sealed interface EditableLine {
 /** A line being dragged, with the price scale frozen at the start so the line follows the pointer exactly. */
 internal data class LineDrag(val line: EditableLine, val scale: PriceScale, val price: Long)
 
-internal enum class LineTone { POSITION, STOP, TARGET, ORDER }
+/** What a button on an order line does. The screen sends each one through the same checks and confirmation as the trade list. */
+sealed interface LineAction {
+    data class ClosePosition(val position: Position) : LineAction
+    data class CancelOrder(val order: PendingOrder) : LineAction
+    data class AddProtection(val position: Position, val stop: Boolean) : LineAction
+    data class RemoveProtection(val position: Position, val stop: Boolean) : LineAction
+    data class AddPendingProtection(val order: PendingOrder, val stop: Boolean) : LineAction
+    data class RemovePendingProtection(val order: PendingOrder, val stop: Boolean) : LineAction
+    data class SetDraftProtection(val stop: Boolean, val enabled: Boolean) : LineAction
+    data object CloseDraft : LineAction
+}
+
+internal enum class LineTone { BUY, SELL, STOP, TARGET, NEUTRAL }
+
+/** The boxes of a line's tag, left to right. Cells of one [group] sit joined; a gap separates the groups. */
+internal enum class CellKind(val group: Int) { TITLE(0), RESULT(0), ADD_TARGET(1), ADD_STOP(2), VALUE(3), CLOSE(3) }
+
+/** One box of a line's tag. [hint] names what [action] does, for the tooltip, the context menu and screen readers. */
+internal data class LineCell(val kind: CellKind, val text: String = "", val action: LineAction? = null, val hint: String = "")
 
 /**
- * One horizontal line on the plot. [edit] is set when dragging it does something, [pnl] is the estimated result of a
- * stop loss or take profit at [price], or the position's floating result at the current quote ([gross] when fees are
- * not in it), and [moving] marks the line under the pointer.
+ * One horizontal line on the plot and its tag. [edit] is set when dragging it does something, [pnl] is the estimated
+ * result of a stop loss or take profit at [price], or the position's floating result at the current quote ([gross] when
+ * fees are not in it), [moving] marks the line under the pointer and [preview] one that is not at the broker yet.
  */
 internal data class OrderLine(
     val price: Long,
-    val label: String,
+    val cells: List<LineCell>,
     val tone: LineTone,
     val dashed: Boolean = true,
     val alpha: Float = 1f,
@@ -35,16 +53,13 @@ internal data class OrderLine(
     val pnl: Long? = null,
     val gross: Boolean = false,
     val moving: Boolean = false,
+    val preview: Boolean = false,
 )
 
 internal fun OrderRequest.withProtection(stop: Boolean, price: Long) = if (stop) copy(stopLoss = price) else copy(takeProfit = price)
 
-internal fun protectionTitle(stop: Boolean) = if (stop) "SL 止损" else "TP 止盈"
-
 /** "毛 -12.50 USD": the estimate is gross when fees are not counted in it. */
 internal fun resultLabel(pnl: Long?, gross: Boolean) = "${if (gross) "毛 " else ""}${pnl?.let { money(it, true) } ?: "—"} USD"
-
-internal fun protectionLabel(stop: Boolean, pnl: Long?, gross: Boolean) = "${protectionTitle(stop)} · ${resultLabel(pnl, gross)}"
 
 /** The legend's live line during a drag: an entry shows the whole estimate, a stop loss or take profit its own result. */
 internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: OrderPreview?, line: OrderLine?): String {
@@ -62,8 +77,34 @@ internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: Order
         "保证金 ${if (e.marginKnown) money(e.marginMicros) + " USD" else "未知"}   $errors"
 }
 
-private fun state(moving: Boolean, editable: Boolean, action: String = "拖动") =
-    if (moving) " · 预览" else if (editable) " · $action" else " · 仅显示"
+private fun sideTone(side: Side) = if (side == Side.BUY) LineTone.BUY else LineTone.SELL
+private fun protectionName(stop: Boolean) = if (stop) "止损" else "止盈"
+private fun protectionTitle(stop: Boolean) = LineCell(CellKind.TITLE, if (stop) "SL" else "TP")
+private fun protectionTone(stop: Boolean) = if (stop) LineTone.STOP else LineTone.TARGET
+private fun addButton(stop: Boolean, action: LineAction) =
+    LineCell(if (stop) CellKind.ADD_STOP else CellKind.ADD_TARGET, if (stop) "SL" else "TP", action, "添加${protectionName(stop)}")
+
+/** The target and stop buttons of an entry or position, in that order; each is offered until its protection exists. */
+private fun addButtons(target: LineAction?, stop: LineAction?) = listOfNotNull(target?.let { addButton(false, it) }, stop?.let { addButton(true, it) })
+
+/** Cells of a stop loss or take profit line: what it would earn or lose, its size, and the button that takes it away. */
+private fun protectionCells(instrument: Instrument, stop: Boolean, pnl: Long?, gross: Boolean, quantity: Long, removal: LineAction?, hint: String) = listOfNotNull(
+    protectionTitle(stop),
+    LineCell(CellKind.RESULT, resultLabel(pnl, gross)),
+    LineCell(CellKind.VALUE, instrument.formatQuantity(quantity)),
+    removal?.let { LineCell(CellKind.CLOSE, action = it, hint = hint) },
+)
+
+private fun orderTitle(order: PendingOrder) = when (order.role) {
+    OrderRole.ENTRY -> LineCell(CellKind.TITLE, order.request.side.label())
+    OrderRole.STOP_LOSS -> protectionTitle(true)
+    OrderRole.TAKE_PROFIT -> protectionTitle(false)
+    OrderRole.UNRESOLVED -> LineCell(CellKind.TITLE, "待确认")
+}
+
+private fun cancelHint(instrument: Instrument, order: PendingOrder) =
+    if (order.isProtection) "撤销${protectionName(order.role == OrderRole.STOP_LOSS)} #${shortId(order.id)}"
+    else "撤单 ${order.request.side.label()}${order.request.kind.label()} ${instrument.formatQuantity(order.request.lotsHundredths)} ${instrument.quantityUnit} #${shortId(order.id)}"
 
 /**
  * Every position, pending order and draft line the chart draws, in drawing order. Stop loss and take profit lines
@@ -87,16 +128,22 @@ internal fun orderLines(
     if (options.showPositions) {
         positions.forEach { p ->
             val pnl = quote?.let { positionPnl(instrument, p, it) }
-            add(OrderLine(p.entryPrice, "${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit} · 浮盈亏 ${resultLabel(pnl, true)} · #${shortId(p.id)}", LineTone.POSITION,
-                dashed = false, alpha = if (p.id == selectedPosition?.id) .85f else .3f, pnl = pnl, gross = true))
+            val canAdd = options.addProtection && p.protectionEditable
+            add(OrderLine(p.entryPrice, listOf(LineCell(CellKind.TITLE, p.side.label()), LineCell(CellKind.RESULT, resultLabel(pnl, true))) +
+                addButtons(LineAction.AddProtection(p, false).takeIf { canAdd && p.takeProfit == null }, LineAction.AddProtection(p, true).takeIf { canAdd && p.stopLoss == null }) +
+                LineCell(CellKind.VALUE, instrument.formatQuantity(p.lotsHundredths)) +
+                LineCell(CellKind.CLOSE, action = LineAction.ClosePosition(p), hint = "平仓 ${p.side.label()} ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit} #${shortId(p.id)}"),
+                sideTone(p.side), dashed = false, alpha = if (p.id == selectedPosition?.id) .85f else .3f, pnl = pnl, gross = true))
         }
         selectedPosition?.let { p ->
             listOf(true to p.stopLoss, false to p.takeProfit).forEach { (stop, base) ->
                 val dragged = (moving as? EditableLine.Protection)?.takeIf { it.position.id == p.id && it.stop == stop } != null
                 val price = (if (dragged) drag?.price else base) ?: return@forEach
                 val pnl = estimatedExitPnl(instrument, p, price)
-                add(OrderLine(price, protectionLabel(stop, pnl, !p.feesKnown) + state(dragged, p.protectionEditable), if (stop) LineTone.STOP else LineTone.TARGET,
-                    edit = if (p.protectionEditable && base != null) EditableLine.Protection(p, stop, base) else null, pnl = pnl, gross = !p.feesKnown, moving = dragged))
+                val order = orders.firstOrNull { it.id == if (stop) p.stopLossOrderId else p.takeProfitOrderId }
+                val removal = order?.let(LineAction::CancelOrder) ?: LineAction.RemoveProtection(p, stop).takeIf { options.removeProtection && p.protectionEditable }
+                add(OrderLine(price, protectionCells(instrument, stop, pnl, !p.feesKnown, p.lotsHundredths, removal, order?.let { cancelHint(instrument, it) } ?: "移除${protectionName(stop)}"),
+                    protectionTone(stop), edit = if (p.protectionEditable && base != null) EditableLine.Protection(p, stop, base) else null, pnl = pnl, gross = !p.feesKnown, moving = dragged))
             }
         }
     }
@@ -123,11 +170,17 @@ internal fun orderLines(
             val price = if (dragged) drag!!.price else base
             // A protection order bound to a position is measured from that position's entry.
             val bound = position?.takeIf { order.isProtection }
-            val pnl = bound?.let { estimatedExitPnl(instrument, it, price) }
-            val result = bound?.let { " · ${resultLabel(pnl, !it.feesKnown)}" } ?: ""
-            val action = when (order.role) { OrderRole.STOP_LOSS -> "拖动止损"; OrderRole.TAKE_PROFIT -> "拖动止盈"; else -> "拖动入场" }
-            add(OrderLine(price, "${order.role.label()} ${request.side.label()}${request.kind.label()} #${shortId(order.id)}$result${state(dragged, edit != null, action)}",
-                when (order.role) { OrderRole.STOP_LOSS -> LineTone.STOP; OrderRole.TAKE_PROFIT -> LineTone.TARGET; else -> LineTone.ORDER },
+            val pnl = bound?.let { estimatedExitPnl(instrument, it, request.lotsHundredths, price) }
+            val bracketsOpen = order.role == OrderRole.ENTRY && options.editPendingProtection && options.addProtection && order.editable && order.protectionEditable
+            add(OrderLine(price, buildList {
+                add(orderTitle(order))
+                if (bound != null) add(LineCell(CellKind.RESULT, resultLabel(pnl, !bound.feesKnown)))
+                addAll(addButtons(LineAction.AddPendingProtection(order, false).takeIf { bracketsOpen && request.takeProfit == null },
+                    LineAction.AddPendingProtection(order, true).takeIf { bracketsOpen && request.stopLoss == null }))
+                add(LineCell(CellKind.VALUE, instrument.formatQuantity(request.lotsHundredths)))
+                if (bound == null) add(LineCell(CellKind.VALUE, request.kind.label()))
+                add(LineCell(CellKind.CLOSE, action = LineAction.CancelOrder(order), hint = cancelHint(instrument, order)))
+            }, when (order.role) { OrderRole.STOP_LOSS -> LineTone.STOP; OrderRole.TAKE_PROFIT -> LineTone.TARGET; OrderRole.ENTRY -> sideTone(request.side); OrderRole.UNRESOLVED -> LineTone.NEUTRAL },
                 edit = edit, pnl = pnl, gross = bound?.feesKnown == false, moving = dragged))
             if (order.role != OrderRole.ENTRY) return@forEach
             // The entry's own stop loss and take profit, measured from the entry (or from where its line is being dragged).
@@ -138,40 +191,48 @@ internal fun orderLines(
                 val at = if (draggedBracket) drag!!.price else bracket
                 val editable = options.editPendingProtection && order.editable && order.protectionEditable
                 val bracketPnl = estimatedExitPnl(instrument, request.side, request.lotsHundredths, entry, at)
-                add(OrderLine(at, "挂单 #${shortId(order.id)} ${protectionLabel(stop, bracketPnl, !instrument.estimatesIncludeFees)}${state(draggedBracket, editable)}",
-                    if (stop) LineTone.STOP else LineTone.TARGET, alpha = .8f, edit = if (editable) EditableLine.PendingProtection(order, stop, bracket) else null,
+                val bracketOrder = orders.firstOrNull { it.id == if (stop) order.stopLossOrderId else order.takeProfitOrderId }
+                val removal = bracketOrder?.let(LineAction::CancelOrder) ?: LineAction.RemovePendingProtection(order, stop).takeIf { options.removeProtection && editable }
+                add(OrderLine(at, protectionCells(instrument, stop, bracketPnl, !instrument.estimatesIncludeFees, request.lotsHundredths, removal,
+                    bracketOrder?.let { cancelHint(instrument, it) } ?: "移除${protectionName(stop)}"),
+                    protectionTone(stop), alpha = .8f, edit = if (editable) EditableLine.PendingProtection(order, stop, bracket) else null,
                     pnl = bracketPnl, gross = !instrument.estimatesIncludeFees, moving = draggedBracket))
             }
         }
     }
     if (draft != null && draftEntry != null && draftEntry > 0) {
         val pending = draft.kind != OrderKind.MARKET && draft.entryPrice != null
-        add(OrderLine(draftEntry, "${draft.side.label()}${draft.kind.label()} 草稿 · ${instrument.formatQuantity(draft.lotsHundredths)} ${instrument.quantityUnit}${if (pending) " · 拖动入场" else ""}",
-            LineTone.ORDER, edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft))
+        add(OrderLine(draftEntry, listOf(LineCell(CellKind.TITLE, draft.side.label())) +
+            addButtons(LineAction.SetDraftProtection(false, true).takeIf { draft.takeProfit == null }, LineAction.SetDraftProtection(true, true).takeIf { draft.stopLoss == null }) +
+            LineCell(CellKind.VALUE, instrument.formatQuantity(draft.lotsHundredths)) + LineCell(CellKind.VALUE, draft.kind.label()) +
+            LineCell(CellKind.CLOSE, action = LineAction.CloseDraft, hint = "关闭下单预览"),
+            sideTone(draft.side), edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft, preview = true))
         listOf(true to draft.stopLoss, false to draft.takeProfit).forEach { (stop, price) ->
             price ?: return@forEach
             val dragged = (moving as? EditableLine.DraftProtection)?.stop == stop
             // The broker's estimate when it has one; otherwise the same arithmetic, so an invalid draft still shows its result.
             val pnl = (if (stop) draftPreview?.stopLossPnlMicros else draftPreview?.takeProfitPnlMicros)
                 ?: estimatedExitPnl(instrument, draft.side, draft.lotsHundredths, draftEntry, price)
-            add(OrderLine(price, "草稿 ${protectionLabel(stop, pnl, !instrument.estimatesIncludeFees)}${state(dragged, true)}", if (stop) LineTone.STOP else LineTone.TARGET,
-                alpha = .65f, edit = EditableLine.DraftProtection(draft, stop, price), pnl = pnl, gross = !instrument.estimatesIncludeFees, moving = dragged))
+            add(OrderLine(price, protectionCells(instrument, stop, pnl, !instrument.estimatesIncludeFees, draft.lotsHundredths, LineAction.SetDraftProtection(stop, false), "取消${protectionName(stop)}"),
+                protectionTone(stop), alpha = .65f, edit = EditableLine.DraftProtection(draft, stop, price), pnl = pnl, gross = !instrument.estimatesIncludeFees, moving = dragged, preview = true))
         }
     }
 }
 
-/** Which layers the chart shows and which pending-order lines the broker lets the user drag. */
+/** Which layers the chart shows, which pending-order lines the broker lets the user drag, and which protections its buttons can add or take away. */
 internal data class OrderLineOptions(
     val showPositions: Boolean,
     val showOrders: Boolean,
     val editPending: Boolean,
     val editPendingProtection: Boolean,
+    val addProtection: Boolean = false,
+    val removeProtection: Boolean = false,
 )
 
 /**
- * What dragging an order line does. A drag only reports where the line was dropped: the draft takes the price at once,
- * while a pending order or position changes on the broker only after the screen's confirmation. The estimates feed the
- * readout during a drag. Grouped in one parameter for the same reason as [ChartChrome].
+ * What dragging an order line or pressing one of its buttons does. A drag only reports where the line was dropped: the
+ * draft takes the price at once, while a pending order or position changes on the broker only after the screen's
+ * confirmation. The estimates feed the readout during a drag. Grouped in one parameter for the same reason as [ChartChrome].
  */
 class ChartOrderActions(
     val estimateDraft: (OrderRequest) -> OrderPreview,
@@ -184,4 +245,7 @@ class ChartOrderActions(
     val estimatePendingProtection: (orderId: String, stopLoss: Long?, takeProfit: Long?) -> OrderPreview,
     val onPendingProtection: (PendingOrder, Long?, Long?) -> Unit,
     val onProtection: (Position, Long?, Long?) -> Unit,
+    val onLineAction: (LineAction) -> Unit = {},
+    val addProtection: Boolean = false,
+    val removeProtection: Boolean = false,
 )

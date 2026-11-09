@@ -22,6 +22,35 @@ class ChartGeometryTest {
         assertTrue(original.zoom(-100000f, 500f, 200).count <= 600)
         assertTrue(original.pan(100000f, 500f, 200).range(200).first >= 0)
     }
+    @Test fun wheelKeepsAFollowingChartOnTheNewestBar() {
+        val following = ChartViewport(80.0, 0.0)
+        val out = following.zoomAt(3f, .25f, 1_000)
+        assertTrue(out.count > following.count, "Rolling towards the user shows more bars")
+        assertEquals(0.0, out.offset)
+        val into = following.zoomAt(-3f, .25f, 1_000)
+        assertTrue(into.count < following.count)
+        assertEquals(0.0, into.offset)
+        assertEquals(-10.0, ChartViewport(80.0, -10.0).zoomAt(1f, .5f, 1_000).offset, "Space left after the last bar stays as it is")
+    }
+    @Test fun wheelKeepsTheBarUnderThePointerWhileLookingBack() {
+        val before = ChartViewport(100.0, 200.0)
+        for (ticks in listOf(-2f, 2f)) {
+            val after = before.zoomAt(ticks, .25f, 1_000)
+            assertEquals(before.start(1_000) + .25 * before.count, after.start(1_000) + .25 * after.count, .00001)
+        }
+    }
+    @Test fun wheelStopsAtTheNewestBarAndItsLimits() {
+        val after = ChartViewport(80.0, 2.0).zoomAt(10f, 0f, 1_000)
+        assertEquals(0.0, after.offset, "Zooming out of the recent past does not open space after the newest bar")
+        assertEquals(600.0, ChartViewport().zoomAt(1_000f, .5f, 1_000).count)
+        assertEquals(12.0, ChartViewport().zoomAt(-1_000f, .5f, 1_000).count)
+        val scale = PriceScale(100.0, 500.0, 0f, 400f)
+        val wider = scale.zoomWheel(1f, 4.0)
+        assertTrue(wider.high - wider.low > scale.high - scale.low)
+        assertEquals(300.0, (wider.low + wider.high) / 2, .00001)
+        assertEquals(scale.high - scale.low, scale.zoomWheel(1f, 4.0).zoomWheel(-1f, 4.0).let { it.high - it.low }, .001)
+        assertEquals(4.0, scale.zoomWheel(-1_000f, 4.0).let { it.high - it.low }, .00001)
+    }
     @Test fun coordinateRoundTripAndTickSnapping() {
         val scale = PriceScale(100.0, 500.0, 20f, 420f)
         for (price in 105L..495L step 5) assertTrue(abs(scale.price(scale.y(price), 5) - price) <= 5)

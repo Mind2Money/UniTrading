@@ -1141,7 +1141,7 @@ class TradovateBroker(
                 PendingOrder(id.toString(), OrderRequest(spec.symbol, side, kind, (version.long("orderQty") ?: return@mapNotNull null) * 100, price,
                     stop?.let { book.orderVersion(it)?.priceValue("stopPrice") }, target?.let { book.orderVersion(it)?.priceValue("price") }),
                     order.str("timestamp")?.let(::timestamp) ?: 0, version.long("id") ?: 1,
-                    role = relation.role, positionId = if (associated) "$aid:$contract" else null, editable = editable, note = note,
+                    role = relation.role, positionId = if (protection != null && id in protection.confirmed) "$aid:$contract" else null, editable = editable, note = note,
                     filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100),
                     stopLossOrderId = stop?.toString(), takeProfitOrderId = target?.toString(),
                     protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id))

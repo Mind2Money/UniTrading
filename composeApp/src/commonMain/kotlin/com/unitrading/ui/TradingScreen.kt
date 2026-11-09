@@ -28,6 +28,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.ChartChrome
 import com.unitrading.chart.ChartOrderActions
 import com.unitrading.chart.IntervalOptions
+import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
@@ -427,6 +428,31 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 fun reviewMobileOrder() {
                     if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
                 }
+                /** A button on an order line: the same paths as the trade list, so confirmations and version checks apply. */
+                fun runLineAction(action: LineAction) {
+                    when (action) {
+                        is LineAction.ClosePosition -> reviewTrade(Confirmation.Close(action.position))
+                        is LineAction.CancelOrder -> reviewTrade(Confirmation.Cancel(action.order))
+                        is LineAction.AddProtection -> {
+                            val p = action.position
+                            val price = referenceProtection(instrument, p.side, quote?.let { if (p.side == Side.BUY) it.bid else it.ask } ?: p.entryPrice, action.stop)
+                            editProtection(p, if (action.stop) price else p.stopLoss, if (action.stop) p.takeProfit else price)
+                        }
+                        is LineAction.RemoveProtection -> action.position.let { p ->
+                            editProtection(p, p.stopLoss.takeUnless { action.stop }, p.takeProfit.takeIf { action.stop }, fromChart = true)
+                        }
+                        is LineAction.AddPendingProtection -> {
+                            val r = action.order.request
+                            val price = referenceProtection(instrument, r.side, r.entryPrice ?: return, action.stop)
+                            editPendingProtection(action.order, if (action.stop) price else r.stopLoss, if (action.stop) r.takeProfit else price)
+                        }
+                        is LineAction.RemovePendingProtection -> action.order.request.let { r ->
+                            editPendingProtection(action.order, r.stopLoss.takeUnless { action.stop }, r.takeProfit.takeIf { action.stop }, fromChart = true)
+                        }
+                        is LineAction.SetDraftProtection -> changeDraft(draft.withProtectionEnabled(instrument, quote, action.stop, action.enabled))
+                        LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
+                    }
+                }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 val chart: @Composable (Modifier) -> Unit = { m ->
@@ -446,6 +472,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         estimatePendingProtection = session::previewOrderProtection,
                         onPendingProtection = { order, sl, tp -> editPendingProtection(order, sl, tp, fromChart = true) },
                         onProtection = { p, sl, tp -> editProtection(p, sl, tp, fromChart = true) },
+                        onLineAction = { runLineAction(it) },
+                        addProtection = plugin.capabilities.addProtection,
+                        removeProtection = plugin.capabilities.removeProtection,
                     )
                     TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
                         selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,

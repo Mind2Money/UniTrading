@@ -7,7 +7,7 @@ class OrderLinesTest {
     private val mes = Instrument("MESZ6", "Micro E-mini S&P", "期货", 6, 250_000, 1_250_000, minLotsHundredths = 100, lotStepHundredths = 100,
         quantityUnit = "张", quantityDecimals = 0, displayPriceDecimals = 2, estimatesIncludeFees = false)
     private val fx = Instrument("EURUSD", "EUR/USD", "外汇", 5, tickValueMicrosPerLot = 1_000_000, commissionMicrosPerLot = 3_000_000)
-    private val all = OrderLineOptions(showPositions = true, showOrders = true, editPending = true, editPendingProtection = true)
+    private val all = OrderLineOptions(showPositions = true, showOrders = true, editPending = true, editPendingProtection = true, addProtection = true, removeProtection = true)
     private val scale = PriceScale(5_480_000_000.0, 5_520_000_000.0, 0f, 100f)
 
     /** A server-style pending entry whose stop and target live in separate bracket orders 702 and 701. */
@@ -17,9 +17,13 @@ class OrderLinesTest {
         PendingOrder("701", OrderRequest("MESZ6", Side.SELL, OrderKind.LIMIT, 100, 5_510_000_000), 0, role = OrderRole.TAKE_PROFIT, editable = false),
         PendingOrder("702", OrderRequest("MESZ6", Side.SELL, OrderKind.STOP, 100, 5_490_000_000), 0, role = OrderRole.STOP_LOSS, editable = false),
     )
+    private val bare = Position("100:200", "MESZ6", Side.BUY, 100, 5_500_000_000, 0, marginMicros = 0, feesKnown = false)
 
     private fun pending(orders: List<PendingOrder>, drag: LineDrag? = null, options: OrderLineOptions = all) =
         orderLines(mes, emptyList(), null, orders, null, null, null, drag, options)
+    private fun OrderLine.texts() = cells.filter { it.kind != CellKind.CLOSE }.map { it.text }
+    private fun OrderLine.closeAction() = cells.singleOrNull { it.kind == CellKind.CLOSE }?.action
+    private fun OrderLine.closeHint() = cells.single { it.kind == CellKind.CLOSE }.hint
 
     @Test fun draftStopAndTargetAreDraggableAndPricedEvenWhileTheEstimateIsInvalid() {
         val draft = OrderRequest("EURUSD", Side.BUY, OrderKind.LIMIT, 100, 108_500, 108_300, 108_900)
@@ -28,7 +32,8 @@ class OrderLinesTest {
         val target = lines.single { it.edit is EditableLine.DraftProtection && !(it.edit as EditableLine.DraftProtection).stop }
         // 200 ticks at $1 a tick, less a $3 commission each way.
         assertEquals(-206_000_000, stop.pnl)
-        assertEquals("草稿 SL 止损 · -206.00 USD · 拖动", stop.label)
+        assertEquals(listOf("SL", "-206.00 USD", "1.00"), stop.texts())
+        assertEquals(LineAction.SetDraftProtection(true, false), stop.closeAction())
         assertEquals(394_000_000, target.pnl)
         assertTrue(lines.any { it.edit is EditableLine.Draft && it.price == 108_500L })
     }
@@ -37,18 +42,25 @@ class OrderLinesTest {
         val draft = OrderRequest("MESZ6", Side.SELL, OrderKind.MARKET, 200, stopLoss = 5_510_000_000)
         val preview = OrderPreview(5_500_000_000, stopLossPnlMicros = -123_450_000)
         val lines = orderLines(mes, emptyList(), null, emptyList(), draft, preview, 5_500_000_000, null, all)
-        assertEquals("草稿 SL 止损 · 毛 -123.45 USD · 拖动", lines.single { it.edit is EditableLine.DraftProtection }.label)
-        assertNull(lines.single { it.price == 5_500_000_000L }.edit, "A market draft has no entry price to drag")
+        assertEquals(listOf("SL", "毛 -123.45 USD", "2"), lines.single { it.edit is EditableLine.DraftProtection }.texts())
+        val line = lines.single { it.price == 5_500_000_000L }
+        assertNull(line.edit, "A market draft has no entry price to drag")
+        assertEquals(listOf("卖出", "TP", "2", "市价"), line.texts(), "The tag reads as on TradingView, offering only the protection it lacks")
+        assertEquals(LineAction.CloseDraft, line.closeAction())
+        assertEquals(LineAction.SetDraftProtection(false, true), line.cells.single { it.kind == CellKind.ADD_TARGET }.action)
+        assertTrue(line.preview, "A draft is not at the broker yet")
     }
 
     @Test fun pendingEntryBracketsShowTheirResultFromTheEntryAndReplaceTheBracketOrdersLines() {
         val lines = pending(listOf(entry) + brackets)
-        assertTrue(lines.none { "#701" in it.label || "#702" in it.label }, "Bracket orders are drawn once, as the entry's own lines")
+        assertEquals(3, lines.size, "Bracket orders are drawn once, as the entry's own lines")
         val stop = lines.single { it.price == 5_490_000_000L }
         val target = lines.single { it.price == 5_510_000_000L }
-        assertEquals("挂单 #700 SL 止损 · 毛 -50.00 USD · 拖动", stop.label)
-        assertEquals("挂单 #700 TP 止盈 · 毛 +50.00 USD · 拖动", target.label)
+        assertEquals(listOf("SL", "毛 -50.00 USD", "1"), stop.texts())
+        assertEquals(listOf("TP", "毛 +50.00 USD", "1"), target.texts())
         assertEquals(EditableLine.PendingProtection(entry, true, 5_490_000_000), stop.edit)
+        assertEquals(LineAction.CancelOrder(brackets[1]), stop.closeAction(), "The stop is its own order at the broker")
+        assertEquals("撤销止损 #702", stop.closeHint())
         assertEquals(EditableLine.Pending(entry), lines.single { it.price == 5_500_000_000L }.edit)
     }
 
@@ -57,14 +69,16 @@ class OrderLinesTest {
             listOf(entry) to all.copy(editPendingProtection = false))) {
             val stop = pending(orders, options = options).single { it.price == 5_490_000_000L }
             assertNull(stop.edit)
-            assertEquals("挂单 #700 SL 止损 · 毛 -50.00 USD · 仅显示", stop.label)
+            assertEquals(listOf("SL", "毛 -50.00 USD", "1"), stop.texts())
         }
     }
 
     @Test fun aBracketWithoutItsPriceOnTheEntryKeepsItsOwnLine() {
         val lines = pending(listOf(entry.copy(request = entry.request.copy(stopLoss = null))) + brackets)
-        assertTrue(lines.any { "#702" in it.label })
-        assertTrue(lines.none { "#701" in it.label })
+        val own = lines.single { it.tone == LineTone.STOP }
+        assertEquals(listOf("SL", "1", "突破"), own.texts())
+        assertEquals("撤销止损 #702", own.closeHint())
+        assertTrue(lines.single { it.tone == LineTone.TARGET }.edit is EditableLine.PendingProtection, "The target is still drawn once, as the entry's own line")
     }
 
     @Test fun draggedBracketFollowsThePointerWithALiveResult() {
@@ -73,7 +87,7 @@ class OrderLinesTest {
         val moving = lines.single { it.moving }
         assertEquals(5_495_000_000, moving.price)
         assertEquals(-25_000_000, moving.pnl)
-        assertTrue(moving.label.endsWith("· 预览"))
+        assertEquals("毛 -25.00 USD", moving.cells.single { it.kind == CellKind.RESULT }.text)
         assertEquals("止损预览 5495.00   毛 -25.00 USD", dragReadout(mes, drag, OrderPreview(5_500_000_000), moving))
         assertEquals("止损预览 5495.00   毛 -25.00 USD   止损方向或最小距离无效",
             dragReadout(mes, drag, OrderPreview(null, errors = listOf("止损方向或最小距离无效")), moving))
@@ -87,15 +101,16 @@ class OrderLinesTest {
     }
 
     @Test fun positionProtectionAndItsOrdersCarryTheResult() {
-        val position = Position("100:200", "MESZ6", Side.BUY, 100, 5_500_000_000, 0, 5_490_000_000, 5_510_000_000, 0, feesKnown = false,
-            stopLossOrderId = "702", takeProfitOrderId = "701")
+        val position = bare.copy(stopLoss = 5_490_000_000, takeProfit = 5_510_000_000, stopLossOrderId = "702", takeProfitOrderId = "701")
         val bound = brackets.map { it.copy(positionId = position.id, editable = true) }
         val shown = orderLines(mes, listOf(position), position, bound, null, null, null, null, all)
-        assertEquals("SL 止损 · 毛 -50.00 USD · 拖动", shown.single { it.price == 5_490_000_000L }.label)
+        val line = shown.single { it.price == 5_490_000_000L }
+        assertEquals(listOf("SL", "毛 -50.00 USD", "1"), line.texts())
+        assertEquals(LineAction.CancelOrder(bound[1]), line.closeAction())
         // With the positions layer off the same stop is drawn from its order, still priced from the position's entry.
         val ordersOnly = orderLines(mes, listOf(position), position, bound, null, null, null, null, all.copy(showPositions = false))
         val stop = ordersOnly.single { it.price == 5_490_000_000L }
-        assertEquals("SL 止损 卖出突破 #702 · 毛 -50.00 USD · 拖动止损", stop.label)
+        assertEquals(listOf("SL", "毛 -50.00 USD", "1"), stop.texts())
         assertEquals(EditableLine.Protection(position, true, 5_490_000_000), stop.edit)
     }
 
@@ -106,10 +121,73 @@ class OrderLinesTest {
         val first = lines(Quote(5_501_000_000, 5_501_250_000, 0))
         assertEquals(10_000_000, first[0].pnl)
         assertEquals(-12_500_000, first[1].pnl)
-        assertTrue(first[0].label.contains("买入 2 张 · 浮盈亏 毛 +10.00 USD"))
-        assertTrue(first[1].label.contains("卖出 2 张 · 浮盈亏 毛 -12.50 USD"))
+        assertEquals("毛 +10.00 USD", first[0].cells.single { it.kind == CellKind.RESULT }.text)
+        assertEquals("毛 -12.50 USD", first[1].cells.single { it.kind == CellKind.RESULT }.text)
         assertEquals(-10_000_000, lines(Quote(5_499_000_000, 5_499_250_000, 1))[0].pnl)
         assertNull(lines(null)[0].pnl)
-        assertTrue(lines(null)[0].label.contains("浮盈亏 毛 — USD"))
+        assertEquals("毛 — USD", lines(null)[0].cells.single { it.kind == CellKind.RESULT }.text)
+    }
+
+    @Test fun positionTagOffersItsCloseAndOnlyTheProtectionTheBrokerCanAdd() {
+        val quote = Quote(5_501_000_000, 5_501_250_000, 0)
+        fun line(position: Position, options: OrderLineOptions = all) = orderLines(mes, listOf(position), position, emptyList(), null, null, null, null, options, quote).first()
+        assertEquals(listOf("买入", "毛 +5.00 USD", "TP", "SL", "1"), line(bare).texts())
+        assertEquals(LineAction.ClosePosition(bare), line(bare).closeAction())
+        assertEquals("平仓 买入 1 张 #200", line(bare).closeHint())
+        assertEquals(LineAction.AddProtection(bare, false), line(bare).cells.single { it.kind == CellKind.ADD_TARGET }.action)
+        val halfDone = bare.copy(takeProfit = 5_510_000_000)
+        assertEquals(listOf("买入", "毛 +5.00 USD", "SL", "1"), line(halfDone).texts())
+        for ((position, options) in listOf(bare to all.copy(addProtection = false), bare.copy(protectionEditable = false) to all))
+            assertEquals(listOf("买入", "毛 +5.00 USD", "1"), line(position, options).texts())
+        assertEquals(LineTone.SELL, line(bare.copy(side = Side.SELL)).tone)
+    }
+
+    @Test fun protectionWithoutAnOrderIsRemovedOnlyWhereTheBrokerAllowsIt() {
+        val position = bare.copy(stopLoss = 5_490_000_000)
+        fun stop(options: OrderLineOptions) = orderLines(mes, listOf(position), position, emptyList(), null, null, null, null, options).single { it.price == 5_490_000_000L }
+        assertEquals(LineAction.RemoveProtection(position, true), stop(all).closeAction())
+        assertEquals("移除止损", stop(all).closeHint())
+        assertNull(stop(all.copy(removeProtection = false)).closeAction())
+        val locked = entry.copy(stopLossOrderId = null, takeProfitOrderId = null)
+        val bracket = pending(listOf(locked)).single { it.price == 5_490_000_000L }
+        assertEquals(LineAction.RemovePendingProtection(locked, true), bracket.closeAction())
+        assertNull(pending(listOf(locked), options = all.copy(removeProtection = false)).single { it.price == 5_490_000_000L }.closeAction())
+    }
+
+    @Test fun pendingEntryTagReadsLeftToRightAsOnTradingView() {
+        val plain = entry.copy(request = entry.request.copy(stopLoss = null, takeProfit = null), stopLossOrderId = null, takeProfitOrderId = null)
+        val line = pending(listOf(plain)).single()
+        assertEquals(listOf("买入", "TP", "SL", "1", "限价"), line.texts())
+        assertEquals(LineTone.BUY, line.tone)
+        assertEquals(LineAction.CancelOrder(plain), line.closeAction())
+        assertEquals("撤单 买入限价 1 张 #700", line.closeHint())
+        assertEquals(LineAction.AddPendingProtection(plain, true), line.cells.single { it.kind == CellKind.ADD_STOP }.action)
+        assertEquals(listOf("买入", "1", "限价"), pending(listOf(plain), options = all.copy(addProtection = false)).single().texts())
+        assertEquals(listOf("买入", "1", "限价"), pending(listOf(plain.copy(editable = false))).single().texts())
+    }
+
+    @Test fun anOrderOfUnknownPurposeCanStillBeCancelledFromTheChart() {
+        val unknown = PendingOrder("1080033", OrderRequest("MESZ6", Side.SELL, OrderKind.STOP, 100, 5_495_000_000), 0, role = OrderRole.UNRESOLVED, editable = false)
+        val line = orderLines(mes, listOf(bare), bare, listOf(unknown), null, null, null, null, all).single { it.price == 5_495_000_000L }
+        assertEquals(listOf("待确认", "1", "突破"), line.texts())
+        assertNull(line.edit)
+        assertEquals(LineTone.NEUTRAL, line.tone)
+        assertEquals(LineAction.CancelOrder(unknown), line.closeAction())
+    }
+
+    @Test fun recognizedProtectionThatCannotBeEditedStillShowsItsResultAndCanBeCancelled() {
+        val stop = brackets[1].copy(positionId = bare.id, editable = false)
+        val line = orderLines(mes, listOf(bare), bare, listOf(stop), null, null, null, null, all).single { it.price == 5_490_000_000L }
+        assertEquals(listOf("SL", "毛 -50.00 USD", "1"), line.texts())
+        assertNull(line.edit)
+        assertEquals(LineAction.CancelOrder(stop), line.closeAction())
+    }
+
+    @Test fun aPartialStopIsMeasuredOnItsOwnQuantity() {
+        val position = bare.copy(lotsHundredths = 300)
+        val stop = brackets[1].copy(positionId = position.id)
+        val line = orderLines(mes, listOf(position), position, listOf(stop), null, null, null, null, all).single { it.price == 5_490_000_000L }
+        // 40 ticks at $1.25 on one contract out of three.
+        assertEquals(-50_000_000, line.pnl)
     }
 }

@@ -60,8 +60,8 @@ class TradeListUiTest {
         val orders = compose.onNodeWithTag("terminal-section-orders").fetchSemanticsNode().boundsInRoot
         val history = compose.onNodeWithTag("terminal-section-history").fetchSemanticsNode().boundsInRoot
         assertTrue(positions.bottom <= orders.top && orders.bottom <= history.top)
-        compose.onNode(hasText("SL 止损") and hasAnyAncestor(hasTestTag("order-role-same-id"))).assertIsDisplayed()
-        compose.onNode(hasText("TP 止盈") and hasAnyAncestor(hasTestTag("order-role-tp"))).assertIsDisplayed()
+        compose.onNode(hasText("SL 止损") and hasAnyAncestor(hasTestTag("order-role-same-id")), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNode(hasText("TP 止盈") and hasAnyAncestor(hasTestTag("order-role-tp")), useUnmergedTree = true).assertIsDisplayed()
         capture("sections-mobile")
         list.performScrollToKey("trade-same-id")
         compose.onNodeWithTag("paired-trade-same-id").performClick()

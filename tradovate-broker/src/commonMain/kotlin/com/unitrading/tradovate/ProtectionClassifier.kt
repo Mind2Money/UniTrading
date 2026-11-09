@@ -18,6 +18,8 @@ internal data class PositionProtection(
     val editable: Boolean = false,
     val revision: String? = null,
     val note: String? = null,
+    /** Every order confirmed as an exit of this position, including those [stopId] and [targetId] could not single out. */
+    val confirmed: Set<Long> = emptySet(),
 )
 
 /** Pure projection of server evidence. It never writes orders or changes raw protocol rows. */
@@ -69,7 +71,8 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
             val r = relation(id)
             "$id:${book.orderVersion(id)?.long("id")}:${order.str("ordStatus")}:${remainingQuantity(id)}:${r.role}:${r.group}:${r.parentId}:${r.activated}:${r.note}"
         }.ifEmpty { null }
-        fun unavailable(message: String) = PositionProtection(revision = revision, note = message)
+        val confirmedIds = confirmed.mapNotNull { it.long("id") }.toSet()
+        fun unavailable(message: String) = PositionProtection(revision = revision, note = message, confirmed = confirmedIds)
         if (confirmed.isEmpty()) return if (relevant.isEmpty()) PositionProtection() else unavailable("存在反向挂单，保护关联尚未完整确认")
         if (confirmed.map { relation(it.long("id")!!).group }.distinct().size != 1) return unavailable("存在多组保护，请在挂单列表中逐项核对")
         val stops = confirmed.filter { relation(it.long("id")!!).role == OrderRole.STOP_LOSS }
@@ -83,7 +86,7 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         val stop = stops.singleOrNull()?.long("id")
         val target = targets.singleOrNull()?.long("id")
         val working = confirmed.all { it.str("ordStatus") == "Working" }
-        return PositionProtection(stop, target, working, revision, if (working) null else "保护订单正在处理，暂不可修改")
+        return PositionProtection(stop, target, working, revision, if (working) null else "保护订单正在处理，暂不可修改", confirmedIds)
     }
 
     /**

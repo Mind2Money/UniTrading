@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.*
 import com.unitrading.chart.dateTime
+import com.unitrading.chart.resultLabel
 
 @Composable
 internal fun BrokerAccountChooser(
@@ -167,6 +168,7 @@ internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modif
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TradeTerminal(
     plugin: BrokerPlugin,
@@ -191,6 +193,9 @@ internal fun TradeTerminal(
     val colors = TradingColors
     val type = MaterialTheme.typography
     val missing = "合约规格暂不可用，目录恢复后才能操作。"
+    // A recognized stop loss or take profit is listed on its position, so the pending section holds only what is left.
+    val protections = account.orders.filter { order -> order.isProtection && account.positions.any { it.id == order.positionId } }.sortedBy { it.role }.groupBy { it.positionId }
+    val pending = account.orders.filterNot { order -> protections[order.positionId]?.contains(order) == true }
     Box(modifier.background(colors.Surface)) {
         LazyColumn(Modifier.fillMaxSize().testTag("trade-terminal"), state = listState) {
             if (header != null) item(key = "header", contentType = "header") { header() }
@@ -201,8 +206,9 @@ internal fun TradeTerminal(
                 val q = market.quotes[p.symbol]
                 val pnl = q?.let { positionPnl(instrument, p, it) }
                 val protection = "SL ${p.stopLoss?.let(instrument::formatPrice) ?: "—"} · TP ${p.takeProfit?.let(instrument::formatPrice) ?: "—"}"
+                val orders = protections[p.id].orEmpty()
                 val actions: @Composable RowScope.() -> Unit = {
-                    TextButton({ onProtect(p) }, enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("止损/止盈") }
+                    TextButton({ onProtect(p) }, Modifier.testTag("protect-position-${p.id}"), enabled = !busy && plugin.capabilities.modifyProtection && p.protectionEditable) { Text("止损/止盈") }
                     OutlinedButton({ onClose(p) }, enabled = !busy, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("平仓") }
                 }
                 Column(Modifier.fillMaxWidth().testTag("position-${p.id}")
@@ -214,21 +220,24 @@ internal fun TradeTerminal(
                             Text("${p.symbol} · ${instrument.formatQuantity(p.lotsHundredths)} ${instrument.quantityUnit}", style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("入场 ${instrument.formatPrice(p.entryPrice)} · #${shortId(p.id)}", color = colors.Muted, style = type.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (!compact) Text(protection, color = colors.Muted, style = type.bodySmall)
+                        if (!compact && orders.isEmpty()) Text(protection, color = colors.Muted, style = type.bodySmall)
                         Text(pnl?.let { money(it, true) } ?: "—", style = type.titleMedium, color = colors.pnl(pnl))
                         if (!compact) actions()
                     }
-                    p.protectionNote?.let { Text(it, color = colors.Muted, style = type.bodySmall) }
+                    if (orders.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        orders.forEach { ProtectionChip(it, p, instrument, busy, onCancel) }
+                    }
+                    (listOfNotNull(p.protectionNote) + orders.mapNotNull { it.note }).distinct().forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
                     if (compact) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(protection, Modifier.weight(1f), color = colors.Muted, style = type.bodySmall)
+                        if (orders.isEmpty()) Text(protection, Modifier.weight(1f), color = colors.Muted, style = type.bodySmall) else Spacer(Modifier.weight(1f))
                         actions()
                     }
                 }
                 DividerLine()
             }
-            item(key = "section-orders", contentType = "section") { TerminalSectionHeader("挂单", account.orders.size, "terminal-section-orders") }
-            if (account.orders.isEmpty()) item(key = "empty-orders") { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。", icon = AppIcons.ReceiptLong) }
-            items(account.orders, key = { "order-${it.id}" }, contentType = { "order" }) { order ->
+            item(key = "section-orders", contentType = "section") { TerminalSectionHeader("挂单", pending.size, "terminal-section-orders") }
+            if (pending.isEmpty()) item(key = "empty-orders") { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。", icon = AppIcons.ReceiptLong) }
+            items(pending, key = { "order-${it.id}" }, contentType = { "order" }) { order ->
                 val r = order.request
                 val instrument = instruments[r.symbol] ?: run { EmptyState(r.symbol, missing); return@items }
                 fun bracketsEditable(entry: PendingOrder) = plugin.capabilities.modifyPendingProtection && entry.editable && entry.protectionEditable
@@ -308,6 +317,26 @@ internal fun TradeTerminal(
                 }
                 DividerLine()
             }
+        }
+    }
+}
+
+/** A stop loss or take profit on its position's row: price, size, the result if it fills, and the button that cancels it. */
+@Composable
+private fun ProtectionChip(order: PendingOrder, position: Position, instrument: Instrument, busy: Boolean, onCancel: (PendingOrder) -> Unit) {
+    val colors = TradingColors
+    val type = MaterialTheme.typography
+    val r = order.request
+    val stop = order.role == OrderRole.STOP_LOSS
+    val pnl = r.entryPrice?.let { estimatedExitPnl(instrument, position, r.lotsHundredths, it) }
+    val filled = if (order.filledLotsHundredths > 0) " · 已成交 ${instrument.formatQuantity(order.filledLotsHundredths)}" else ""
+    Surface(Modifier.testTag("pending-order-${order.id}"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.testTag("order-role-${order.id}")) { StatusBadge(order.role.label(), if (stop) colors.Stop else colors.Target) }
+            Text("${r.entryPrice?.let(instrument::formatPrice) ?: "—"} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}$filled", style = type.bodySmall, maxLines = 1)
+            Text(resultLabel(pnl, !position.feesKnown), color = colors.pnl(pnl), style = type.bodySmall, maxLines = 1)
+            ActionIcon(AppIcons.Close, "撤销${if (stop) "止损" else "止盈"} #${shortId(order.id)}", "cancel-order-${order.id}", Modifier.size(32.dp), enabled = !busy,
+                tint = MaterialTheme.colorScheme.error, iconSize = 16.dp) { onCancel(order) }
         }
     }
 }

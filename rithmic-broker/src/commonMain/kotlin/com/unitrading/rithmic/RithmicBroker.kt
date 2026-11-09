@@ -887,6 +887,7 @@ class RithmicBroker(
             val accountOrders = activeOrders.filter { it.accountId == aid }
             val rawPositions = positions.values.filter { it.accountId == aid && it.net != 0L }
             val protectionByOrder = mutableMapOf<String, String>()
+            val singledOut = mutableSetOf<String>()
             val mappedPositions = rawPositions.mapNotNull { p ->
                 val spec = specs[p.symbol] ?: return@mapNotNull null
                 val entry = p.avgPrice?.let(spec.scale::units)?.takeIf { it > 0 } ?: return@mapNotNull null
@@ -896,8 +897,8 @@ class RithmicBroker(
                 val targets = children.filter { it.priceType == RithmicEnums.PRICE_LIMIT }
                 val stop = stops.singleOrNull(); val target = targets.singleOrNull()
                 val editable = stops.size <= 1 && targets.size <= 1
-                stop?.let { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
-                target?.let { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
+                (stops + targets).forEach { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
+                listOfNotNull(stop, target).mapTo(singledOut) { it.basketId }
                 val id = "$aid:${p.symbol}"
                 val prior = old?.positions?.firstOrNull { it.id == id }
                 // Every PnL update carries a new time; taking it as the opening time would bump the version and invalidate any open edit.
@@ -936,12 +937,12 @@ class RithmicBroker(
                 val working = !order.commandInFlight
                 val editable = when (role) {
                     OrderRole.ENTRY -> working && kind != OrderKind.MARKET && order.filled == 0L
-                    OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> positionId != null && working
+                    OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> order.basketId in singledOut && working
                     else -> false
                 }
                 val note = when {
                     role == OrderRole.ENTRY && !editable -> if (order.filled > 0) "订单已部分成交，暂不可改价" else "订单状态为“${order.status}”，暂不可改价"
-                    role != OrderRole.ENTRY && positionId == null -> "括号保护单尚未唯一关联到当前净仓，仅显示"
+                    role != OrderRole.ENTRY && order.basketId !in singledOut -> "括号保护单尚未唯一关联到当前净仓，仅显示"
                     role == OrderRole.UNRESOLVED -> "无法识别的括号订单类型"
                     else -> null
                 }

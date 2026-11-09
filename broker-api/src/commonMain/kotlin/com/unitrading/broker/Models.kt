@@ -172,6 +172,7 @@ data class PendingOrder(
     val createdAtMs: Long,
     val version: Long = 1,
     val role: OrderRole = OrderRole.ENTRY,
+    /** The position a stop loss or take profit protects. Set even when [editable] is false because several orders share that position. */
     val positionId: String? = null,
     val editable: Boolean = true,
     val note: String? = null,

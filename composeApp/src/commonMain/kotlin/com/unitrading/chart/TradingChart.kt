@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onPlaced
@@ -28,15 +29,16 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,10 +100,13 @@ fun TradingChart(
     var size by remember { mutableStateOf(IntSize(900, 400)) }
     /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
     var legendArea by remember { mutableStateOf<Rect?>(null) }
-    val orderLabelHits = remember { mutableListOf<Pair<Rect, EditableLine>>() }
+    /** Where the mouse rests; the tag button under it lights up and names itself. */
+    var hoverPoint by remember { mutableStateOf<Offset?>(null) }
+    var lineMenu by remember(accountKey, instrument.symbol) { mutableStateOf<LineMenu?>(null) }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
     var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
-    val textMeasurer = rememberTextMeasurer()
+    val textMeasurer = rememberTextMeasurer(cacheSize = 64)
+    val closeIcon = rememberVectorPainter(AppIcons.Close)
     val density = LocalDensity.current
     val left = with(density) { 12.dp.toPx() }
     val right = (size.width - with(density) { 84.dp.toPx() }).coerceAtLeast(left + 1)
@@ -173,17 +178,33 @@ fun TradingChart(
     // A market draft enters at the side of the quote it trades against, so its lines show even while the estimate is invalid.
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
-        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection), quote)
+        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection), quote)
     val currentLines by rememberUpdatedState(lines)
     val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
     // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
     val legendShown = !chrome.ordering || readout != null
     val labelStyle = TextStyle(color = colors.Muted, fontSize = 11.sp, fontFeatureSettings = "tnum")
+    val tagTexts = HashMap<String, TextLayoutResult>()
+    fun tagText(value: String) = tagTexts.getOrPut(value) { textMeasurer.measure(value, labelStyle) }
+    val tagMetrics = with(density) {
+        OrderTagMetrics(maxOf((if (compact) 24.dp else 20.dp).toPx(), tagText("0").size.height + 4.dp.toPx()), 6.dp.toPx(), (if (compact) 28.dp else 22.dp).toPx(), 4.dp.toPx(), 3.dp.toPx())
+    }
+    val orderTags = layoutOrderTags(lines, scale, Rect(left + with(density) { 3.dp.toPx() }, top, right - with(density) { 8.dp.toPx() }, plotBottom),
+        listOfNotNull(legendArea?.takeIf { legendShown }), tagMetrics) { tagText(it).size.width.toFloat() }
+    val currentTags by rememberUpdatedState(orderTags)
+    val hoveredButton = hoverPoint?.let { orderTags.buttonAt(it) }
+    val chartCursor = when {
+        hoveredButton != null -> PointerIcon.Hand
+        drag != null || hoverPoint?.let { it.x in left..right && it.y in top..plotBottom && grabAt(it, orderTags, lines, scale, 22 * density.density) != null } == true -> panelResizeCursor(false)
+        else -> PointerIcon.Default
+    }
     val periodMs = timeframe.minutes * 60_000L
     val step = plotWidth / viewport.count.toFloat()
     val currentViewport by rememberUpdatedState(viewport)
-    val currentRange by rememberUpdatedState(range)
-    fun visibleIndex(x: Float): Int = ((x - left) / (plotWidth / currentViewport.count) + currentViewport.start(currentTotal) - currentRange.first).toInt().coerceIn(0, (currentVisible.size - 1).coerceAtLeast(0))
+    fun visibleIndex(x: Float, view: ChartViewport = currentViewport): Int {
+        val shown = view.range(currentTotal)
+        return ((x - left) / (plotWidth / view.count) + view.start(currentTotal) - shown.first).toInt().coerceIn(0, (shown.last - shown.first).coerceAtLeast(0))
+    }
 
     LaunchedEffect(focusedTrade?.id, instrument.symbol, timeframe) {
         if (focusedTrade != null && focusedTrade.symbol == instrument.executionSymbol) {
@@ -271,16 +292,48 @@ fun TradingChart(
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览。"
+                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓、撤单或设置止损止盈，右键打开同样的操作。"
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
+                            customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
+                            set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null }.associate { it.cell.hint to it.bounds })
+                        }
+                        .pointerHoverIcon(chartCursor)
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size) {
+                            // On the Initial pass, so the tap and drag detectors below never see the press that opens the menu.
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                                    val point = event.changes.firstOrNull()?.position ?: continue
+                                    if (point.x !in left..right || point.y !in top..currentPlotBottom) continue
+                                    val line = lineAt(point, currentTags, currentLines, currentScale, 8 * density.density) ?: continue
+                                    lineMenu = LineMenu(point, line.cells.filter { it.action != null })
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent()
-                                    if (event.type == PointerEventType.Exit) crosshair = null
+                                    if (event.type == PointerEventType.Exit) { crosshair = null; hoverPoint = null }
+                                    else if (event.type == PointerEventType.Scroll) {
+                                        val change = event.changes.firstOrNull() ?: continue
+                                        val point = change.position
+                                        val ticks = change.scrollDelta
+                                        change.consume()
+                                        if (drag != null) continue
+                                        if (point.x >= right && point.y < currentPlotBottom) manualScale = (manualScale ?: currentScale).zoomWheel(ticks.y, instrument.tickSize * 4.0)
+                                        else {
+                                            // Sideways scrolling (Shift + wheel, or a trackpad) moves through time; rolling zooms.
+                                            viewport = if (abs(ticks.x) > abs(ticks.y)) viewport.pan(-ticks.x * plotWidth * .1f, plotWidth, currentTotal)
+                                                else viewport.zoomAt(ticks.y, ((point.x - left) / plotWidth).coerceIn(0f, 1f), currentTotal)
+                                            if (crosshair != null) crosshair = visibleIndex(point.x, viewport)
+                                        }
+                                    }
                                     else if ((event.type == PointerEventType.Move || event.type == PointerEventType.Enter) && event.changes.none { it.pressed }) {
                                         val pointer = event.changes.firstOrNull()?.position
+                                        hoverPoint = pointer
                                         if (pointer != null && drag == null) { crosshair = visibleIndex(pointer.x); crosshairY = pointer.y }
                                     }
                                 }
@@ -288,6 +341,11 @@ fun TradingChart(
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory, panes.size) {
                             detectTapGestures(onTap = { point ->
+                                val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
+                                if (button != null) {
+                                    button.cell.action?.let(currentActions.onLineAction)
+                                    return@detectTapGestures
+                                }
                                 val bars = currentVisible
                                 if (bars.isNotEmpty() && point.x < right && point.y < bottom) {
                                     val index = visibleIndex(point.x)
@@ -313,6 +371,7 @@ fun TradingChart(
                                     val point = down.position
                                     crosshair = null
                                     mode = when {
+                                        lineMenu != null -> ChartDragMode.NONE
                                         point.x >= right && point.y < currentPlotBottom -> ChartDragMode.PRICE
                                         point.y >= bottom && point.x < right -> ChartDragMode.TIME
                                         point.x in left..right && point.y in top..currentPlotBottom -> ChartDragMode.PLOT
@@ -320,12 +379,10 @@ fun TradingChart(
                                         else -> ChartDragMode.NONE
                                     }
                                     val s = currentScale
-                                    // The line drawn last (the draft, then pending brackets) wins a tie, as it is drawn on top.
-                                    val labelHit = orderLabelHits.lastOrNull { it.first.contains(point) }?.second
-                                    val hit = labelHit ?: currentLines.asReversed().mapNotNull { it.edit }.minByOrNull { abs(s.y(it.price) - point.y) }
-                                    if (mode == ChartDragMode.PLOT && hit != null && (labelHit != null || abs(s.y(hit.price) - point.y) < 22 * density.density)) {
-                                        labelDragOffset = if (labelHit != null) point.y - s.y(hit.price) else 0f
-                                        drag = LineDrag(hit, s, hit.price)
+                                    val grab = if (mode == ChartDragMode.PLOT) grabAt(point, currentTags, currentLines, s, 22 * density.density) else null
+                                    if (grab != null) {
+                                        labelDragOffset = if (grab.onTag) point.y - s.y(grab.line.price) else 0f
+                                        drag = LineDrag(grab.line, s, grab.line.price)
                                     }
                                     if (mode == ChartDragMode.PRICE || mode == ChartDragMode.PLOT && drag == null) manualScale = s
                                 },
@@ -384,25 +441,6 @@ fun TradingChart(
                     val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                     val labelPadding = 3.dp.toPx()
                     val priceTags = mutableListOf<PriceTag>()
-                    val placedLabels = listOfNotNull(legendArea?.takeIf { legendShown }).toMutableList()
-                    orderLabelHits.clear()
-                    fun priceLine(line: OrderLine, color: Color) {
-                        val y = scale.y(line.price)
-                        if (y !in top..plotBottom) return
-                        drawLine(color.copy(alpha = line.alpha), Offset(left, y), Offset(right, y), strokeWidth = 1.3f,
-                            pathEffect = if (line.dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
-                        priceTags.add(PriceTag(line.price, colors.Ink, colors.Surface))
-                        val ink = if (line.tone == LineTone.POSITION) colors.pnl(line.pnl) else colors.Ink
-                        val measured = textMeasurer.measure(line.label, labelStyle.copy(color = ink), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            constraints = Constraints(maxWidth = (right - left - labelPadding * 4).toInt().coerceAtLeast(1)))
-                        val box = Size(measured.size.width + labelPadding * 2, measured.size.height + labelPadding * 2)
-                        val bounds = placeOrderLabel(box, y, Rect(left + labelPadding, top, right - labelPadding, plotBottom), placedLabels, labelPadding) ?: return
-                        placedLabels.add(bounds)
-                        line.edit?.let { orderLabelHits.add(bounds to it) }
-                        drawLine(color.copy(alpha = .65f), Offset(bounds.right, bounds.center.y), Offset(right, y), 1f)
-                        drawRoundRect(colors.Surface.copy(alpha = 0.94f), bounds.topLeft, bounds.size, CornerRadius(labelPadding, labelPadding))
-                        drawText(measured, topLeft = bounds.topLeft + Offset(labelPadding, labelPadding))
-                    }
                     for (i in 0..5) {
                         val y = top + (plotBottom - top) * i / 5
                         drawLine(colors.Grid, Offset(left, y), Offset(right, y), 1f)
@@ -482,14 +520,15 @@ fun TradingChart(
                         }
                     }
                     lines.forEach { line ->
-                        val color = when (line.tone) {
-                            LineTone.POSITION -> colors.Accent
-                            LineTone.STOP -> colors.Stop
-                            LineTone.TARGET -> colors.Target
-                            LineTone.ORDER -> colors.Muted
-                        }
-                        priceLine(line, color)
+                        val y = scale.y(line.price)
+                        if (y !in top..plotBottom) return@forEach
+                        val color = colors.lineColor(line.tone)
+                        drawLine(color.copy(alpha = line.alpha), Offset(left, y), Offset(right, y), strokeWidth = if (line.moving) 2.2f else 1.3f,
+                            pathEffect = if (line.dashed) PathEffect.dashPathEffect(floatArrayOf(7f, 5f)) else null)
+                        priceTags.add(PriceTag(line.price, contentOn(color), color))
                     }
+                    val tagStyle = OrderTagStyle(colors, 3.dp.toPx(), 13.dp.toPx(), closeIcon) { tagText(it) }
+                    orderTags.forEach { drawOrderTag(it, tagStyle, right, hoveredButton) }
                     }
                     if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, paneLayout, step,
                         textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
@@ -546,7 +585,17 @@ fun TradingChart(
                         drawRect(colors.Ink, Offset(tagLeft, y - lineHeight / 2), Size(tagWidth, lineHeight))
                         text(value, tagLeft + labelPadding, y - labelHeight / 2, colors.Surface)
                     }
+                    hoveredButton?.let { button ->
+                        val tip = textMeasurer.measure(button.cell.hint, labelStyle.copy(color = colors.Surface))
+                        val box = Size(tip.size.width + labelPadding * 2, tip.size.height + labelPadding * 2)
+                        val tipLeft = (button.bounds.center.x - box.width / 2).coerceIn(left, maxOf(left, right - box.width))
+                        val above = button.bounds.top - box.height - labelPadding
+                        val tipTop = if (above >= top) above else button.bounds.bottom + labelPadding
+                        drawRoundRect(colors.Ink, Offset(tipLeft, tipTop), box, CornerRadius(labelPadding, labelPadding))
+                        drawText(tip, topLeft = Offset(tipLeft + labelPadding, tipTop + labelPadding))
+                    }
                 }
+                lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
                 val barIndex = crosshair ?: visible.lastIndex
                 val bar = visible.getOrNull(barIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + barIndex - 1)

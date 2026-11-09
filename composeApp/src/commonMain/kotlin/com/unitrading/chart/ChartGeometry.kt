@@ -6,6 +6,9 @@ import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.ceil
 
+/** How much one wheel notch scales the visible range, as the exponent of e: about 13%. */
+private const val WHEEL_ZOOM = .12
+
 /** Rendering uses floating coordinates; account arithmetic remains integer-only. */
 data class PriceScale(val low: Double, val high: Double, val top: Float, val bottom: Float) {
     init { require(high > low && bottom > top) }
@@ -24,6 +27,8 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
         val center = (low + high) / 2
         return copy(low = center - span / 2, high = center + span / 2)
     }
+    /** The wheel over the price axis: [ticks] are notches, positive when rolling towards the user, which zooms out. */
+    fun zoomWheel(ticks: Float, minimumSpan: Double): PriceScale = zoom((ticks * WHEEL_ZOOM / 3.0).toFloat() * (bottom - top), minimumSpan)
     companion object {
         fun from(candles: List<Candle>, extras: List<Long>, top: Float, bottom: Float): PriceScale {
             val points = candles.flatMap { listOf(it.low, it.high) } + extras.filter { it > 0 }
@@ -47,6 +52,16 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
     fun zoom(pixels: Float, width: Float, total: Int): ChartViewport {
         val next = (count * exp(-pixels / width.coerceAtLeast(1f) * 3.0)).coerceIn(12.0, 600.0)
         return copy(count = next, offset = offset + (count - next) / 2).bounded(total)
+    }
+    /**
+     * The wheel over the plot; [ticks] are notches, positive when rolling towards the user, which shows more bars. The bar
+     * at [anchor] (0 the left edge, 1 the right) stays under the pointer, except on a chart following the newest bar, which
+     * keeps its right edge. Zooming out of the past stops at the newest bar instead of opening empty space after it.
+     */
+    fun zoomAt(ticks: Float, anchor: Float, total: Int): ChartViewport {
+        val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, 600.0)
+        val moved = if (offset <= 0.0) offset else (offset + (1 - anchor) * (count - next)).coerceAtLeast(0.0)
+        return copy(count = next, offset = moved).bounded(total)
     }
     fun bounded(total: Int) = copy(offset = offset.coerceIn(-count * .8, (total - count * .2).coerceAtLeast(0.0)))
     /**

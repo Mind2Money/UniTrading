@@ -36,3 +36,8 @@ internal fun estimatedExitPnl(instrument: Instrument, position: Position, exit: 
     checkedAdd(checkedAdd(grossPnl(instrument, position.side, position.lotsHundredths, position.entryPrice, exit), -position.entryFeeMicros),
         -commission(instrument, position.lotsHundredths))
 }.getOrNull()
+
+/** Result of a protection order for [quantity] filling at [exit]: a smaller order closes only its share of [position]. */
+internal fun estimatedExitPnl(instrument: Instrument, position: Position, quantity: Long, exit: Long): Long? =
+    if (quantity >= position.lotsHundredths) estimatedExitPnl(instrument, position, exit)
+    else estimatedExitPnl(instrument, position.side, quantity, position.entryPrice, exit)

@@ -276,6 +276,10 @@ class RithmicBrokerTest {
         server.plant(RithmicEnums.INFRA_ORDER).push { int32(Rf.TEMPLATE_ID, Rt.EXCHANGE_ORDER_NOTIFICATION); string(Rf.ACCOUNT_ID, "ACC1"); limitEntry("S2", RithmicEnums.SELL, 1, 5480.0, originalBasket = "E9", priceType = RithmicEnums.PRICE_STOP_MARKET)() }
         runCurrent()
         assertFalse(session.state.value.positions.single().protectionEditable)
+        // Both stops are still this position's protection for display, but neither can be edited as the stop.
+        val stops = session.state.value.orders.filter { it.role == OrderRole.STOP_LOSS }
+        assertEquals(setOf("S1", "S2"), stops.map { it.id }.toSet())
+        assertTrue(stops.all { it.positionId == position.id && !it.editable && it.note != null })
     }
 
     @Test fun pendingEntryBracketLevelsShowAsProtectionAndMoveByTicks() = runTest {

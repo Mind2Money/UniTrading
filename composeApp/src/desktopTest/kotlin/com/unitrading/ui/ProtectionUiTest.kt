@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.Density
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
+import com.unitrading.chart.OrderTagButtons
 import com.unitrading.chart.PriceScale
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
@@ -64,6 +65,7 @@ private class OfflineProtectionBroker(unresolved: Boolean = false) : BrokerPlugi
     }
 }
 
+@OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 class ProtectionUiTest {
     @get:Rule val compose = createComposeRule()
     private fun render(broker: OfflineProtectionBroker) {
@@ -72,15 +74,34 @@ class ProtectionUiTest {
         compose.onNodeWithTag("broker-picker").performClick()
         compose.onNodeWithText(broker.descriptor.name).performClick()
     }
-    @Test fun pendingTableUsesTpSlLabelsAndProtectionDialog() {
+    private fun chart() = compose.onNodeWithTag("trading-chart")
+    private fun chartState() = chart().fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+        .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+    private fun button(hint: String): Offset = chart().fetchSemanticsNode().config[OrderTagButtons].let { assertNotNull(it[hint], "No button \"$hint\" in ${it.keys}") }.center
+    private fun tapButton(hint: String) {
+        val at = button(hint)
+        chart().performTouchInput { click(at) }
+        compose.waitForIdle()
+    }
+
+    @Test fun positionRowCarriesItsRecognizedProtectionAndThePendingSectionDoesNot() {
         val broker = OfflineProtectionBroker()
         render(broker)
-        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-701")
-        compose.onNode(hasText("TP 止盈", substring = true) and hasAnyAncestor(hasTestTag("trade-terminal"))).assertExists()
-        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-702")
-        compose.onNode(hasText("SL 止损", substring = true) and hasAnyAncestor(hasTestTag("trade-terminal"))).assertExists()
-        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-701")
-        compose.onNodeWithTag("edit-order-701").assertTextContains("止盈价").performClick()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
+        for ((id, label) in listOf("701" to "TP 止盈", "702" to "SL 止损")) {
+            // The clickable position row merges its text for screen readers, so the chips are only separate in the unmerged tree.
+            compose.onNode(hasTestTag("pending-order-$id") and hasAnyAncestor(hasTestTag("position-100:200")), useUnmergedTree = true).assertExists()
+            compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("order-role-$id")), useUnmergedTree = true).assertExists()
+        }
+        compose.onNodeWithText("毛 +100.00 USD").assertExists()
+        compose.onNodeWithText("毛 -50.00 USD").assertExists()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("section-orders")
+        compose.onNodeWithText("挂单 0").assertExists()
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
+        compose.onNodeWithTag("cancel-order-702").performClick()
+        compose.onNodeWithTag("confirm-action").assertExists()
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("protect-position-100:200").performClick()
         compose.onNodeWithTag("protection-dialog").assertExists()
         compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
         compose.onNodeWithText("取消").performClick()
@@ -115,10 +136,65 @@ class ProtectionUiTest {
         assertEquals(0, broker.entryCalls)
         assertEquals(0, broker.protectionCalls)
     }
+    @Test fun chartButtonsAskForTheSameConfirmationAsTheTradeList() {
+        val broker = OfflineProtectionBroker()
+        render(broker)
+        tapButton("撤销止损 #702")
+        compose.onNodeWithText("确认撤单").assertExists()
+        compose.onNodeWithText("撤销SL 止损 #702", substring = true).assertExists()
+        compose.onNodeWithText("取消").performClick()
+        tapButton("平仓 买入 1 张 #200")
+        compose.onNodeWithText("确认平仓").assertExists()
+        compose.onNodeWithText("取消").performClick()
+        assertEquals(0, broker.protectionCalls)
+    }
+    @Test fun anOrderOfUnknownPurposeCanBeCancelledFromTheChart() {
+        render(OfflineProtectionBroker(unresolved = true))
+        tapButton("撤单 卖出突破 1 张 #702")
+        compose.onNodeWithText("撤销关联待确认 #702", substring = true).assertExists()
+    }
+    @Test fun aRightClickOffersTheLineButtonsByName() {
+        render(OfflineProtectionBroker())
+        val at = button("撤销止损 #702")
+        chart().performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("line-menu-0").assertTextContains("撤销止损 #702").performClick()
+        compose.onNodeWithText("确认撤单").assertExists()
+        compose.onNodeWithTag("line-menu-0").assertDoesNotExist()
+    }
+    @Test fun theWheelZoomsTimeOverThePlotAndPriceOverTheAxis() {
+        render(OfflineProtectionBroker())
+        val size = chart().fetchSemanticsNode().size
+        val before = chartState()
+        chart().performMouseInput { moveTo(Offset(size.width * .4f, size.height * .5f)); scroll(-3f) }
+        compose.waitForIdle()
+        val zoomed = chartState()
+        assertTrue(zoomed.getValue("bars").toDouble() < before.getValue("bars").toDouble(), "Rolling away zooms in")
+        assertEquals(0.0, zoomed.getValue("offset").toDouble(), "The chart keeps following the newest bar")
+        assertEquals("true", zoomed.getValue("auto"))
+        chart().performMouseInput { moveTo(Offset(size.width - 10f, size.height * .3f)); scroll(4f) }
+        compose.waitForIdle()
+        val axis = chartState()
+        assertEquals(zoomed.getValue("bars"), axis.getValue("bars"))
+        assertEquals("false", axis.getValue("auto"))
+        assertTrue(axis.getValue("high").toDouble() - axis.getValue("low").toDouble() > zoomed.getValue("high").toDouble() - zoomed.getValue("low").toDouble())
+    }
+    @Test fun aDraftTagTurnsProtectionOnAndCanBeDiscarded() {
+        render(OfflineProtectionBroker())
+        compose.onNodeWithTag("legend-buy").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("order-tp-enabled").assertIsOff()
+        tapButton("添加止盈")
+        compose.onNodeWithTag("order-tp-enabled").assertIsOn()
+        tapButton("取消止盈")
+        compose.onNodeWithTag("order-tp-enabled").assertIsOff()
+        tapButton("关闭下单预览")
+        assertFalse("关闭下单预览" in chart().fetchSemanticsNode().config[OrderTagButtons])
+    }
     @Test fun offlineScreenshotShowsPositionProtectionWithoutDuplicateEntryLines() {
         val broker = OfflineProtectionBroker()
         render(broker)
-        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-701")
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
         val file = File("../artifacts/offline-tpsl.png")
         file.parentFile.mkdirs()
         ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", file)
