@@ -13,6 +13,9 @@ interface BrokerPlugin {
     val market: StateFlow<MarketSnapshot>
     /** Best-effort live entry/protection notifications; never replays historical executions. */
     val tradeFills: Flow<TradeFill> get() = emptyFlow()
+    /** Optional, read-only market tape and price-level depth for one explicitly watched contract. */
+    val orderFlow: StateFlow<OrderFlowSnapshot>? get() = null
+    fun watchOrderFlow(symbol: String?) {}
     suspend fun searchInstruments(query: String) {}
     /** Subscribe an independent quote list without changing the chart or sending trade commands. */
     fun watchQuotes(symbols: Set<String>) {}

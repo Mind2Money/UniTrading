@@ -2,6 +2,11 @@
 
 ## 简体中文
 
+📊 **Rithmic 订单流**
+✅ 登录 Rithmic 后可从“订单流”打开足迹（Bid × Ask）、逐笔成交量分布（POC / 70% 价值区）、Delta / CVD、可按成交量过滤并暂停显示的逐笔成交，以及只读多档 DOM
+✅ 宽屏将图表与分析并排显示；小窗口和手机使用独立分析页，支持返回和横向滚动切换工具
+⚠️ 统计来自本次订阅的最近 20,000 笔真实成交，不含历史回补；重连、换合约或关闭分析后重新打开会重新采集。未知主动方向单独列出，不计入 Delta；DOM 取决于账户 L2 行情权限，尚未核实边界的聚合快照降级为买一卖一
+
 💻 **macOS 版**
 ✅ 新增 Apple Silicon 的 macOS 桌面版（macOS 13 及以上），支持 Tradovate 和 Rithmic 登录，授权记录和已保存登录由系统钥匙串保护
 ⚠️ 尚未在真实 Mac 上实测登录。安装包未经 Apple 公证，解压后先执行 `xattr -cr UniTrading.app` 再打开
@@ -45,6 +50,11 @@
 ⚠️ 这个版本本身仍要手动下载一次，之后的版本才能在应用内更新
 
 ## English
+
+📊 **Rithmic order flow**
+✅ Added Bid × Ask footprints, traded volume profiles with POC and a 70% value area, Delta / CVD, a filterable tape with display pause, and a read-only multi-level DOM after Rithmic sign-in
+✅ Wide windows show the chart and analysis side by side; smaller windows and phones use a dedicated analysis page with back navigation and horizontally scrollable tools
+⚠️ Statistics cover the most recent 20,000 live trades collected during this subscription, without historical backfill. Reconnecting, changing contracts, or reopening analysis starts a new window. Unknown aggressor volume stays separate from Delta; DOM requires account L2 permissions, and aggregated snapshots with unverified replacement boundaries fall back to top of book
 
 💻 **macOS**
 ✅ New macOS desktop build for Apple Silicon (macOS 13 or later) with Tradovate and Rithmic sign-in; the license record and saved logins are protected by the system keychain

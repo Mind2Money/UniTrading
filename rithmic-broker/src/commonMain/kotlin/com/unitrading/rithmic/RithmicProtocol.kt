@@ -74,6 +74,11 @@ internal object Rf {
     const val TRADE_PRICE = 100006
     const val TRADE_SIZE = 100178
     const val TRADE_SIZE_64 = 159008
+    const val BOOK_UPDATE_TYPE = 157608
+    const val BOOK_BID_PRICE = 154282
+    const val BOOK_BID_SIZE = 154283
+    const val BOOK_ASK_PRICE = 154284
+    const val BOOK_ASK_SIZE = 154285
     const val BAR_TYPE = 119200
     const val BAR_PERIOD = 119112
     const val BAR_MARKER = 119100
@@ -192,6 +197,7 @@ internal object Rt {
     const val RESPONSE_FRONT_MONTH = 114
     const val LAST_TRADE = 150
     const val BEST_BID_OFFER = 151
+    const val ORDER_BOOK = 156
     const val REQUEST_TIME_BAR_UPDATE = 200
     const val RESPONSE_TIME_BAR_UPDATE = 201
     const val REQUEST_TIME_BAR_REPLAY = 202
@@ -262,6 +268,14 @@ internal object RithmicEnums {
     const val REQUEST_UNSUBSCRIBE = 2
     const val UPDATE_LAST_TRADE = 1
     const val UPDATE_BBO = 2
+    const val UPDATE_ORDER_BOOK = 4
+    const val BOOK_CLEAR = 1
+    const val BOOK_NONE = 2
+    const val BOOK_SNAPSHOT = 3
+    const val BOOK_BEGIN = 4
+    const val BOOK_MIDDLE = 5
+    const val BOOK_END = 6
+    const val BOOK_SOLO = 7
     const val PRESENCE_BID = 1
     const val PRESENCE_ASK = 2
     const val PRESENCE_LAST_TRADE = 1

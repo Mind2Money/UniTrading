@@ -57,6 +57,8 @@ internal class FakeRithmicServer : RithmicWire {
     /** Account P&L snapshot figures; empty text is what the server sends for a figure it does not have. */
     var snapshotBalance = "25000"
     var snapshotDayClosed = "12.5"
+    var denyDepth = false
+    var silentDepth = false
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -178,9 +180,13 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_PRODUCT_CODES -> parts(Rt.RESPONSE_PRODUCT_CODES, productCodes[m.str(Rf.EXCHANGE)].orEmpty().map { code -> { string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: ""); string(Rf.PRODUCT_CODE, code) } })
             Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit); productCommission[code]?.let { double(Rf.COMMISSION_FILL_RATE, it) } } })
             Rt.REQUEST_MARKET_DATA_UPDATE -> {
+                if (silentDepth && m.long(Rf.UPDATE_BITS) == RithmicEnums.UPDATE_ORDER_BOOK.toLong() && m.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE) return
+                if (denyDepth && m.long(Rf.UPDATE_BITS) == RithmicEnums.UPDATE_ORDER_BOOK.toLong() && m.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE) {
+                    reply(Rt.RESPONSE_MARKET_DATA_UPDATE, codes = listOf("13", "level 2 permission denied")); return
+                }
                 reply(Rt.RESPONSE_MARKET_DATA_UPDATE)
                 val (bid, ask) = quote ?: return
-                if (m.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE) socket.push {
+                if (m.int(Rf.REQUEST) == RithmicEnums.REQUEST_SUBSCRIBE && (m.long(Rf.UPDATE_BITS) ?: 0L) and RithmicEnums.UPDATE_BBO.toLong() != 0L) socket.push {
                     int32(Rf.TEMPLATE_ID, Rt.BEST_BID_OFFER); string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME")
                     uint32(Rf.PRESENCE_BITS, 3); double(Rf.BID_PRICE, bid); int32(Rf.BID_SIZE, 10); double(Rf.ASK_PRICE, ask); int32(Rf.ASK_SIZE, 12)
                     int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt()); int32(Rf.USECS, 250_000)

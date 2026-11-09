@@ -161,6 +161,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showSettings by remember { mutableStateOf(false) }
         var showActivity by remember(accountKey) { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
+        val orderFlowSupported = plugin.orderFlow != null
+        var showOrderFlow by remember(plugin) { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
@@ -201,6 +203,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
 
         LaunchedEffect(runtime) { runtime.run() }
         LaunchedEffect(plugin, symbol, executionSymbol, timeframe) { plugin.watch(symbol, timeframe) }
+        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow) { plugin.watchOrderFlow(symbol.takeIf { showOrderFlow }) }
+        DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
             if (previousExecutionSymbol != executionSymbol) {
                 selectedPositionId = null; focusedTrade = null; focusedExecution = null
@@ -377,9 +381,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     EnvironmentBadge(environment)
                     if (localDemo) Spacer(Modifier.width(12.dp)) else ConnectionStatusControl(market, compact = true, busy, syncAction)
                 }
-                val selectTab: (Int) -> Unit = { tab -> if (mobileTab != tab) showActivity = false; mobileTab = tab }
+                val selectTab: (Int) -> Unit = { tab ->
+                    if (mobileTab != tab) showActivity = false
+                    showOrderFlow = false
+                    mobileTab = tab
+                }
                 // The persistent order sheet shares the chart surface and never dims it.
-                val chartFirst = compact && mobileTab == 1
+                val chartFirst = compact && mobileTab == 1 && !showOrderFlow
                 val panelOpen = chartFirst && orderOpen
                 fun closeOrder() {
                     focusManager.clearFocus()
@@ -437,6 +445,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
                 val chart: @Composable (Modifier) -> Unit = { m ->
                     // Minimizing hides only the form; the active draft remains editable on the chart.
                     val draftShown = if (compact) orderActive else showDraft
@@ -485,7 +495,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         chrome = ChartChrome(compact, chartPreferences.legendCollapsed ?: compactShort,
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOpen, drawings = drawings, toolbarEnd = {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { barStatus() }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (compact && orderFlowSupported) ActionIcon(AppIcons.TrendingUp, "订单流分析", "open-order-flow") {
+                                        closeOrder(); showOrderFlow = true
+                                    }
+                                    barStatus()
+                                }
                             }))
                     }
                 }
@@ -501,13 +516,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text(session.account.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (!localDemo) ConnectionStatusControl(market, compact = false, busy, syncAction)
                             if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
+                            if (orderFlowSupported) TextButton({ showOrderFlow = !showOrderFlow }, Modifier.testTag("open-order-flow")) {
+                                Text(if (showOrderFlow) "返回工作区" else "订单流")
+                            }
                             ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
                             ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                             if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order")) { Text("下单") }
                         }
                         DividerLine()
                     }
-                    if (desktop) {
+                    if (showOrderFlow) {
+                        if (desktop && wide) Row(Modifier.weight(1f).fillMaxWidth()) {
+                            chart(Modifier.weight(1f).fillMaxHeight())
+                            VerticalDivider()
+                            OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxHeight()) { showOrderFlow = false }
+                        } else OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
+                    } else if (desktop) {
                         DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
                             accounts = {
                                 BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount)

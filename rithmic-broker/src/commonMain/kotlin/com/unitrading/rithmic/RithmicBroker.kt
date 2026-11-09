@@ -47,6 +47,16 @@ class RithmicBroker(
     override val market: StateFlow<MarketSnapshot> = mutableMarket.asStateFlow()
     private val tradeEvents = MutableSharedFlow<TradeFill>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     override val tradeFills = tradeEvents.asSharedFlow()
+    private val flowWindow = RithmicOrderFlow()
+    private val mutableOrderFlow = MutableStateFlow(OrderFlowSnapshot())
+    override val orderFlow: StateFlow<OrderFlowSnapshot> = mutableOrderFlow.asStateFlow()
+    private val orderFlowSyncLock = Mutex()
+    private var requestedOrderFlow: String? = null
+    private var requestedFlowRevision = 0L
+    private var activeFlowRevision = -1L
+    private var orderFlowExecution: String? = null
+    private var subscribedDepth: String? = null
+    private var flowPublishJob: Job? = null
 
     private val lock = Mutex()
     private val commandLock = Mutex()
@@ -78,7 +88,7 @@ class RithmicBroker(
     private data class ProductRms(val orderLimit: Long?, val commissionMicros: Long?)
     private val productRms = mutableMapOf<Pair<String, String>, ProductRms>()
     private val brackets = mutableMapOf<String, BracketLevels>()
-    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
+    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val bidSize: Long? = null, val askSize: Long? = null)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var quotes = emptyMap<String, Quote>()
     private val subscribedQuotes = mutableSetOf<String>()
@@ -119,7 +129,10 @@ class RithmicBroker(
     suspend fun connect(onProgress: (String) -> Unit = {}) = withContext(scope.coroutineContext.minusKey(Job)) {
         check(!stopped)
         connectLock.withLock {
-            lock.withLock { connecting = true; connected = false; marketReady = false; problem = "正在连接 ${descriptor.name}"; publish() }
+            lock.withLock {
+                connecting = true; connected = false; marketReady = false; problem = "正在连接 ${descriptor.name}"
+                resetOrderFlow("连接已重置，等待重新订阅"); publish()
+            }
             onProgress(problem)
             closePlants(logout = false)
             val gateway = credentials.normalizedGateway
@@ -177,6 +190,7 @@ class RithmicBroker(
         onProgress(problem)
         watching?.let { watch(it.first, it.second) }
         refreshQuoteWatch()
+        scope.launch { syncOrderFlow() }
         startMaintenance()
         productListJob?.cancel()
         productListJob = scope.launch { syncProductList() }
@@ -187,7 +201,8 @@ class RithmicBroker(
             scope.launch {
                 lock.withLock {
                     if (stopped) return@withLock
-                    connected = false; marketReady = false; problem = "$reason，正在等待重新连接"; publish()
+                    connected = false; marketReady = false; problem = "$reason，正在等待重新连接"
+                    resetOrderFlow("连接中断，逐笔窗口已清空"); publish()
                 }
                 scheduleReconnect()
             }
@@ -386,7 +401,7 @@ class RithmicBroker(
     override fun disconnect() {
         stopped = true
         scope.launch {
-            lock.withLock { connected = false; marketReady = false; problem = "已断开"; publish() }
+            lock.withLock { connected = false; marketReady = false; problem = "已断开"; resetOrderFlow("已断开，逐笔窗口已清空"); publish() }
             maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); quoteWatchJob?.cancel(); recoveryJob?.cancel(); continuousJob?.cancel(); productListJob?.cancel()
             closePlants(logout = true)
             saveCandleCache()
@@ -490,8 +505,17 @@ class RithmicBroker(
                 val bid = if (bidCleared) null else if (presence and RithmicEnums.PRESENCE_BID.toLong() != 0L || message.has(Rf.BID_PRICE)) message.double(Rf.BID_PRICE)?.let(spec.scale::units) ?: previous?.bid else previous?.bid
                 val ask = if (askCleared) null else if (presence and RithmicEnums.PRESENCE_ASK.toLong() != 0L || message.has(Rf.ASK_PRICE)) message.double(Rf.ASK_PRICE)?.let(spec.scale::units) ?: previous?.ask else previous?.ask
                 if (listOfNotNull(bid, ask).any { it <= 0 || it % spec.instrument.tickSize != 0L }) return@withLock
-                val next = QuoteSides(bid, ask, time)
+                val bidSize = if (bidCleared || bid == null) null else message.size(Rf.BID_SIZE_64, Rf.BID_SIZE)?.takeIf { it >= 0 }
+                    ?: previous?.bidSize?.takeIf { bid == previous?.bid }
+                val askSize = if (askCleared || ask == null) null else message.size(Rf.ASK_SIZE_64, Rf.ASK_SIZE)?.takeIf { it >= 0 }
+                    ?: previous?.askSize?.takeIf { ask == previous?.ask }
+                val next = QuoteSides(bid, ask, time, bidSize, askSize)
                 quoteSides[symbol] = next
+                if (collectingOrderFlow(symbol)) {
+                    if (bid != null && ask != null && ask < bid) flowWindow.bbo(null, null, null, null)
+                    else flowWindow.bbo(bid, bidSize, ask, askSize)
+                    publishOrderFlow()
+                }
                 val b = next.bid
                 val a = next.ask
                 // One side gone (cleared or never seen) means no tradable quote; stale prices never linger.
@@ -503,16 +527,27 @@ class RithmicBroker(
                 val symbol = message.str(Rf.SYMBOL)?.trim() ?: return@withLock
                 val spec = specs[symbol] ?: return@withLock
                 if (message.bool(Rf.IS_SNAPSHOT) == true) return@withLock
+                if ((message.long(Rf.CLEAR_BITS) ?: 0L) and RithmicEnums.PRESENCE_LAST_TRADE.toLong() != 0L) return@withLock
                 val price = message.double(Rf.TRADE_PRICE)?.let(spec.scale::units) ?: return@withLock
                 val size = message.size(Rf.TRADE_SIZE_64, Rf.TRADE_SIZE)?.takeIf { it >= 0 } ?: 0
                 val time = message.timeMs() ?: now()
-                if (price <= 0) return@withLock
+                if (price <= 0 || price % spec.instrument.tickSize != 0L) return@withLock
+                if (collectingOrderFlow(symbol) && size > 0) {
+                    flowWindow.trade(price, size, time, message.int(Rf.TRANSACTION_TYPE))
+                    publishOrderFlow()
+                }
                 val series = barSubscription ?: return@withLock
                 // Daily bars follow the exchange trading date, not the UTC calendar day; only the server closes them.
                 if (executionSymbol(series.first) != symbol || series.second.minutes % 1440 == 0) return@withLock
                 applyTrade(series, price, size, time)
             }
-            Rt.FORCED_LOGOUT -> { marketReady = false; problem = "Rithmic 服务器强制登出了行情连接"; publish() }
+            Rt.ORDER_BOOK -> {
+                val symbol = message.str(Rf.SYMBOL)?.trim() ?: return@withLock
+                if (!collectingOrderFlow(symbol) || subscribedDepth != symbol) return@withLock
+                val spec = specs[symbol] ?: return@withLock
+                if (flowWindow.book(message, spec)) publishOrderFlow(immediate = message.int(Rf.BOOK_UPDATE_TYPE) in listOf(RithmicEnums.BOOK_CLEAR, RithmicEnums.BOOK_NONE))
+            }
+            Rt.FORCED_LOGOUT -> { marketReady = false; resetOrderFlow("行情连接已断开，逐笔窗口已清空"); problem = "Rithmic 服务器强制登出了行情连接"; publish() }
         }
     }
 
@@ -674,6 +709,7 @@ class RithmicBroker(
             else if (problem.startsWith("$symbol 主力无法确认")) problem = "$symbol 主力已确认：${resolved.first}"
             rebuild()
         }
+        if (requestedOrderFlow == symbol) syncOrderFlow()
         if (resolved != null) { refreshQuoteWatch(); watching?.takeIf { it.first == symbol }?.let { watch(it.first, it.second) } }
     }
 
@@ -730,7 +766,7 @@ class RithmicBroker(
         val plant = ticker ?: return@withLock
         val wanted = lock.withLock {
             val fromAccounts = positions.values.filter { it.net != 0L }.map { it.symbol } + orders.values.filter { it.active }.map { it.symbol }
-            val fromWatch = (quoteWatchSymbols + listOfNotNull(watching?.first)).mapNotNull { executionSymbol(it) }
+            val fromWatch = (quoteWatchSymbols + listOfNotNull(watching?.first, requestedOrderFlow)).mapNotNull { executionSymbol(it) }
             (fromAccounts + fromWatch).filter { it in specs }.toSet()
         }
         val (remove, add) = lock.withLock { (subscribedQuotes - wanted).toList() to (wanted - subscribedQuotes).toList() }
@@ -755,6 +791,106 @@ class RithmicBroker(
     private fun ProtoWriter.marketData(symbol: String, exchange: String, request: Int) {
         string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange); int32(Rf.REQUEST, request)
         uint32(Rf.UPDATE_BITS, (RithmicEnums.UPDATE_LAST_TRADE or RithmicEnums.UPDATE_BBO).toLong())
+    }
+
+    // ───────────────────────────── live order flow ─────────────────────────────
+
+    override fun watchOrderFlow(symbol: String?) {
+        if (stopped || requestedOrderFlow == symbol) return
+        requestedOrderFlow = symbol
+        requestedFlowRevision++
+        scope.launch { syncOrderFlow() }
+    }
+
+    /** All callers hold [lock]. Disconnects invalidate both the book and the contiguous tape window. */
+    private fun resetOrderFlow(message: String) {
+        subscribedDepth = null; orderFlowExecution = null; activeFlowRevision = -1L
+        flowWindow.reset(null, message)
+        publishOrderFlow(immediate = true)
+    }
+
+    private fun collectingOrderFlow(symbol: String): Boolean =
+        marketReady && activeFlowRevision == requestedFlowRevision && symbol == orderFlowExecution && requestedOrderFlow?.let(::executionSymbol) == symbol
+
+    private fun publishOrderFlow(immediate: Boolean = false) {
+        if (immediate) {
+            flowPublishJob?.cancel(); flowPublishJob = null
+            mutableOrderFlow.value = flowWindow.snapshot(marketReady && orderFlowExecution != null)
+        } else if (flowPublishJob?.isActive != true) {
+            flowPublishJob = scope.launch {
+                delay(100)
+                lock.withLock {
+                    mutableOrderFlow.value = flowWindow.snapshot(marketReady && orderFlowExecution != null)
+                }
+            }
+        }
+    }
+
+    /** Depth is an independent bits=4 subscription: a permission error never disables BBO or trading. */
+    private suspend fun syncOrderFlow() = orderFlowSyncLock.withLock syncFlow@ {
+        val requested = requestedOrderFlow
+        val revision = requestedFlowRevision
+        val plant = ticker
+        val target = lock.withLock {
+            requested?.let(::executionSymbol)?.takeIf { marketReady && it in specs }
+        }
+        val oldDepth = lock.withLock {
+            if (requested != requestedOrderFlow || revision != requestedFlowRevision) return@syncFlow
+            if (plant !== ticker || target != null && !marketReady) return@syncFlow
+            if (target != null && orderFlowExecution == target && flowWindow.symbol == target && activeFlowRevision == revision) return@syncFlow
+            val previous = subscribedDepth
+            subscribedDepth = null; orderFlowExecution = target; activeFlowRevision = revision
+            flowWindow.reset(target, when {
+                requested == null -> "未订阅订单流"
+                target == null -> "等待连接或主力合约确认"
+                else -> "正在订阅实时逐笔，等待 L2 深度"
+            })
+            if (target != null) quoteSides[target]?.takeIf { it.bid == null || it.ask == null || it.ask >= it.bid }
+                ?.let { flowWindow.bbo(it.bid, it.bidSize, it.ask, it.askSize) }
+            publishOrderFlow(immediate = true)
+            previous
+        }
+        if (oldDepth != null && plant != null) {
+            val spec = lock.withLock { specs[oldDepth] }
+            if (spec != null) try {
+                plant.request(Rt.REQUEST_MARKET_DATA_UPDATE, 5_000) {
+                    string(Rf.SYMBOL, oldDepth); string(Rf.EXCHANGE, spec.exchange)
+                    int32(Rf.REQUEST, RithmicEnums.REQUEST_UNSUBSCRIBE); uint32(Rf.UPDATE_BITS, RithmicEnums.UPDATE_ORDER_BOOK.toLong())
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* A stale depth subscription is ignored by collectingOrderFlow. */ }
+        }
+        if (plant == null || plant !== ticker || requested != requestedOrderFlow || revision != requestedFlowRevision || target == null) {
+            if (marketReady && plant != null) syncQuoteSubscriptions()
+            return@syncFlow
+        }
+        try { syncQuoteSubscriptions() }
+        catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Existing quote errors already appear on the main connection. */ }
+        if (plant !== ticker || requested != requestedOrderFlow || revision != requestedFlowRevision) return@syncFlow
+        val spec = lock.withLock { specs[target] } ?: return@syncFlow
+        lock.withLock {
+            if (plant !== ticker || !marketReady || revision != requestedFlowRevision) return@syncFlow
+            subscribedDepth = target
+        }
+        try {
+            val reply = plant.request(Rt.REQUEST_MARKET_DATA_UPDATE, 10_000) {
+                string(Rf.SYMBOL, target); string(Rf.EXCHANGE, spec.exchange)
+                int32(Rf.REQUEST, RithmicEnums.REQUEST_SUBSCRIBE); uint32(Rf.UPDATE_BITS, RithmicEnums.UPDATE_ORDER_BOOK.toLong())
+            }
+            if (reply.lastOrNull()?.rpCode()?.firstOrNull() == "7") lock.withLock {
+                if (plant === ticker && requested == requestedOrderFlow && revision == activeFlowRevision && target == orderFlowExecution) {
+                    flowWindow.unavailable("服务器未提供 L2 深度；逐笔仍可使用")
+                    publishOrderFlow(immediate = true)
+                }
+            }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (error: Exception) { lock.withLock {
+            if (plant === ticker && requested == requestedOrderFlow && revision == activeFlowRevision && target == orderFlowExecution) {
+                flowWindow.unavailable("L2 深度不可用：${safeRithmicMessage(error.message ?: "请检查行情权限")}；逐笔仍可使用")
+                publishOrderFlow(immediate = true)
+            }
+        } }
     }
 
     // ───────────────────────────── history ─────────────────────────────
