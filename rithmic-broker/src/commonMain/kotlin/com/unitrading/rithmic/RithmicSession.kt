@@ -43,7 +43,7 @@ class RithmicCredentials(
 
     companion object {
         const val DEFAULT_APP_NAME = "UniTrading"
-        const val DEFAULT_APP_VERSION = "1.3.1"
+        const val DEFAULT_APP_VERSION = "1.4.0"
         internal fun slug(value: String): String = value.trim().lowercase().map { if (it.isLetterOrDigit()) it else '-' }.joinToString("")
     }
 }

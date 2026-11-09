@@ -1,6 +1,10 @@
 # Unreleased
 
+# v1.4.0
+
 ## 简体中文
+
+🎉 UniTrading 更新至 **v1.4.0**！新增 Rithmic 订单流、TradingView 式画图工具、账户回撤显示、macOS 版和应用内更新，界面配色按 Material 3 重做。
 
 📊 **Rithmic 订单流**
 ✅ 登录 Rithmic 后可从“订单流”打开足迹（Bid × Ask）、逐笔成交量分布（POC / 70% 价值区）、Delta / CVD、可按成交量过滤并暂停显示的逐笔成交，以及只读多档 DOM
@@ -61,6 +65,8 @@
 ⚠️ 这个版本本身仍要手动下载一次，之后的版本才能在应用内更新
 
 ## English
+
+🎉 UniTrading is now **v1.4.0**! It adds Rithmic order flow, TradingView-style drawing tools, account drawdown readouts, a macOS build and in-app updates, and rebuilds the interface colors on Material 3.
 
 📊 **Rithmic order flow**
 ✅ Added Bid × Ask footprints, traded volume profiles with POC and a 70% value area, Delta / CVD, a filterable tape with display pause, and a read-only multi-level DOM after Rithmic sign-in
