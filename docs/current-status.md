@@ -37,13 +37,13 @@
 ## 构建与 CI
 
 - 共享 JVM 编译使用 JDK 21 toolchain；Kotlin 2.4.20、Compose Multiplatform 1.12.0、Gradle 9.7.1、AGP 9.4.0。
-- Android compileSdk 37、targetSdk 36、minSdk 26。CI 安装包标识为 `platforms;android-37.0`；本机 SDK 路径放在不提交的 `local.properties`。
+- Android compileSdk 37.2（库模块 37.0）、targetSdk 36、minSdk 26。CI 安装包标识为 `platforms;android-37.0` 和 `platforms;android-37.2`；本机 SDK 路径放在不提交的 `local.properties`。
 - Windows 打包需要完整 JDK 的 `jpackage.exe`。本机 JBR 21 缺少该工具，1.1.3/1.1.4 分发目录使用 Microsoft JDK 25.0.2 打包；JBR 可用于编译，但缺少打包工具。
 
 ```powershell
 ./gradlew.bat :composeApp:run
 ./gradlew.bat :composeApp:createDistributable
-./gradlew.bat :androidApp:assembleDebug
+./gradlew.bat :androidApp:assembleStandardDebug
 ./gradlew.bat :androidApp:assembleRelease
 ./gradlew.bat :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :composeApp:desktopTest
 ```
@@ -54,10 +54,10 @@ Android debug 使用调试签名；本机构建 release 默认为未签名 APK�
 
 | 阶段 | 实际配置 |
 | --- | --- |
-| 构建 | branch push / PR / 手动执行 `:androidApp:assembleRelease`，检查 mapping/resources 输出并上传 unsigned APK |
+| 构建 | branch push / PR / 手动执行 `:androidApp:assembleRelease`，检查两个 flavor 的 mapping/resources 输出并上传 unsigned APK |
 | 签名 | main/master 或 `v*` tag 的 push 使用 secrets 签名，再上传 signed APK |
 | Windows 包 | 仅 `v*` tag：`windows-latest` 执行 `:composeApp:createDistributable`，检查 exe 版本和登录 host 后压缩为 `UniTrading-<版本>-windows-x64.zip` |
-| GitHub Release | 仅 `v*` tag：tag 须等于 `v<versionName>`；两个包就绪后用 `docs/release-notes.md` 的小节和提交列表创建 Release，上传 signed APK、Windows zip 与 R8 mapping |
+| GitHub Release | 仅 `v*` tag：tag 须等于 `v<versionName>`；两个包就绪后用 `docs/release-notes.md` 的小节和提交列表创建 Release，上传两个 signed APK、Windows zip 与 R8 mapping |
 | 通知 | 对上述发布 push 调用 Telegram；构建失败时也报告，取消运行时停止；未配置 Telegram secrets 时跳过 |
 | 签名 secrets | `SIGNING_KEY_BASE64`、`ALIAS`、`KEY_STORE_PASSWORD`；`KEY_PASSWORD` 可选 |
 | Telegram secrets | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |

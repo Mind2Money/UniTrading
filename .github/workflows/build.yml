@@ -61,8 +61,9 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       # compileSdk 37 is published as android-37.0; the bare name does not exist.
+      # androidApp compiles against 37.2, the oldest GeckoView accepts.
       - name: 安装 compile SDK
-        run: sdkmanager --install "platforms;android-37.0"
+        run: sdkmanager --install "platforms;android-37.0" "platforms;android-37.2"
 
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
@@ -83,8 +84,8 @@ jobs:
             echo "commit_count=$count"
           } >> "$GITHUB_OUTPUT"
 
-      # The release build type shrinks code and resources with R8
-      # (androidApp/build.gradle.kts).
+      # The release build type shrinks code and resources with R8, and the task
+      # builds both flavors: standard and gecko (androidApp/build.gradle.kts).
       - name: 编译 release APK
         run: ./gradlew :androidApp:assembleRelease
 
@@ -95,29 +96,48 @@ jobs:
         run: |
           set -euo pipefail
           out=androidApp/build/outputs
-          # A fresh checkout has no stale outputs, so these files prove that this
-          # build ran R8 and resource shrinking.
-          test -s "$out/mapping/release/mapping.txt"
-          test -s "$out/mapping/release/resources.txt"
-          apk="$out/apk/release/androidApp-release-unsigned.apk"
-          test -f "$apk"
-
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
-          badging="$("$build_tools/aapt2" dump badging "$apk")"
-          version_name="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
-          version_code="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")"
-          test -n "$version_name"
-          test -n "$version_code"
+          mkdir -p dist
+          # Each flavor, and what its file name adds after the commit.
+          for variant in standard: gecko:-webview; do
+            flavor="${variant%%:*}"
+            suffix="${variant#*:}"
+            # A fresh checkout has no stale outputs, so these files prove that this
+            # build ran R8 and resource shrinking.
+            test -s "$out/mapping/${flavor}Release/mapping.txt"
+            test -s "$out/mapping/${flavor}Release/resources.txt"
+            apk="$out/apk/$flavor/release/androidApp-$flavor-release-unsigned.apk"
+            test -f "$apk"
 
-          # A release takes its version from the tag, which must match the build.
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version_name" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $version_name"
+            badging="$("$build_tools/aapt2" dump badging "$apk")"
+            version_name="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
+            version_code="$(printf '%s\n' "$badging" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")"
+            test -n "$version_name"
+            test -n "$version_code"
+
+            # A release takes its version from the tag, which must match the build.
+            if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version_name" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match versionName $version_name"
+              exit 1
+            fi
+
+            name="UniTrading-${version_name}-${SHORT_SHA}"
+            cp "$apk" "dist/${name}${suffix}-unsigned.apk"
+          done
+
+          # The login window installs these while running, so nothing earlier
+          # notices them missing; a phone cannot install the wrong architecture.
+          contents="$(unzip -l "dist/${name}-webview-unsigned.apk")"
+          for environment in demo live; do
+            if ! grep -q "assets/tradovate-login/$environment/login.js" <<<"$contents"; then
+              echo "::error::The $environment login extension is not packaged"
+              exit 1
+            fi
+          done
+          if ! grep -q "native-code: 'arm64-v8a'" <<<"$("$build_tools/aapt2" dump badging "dist/${name}-webview-unsigned.apk")"; then
+            echo "::error::The -webview APK is not arm64-v8a"
             exit 1
           fi
-
-          name="UniTrading-${version_name}-${SHORT_SHA}"
-          mkdir -p dist
-          cp "$apk" "dist/${name}-unsigned.apk"
           ls -l dist
           {
             echo "name=$name"
@@ -135,7 +155,14 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: UniTrading-mapping-android
-          path: androidApp/build/outputs/mapping/release/mapping.txt
+          path: androidApp/build/outputs/mapping/standardRelease/mapping.txt
+          retention-days: 90
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniTrading-mapping-android-webview
+          path: androidApp/build/outputs/mapping/geckoRelease/mapping.txt
           retention-days: 90
           if-no-files-found: error
 
@@ -175,17 +202,12 @@ jobs:
           fi
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
           echo "using $build_tools"
-          unsigned="unsigned/${APK_NAME}-unsigned.apk"
-          test -f "$unsigned"
 
           keystore="$RUNNER_TEMP/release.keystore"
           trap 'rm -f "$keystore"' EXIT
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
 
-          "$build_tools/zipalign" -c 4 "$unsigned"
-
           mkdir -p signed
-          signed="signed/${APK_NAME}.apk"
           # No v4 signature: it is a separate .idsig file nothing here ships.
           args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
           # A PKCS12 store has one password for both; pass a key password only
@@ -193,13 +215,26 @@ jobs:
           if [ -n "${KEY_PASSWORD:-}" ]; then
             args+=(--key-pass env:KEY_PASSWORD)
           fi
-          "$build_tools/apksigner" "${args[@]}" --out "$signed" "$unsigned"
-          "$build_tools/apksigner" verify --print-certs "$signed" | grep -i 'SHA-256'
+          for apk in "$APK_NAME" "$APK_NAME-webview"; do
+            unsigned="unsigned/$apk-unsigned.apk"
+            test -f "$unsigned"
+            "$build_tools/zipalign" -c 4 "$unsigned"
+            "$build_tools/apksigner" "${args[@]}" --out "signed/$apk.apk" "$unsigned"
+            "$build_tools/apksigner" verify --print-certs "signed/$apk.apk" | grep -i 'SHA-256'
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: UniTrading-apk-signed
           path: signed/${{ needs.build-android.outputs.apk_name }}.apk
+          if-no-files-found: error
+
+      # Kept apart because Telegram takes only the standard APK; this one is over
+      # the 50 MB a bot can send.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: UniTrading-apk-webview-signed
+          path: signed/${{ needs.build-android.outputs.apk_name }}-webview.apk
           if-no-files-found: error
 
   # ─── Windows 桌面包（仅 v* tag）──────────────────────────────────────────────
@@ -223,7 +258,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       - name: 安装 compile SDK
-        run: sdkmanager --install "platforms;android-37.0"
+        run: sdkmanager --install "platforms;android-37.0" "platforms;android-37.2"
 
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
@@ -274,7 +309,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
 
       - name: 安装 compile SDK
-        run: sdkmanager --install "platforms;android-37.0"
+        run: sdkmanager --install "platforms;android-37.0" "platforms;android-37.2"
 
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
 
@@ -339,6 +374,11 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
+          name: UniTrading-apk-webview-signed
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
           name: UniTrading-windows-x64
           path: dist
 
@@ -351,6 +391,11 @@ jobs:
         with:
           name: UniTrading-mapping-android
           path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-mapping-android-webview
+          path: dist/webview-mapping
 
       # Re-running must not fail on an existing release; uploads replace assets.
       - name: 创建或更新 Release
@@ -365,14 +410,16 @@ jobs:
           python3 scripts/release-notes.py "$TAG" --commits > release-notes.md
           mapping="dist/UniTrading-${VERSION_NAME}-android-mapping.txt"
           mv dist/mapping.txt "$mapping"
+          webview_mapping="dist/UniTrading-${VERSION_NAME}-android-webview-mapping.txt"
+          mv dist/webview-mapping/mapping.txt "$webview_mapping"
           if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
             gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-notes.md
           fi
           gh release upload "$TAG" --clobber \
-            "dist/${APK_NAME}.apk" "dist/UniTrading-${VERSION_NAME}-windows-x64.zip" \
-            "dist/UniTrading-${VERSION_NAME}-macos-arm64.zip" "$mapping"
+            "dist/${APK_NAME}.apk" "dist/${APK_NAME}-webview.apk" "dist/UniTrading-${VERSION_NAME}-windows-x64.zip" \
+            "dist/UniTrading-${VERSION_NAME}-macos-arm64.zip" "$mapping" "$webview_mapping"
 
   # ─── Discord（仅 v* tag）─────────────────────────────────────────────────────
   # Runs after the release, so the link in the message already downloads. A failure

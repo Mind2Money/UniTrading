@@ -78,15 +78,15 @@ xattr -cr UniTrading.app
 ### Android 调试 APK
 
 ```bash
-./gradlew :androidApp:assembleDebug
+./gradlew :androidApp:assembleStandardDebug
 ```
 
-输出：`androidApp/build/outputs/apk/debug/androidApp-debug.apk`。
+输出：`androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk`。内置浏览器版见[本地构建与 CI](docs/local-build.md#android-的两个-apk)。
 
 已启动模拟器或连接设备时：
 
 ```bash
-./gradlew :androidApp:installDebug
+./gradlew :androidApp:installStandardDebug
 ```
 
 ### 测试
@@ -119,7 +119,7 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator 
 4. 账户与品种由服务器加载；在行情栏输入合约前缀（如 MES），点击“查询服务器合约”。只支持已加载规格的 USD 线性期货。
 5. 数量单位为整数“张”；按服务器净额持仓显示，禁止将 0.01 手直接映射成期货订单。
 
-Windows 需要 WebView2 Runtime 与系统 .NET Framework；macOS 使用系统 WKWebView。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 需要较新 System WebView；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
+Windows 需要 WebView2 Runtime 与系统 .NET Framework；macOS 使用系统 WKWebView。`:composeApp:run` 会自动构建登录 host，不要求安装 .NET SDK。Android 标准版使用手机的 System WebView，系统 WebView 不满足要求的设备（例如鸿蒙）可安装文件名以 `-webview.apk` 结尾的内置浏览器版；自动填充依赖用户启用的系统密码/Autofill 服务，模拟器未必预装该服务。
 
 Windows、macOS 和 Android 登录后会在本机加密保存会话，重启自动恢复仍有效的登录及上次选择的账户；续期后的会话同步更新。Windows 使用当前用户的 DPAPI，macOS 使用登录钥匙串中的密钥与 AES-GCM，Android 使用 Keystore 密钥与 AES-GCM。支持保存多个用户及独立的 Demo/Live 登录；账户页可以重试恢复或清除全部已保存登录。会话过期或被服务器撤销后仍需重新认证。
 

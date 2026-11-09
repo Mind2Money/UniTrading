@@ -11,15 +11,16 @@ import java.io.File
 class ApkUpdateTargetTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val target = ApkUpdateTarget(context)
-    private fun release(version: String, name: String = "UniTrading-${version.removePrefix("v")}-79768fe.apk") = ReleasePackage(version, name, listOf("https://api.github.com/x"), 1, "a".repeat(64))
+    private fun release(version: String, name: String = "UniTrading-${version.removePrefix("v")}-79768fe$APK_NAME_SUFFIX.apk") = ReleasePackage(version, name, listOf("https://api.github.com/x"), 1, "a".repeat(64))
 
     @Test fun onlyTheSignedApkOfTheReleaseIsPicked() {
         val pattern = target.assetName("1.4.0")
-        assertTrue(pattern.matches("UniTrading-1.4.0-79768fe.apk"))
+        assertTrue(pattern.matches("UniTrading-1.4.0-79768fe$APK_NAME_SUFFIX.apk"))
         assertFalse(pattern.matches("UniTrading-1.4.0-79768fe-unsigned.apk"))
+        assertFalse(pattern.matches("UniTrading-1.4.0-79768fe${if (APK_NAME_SUFFIX.isEmpty()) "-webview" else ""}.apk"))
         assertFalse(pattern.matches("UniTrading-1.4.0-android-mapping.txt"))
         assertFalse(pattern.matches("UniTrading-1.4.0-windows-x64.zip"))
-        assertFalse(pattern.matches("UniTrading-1.3.9-79768fe.apk"))
+        assertFalse(pattern.matches("UniTrading-1.3.9-79768fe$APK_NAME_SUFFIX.apk"))
     }
 
     /** Fails on a shrunk build if R8 or resource shrinking removes the provider or its path list. */

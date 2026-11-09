@@ -28,7 +28,7 @@ internal class ApkUpdateTarget(private val context: Context) : UpdateTarget {
 
     override val install = UpdateInstall.SYSTEM_INSTALLER
     // CI names the APK after the version and the short commit; `-unsigned` builds never reach a release.
-    override fun assetName(version: String) = Regex("^UniTrading-${Regex.escape(version)}-[0-9a-f]{7,40}\\.apk$")
+    override fun assetName(version: String) = Regex("^UniTrading-${Regex.escape(version)}-[0-9a-f]{7,40}${Regex.escape(APK_NAME_SUFFIX)}\\.apk$")
     override fun clear() = !folder.exists() || folder.deleteRecursively()
     override fun lastOutcome(): UpdateProgress = UpdateProgress.Idle
     private fun apk(release: ReleasePackage) = File(folder, release.name)

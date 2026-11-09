@@ -1,5 +1,21 @@
 # Unreleased
 
+## 简体中文
+
+📱 **Android 安装包**
+✅ 发布页新增内置浏览器版 APK（文件名以 `-webview.apk` 结尾，约 95 MB，只支持 arm64）：Tradovate 登录改用 APK 自带的 GeckoView，不依赖手机的 System WebView，鸿蒙等系统 WebView 不满足要求的手机可以安装这个版本
+✅ 两个版本的包名和签名相同，可以直接互相覆盖安装并保留数据；应用内更新只更新到同类型的安装包
+✅ 标准版不再因为 WebView 不支持独立配置而拒绝登录，这种情况下 Demo 和 Live 共用网站登录状态；确实缺少必需能力时，提示写明缺哪一项和 WebView 版本
+⚠️ 这两项改动尚未在鸿蒙真机上验证，内置浏览器版也未用真实账号登录过
+
+## English
+
+📱 **Android packages**
+✅ The release page now has a built-in browser APK (file name ending in `-webview.apk`, about 95 MB, arm64 only): the Tradovate login uses GeckoView inside the APK instead of the phone's System WebView, for phones whose System WebView falls short, such as HarmonyOS devices
+✅ Both packages share one package name and signature, so either installs over the other and keeps your data; in-app updates stay on the same kind of package
+✅ The standard package no longer refuses to log in when the WebView lacks separate profiles; Demo and Live then share the website's login state. When a required capability really is missing, the message names it and the WebView version
+⚠️ Neither change has been run on a real HarmonyOS phone yet, and the built-in browser package has not logged in with a real account
+
 # v1.4.0
 
 ## 简体中文

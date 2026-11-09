@@ -35,6 +35,14 @@ class AppUpdatesTest {
         assertEquals(3_221_147, phone?.bytes)
     }
 
+    /** Released Android builds keep matching this pattern and accept only one file, so the second APK must stay out of it. */
+    @Test fun theBuiltInBrowserApkLeavesTheStandardApkTheOnlyMatch() {
+        val builtInBrowser = { version: String -> Regex("^UniTrading-${Regex.escape(version)}-[0-9a-f]{7,40}-webview\\.apk$") }
+        val text = release(assets = listOf(asset("UniTrading-1.4.0-79768fe.apk"), asset("UniTrading-1.4.0-79768fe-webview.apk"), asset("UniTrading-1.4.0-android-webview-mapping.txt")))
+        assertEquals("UniTrading-1.4.0-79768fe.apk", parseLatestRelease(text, android).packageFile?.name)
+        assertEquals("UniTrading-1.4.0-79768fe-webview.apk", parseLatestRelease(text, builtInBrowser).packageFile?.name)
+    }
+
     @Test fun anythingButThisRepositorysPublishedStableReleaseIsRefused() {
         assertInvalid("not json")
         assertInvalid("[]")

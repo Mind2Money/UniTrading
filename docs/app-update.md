@@ -13,7 +13,7 @@
 | 步骤 | Windows（打包版） | Android |
 | --- | --- | --- |
 | 检查 | 匿名读取 `Mind2Money/UniTrading` 的 latest release，不带任何凭据 | 同左 |
-| 选包 | `UniTrading-<版本>-windows-x64.zip` | `UniTrading-<版本>-<提交>.apk` |
+| 选包 | `UniTrading-<版本>-windows-x64.zip` | `UniTrading-<版本>-<提交>.apk`；内置浏览器版选 `UniTrading-<版本>-<提交>-webview.apk` |
 | 下载 | 先走 API 资源地址，失败时换 release 下载地址；跳转只跟 GitHub 自己的域名；核对大小和 SHA-256 | 同左 |
 | 本机检查 | 解压成 `payload` 和 `helper` 两份，启动 helper 副本的 `--version`，输出必须等于目标版本 | 包名和 `versionName` 必须对应，`versionCode` 必须升高，签名证书必须与已安装应用相同 |
 | 安装 | helper 等旧版退出，把旧文件改名移开、新文件移入，出错时回滚，再打开新版 | 打开系统安装界面，由用户确认；首次还要在系统页面允许本应用安装未知应用 |
@@ -40,7 +40,7 @@ Windows 的做法来自 BatchTradovate：jpackage 启动器把应用放在 kill-
 
 旧版本靠这些约定更新到新版本，改动前要考虑已经发出去的版本：
 
-- Release 资源名：`UniTrading-<版本>-windows-x64.zip`、`UniTrading-<版本>-<7 位及以上十六进制提交>.apk`，各只能有一个匹配项。
+- Release 资源名：`UniTrading-<版本>-windows-x64.zip`、`UniTrading-<版本>-<7 位及以上十六进制提交>.apk`、`UniTrading-<版本>-<提交>-webview.apk`，各只能有一个匹配项。v1.4.0 及更早的 Android 版本只认不带后缀的 APK，内置浏览器版靠后缀避开它们的匹配规则。
 - zip 只有一个根目录 `UniTrading/`，里面有 `UniTrading.exe`、`app`、`runtime`。
 - 打包后的程序支持 `--version`（输出 `jpackage.app-version`），无参数启动时先判断自己是不是 helper 副本。
 - `update-staging/helper/update-job.json` 的位置和字段不变。

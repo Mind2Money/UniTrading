@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 spec = importlib.util.spec_from_file_location('build_local', Path(__file__).with_name('build-local.py'))
 build_local = importlib.util.module_from_spec(spec)
@@ -292,6 +293,79 @@ class LocalBuildTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'signature invalid'):
                     build.sign()
             self.assertFalse(build.signed.exists())
+
+    def write_release_outputs(self, root, entries=('assets/tradovate-login/demo/login.js', 'assets/tradovate-login/live/login.js')):
+        outputs = root / 'androidApp/build/outputs'
+        for flavor in ('standard', 'gecko'):
+            maps = outputs / 'mapping' / f'{flavor}Release'
+            maps.mkdir(parents=True)
+            (maps / 'mapping.txt').write_text(flavor)
+            (maps / 'resources.txt').write_text(flavor)
+            apk = outputs / 'apk' / flavor / 'release' / f'androidApp-{flavor}-release-unsigned.apk'
+            apk.parent.mkdir(parents=True)
+            with zipfile.ZipFile(apk, 'w') as package:
+                for entry in entries:
+                    package.writestr(entry, flavor)
+
+    def run_android(self, folder, entries=None, native_code="native-code: 'arm64-v8a'"):
+        root, output = Path(folder) / 'repo', Path(folder) / 'output'
+        output.mkdir()
+        self.write_release_outputs(root, *([entries] if entries else []))
+        build = self.make_build(str(output))
+        build.console.stream = io.StringIO()
+
+        def command(args, **kwargs):
+            return 'abc1234\n' if args[0] == 'git' else \
+                f"package: name='com.unitrading.demo' versionCode='11' versionName='1.5.0'\n{native_code}\n"
+
+        with patch.object(build_local, 'ROOT', root), patch.object(build, 'gradle_tasks'), \
+                patch.object(build, 'android_tool', side_effect=lambda name: name), \
+                patch.object(build, 'run', side_effect=command):
+            build.android()
+        return build
+
+    def test_android_keeps_the_released_apk_name_and_adds_the_webview_apk(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.run_android(folder)
+            self.assertEqual(build.unsigned.name, 'UniTrading-1.5.0-abc1234-unsigned.apk')
+            self.assertEqual(build.webview_unsigned.name, 'UniTrading-1.5.0-abc1234-webview-unsigned.apk')
+            self.assertEqual((build.output / 'mapping.txt').read_text(), 'standard')
+            self.assertEqual((build.output / 'webview-mapping.txt').read_text(), 'gecko')
+            self.assertEqual(build.summary['version_name'], '1.5.0')
+            self.assertEqual(build.summary['artifacts']['webview_resources'], 'webview-resources.txt')
+
+    def test_android_refuses_a_webview_apk_without_a_login_extension(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(RuntimeError, 'live login extension'):
+                self.run_android(folder, entries=('assets/tradovate-login/demo/login.js',))
+
+    def test_android_refuses_a_webview_apk_for_another_architecture(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(RuntimeError, 'not arm64-v8a'):
+                self.run_android(folder, native_code="native-code: 'x86_64'")
+
+    def test_signing_covers_both_apks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            build = self.make_build(folder, '--targets', 'android', '--sign')
+            build.unsigned = Path(folder) / 'UniTrading-1.0-abcdef-unsigned.apk'
+            build.webview_unsigned = Path(folder) / 'UniTrading-1.0-abcdef-webview-unsigned.apk'
+            build.unsigned.write_bytes(b'standard')
+            build.webview_unsigned.write_bytes(b'webview')
+            build.env.update(SIGNING_KEY_BASE64=base64.b64encode(b'key').decode(),
+                             KEY_ALIAS='test', KEY_STORE_PASSWORD='secret', KEY_PASSWORD='')
+
+            def command(args, **kwargs):
+                if 'sign' in args:
+                    args[args.index('--out') + 1].write_bytes(Path(args[-1]).read_bytes())
+
+            with patch.object(build, 'android_tool', side_effect=lambda name: name), \
+                    patch.object(build, 'run', side_effect=command):
+                build.sign()
+            # Telegram sends build.signed, which must stay the standard APK.
+            self.assertEqual(build.signed.read_bytes(), b'standard')
+            self.assertEqual(build.signed.name, 'UniTrading-1.0-abcdef.apk')
+            self.assertEqual((Path(folder) / 'UniTrading-1.0-abcdef-webview.apk').read_bytes(), b'webview')
+            self.assertEqual(build.summary['artifacts']['webview_signed_apk'], 'UniTrading-1.0-abcdef-webview.apk')
 
     def test_telegram_requires_signing(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -16,10 +16,13 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('broker-api', 'demo-broker', 'tradovate-broker', 'composeApp')
+# Each release flavor and what its APK name adds after the commit; released apps look for these names.
+APK_VARIANTS = (('standard', ''), ('gecko', '-webview'))
 STAGES = {'preflight': '环境检查', 'desktop': '桌面测试与打包', 'android': 'Android R8 编译',
           'ios': 'iOS 构建与检查', 'sign-android': 'Android 签名', 'telegram': 'Telegram 发布'}
 DEFAULT_CONFIG = ROOT / 'local-build.json'
@@ -211,6 +214,7 @@ class Build:
         self.console = Console()
         self.started = time.monotonic()
         self.stage_count = 1 + len(set(args.targets)) + int(args.sign) + int(args.notify_telegram)
+        self.webview_unsigned = None
 
     def banner(self, preview=False):
         self.console.line()
@@ -244,7 +248,9 @@ class Build:
             self.console.line('  已生成产物')
             for name, relative in self.summary['artifacts'].items():
                 labels = {'desktop': '桌面应用', 'unsigned_apk': '未签名 APK', 'signed_apk': '已签名 APK',
-                          'mapping': 'R8 映射', 'resources': '资源压缩报告', 'ios': 'iOS 应用与日志'}
+                          'webview_unsigned_apk': '内置浏览器版未签名 APK', 'webview_signed_apk': '内置浏览器版已签名 APK',
+                          'mapping': 'R8 映射', 'resources': '资源压缩报告', 'webview_mapping': '内置浏览器版 R8 映射',
+                          'webview_resources': '内置浏览器版资源压缩报告', 'ios': 'iOS 应用与日志'}
                 self.console.line(f'  {labels.get(name, name)}  {self.output / relative}')
         self.console.line()
         self.console.line(f'  完整日志  {self.output / "build.log"}')
@@ -455,28 +461,56 @@ class Build:
         self.gradle_tasks(':androidApp:assembleRelease', '-PcredentialStoreTest=false',
                           '-PinstrumentationBuildType=debug', label='编译 Release APK（R8 代码与资源压缩）')
         outputs = ROOT / 'androidApp/build/outputs'
-        for name in ('mapping.txt', 'resources.txt'):
-            source = outputs / 'mapping/release' / name
-            if not source.is_file() or not source.stat().st_size:
-                raise RuntimeError(f'R8 output missing: {source}')
-            shutil.copy2(source, self.output / name)
-        apk = outputs / 'apk/release/androidApp-release-unsigned.apk'
-        badging = self.run([self.android_tool('aapt2'), 'dump', 'badging', apk], capture=True)
-        values = {k: re.search(rf"{k}='([^']+)'", badging) for k in ('versionName', 'versionCode')}
-        if not all(values.values()) or "package: name='com.unitrading.demo'" not in badging:
-            raise RuntimeError('Unexpected APK application ID/version; refusing to publish')
-        version, code = values['versionName'][1], values['versionCode'][1]
         short_sha = self.run(['git', 'rev-parse', '--short', 'HEAD'], capture=True).strip()
-        name = f'UniTrading-{version}-{short_sha}'
-        self.unsigned = self.output / f'{name}-unsigned.apk'
-        shutil.copy2(apk, self.unsigned)
-        self.summary.update(version_name=version, version_code=code)
-        self.summary['artifacts'].update(unsigned_apk=self.unsigned.name, mapping='mapping.txt', resources='resources.txt')
-        self.console.line(f'{self.unsigned.name} · {self.unsigned.stat().st_size / 1024 / 1024:.2f} MiB', 'INFO')
+        for flavor, suffix in APK_VARIANTS:
+            copied = 'webview-' if suffix else ''
+            key = copied.replace('-', '_')
+            for name in ('mapping.txt', 'resources.txt'):
+                source = outputs / f'mapping/{flavor}Release' / name
+                if not source.is_file() or not source.stat().st_size:
+                    raise RuntimeError(f'R8 output missing: {source}')
+                shutil.copy2(source, self.output / (copied + name))
+            apk = outputs / f'apk/{flavor}/release/androidApp-{flavor}-release-unsigned.apk'
+            badging = self.run([self.android_tool('aapt2'), 'dump', 'badging', apk], capture=True)
+            values = {k: re.search(rf"{k}='([^']+)'", badging) for k in ('versionName', 'versionCode')}
+            if not all(values.values()) or "package: name='com.unitrading.demo'" not in badging:
+                raise RuntimeError('Unexpected APK application ID/version; refusing to publish')
+            version, code = values['versionName'][1], values['versionCode'][1]
+            name = f'UniTrading-{version}-{short_sha}{suffix}'
+            unsigned = self.output / f'{name}-unsigned.apk'
+            shutil.copy2(apk, unsigned)
+            if suffix:
+                self.check_webview_apk(unsigned, badging)
+                self.webview_unsigned = unsigned
+            else:
+                self.unsigned = unsigned
+                self.summary.update(version_name=version, version_code=code)
+            self.summary['artifacts'].update({key + 'unsigned_apk': unsigned.name, key + 'mapping': copied + 'mapping.txt',
+                                              key + 'resources': copied + 'resources.txt'})
+            self.console.line(f'{unsigned.name} · {unsigned.stat().st_size / 1024 / 1024:.2f} MiB', 'INFO')
+
+    @staticmethod
+    def check_webview_apk(apk, badging):
+        # The login window installs these while running, so nothing earlier notices them missing.
+        with zipfile.ZipFile(apk) as package:
+            names = set(package.namelist())
+        for environment in ('demo', 'live'):
+            if f'assets/tradovate-login/{environment}/login.js' not in names:
+                raise RuntimeError(f'The {environment} login extension is not packaged; refusing to publish')
+        if "native-code: 'arm64-v8a'" not in badging:
+            raise RuntimeError('The -webview APK is not arm64-v8a; refusing to publish')
 
     def sign(self):
         self.signed = self.output / self.unsigned.name.replace('-unsigned.apk', '.apk')
-        self.run([self.android_tool('zipalign'), '-c', '4', self.unsigned], label='检查 APK 对齐')
+        self.sign_apk(self.unsigned, self.signed)
+        self.summary['artifacts']['signed_apk'] = self.signed.name
+        if self.webview_unsigned:
+            webview = self.output / self.webview_unsigned.name.replace('-unsigned.apk', '.apk')
+            self.sign_apk(self.webview_unsigned, webview)
+            self.summary['artifacts']['webview_signed_apk'] = webview.name
+
+    def sign_apk(self, unsigned, signed):
+        self.run([self.android_tool('zipalign'), '-c', '4', unsigned], label='检查 APK 对齐')
         with tempfile.TemporaryDirectory(prefix='unitrading-sign-') as folder:
             keystore = Path(folder) / 'release.keystore'
             candidate = Path(folder) / 'signed.apk'
@@ -487,11 +521,10 @@ class Build:
                        '--v4-signing-enabled', 'false']
             if self.env.get('KEY_PASSWORD'):
                 command += ['--key-pass', 'env:KEY_PASSWORD']
-            self.run([*command, '--out', candidate, self.unsigned], label='签名 APK')
+            self.run([*command, '--out', candidate, unsigned], label='签名 APK')
             self.run([self.android_tool('apksigner'), 'verify', '--print-certs', candidate], label='验证 APK 签名')
             # Only verified signatures receive the final distributable filename.
-            shutil.copy2(candidate, self.signed)
-        self.summary['artifacts']['signed_apk'] = self.signed.name
+            shutil.copy2(candidate, signed)
 
     def ios(self):
         if not self.args.skip_tests:
@@ -506,6 +539,7 @@ class Build:
         self.summary['artifacts']['ios'] = 'ios'
 
     def telegram(self):
+        # Only the standard APK: the -webview one is over the 50 MB a bot can send.
         # Token is provided to curl through stdin config, never in argv, logs, or files.
         token = self.env['TELEGRAM_BOT_TOKEN']
         if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+', token):

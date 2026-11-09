@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "UniTrading Tradovate login",
+  "version": "@VERSION@",
+  "browser_specific_settings": { "gecko": { "id": "tradovate-login@unitrading.invalid" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "content_scripts": [
+    { "matches": ["https://trader.tradovate.com/*"], "js": ["bridge.js"], "run_at": "document_start" },
+    { "matches": ["https://trader.tradovate.com/*"], "js": ["login.js"], "run_at": "document_start", "world": "MAIN" }
+  ]
+}

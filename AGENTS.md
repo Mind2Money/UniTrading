@@ -13,4 +13,5 @@
 - `v*` tag 触发 Windows、macOS 打包和 GitHub Release，tag 必须等于 `v<versionName>`。完整步骤见[本地构建与 CI](docs/local-build.md#发布版本)。
 - GitHub Release 成功后，CI 用 `DISCORD_RELEASE_WEBHOOK` secret 发 Discord 公告，只发 `## 简体中文` 小节。Webhook URL 不得写进受跟踪文件、日志或发布说明。发送记录是 commit status；状态为 `pending` 时先看频道，不要盲目重发，见 [Discord 公告](docs/local-build.md#discord-公告)。
 - `scripts/build-local.ps1` 读到本机 `local-build.json` 时默认签名并发 Telegram；只做回归时传 `-Sign:$false -NotifyTelegram:$false`。
+- Android 同时发标准版和内置 GeckoView 的 `-webview` 版，见[两个 APK](docs/local-build.md#android-的两个-apk)。GeckoView 不随系统更新，发版时升到最新稳定版。
 - 已发出的版本靠 Release 资源名、zip 结构和 `--version` 更新到新版本。改 `UniTrading-<版本>-windows-x64.zip`、APK 命名或 zip 根目录之前，先读[发布约定](docs/app-update.md#发布约定)。

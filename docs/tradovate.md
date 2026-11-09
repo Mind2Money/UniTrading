@@ -31,7 +31,13 @@
 
 使用 Android WebView 的独立 Demo/Live profile 与系统 Autofill 框架。收到会话后自动提交保存上下文、等待系统提示处理并返回主界面。**自动保存/填充依赖用户启用一个系统密码服务**；WebView 不自带独立密码管理器。未启用时登录窗会显示说明和系统设置入口。
 
-要求 System WebView 支持文档起始脚本、受限 WebMessage 和多 profile；缺少任一能力时要求更新，不降级成对所有网页暴露 JavaScriptInterface 的方案。
+标准版要求 System WebView 支持文档起始脚本和受限 WebMessage。缺少时登录窗写明缺哪一项和 WebView 的包名、版本，不降级成对所有网页暴露 JavaScriptInterface 的方案。多 profile 是可选的：不支持时 Demo 和 Live 共用网站登录状态（与 macOS 13 相同），登录窗会显示说明。
+
+内置浏览器版（文件名以 `-webview.apk` 结尾）用 APK 自带的 GeckoView 代替 System WebView，给系统 WebView 不满足要求的设备使用，例如鸿蒙。只支持 arm64-v8a。Demo 和 Live 由各自的 contextId 隔离。登录脚本与其他平台相同，由内置扩展在页面脚本之前注入，经 `nativeMessagingFromContent` 把消息交回应用，应用再校验来源和主框架。保存和填充密码同样走系统 Autofill。
+
+2026-11-10 在 API 36 x86_64 模拟器上验证：GeckoView 159 打开真实登录页，语言下拉和键盘输入可用；用只在本机打的临时补丁让真实页面收到模拟的登录回复，Demo、Live、Demo 依次交回对应环境的会话。强制关闭多 profile 后标准版能打开登录页并显示说明。未验证：真实账号登录、MFA 和验证码、鸿蒙真机、GeckoView 下系统密码服务的保存和填充。
+
+同日抓包只看连接目标、未解密内容：内置浏览器首次打开登录页时，GeckoView 自身额外连接 Mozilla 的 `firefox.settings.services.mozilla.com`、`firefox-settings-attachments.cdn.mozilla.net`、`content-signature-2.cdn.mozilla.net`（配置下载）和 `location.services.mozilla.com`（按 IP 判断地区）。页面引用的分析脚本（如 LaunchDarkly、Heap）由 Tradovate 的网页决定，使用系统 WebView 时同样会加载。
 
 ## 交易能力与限制
 

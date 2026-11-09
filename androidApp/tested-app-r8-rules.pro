@@ -14,6 +14,15 @@
 -keep class com.unitrading.android.AndroidCredentialStore { *; }
 -keep class com.unitrading.android.TradingRuntimeModel { *; }
 -keep class com.unitrading.android.ApkUpdateTarget { *; }
+-keep class com.unitrading.android.TradovateLoginActivityKt { *; }
+-keep class com.unitrading.android.LoginBrowser { *; }
+-keep class com.unitrading.tradovate.TradovateLoginScript { *; }
+-keep class com.unitrading.tradovate.TradovateEnvironment { *; }
+-keep class org.mozilla.geckoview.GeckoResult { *; }
+-keep class org.mozilla.geckoview.GeckoRuntime { *; }
+-keep class org.mozilla.geckoview.WebExtension { *; }
+-keep class org.mozilla.geckoview.WebExtension$MetaData { *; }
+-keep class org.mozilla.geckoview.WebExtensionController { *; }
 -keep class com.unitrading.app.ReleasePackage { *; }
 -keep class com.unitrading.app.UpdateFailure { *; }
 -keep class androidx.core.content.FileProvider { *; }

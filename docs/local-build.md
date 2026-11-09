@@ -12,8 +12,8 @@ GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Teleg
 - Python 3.10+（仅标准库）；Windows 入口需要 PowerShell 7（`pwsh`）。
 - JDK 21，建议设置 `JAVA_HOME` 并把其 `bin` 加入 PATH；项目 Gradle toolchain 为 21。
 - Android SDK：`local.properties` 的 `sdk.dir` 优先，其次 `ANDROID_HOME`、`ANDROID_SDK_ROOT`。
-  安装 `platform-tools`、`platforms;android-37.0` 和 build-tools。
-  SDK 命令行示例：`sdkmanager --install "platform-tools" "platforms;android-37.0" "build-tools;36.1.0"`。
+  安装 `platform-tools`、`platforms;android-37.0`、`platforms;android-37.2` 和 build-tools。`androidApp` 按 37.2 编译，这是 GeckoView 接受的最低版本。
+  SDK 命令行示例：`sdkmanager --install "platform-tools" "platforms;android-37.0" "platforms;android-37.2" "build-tools;36.1.0"`。
 - Windows 桌面打包需要 .NET Framework C# 编译器；现有 native-auth 构建会下载固定版本 WebView2 并运行自测。
 - iOS 必须在 Apple Silicon Mac 上安装 Xcode、命令行工具和可用 iPhone 模拟器。
 
@@ -38,7 +38,7 @@ Android 原 CI 没有 instrumentation 测试，本脚本也不会自动在设备
 后台模式的相同进度输出保存在结果目录旁的 `.console.log` 文件。
 
 默认产物在 `artifacts/local/<时间戳>/`，包含 `build.log`、`summary.json`、测试报告、
-桌面应用目录、`UniTrading-<版本>-<提交>-unsigned.apk`、`mapping.txt`、`resources.txt`。
+桌面应用目录、`UniTrading-<版本>-<提交>-unsigned.apk`、`UniTrading-<版本>-<提交>-webview-unsigned.apk`、`mapping.txt`、`resources.txt`，以及内置浏览器版的 `webview-mapping.txt`、`webview-resources.txt`。
 `summary.json` 记录源提交、工作区是否有未提交改动、各阶段结果及 APK SHA-256。
 单个构建命令最多执行 45 分钟；Python 入口可用 `--command-timeout <秒>` 调整。
 复制的测试报告可能包含其他平台历史报告，以本次 summary 的阶段状态为执行依据。
@@ -129,11 +129,28 @@ PowerShell 可用 `-SkipTests:$false` 恢复测试、`-CommandTimeout <秒>` 覆
 
 签名前检查 zipalign，签名后运行 apksigner verify；禁用独立 v4 签名文件。
 临时 keystore 在签名步骤结束时删除。密码不写入命令参数或日志。
-Telegram 只上传本次签名且验证通过的 APK；API 或 HTTP 失败使构建返回非零退出码。
+Telegram 只上传本次签名且验证通过的标准版 APK（内置浏览器版超过 Bot API 的 50 MB 上限）；API 或 HTTP 失败使构建返回非零退出码。
 token 通过 curl 标准输入传入，不写命令参数或日志；服务端返回成功时摘要记录 `telegram.status: sent`，
 不保存 Telegram 原始响应。整个配置对象不写入构建摘要或日志。
 本地失败写入日志，不自动向 Telegram 发送失败消息。GitHub CI 仍保留原有失败通知。
 本地脚本不自动推送 Git、创建 GitHub Actions artifacts 或下载 GitHub Secrets。
+
+## Android 的两个 APK
+
+`:androidApp:assembleRelease` 同时构建两个 flavor，只有 Tradovate 登录窗里的浏览器不同：
+
+| flavor | 文件名 | 登录窗使用 | 体积 |
+| --- | --- | --- | --- |
+| `standard` | `UniTrading-<版本>-<提交>.apk` | 手机的 Android System WebView | 约 3.4 MB |
+| `gecko` | `UniTrading-<版本>-<提交>-webview.apk` | APK 自带的 GeckoView，只打 arm64-v8a | 约 95 MB |
+
+两个 APK 包名和签名相同，可以互相覆盖安装并保留数据，不能同时安装。应用内更新只更新到同一 flavor 的 APK。GitHub Release 附带两个 APK，Telegram 只推标准版。
+
+Gradle 任务名带 flavor，例如 `:androidApp:installStandardDebug`、`:androidApp:connectedStandardDebugAndroidTest`、`:androidApp:connectedGeckoDebugAndroidTest`。x86_64 模拟器运行内置浏览器版要加 `-PgeckoAbi=x86_64`；发布包不加这个参数。
+
+`geckoLoginExtensions` 任务把 `TradovateLoginScript` 按 Demo、Live 各生成一份扩展，放进 `assets/tradovate-login/`；登录窗打开哪个环境就安装哪一份。
+
+GeckoView 的版本写在 `androidApp/build.gradle.kts`，内置内核不会随系统更新，发版时升到 [Mozilla Maven](https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml) 的最新稳定版。新版本可能要求更高的 compileSdk。
 
 ## 发布版本
 
@@ -151,7 +168,7 @@ token 通过 curl 标准输入传入，不写命令参数或日志；服务端�
 4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
 5. 先推 `main`，确认 workflow 能解析、Android 构建通过，再推标签。两次 push 各自触发一次 CI，Telegram 会收到两条消息。
 
-标签 CI 构建并签名 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带签名 APK、Windows zip、macOS zip 和 R8 mapping。
+标签 CI 构建并签名两个 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带两个签名 APK、Windows zip、macOS zip 和两份 R8 mapping。
 标签必须等于 `v<versionName>`，否则 Android 构建失败，不会创建 Release。重跑失败的 job 时，已有 Release 的正文和附件会被覆盖更新。
 
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
