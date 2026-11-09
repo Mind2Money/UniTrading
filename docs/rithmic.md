@@ -27,6 +27,7 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 | `RithmicTransport.kt` | Ktor WebSocket 二进制帧传输，网关白名单 |
 | `RithmicPlant.kt` | 单个 plant 连接：`user_msg` 关联、多段回复聚合、`rp_code` 终止判定、登录、心跳、强制登出 |
 | `RithmicSession.kt` | 环境、系统名称、凭据模型与 broker id |
+| `RithmicDrawdown.kt` | 自动平仓规则、爆号线和账户价值（只用于显示） |
 | `RithmicMapping.kt` | 参考数据 → 合约规格、订单 / 成交 / 持仓 / 资金解析、K 线时间换算 |
 | `RithmicBroker.kt` | `BrokerPlugin` 实现 |
 
@@ -56,6 +57,20 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 - 受理不等于成交。请求超时、连接断开或缺少回执时结果标记为未知并暂停后续写入，等待订单 / 仓位推送或手动同步确认；不会自动重发。
 - 任一 plant 断开后自动重连最多三次，重新订阅行情与 K 线，不重放交易指令；服务器强制登出（并发会话超限）同样触发。
 - 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，超出时只返回窗口内最早的 10,000 根，应用请求约四倍图表宽度的时间窗，不会超出。
+
+## 账户风险度
+
+桌面底部资金栏和手机交易页显示当前账户的“可回撤额度”和“危险度”，算法与 BatchTradovate 相同。
+
+- **爆号线**是 Rithmic 上报的 `auto_liq_threshold_current_value`：登录时来自账户列表（303），之后由风控推送更新（订阅 3508，推送 356）。它对应 R | Trader 的 Auto Liquidate Threshold Value。系统不提供风控推送时登录不受影响，爆号线停在登录时的值。
+- `auto_liquidate_threshold` 的含义随规则变化：Minimum Account Balance 下是余额线本身，Trailing 和 End of Day Drawdown 类规则下是回撤距离。
+- End of Day Drawdown 类规则和 Multiple Simultaneous Criteria 没有当前值时，程序用实时读到的数字计算爆号线，不保存任何记录：上次收盘 = 余额 − 当日已平仓盈亏，爆号线 = 上次收盘 − 回撤额度，到 `auto_liquidate_max_min_account_balance` 封顶并显示“已锁定”。券商上报当前值后以当前值为准。
+- Multiple Simultaneous Criteria 按 EOD 显示：回撤额度取 `auto_liquidate_threshold`，爆号线不低于券商的 `min_account_balance`（账户盈亏推送优先，其次风控资料 305）。
+- 其他规则没有上报当前值时显示“券商未上报爆号线”，可回撤额度和危险度显示“—”，悬停或手机卡片上可以看到券商的规则名和原始数字。Loss Limit 和 Profit Limit 类规则是金额，不是余额线，没有爆号线。
+- **可回撤额度** = 账户价值 − 爆号线。账户价值是余额加各持仓的 `open_position_pnl`，空仓时是余额；持仓盈亏未知时用账户级净值。余额的读法与资金栏相同，不会重复计算持仓盈亏。
+- **危险度**的分母：Trailing 和 End of Day Drawdown 类规则用 `auto_liquidate_threshold`，其他规则用峰值余额减爆号线。两者都没有时只显示额度，危险度显示“—”。
+- 算出的 EOD 线是计算值。真实的 EOD 线不会回落，算出的线会随亏损日回落（不低于最低余额），所以亏损日之后额度会偏大，请以券商后台或 R | Trader 的 Auto Liquidate Threshold Value 为准。
+- 尚未在 UniTrading 里用真实账户核对。BatchTradovate 在真实 Paper Trading 账户上登录时没有收到当前值，也没有收到推送。
 
 ## 联调探针
 

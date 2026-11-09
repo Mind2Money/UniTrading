@@ -236,7 +236,7 @@ class TradovateBroker(
         var snapshot = account.request("user/syncrequest", buildJsonObject {
             put("splitResponses", false)
             putJsonArray("entityTypes") {
-                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "fillPair", "fillFee", "contract", "orderStrategy", "orderStrategyLink").forEach { add(it) }
+                listOf("currency", "account", "cashBalance", "order", "orderVersion", "position", "fill", "fillPair", "fillFee", "contract", "orderStrategy", "orderStrategyLink", "accountRiskStatus", "userAccountAutoLiq").forEach { add(it) }
             }
         })
         if (listOf("accounts", "orders", "orderVersions", "positions", "fills").any { snapshot[it] !is JsonArray }) {
@@ -789,6 +789,8 @@ class TradovateBroker(
                 queuedEvents.add(data)
             } else {
                 book.event(data)
+                // Display data: it moves the drawdown figures and nothing about orders or positions.
+                if (data.str("entityType") in DRAWDOWN_ENTITY_TYPES) { rebuild(); return }
                 if (data.str("entityType") in setOf("fill", "fillPair", "fillFee")) {
                     if (data.str("entityType") == "fill") (data["entity"] as? JsonObject)?.long("id")?.let(fillFees::remove)
                     scheduleHistoryDetails(invalidate = data.str("entityType") == "fillFee")
@@ -1160,10 +1162,12 @@ class TradovateBroker(
             val estimatedEquity = if (balance != null && floating != null) checkedAdd(balance, floating) else null
             val equity = estimatedEquity ?: finance?.moneyValue("netLiq")
             val margin = finance?.moneyValue("initialMargin")
+            val drawdown = accountDrawdown(tradovateDrawdownRule(book.item("accountRiskStatus", aid), book.item("userAccountAutoLiq", aid)),
+                tradovateAccountValue(estimatedEquity, finance?.moneyValue("netLiq"), positions.isEmpty()))
             val snapshot = AccountSnapshot(account.id, balance ?: 0, equity ?: 0, margin ?: 0, positions, pending,
                 trades = pairedTrades(book, aid, contractSpecs, fillFees), events = localEvents[account.id] ?: emptyList(), executions = fills,
                 balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = estimatedEquity != null && positions.isNotEmpty(),
-                dailyPnl = financials[aid]?.dailyPnl)
+                dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown)
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()

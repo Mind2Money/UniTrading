@@ -232,6 +232,8 @@ data class AccountSnapshot(
     val marginKnown: Boolean = true,
     val equityEstimated: Boolean = false,
     val dailyPnl: DailyPnl? = null,
+    /** The broker's drawdown line and the room above it; null for an account without a known rule. */
+    val drawdown: AccountDrawdown? = null,
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

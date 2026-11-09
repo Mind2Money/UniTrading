@@ -24,6 +24,13 @@
 ✅ 支持鼠标滚轮：在图表上滚动缩放时间，在右侧价格轴上滚动缩放价格，Shift + 滚轮或触控板横向滑动平移
 ⚠️ Tradovate 和 Rithmic 的已有持仓、挂单仍不能在这里新增或删除止损止盈，线上不显示 TP、SL 按钮，下单草稿不受影响
 
+🛡️ **账户风险**
+✅ 新增“可回撤额度”和“危险度”：桌面底部资金栏和手机交易页显示当前账户离爆号线还有多少，危险度是一个完整回撤额度已用掉的比例，50% 起变橙、80% 起变红，TDD 和 EOD 账户用同一尺度
+✅ Tradovate 账户按账户模块的爆号线（Drawdown Auto Liq Level）计算，随行情更新
+✅ Rithmic 账户优先取券商上报的自动平仓线，随风控推送更新；鼠标移到这两项上可以看到这条线怎么来的，手机上直接写在卡片里
+⚠️ 拿不到规则或账户净值时显示“—”，不按 0 计算；这些数字只用于显示，不影响下单
+⚠️ Rithmic EOD 账户没有上报爆号线时由程序计算，亏损日之后额度会偏大，请以券商后台或 R | Trader 为准；本版尚未用真实账户核对 UniTrading 显示的数字
+
 📋 **交易列表**
 ✅ 已识别的止损、止盈单合并到所属持仓下，未成交挂单匹配到的止损、止盈合并到该挂单下，显示价格、数量和预计盈亏并可直接撤销，不再各占一行
 
@@ -60,6 +67,13 @@
 ✅ Fixed the Tradovate quantity limit often failing to resolve: loading contract details no longer voids the check, and the quantity buttons work while the limit is unknown
 ✅ Mouse wheel support: scroll over the chart to zoom time, over the price axis to zoom price; Shift + wheel or a sideways trackpad swipe pans
 ⚠️ Tradovate and Rithmic positions and orders still cannot add or remove stops and targets here, so their lines show no TP and SL buttons; order drafts are not affected
+
+🛡️ **Account risk**
+✅ New drawdown room and danger figures: the desktop status bar and the phone trade page show how far the current account stands above its drawdown line; danger is the share of one full trailing amount used, turning orange at 50% and red at 80%, on one scale for TDD and EOD accounts
+✅ Tradovate accounts use the Accounts module's Drawdown Auto Liq Level and follow the market
+✅ Rithmic accounts use the auto-liquidation line the broker reports first and follow its risk updates; hover either figure to see how the line comes about, and on phones it is written on the card
+⚠️ Without a rule or an account value these show "—", never 0; they are display figures only and do not affect orders
+⚠️ When a Rithmic EOD account reports no line the app computes one, and the room reads too large after a losing day, so go by your broker's back office or R | Trader; the figures UniTrading shows have not been checked on a real account yet
 
 📋 **Trade list**
 ✅ Recognized stop and target orders now sit under their position, and those matched to an unfilled order under that order, with price, quantity and estimated result; each can be cancelled there instead of taking a row of its own

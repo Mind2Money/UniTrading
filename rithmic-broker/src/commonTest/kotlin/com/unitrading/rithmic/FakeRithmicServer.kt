@@ -42,6 +42,21 @@ internal class FakeRithmicServer : RithmicWire {
     /** Per-product order limits answering the product RMS request. */
     var productMaxOrder = emptyMap<String, Int>()
     var productCommission = emptyMap<String, Double>()
+    /** Auto-liquidation settings answering the account RMS request, as doubles the way template 305 carries them. */
+    var autoLiqCriteria: String? = null
+    var autoLiqThreshold: Double? = null
+    var autoLiqMaxMin: Double? = null
+    var rmsLossLimit: Double? = null
+    var rmsMinBalance: Double? = null
+    /** The current line the account list carries, by account. */
+    val autoLiqLines = mutableMapOf<String, String>()
+    enum class RmsUpdates { ACCEPT, REJECT, SILENT }
+    var rmsUpdatesReply = RmsUpdates.ACCEPT
+    var pnlMinBalance: String? = null
+    var pnlLossPercent: String? = null
+    /** Account P&L snapshot figures; empty text is what the server sends for a figure it does not have. */
+    var snapshotBalance = "25000"
+    var snapshotDayClosed = "12.5"
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -51,6 +66,10 @@ internal class FakeRithmicServer : RithmicWire {
 
     fun plant(infra: Int): FakeSocket = sockets.last { it.infra == infra }
     fun requests(template: Int) = requests.filter { it.templateId == template }
+    fun pushRms(account: String, line: String?, peak: String?) = plant(RithmicEnums.INFRA_ORDER).push {
+        int32(Rf.TEMPLATE_ID, Rt.ACCOUNT_RMS_UPDATES); string(Rf.ACCOUNT_ID, account); int32(Rf.UPDATE_BITS, RithmicEnums.RMS_UPDATE_AUTO_LIQ_CURRENT_VALUE)
+        line?.let { string(Rf.AUTO_LIQ_THRESHOLD_CURRENT_VALUE, it) }; peak?.let { string(Rf.AUTO_LIQ_PEAK_BALANCE, it) }
+    }
 
     inner class FakeSocket : RithmicWireSocket {
         private val inbound = Channel<ByteArray>(Channel.UNLIMITED)
@@ -92,7 +111,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_LOGOUT -> reply(Rt.RESPONSE_LOGOUT)
             Rt.REQUEST_LOGIN_INFO -> reply(Rt.RESPONSE_LOGIN_INFO) { string(Rf.FCM_ID, "FCM1"); string(Rf.IB_ID, "IB1"); int32(Rf.USER_TYPE, RithmicEnums.USER_TYPE_TRADER) }
             Rt.REQUEST_ACCOUNT_LIST -> accounts.forEachIndexed { index, account ->
-                reply(Rt.RESPONSE_ACCOUNT_LIST, terminal = index == accounts.lastIndex) { string(Rf.ACCOUNT_ID, account); string(Rf.ACCOUNT_NAME, "Account $account"); string(Rf.ACCOUNT_CURRENCY, "USD") }
+                reply(Rt.RESPONSE_ACCOUNT_LIST, terminal = index == accounts.lastIndex) { string(Rf.ACCOUNT_ID, account); string(Rf.ACCOUNT_NAME, "Account $account"); string(Rf.ACCOUNT_CURRENCY, "USD"); autoLiqLines[account]?.let { string(Rf.AUTO_LIQ_THRESHOLD_CURRENT_VALUE, it) } }
             }
             Rt.REQUEST_TRADE_ROUTES -> reply(Rt.RESPONSE_TRADE_ROUTES) { if (tradeRoutesListed) { string(Rf.EXCHANGE, "CME"); string(Rf.TRADE_ROUTE, "simulator"); string(Rf.ROUTE_STATUS, "UP"); bool(Rf.IS_DEFAULT_ROUTE, true) } }
             Rt.REQUEST_SUBSCRIBE_ORDER_UPDATES -> reply(Rt.RESPONSE_SUBSCRIBE_ORDER_UPDATES)
@@ -103,7 +122,16 @@ internal class FakeRithmicServer : RithmicWire {
             }
             Rt.REQUEST_SHOW_BRACKETS -> parts(Rt.RESPONSE_SHOW_BRACKETS, bracketTargets.map { (basket, level) -> { string(Rf.BASKET_ID, basket); string(Rf.TARGET_TICKS, level.first.toString()); string(Rf.TARGET_QUANTITY, level.second.toString()) } })
             Rt.REQUEST_SHOW_BRACKET_STOPS -> parts(Rt.RESPONSE_SHOW_BRACKET_STOPS, bracketStops.map { (basket, level) -> { string(Rf.BASKET_ID, basket); string(Rf.STOP_TICKS, level.first.toString()); string(Rf.STOP_QUANTITY, level.second.toString()) } })
-            Rt.REQUEST_ACCOUNT_RMS_INFO -> reply(Rt.RESPONSE_ACCOUNT_RMS_INFO) { string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); maxOrderQuantity?.let { int32(Rf.MAX_ORDER_QUANTITY, it.toInt()) } }
+            Rt.REQUEST_ACCOUNT_RMS_INFO -> reply(Rt.RESPONSE_ACCOUNT_RMS_INFO) {
+                string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); maxOrderQuantity?.let { int32(Rf.MAX_ORDER_QUANTITY, it.toInt()) }
+                autoLiqCriteria?.let { string(Rf.AUTO_LIQUIDATE_CRITERIA, it) }; autoLiqThreshold?.let { double(Rf.AUTO_LIQUIDATE_THRESHOLD, it) }; autoLiqMaxMin?.let { double(Rf.AUTO_LIQUIDATE_MAX_MIN_BALANCE, it) }
+                rmsLossLimit?.let { double(Rf.LOSS_LIMIT, it) }; rmsMinBalance?.let { double(Rf.MIN_ACCOUNT_BALANCE, it) }
+            }
+            Rt.REQUEST_ACCOUNT_RMS_UPDATES -> when (rmsUpdatesReply) {
+                RmsUpdates.ACCEPT -> reply(Rt.RESPONSE_ACCOUNT_RMS_UPDATES)
+                RmsUpdates.REJECT -> reply(Rt.RESPONSE_ACCOUNT_RMS_UPDATES, codes = listOf("9", "not supported"))
+                RmsUpdates.SILENT -> {}
+            }
             Rt.REQUEST_SHOW_FILL_HISTORY -> parts(Rt.RESPONSE_SHOW_FILL_HISTORY, if (!fillHistoryListed) emptyList() else listOf {
                 string(Rf.FILL_ID, "H1"); string(Rf.BASKET_ID, "H-B1"); string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); string(Rf.SYMBOL, "MESZ6"); string(Rf.EXCHANGE, "CME")
                 string(Rf.TRANSACTION_TYPE, "B"); int64(Rf.FILL_SIZE, 1); double(Rf.FILL_PRICE, 5480.0); int32(Rf.SSBOE, (FAKE_TIME / 1_000 - 3_600).toInt())
@@ -112,7 +140,8 @@ internal class FakeRithmicServer : RithmicWire {
                 positions.forEach { position -> socket.push { int32(Rf.TEMPLATE_ID, Rt.INSTRUMENT_PNL_UPDATE); bool(Rf.IS_SNAPSHOT, true); string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); position() } }
                 socket.push {
                     int32(Rf.TEMPLATE_ID, Rt.ACCOUNT_PNL_UPDATE); bool(Rf.IS_SNAPSHOT, true); string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: "")
-                    string(Rf.ACCOUNT_BALANCE, "25000"); string(Rf.CASH_ON_HAND, "25000"); string(Rf.OPEN_POSITION_PNL, "0"); string(Rf.DAY_PNL, "12.5"); string(Rf.DAY_CLOSED_PNL, "12.5")
+                    string(Rf.ACCOUNT_BALANCE, snapshotBalance); string(Rf.CASH_ON_HAND, snapshotBalance); string(Rf.OPEN_POSITION_PNL, "0"); string(Rf.DAY_PNL, "12.5"); string(Rf.DAY_CLOSED_PNL, snapshotDayClosed)
+                    pnlMinBalance?.let { string(Rf.MIN_ACCOUNT_BALANCE, it) }; pnlLossPercent?.let { string(Rf.PERCENT_MAX_ALLOWABLE_LOSS, it) }
                     int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt())
                 }
                 reply(Rt.RESPONSE_PNL_SNAPSHOT)

@@ -73,6 +73,7 @@ class RithmicBroker(
     private val fills = mutableMapOf<String, RithmicFill>()
     private val positions = mutableMapOf<Pair<String, String>, RithmicPosition>()
     private val financials = mutableMapOf<String, RithmicFinancials>()
+    private var risks = emptyMap<String, RithmicRisk>()
     private val maxOrderQuantities = mutableMapOf<String, Long?>()
     private data class ProductRms(val orderLimit: Long?, val commissionMicros: Long?)
     private val productRms = mutableMapOf<Pair<String, String>, ProductRms>()
@@ -219,7 +220,10 @@ class RithmicBroker(
             val id = row.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 64 } ?: return@mapNotNull null
             AccountInfo(id, row.str(Rf.ACCOUNT_NAME)?.trim()?.takeIf { it.isNotEmpty() } ?: id, row.str(Rf.ACCOUNT_CURRENCY)?.trim()?.ifEmpty { null } ?: "USD")
         }.distinctBy { it.id }
+        // A login reads the line afresh, so what a dropped connection left behind cannot stand in for it.
+        val lines = rows.mapNotNull { row -> row.str(Rf.ACCOUNT_ID)?.trim()?.takeIf { id -> mapped.any { it.id == id } }?.let { it to parseRiskUpdate(row, null) } }.toMap()
         lock.withLock {
+            risks = lines
             accountInfos = mapped
             accountFlows = mapped.associate { it.id to (accountFlows[it.id] ?: MutableStateFlow(AccountSnapshot(it.id, 0, balanceKnown = false, equityKnown = false, marginKnown = false))) }
         }
@@ -256,9 +260,18 @@ class RithmicBroker(
             val rms = order.request(Rt.REQUEST_ACCOUNT_RMS_INFO) { account(); int32(Rf.USER_TYPE, userType) }
             val limits = rms.filter { it.str(Rf.ACCOUNT_ID)?.trim() == accountId || !it.has(Rf.ACCOUNT_ID) }
                 .flatMap { listOfNotNull(it.long(Rf.MAX_ORDER_QUANTITY), it.long(Rf.BUY_LIMIT), it.long(Rf.SELL_LIMIT)) }.filter { it > 0 }
-            lock.withLock { maxOrderQuantities[accountId] = limits.minOrNull() }
+            lock.withLock {
+                maxOrderQuantities[accountId] = limits.minOrNull()
+                parseRiskSettings(rms, accountId, risks[accountId])?.let { risks = risks + (accountId to it) }
+            }
         } catch (cancel: CancellationException) { throw cancel }
         catch (_: Exception) { lock.withLock { maxOrderQuantities[accountId] = null } }
+        // Display data: a system without this stream costs the login nothing, so nothing waits for the reply.
+        scope.launch {
+            try { order.request(Rt.REQUEST_ACCOUNT_RMS_UPDATES) { account(); string(Rf.REQUEST, "subscribe"); int32(Rf.UPDATE_BITS, RithmicEnums.RMS_UPDATE_AUTO_LIQ_CURRENT_VALUE) } }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { /* The line stays at what the login read. */ }
+        }
         try {
             val rows = order.request(Rt.REQUEST_PRODUCT_RMS_INFO, 30_000) { account() }
             lock.withLock {
@@ -427,6 +440,12 @@ class RithmicBroker(
                 rebuild()
             }
             Rt.TRADE_ROUTE -> lock.withLock { tradeRoutes = routesFrom(listOf(message), tradeRoutes) }
+            Rt.ACCOUNT_RMS_UPDATES -> lock.withLock {
+                val account = message.str(Rf.ACCOUNT_ID)?.trim() ?: return@withLock
+                if (account !in risks) return@withLock
+                risks = risks + (account to parseRiskUpdate(message, risks[account]))
+                rebuild()
+            }
             Rt.FORCED_LOGOUT -> lock.withLock { problem = "Rithmic 服务器强制登出了订单连接"; publish() }
             Rt.REJECT -> lock.withLock { problem = "Rithmic 拒绝了一个请求：${message.failureMessage()}"; publish() }
         }
@@ -974,7 +993,8 @@ class RithmicBroker(
             }
             val snapshot = AccountSnapshot(aid, balance ?: 0, equity ?: balance ?: 0, margin ?: 0, mappedPositions, pending, trades = closedTrades,
                 events = localEvents[aid] ?: emptyList(), executions = executions,
-                balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = false, dailyPnl = dailyPnl)
+                balanceKnown = balance != null, equityKnown = equity != null, marginKnown = margin != null, equityEstimated = false, dailyPnl = dailyPnl,
+                drawdown = accountDrawdown(rithmicDrawdownRule(risks[aid], money), rithmicAccountValue(money, rawPositions)))
             nextFlows.getOrPut(aid) { MutableStateFlow(snapshot) }.value = snapshot
         }
         accountFlows = nextFlows.toMap()

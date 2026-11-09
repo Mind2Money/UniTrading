@@ -11,6 +11,7 @@ UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 
 - Android 底部使用带图标的 Material 3 导航。手机图表页参考 MT5 的布局，图表占据主要空间，下单面板折叠在图表下方，见 [手机布局](docs/mobile-layout.md)。桌面使用多栏工作台。
 - 实时盈亏通知显示当前账户的浮动盈亏、净值和持仓数，可在账户页关闭。Android 使用常驻通知，Android 16 起支持 Live Update / HyperOS 超级岛，状态栏显示盈亏，前台服务负责后台刷新；iOS 使用灵动岛 / 锁屏 Live Activity。详见 [实时盈亏通知](docs/live-pnl-notifications.md)。
 - 今日盈亏使用 Tradovate 返回的账户总盈亏快照，按券商交易日展示，附更新时间；桌面资金栏、手机交易/账户页及图表摘要均可查看，见 [今日盈亏](docs/daily-pnl.md)。
+- 可回撤额度和危险度显示当前账户离爆号线还有多少，覆盖 Tradovate 和 Rithmic，在桌面资金栏和手机交易页；拿不到规则或净值时显示“—”，算法见 [Tradovate](docs/tradovate.md#账户风险度) 和 [Rithmic](docs/rithmic.md#账户风险度)。
 - 设置页可以检查新版本并在应用内更新。Windows 自动下载、校验、替换并重启，Android 由系统安装界面完成；有持仓或挂单时不能更新，见 [应用内更新](docs/app-update.md)。
 - 支持深色、浅色、跟随系统和 TradingV（TradingView 黑色配色）主题。页面、面板、图表背景、网格、K 线、盈亏数字和保护线可分别配色，支持 RGB 选色和十六进制输入，保存后重启仍有效。
 - 由插件提供品种、合约规格、Bid/Ask、历史 K 线、账户、订单及成交。

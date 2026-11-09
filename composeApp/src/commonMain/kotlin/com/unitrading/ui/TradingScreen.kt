@@ -576,7 +576,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
                                     onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1 },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account) })
+                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account, connected = market.connected) })
                             }
                             else -> if (showActivity) {
                                 ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
@@ -592,7 +592,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     else if (desktop) {
                         DividerLine()
                         AccountStrip(account, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
-                            else "状态以服务器为准 · ${environment.label}")
+                            else "状态以服务器为准 · ${environment.label}", connected = market.connected)
                     }
                 }
                 }

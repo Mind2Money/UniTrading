@@ -60,6 +60,9 @@ val TradingColors: TradingPalette @Composable get() = LocalTradingPalette.curren
 
 fun TradingPalette.pnl(value: Long?): Color = when { value == null || value == 0L -> Ink; value > 0 -> Profit; else -> Loss }
 
+/** Amber between profit and loss. The palette has no role for it, so it follows the panel's brightness. */
+internal val TradingPalette.Caution: Color get() = if (Surface.luminance() > .45f) Color(0xFF8A5A00) else Color(0xFFFFB74D)
+
 /** Readable text colour on a filled [color]. */
 internal fun contentOn(color: Color): Color = if (color.luminance() > .45f) Color(0xFF101820) else Color.White
 

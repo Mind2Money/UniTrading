@@ -275,6 +275,11 @@ class AppearanceUiTest {
             screenshot("android-floating-notice")
             tap("关闭操作提示", description = true)
             assertNull(node("操作提示"))
+            // Phone account card: the local demo has no broker rule, so both figures stay a dash and say why.
+            tap("交易", last = true)
+            awaitText("可回撤额度")
+            awaitText("未取得券商的回撤规则")
+            screenshot("android-account-drawdown")
             tap("设置", last = true)
             awaitText("账户与连接")
             if (node("外观与主题") == null) {

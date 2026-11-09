@@ -157,6 +157,13 @@ internal object Rf {
     const val MARGIN_BALANCE = 156977
     const val AVAILABLE_BUYING_POWER = 157015
     const val USED_BUYING_POWER = 157014
+    const val AUTO_LIQUIDATE_CRITERIA = 131036
+    const val AUTO_LIQUIDATE_THRESHOLD = 131037
+    const val AUTO_LIQUIDATE_MAX_MIN_BALANCE = 131039
+    const val AUTO_LIQ_THRESHOLD_CURRENT_VALUE = 131040
+    const val AUTO_LIQ_PEAK_BALANCE = 131049
+    const val MIN_ACCOUNT_BALANCE = 156968
+    const val PERCENT_MAX_ALLOWABLE_LOSS = 156965
     const val RMS_UPDATES_ONLY = 154968
     const val AGREEMENT_TITLE = 153406
     const val AGREEMENT_ID = 153407
@@ -228,6 +235,7 @@ internal object Rt {
     const val RITHMIC_ORDER_NOTIFICATION = 351
     const val EXCHANGE_ORDER_NOTIFICATION = 352
     const val BRACKET_UPDATES = 353
+    const val ACCOUNT_RMS_UPDATES = 356
     const val REQUEST_PNL_UPDATES = 400
     const val RESPONSE_PNL_UPDATES = 401
     const val REQUEST_PNL_SNAPSHOT = 402
@@ -240,6 +248,8 @@ internal object Rt {
     const val RESPONSE_EXIT_POSITION = 3505
     const val REQUEST_SHOW_FILL_HISTORY = 3512
     const val RESPONSE_SHOW_FILL_HISTORY = 3513
+    const val REQUEST_ACCOUNT_RMS_UPDATES = 3508
+    const val RESPONSE_ACCOUNT_RMS_UPDATES = 3509
 }
 
 internal object RithmicEnums {
@@ -275,6 +285,7 @@ internal object RithmicEnums {
     const val BRACKET_TARGET_AND_STOP_STATIC = 6
     const val NOTIFY_FILL = 5
     const val NOTIFY_REJECT = 6
+    const val RMS_UPDATE_AUTO_LIQ_CURRENT_VALUE = 1
 }
 
 /** Protocol-level failure: a Rithmic response code other than success, a reject frame or a dropped plant. */

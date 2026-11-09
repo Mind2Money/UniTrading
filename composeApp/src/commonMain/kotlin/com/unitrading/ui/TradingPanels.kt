@@ -123,25 +123,30 @@ private class AccountFigures(account: AccountSnapshot, colors: TradingPalette) {
     private val level = if (account.marginKnown && account.equityKnown && account.marginMicros > 0)
         "${account.equityMicros.toDouble().div(account.marginMicros).times(100).toInt()}%" else "—"
     private val floatingKnown = account.equityKnown && account.balanceKnown
-    val entries = listOf(
+    val funds = listOf(
         Triple("余额 USD", if (account.balanceKnown) money(account.balanceMicros) else "—", Color.Unspecified),
         Triple(if (account.equityEstimated) "净值 USD（估算）" else "净值 USD", if (account.equityKnown) money(account.equityMicros) else "—", Color.Unspecified),
+    )
+    val others = listOf(
         Triple("浮动盈亏", if (floatingKnown) money(account.floatingPnlMicros, true) else "—", if (floatingKnown) colors.pnl(account.floatingPnlMicros) else Color.Unspecified),
         Triple("已用保证金", if (account.marginKnown) money(account.marginMicros) else "—", Color.Unspecified),
         Triple("可用保证金", if (account.equityKnown && account.marginKnown) money(account.freeMarginMicros) else "—", Color.Unspecified),
         Triple("保证金比例", level, Color.Unspecified),
     )
+    val entries = funds + others
 }
 
 /** Desktop status bar: every account figure on one line, scrolling sideways only when the window is too narrow. */
 @Composable
-internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier, note: String? = null) {
+internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier, note: String? = null, connected: Boolean = true) {
     val figures = AccountFigures(account, TradingColors)
     Row(modifier.fillMaxWidth().background(TradingColors.Shell).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             Metric("今日盈亏 USD（券商）", figures.daily, color = figures.dailyColor, valueTag = "daily-pnl-value")
-            figures.entries.forEach { (label, value, color) -> Metric(label, value, color = color) }
+            figures.funds.forEach { (label, value, color) -> Metric(label, value, color = color) }
+            DrawdownStrip(account.drawdown, connected)
+            figures.others.forEach { (label, value, color) -> Metric(label, value, color = color) }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(figures.dailySource, Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
@@ -152,7 +157,7 @@ internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifie
 
 /** Phone account summary: all figures on one card, with nothing hidden behind sideways scrolling. */
 @Composable
-internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modifier) {
+internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modifier, connected: Boolean = true) {
     val figures = AccountFigures(account, TradingColors)
     Surface(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -166,6 +171,7 @@ internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modif
                     row.forEach { (label, value, color) -> Metric(label, value, Modifier.weight(1f), color) }
                 }
             }
+            DrawdownSummary(account.drawdown, connected)
         }
     }
 }

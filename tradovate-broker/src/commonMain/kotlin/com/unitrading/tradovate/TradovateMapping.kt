@@ -55,7 +55,7 @@ internal class EntityBook {
             val previousTime = previous?.str("timestamp")?.let(::timestamp)
             val nextTime = value.str("timestamp")?.let(::timestamp)
             if (previousTime != null && nextTime != null && nextTime < previousTime) return
-            table[id] = JsonObject((previous ?: emptyMap()) + value)
+            table[id] = if (type in DRAWDOWN_ENTITY_TYPES) value else JsonObject((previous ?: emptyMap()) + value)
             if (type == "orderVersion") {
                 val orderId = value.long("orderId") ?: return
                 versionIds[orderId] = maxOf(versionIds[orderId] ?: 0, id)
@@ -70,7 +70,8 @@ internal class EntityBook {
         mapOf("accounts" to "account", "positions" to "position", "orders" to "order", "orderVersions" to "orderVersion",
             "cashBalances" to "cashBalance", "fills" to "fill", "fillPairs" to "fillPair", "fillFees" to "fillFee", "contracts" to "contract",
             "contractMaturities" to "contractMaturity", "products" to "product", "currencies" to "currency",
-            "orderStrategies" to "orderStrategy", "orderStrategyLinks" to "orderStrategyLink").forEach { (plural, type) ->
+            "orderStrategies" to "orderStrategy", "orderStrategyLinks" to "orderStrategyLink",
+            "accountRiskStatuses" to "accountRiskStatus", "userAccountAutoLiqs" to "userAccountAutoLiq").forEach { (plural, type) ->
             data.array(plural).forEach { apply(type, it) }
         }
     }

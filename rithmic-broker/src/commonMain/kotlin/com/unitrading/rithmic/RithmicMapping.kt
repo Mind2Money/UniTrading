@@ -223,6 +223,8 @@ internal data class RithmicFinancials(
     val usedBuyingPowerMicros: Long?,
     val availableBuyingPowerMicros: Long?,
     val timeMs: Long,
+    val minBalanceMicros: Long? = null,
+    val lossPercentMicros: Long? = null,
 )
 
 /**
@@ -247,7 +249,8 @@ internal fun parseFinancials(data: ProtoMessage, previous: RithmicFinancials?, f
         money(Rf.OPEN_POSITION_PNL, previous?.openPnlMicros), money(Rf.CLOSED_POSITION_PNL, previous?.closedPnlMicros),
         money(Rf.DAY_PNL, previous?.dayPnlMicros), money(Rf.DAY_OPEN_PNL, previous?.dayOpenPnlMicros), money(Rf.DAY_CLOSED_PNL, previous?.dayClosedPnlMicros),
         money(Rf.USED_BUYING_POWER, previous?.usedBuyingPowerMicros), money(Rf.AVAILABLE_BUYING_POWER, previous?.availableBuyingPowerMicros),
-        data.timeMs() ?: fallbackTime)
+        data.timeMs() ?: fallbackTime,
+        money(Rf.MIN_ACCOUNT_BALANCE, previous?.minBalanceMicros), money(Rf.PERCENT_MAX_ALLOWABLE_LOSS, previous?.lossPercentMicros))
 }
 
 /**
