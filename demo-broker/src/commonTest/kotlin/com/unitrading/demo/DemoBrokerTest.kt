@@ -257,6 +257,45 @@ class DemoBrokerTest {
     }
 
     @Test
+    fun marketProtectionClearsTheWholeSpread() = runTest {
+        val broker = freshBroker()
+        val session = broker.openSession("account-a")
+        feed(broker, 10_000, 10_040)
+        assertFalse(session.preview(order().copy(takeProfit = 10_025)).valid, "Inside the spread, under the buy fill")
+        assertFalse(session.preview(order().copy(takeProfit = 10_040)).valid, "Exactly at the buy fill")
+        assertTrue(session.preview(order().copy(takeProfit = 10_045)).valid)
+        assertFalse(session.preview(order(Side.SELL).copy(takeProfit = 10_015)).valid, "Inside the spread, over the sell fill")
+        assertFalse(session.preview(order(Side.SELL).copy(takeProfit = 10_000)).valid, "Exactly at the sell fill")
+        assertTrue(session.preview(order(Side.SELL).copy(takeProfit = 9_995)).valid)
+    }
+
+    @Test
+    fun stopMovesToBreakEvenOrPastItWhileTheTargetIsInsideTheMinimumDistance() = runTest {
+        for (side in Side.entries) {
+            val broker = freshBroker()
+            val session = broker.openSession("account-a")
+            val buy = side == Side.BUY
+            val target = if (buy) 10_300L else 9_700L
+            val id = session.placeOrder("open", order(side).copy(takeProfit = target)).entityId!!
+            val entry = session.state.value.positions.single().entryPrice
+            // The close price is two ticks from the target; the minimum distance is four.
+            if (buy) feed(broker, 10_290, 10_300) else feed(broker, 9_700, 9_710)
+            val even = session.modifyProtection("even", id, 1, entry, target)
+            assertTrue(even.accepted, even.message)
+            assertEquals(entry, session.state.value.positions.single().stopLoss)
+            val past = entry + if (buy) 100 else -100
+            val locked = session.modifyProtection("past", id, 2, past, target)
+            assertTrue(locked.accepted, locked.message)
+            assertEquals(past, session.state.value.positions.single().stopLoss)
+            val through = session.modifyProtection("through", id, 3, if (buy) 10_290 else 9_710, target)
+            assertFalse(through.accepted)
+            assertTrue("止损须" in through.message, through.message)
+            assertEquals(past, session.state.value.positions.single().stopLoss)
+            assertEquals(broker.exportState(), DemoBroker(TEST_CONFIG, broker.exportState()).exportState())
+        }
+    }
+
+    @Test
     fun allCommandsAreIdempotentAndConflictingReuseIsRejected() = runTest {
         val broker = freshBroker()
         val session = broker.openSession("account-a")

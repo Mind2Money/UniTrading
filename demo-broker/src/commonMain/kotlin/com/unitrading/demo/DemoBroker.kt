@@ -251,8 +251,10 @@ class DemoBroker(
                     val position = working.positions[index]
                     require(position.version == command.expectedVersion) { "仓位版本已过期，请刷新后重试" }
                     val quote = freshQuote(position.symbol, currentMarket())
-                    validateProtection(bySymbol.getValue(position.symbol), position.side,
-                        closePrice(position.side, quote), command.stopLoss, command.takeProfit)
+                    val instrument = bySymbol.getValue(position.symbol)
+                    positionProtectionError(instrument, position, quote, command.stopLoss, command.takeProfit)?.let { throw IllegalArgumentException(it) }
+                    validateProtection(instrument, position.side, closePrice(position.side, quote),
+                        command.stopLoss.takeIf { it != position.stopLoss }, command.takeProfit.takeIf { it != position.takeProfit })
                     working.positions[index] = position.copy(stopLoss = command.stopLoss, takeProfit = command.takeProfit,
                         version = checkedAdd(position.version, 1))
                     event(working, "修改止损/止盈 ${position.id}")
@@ -310,6 +312,7 @@ class DemoBroker(
         }
         val entry = if (filling) executable else requested
         val close = closePrice(request.side, quote)
+        if (!filling) entryProtectionError(instrument, request, quote)?.let { throw IllegalArgumentException(it) }
         // Pending protection is initially relative to the requested entry. At a trigger,
         // unhit protection must still satisfy the current minimum distance. Already crossed
         // protection is allowed so a gap fills and exits at real quotes in this same tick.

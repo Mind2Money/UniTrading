@@ -1331,7 +1331,8 @@ class TradovateBroker(
                 val stop = p.stopLoss != stopLoss
                 val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有止损/止盈，添加或删除保护请到官网操作" }
                 val spec = instruments.first { it.symbol == p.symbol }
-                validateProtection(spec, p.side, quotes[p.symbol], stopLoss, takeProfit)
+                require(fresh(quotes[p.symbol])) { "止损/止盈修改需要有效的实时报价" }
+                positionProtectionError(spec, p, quotes[p.symbol], stopLoss, takeProfit)?.let { errorArgument(it) }
                 val binding = lock.withLock {
                     val resolution = ProtectionClassifier(book, accountId.toLong()).forPosition(positionId.substringAfter(':').toLong(), p.side, p.lotsHundredths / 100)
                     require(resolution.editable && resolution.revision == p.protectionRevision) { "保护订单关联或版本已变化，请重新选择" }
@@ -1366,22 +1367,13 @@ class TradovateBroker(
             val reference = if (request.side == Side.BUY) quote.ask else quote.bid
             require(if (above) entry >= reference + spec.tickSize else entry <= reference - spec.tickSize) { "Limit/Stop 入场方向或距离无效" }
         }
-        val reference = if (request.kind == OrderKind.MARKET) if (request.side == Side.BUY) quote.bid else quote.ask else entry
-        validateProtection(spec, request.side, Quote(reference, reference, quote.timeMs), request.stopLoss, request.takeProfit)
+        entryProtectionError(spec, request, quote)?.let { errorArgument(it) }
         if (!modifying && (request.stopLoss != null || request.takeProfit != null)) require(accountFlows.getValue(accountId).value.positions.none { it.symbol == request.symbol }) { "该合约已有净仓，不能再叠加括号保护" }
         OrderPreview(entry, stopLossPnlMicros = request.stopLoss?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             takeProfitPnlMicros = request.takeProfit?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             quoteRevision = market.value.revision, marginKnown = false, feesKnown = false,
             warnings = listOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Tradovate 为准"))
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
-
-    private fun validateProtection(spec: Instrument, side: Side, quote: Quote?, sl: Long?, tp: Long?) {
-        require(fresh(quote)) { "止损/止盈修改需要有效的实时报价" }
-        val reference = if (side == Side.BUY) quote!!.bid else quote!!.ask
-        for (price in listOfNotNull(sl, tp)) require(price > 0 && price % spec.tickSize == 0L) { "止损/止盈不符合最小变动单位" }
-        sl?.let { require(if (side == Side.BUY) it <= reference - spec.tickSize else it >= reference + spec.tickSize) { "止损方向或距离无效" } }
-        tp?.let { require(if (side == Side.BUY) it >= reference + spec.tickSize else it <= reference - spec.tickSize) { "止盈方向或距离无效" } }
-    }
 
     private fun orderBody(accountId: String, requestId: String, request: OrderRequest, spec: Instrument): JsonObject = buildJsonObject {
         put("accountId", accountId.toLong()); put("action", if (request.side == Side.BUY) "Buy" else "Sell")

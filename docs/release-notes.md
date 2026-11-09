@@ -39,6 +39,11 @@
 📋 **交易列表**
 ✅ 已识别的止损、止盈单合并到所属持仓下，未成交挂单匹配到的止损、止盈合并到该挂单下，显示价格、数量和预计盈亏并可直接撤销，不再各占一行
 
+🎯 **止损止盈校验**
+✅ 下单前按订单方向校验：买入单止损须低于入场价、止盈须高于入场价，卖出单相反；市价单的止损止盈要越过买卖价差，不再放行落在价差内或正好等于成交价的止盈
+✅ 修改持仓止损止盈时先校验价格：大于零、符合最小变动单位、在当前可平仓价的正确一侧、止损止盈不颠倒，不合格时直接提示原因，确认按钮不可用，跳过确认时拖线也不会发出
+✅ 持仓后只和当前可平仓价比较，与入场价无关，推保本、把止损推过入场价不受影响；每次只校验改动的那条线，价格已贴近止盈时也能移动止损
+
 🖥️ **桌面布局**
 ✅ 面板改为 TradingView 式排版：图表在左、交易区在图表下方，下单面板和行情面板依次排在右侧，最右侧一列图标
 ✅ 行情、下单、交易三个面板都能收起和展开，图表自动占用空出的位置，状态本机保存；可以用最右侧图标，也可以用面板自己的收起按钮。“重置布局”恢复全部面板
@@ -87,6 +92,11 @@
 
 📋 **Trade list**
 ✅ Recognized stop and target orders now sit under their position, and those matched to an unfilled order under that order, with price, quantity and estimated result; each can be cancelled there instead of taking a row of its own
+
+🎯 **Stop and target checks**
+✅ Orders are checked against their direction before placement: a buy's stop must be below its entry and its target above it, and the reverse for a sell; market orders must clear the bid/ask spread, so a target inside the spread or exactly at the fill price is refused
+✅ Editing a position's stop or target now checks the price first: above zero, on the tick grid, on the right side of the current closing price, and with stop and target not crossed. A failure shows its reason and disables the confirm button, and a chart drop with confirmations off is not sent
+✅ After a fill only the current closing price counts, never the entry, so moving a stop to break-even or past it is unaffected; only the line being changed is checked, so a stop can still move when price is right at the target
 
 🖥️ **Desktop layout**
 ✅ Panels now follow TradingView's arrangement: the chart on the left with the trade list under it, then the order panel, the market panel and a column of icons on the right

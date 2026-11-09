@@ -294,7 +294,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val error = when {
                     current == null || current.version != position.version || current.stopLoss != position.stopLoss || current.takeProfit != position.takeProfit -> "仓位或止损/止盈已更新，请重新选择"
                     listOfNotNull(sl, tp).any { it <= 0 || it % spec.tickSize != 0L } -> "价格须大于零并符合最小变动单位"
-                    else -> protectionEditError(plugin.capabilities, current, sl, tp)
+                    else -> protectionEditError(plugin.capabilities, current, sl, tp) ?: positionProtectionError(spec, current, market.quotes[current.symbol], sl, tp)
                 }
                 if (error != null) { showNotice(error, attention = true); return }
                 perform { session.modifyProtection(requestId(), position.id, position.version, sl, tp) }
@@ -757,6 +757,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val validInput = (edit.stopLoss.isBlank() || sl != null && sl > 0 && sl % spec.tickSize == 0L) && (edit.takeProfit.isBlank() || tp != null && tp > 0 && tp % spec.tickSize == 0L)
                     val validVersion = current?.version == p.version
                     val capabilityError = protectionEditError(plugin.capabilities, p, sl, tp)
+                    val priceError = if (validInput) positionProtectionError(spec, p, market.quotes[p.symbol], sl, tp) else null
                     fun estimate(price: Long?): String = price?.takeIf { it > 0 }?.let {
                         runCatching { "${money(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, it) - p.entryFeeMicros - commission(spec, p.lotsHundredths), true)} USD" }.getOrDefault("超出范围")
                     } ?: "未设置"
@@ -776,11 +777,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text("当前显示预估结果。确认后由交易商校验并更新，跳空可能使实际结果与预估不同。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             if (!validVersion) Text("仓位已关闭或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
                             if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            priceError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("protection-price-error")) }
                         } },
                         confirmButton = { Button({
                             protection = null
                             perform { session.modifyProtection(requestId(), p.id, p.version, sl, tp) }
-                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
+                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && priceError == null && !busy) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
                         dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
                     )
                 }

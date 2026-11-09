@@ -282,6 +282,37 @@ class RithmicBrokerTest {
         assertTrue(stops.all { it.positionId == position.id && !it.editable && it.note != null })
     }
 
+    /** The quote is 5500.00 / 5500.25 against a 5490 entry, and the target has been reached without filling. */
+    @Test fun aStopMovesToBreakEvenAndPastItButNotThroughTheMarket() = runTest {
+        val server = FakeRithmicServer().apply {
+            positions += positionRow(1, 5490.0)
+            openOrders += limitEntry("S1", RithmicEnums.SELL, 1, 5480.0, originalBasket = "E1", priceType = RithmicEnums.PRICE_STOP_MARKET)
+            openOrders += limitEntry("T1", RithmicEnums.SELL, 1, 5500.0, originalBasket = "E1")
+        }
+        val session = ready(server).openSession("ACC1")
+        val position = session.state.value.positions.single()
+        assertFalse(session.modifyProtection("req-60", position.id, position.version, 550000, position.takeProfit).accepted, "A stop at the bid would trigger at once")
+        assertTrue(server.requests(Rt.REQUEST_MODIFY_ORDER).isEmpty())
+        val even = session.modifyProtection("req-61", position.id, position.version, 549000, position.takeProfit)
+        assertTrue(even.accepted, even.message)
+        assertEquals(5490.0, server.requests(Rt.REQUEST_MODIFY_ORDER).single().double(Rf.TRIGGER_PRICE))
+        server.notifyOrder("S1", "modified") { double(Rf.TRIGGER_PRICE, 5490.0) }
+        runCurrent()
+        val moved = session.state.value.positions.single()
+        assertEquals(549000, moved.stopLoss)
+        val past = session.modifyProtection("req-62", moved.id, moved.version, 549500, moved.takeProfit)
+        assertTrue(past.accepted, past.message)
+    }
+
+    @Test fun aMarketOrderTargetMustClearItsFillPrice() = runTest {
+        val session = ready(FakeRithmicServer()).openSession("ACC1")
+        fun target(side: Side, price: Long) = session.preview(OrderRequest("MESZ6", side, OrderKind.MARKET, 100, takeProfit = price))
+        assertFalse(target(Side.BUY, 550025).valid, "A buy fills at the ask")
+        assertTrue(target(Side.BUY, 550050).valid)
+        assertFalse(target(Side.SELL, 550000).valid, "A sell fills at the bid")
+        assertTrue(target(Side.SELL, 549975).valid)
+    }
+
     @Test fun pendingEntryBracketLevelsShowAsProtectionAndMoveByTicks() = runTest {
         val server = FakeRithmicServer().apply {
             openOrders += limitEntry("E2", RithmicEnums.BUY, 1, 5490.0)

@@ -50,6 +50,8 @@ TradingScreen(runtime)
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
 | `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
 
+止损止盈的价格规则在 [ProtectionPrices.kt](../broker-api/src/commonMain/kotlin/com/unitrading/broker/ProtectionPrices.kt)，插件直接调用，不要各写一份。`entryProtectionError` 用于未成交订单：按订单方向与入场价比较，市价单要越过整个买卖价差。`positionProtectionError` 用于已有持仓：只校验改动的那条线，只和当前可平仓价比较，不看入场价，这样推保本和把止损推过入场价都不受影响。
+
 交易命令返回 `TradeResult`。`outcome` 区分 ACCEPTED、REJECTED、UNKNOWN；`accepted=true` 在远程插件中只表示已受理，不等于成交。结果未知时，不能据此判断未成交，也不能自动重发。示例远程插件按会话去重，同请求 ID 不重复发送；重新登录后应先核对服务器状态，内存中的去重记录不保证跨会话有效。
 
 ## 数值单位

@@ -1284,7 +1284,8 @@ class RithmicBroker(
                 val stop = p.stopLoss != stopLoss
                 val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有止损/止盈，添加或删除保护请在 R | Trader 操作" }
                 val spec = lock.withLock { specs[p.symbol] } ?: errorArgument("合约规格尚未加载")
-                validateProtection(spec.instrument, p.side, quotes[p.symbol], stopLoss, takeProfit)
+                require(fresh(quotes[p.symbol])) { "止损/止盈修改需要有效的实时报价" }
+                positionProtectionError(spec.instrument, p, quotes[p.symbol], stopLoss, takeProfit)?.let { errorArgument(it) }
                 val id = requireNotNull(if (stop) p.stopLossOrderId else p.takeProfitOrderId) { "没有唯一可修改的保护订单" }
                 val raw = lock.withLock { orders[id] }
                 require(raw != null && raw.active && raw.side != null) { "保护订单已被替换或不再有效" }
@@ -1331,8 +1332,7 @@ class RithmicBroker(
             val reference = if (request.side == Side.BUY) quote.ask else quote.bid
             require(if (above) entry >= reference + tick else entry <= reference - tick) { "Limit/Stop 入场方向或距离无效" }
         }
-        val reference = if (request.kind == OrderKind.MARKET) if (request.side == Side.BUY) quote.bid else quote.ask else entry
-        validateProtection(spec.instrument, request.side, Quote(reference, reference, quote.timeMs), request.stopLoss, request.takeProfit)
+        entryProtectionError(spec.instrument, request, quote)?.let { errorArgument(it) }
         if (!modifying && (request.stopLoss != null || request.takeProfit != null)) require(accountFlows[accountId]?.value?.positions?.none { it.symbol == request.symbol } != false) { "该合约已有净仓，不能再叠加括号保护" }
         val warnings = mutableListOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Rithmic / FCM 为准")
         if (request.kind == OrderKind.MARKET && (request.stopLoss != null || request.takeProfit != null)) warnings.add("市价单的括号保护按实际成交价加减相同 tick 数生成，实际 SL/TP 价位可能与输入不同")
@@ -1343,14 +1343,6 @@ class RithmicBroker(
             takeProfitPnlMicros = request.takeProfit?.let { grossPnl(spec.instrument, request.side, request.lotsHundredths, entry, it) },
             quoteRevision = market.value.revision, marginKnown = false, feesKnown = commission != null, warnings = warnings)
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeRithmicMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
-
-    private fun validateProtection(spec: Instrument, side: Side, quote: Quote?, sl: Long?, tp: Long?) {
-        require(fresh(quote)) { "止损/止盈修改需要有效的实时报价" }
-        val reference = if (side == Side.BUY) quote!!.bid else quote!!.ask
-        for (price in listOfNotNull(sl, tp)) require(price > 0 && price % spec.tickSize == 0L) { "止损/止盈不符合最小变动单位" }
-        sl?.let { require(if (side == Side.BUY) it <= reference - spec.tickSize else it >= reference + spec.tickSize) { "止损方向或距离无效" } }
-        tp?.let { require(if (side == Side.BUY) it >= reference + spec.tickSize else it <= reference - spec.tickSize) { "止盈方向或距离无效" } }
-    }
 
     private suspend fun command(accountId: String, requestId: String, signature: String, action: suspend () -> TradeResult): TradeResult = commandLock.withLock {
         val key = "$accountId/$requestId"

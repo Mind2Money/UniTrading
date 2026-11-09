@@ -95,6 +95,15 @@ class TradingScreenTest {
         compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
     }
 
+    @Test fun theOrderFormRefusesProtectionAgainstItsDirection() {
+        render()
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        compose.onNodeWithTag("order-sl-enabled").performClick()
+        compose.onNodeWithTag("review-order").assertIsEnabled()
+        compose.onNodeWithTag("order-sl").performTextReplacement(instrument.formatPrice(q.bid))
+        compose.onNodeWithTag("order-error").assertTextContains("买入单的止损须低于当前 Bid ${instrument.formatPrice(q.bid)}")
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
+    }
     @Test fun orderPreviewConfirmationAndOhlcTable() {
         render()
         val before = session.state.value.positions.size

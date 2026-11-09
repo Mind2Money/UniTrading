@@ -429,6 +429,38 @@ class TradovateTests {
         assertTrue(broker.market.value.tradingReady)
         assertEquals(5_491_000_000, account.state.value.positions.single().stopLoss)
     }
+    /** The quote is 5500 / 5500.25 against a 5490 entry, and the target has been reached without filling. */
+    @Test fun aStopMovesToBreakEvenAndPastItButNotThroughTheMarket() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":1,"netPrice":5490,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("order", obj("""{"id":701,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Working","parentId":700,"ocoId":702,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("order", obj("""{"id":702,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Working","parentId":700,"ocoId":701,"timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1701,"orderId":701,"orderQty":1,"orderType":"Stop","stopPrice":5480}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1702,"orderId":702,"orderQty":1,"orderType":"Limit","price":5500}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        val p = account.state.value.positions.single()
+        assertFalse(account.modifyProtection("at-bid", p.id, p.version, 5_500_000_000, p.takeProfit).accepted, "A stop at the bid would trigger at once")
+        assertTrue(wire.requests.none { it.path == "order/modifyorder" })
+        val even = account.modifyProtection("even", p.id, p.version, 5_490_000_000, p.takeProfit)
+        assertTrue(even.accepted, even.message)
+        assertEquals("5490.000000", wire.requests.last().body!!.str("stopPrice"))
+        wire.account.entity("orderVersion", obj("""{"id":1703,"orderId":701,"orderQty":1,"orderType":"Stop","stopPrice":5490}"""))
+        runCurrent()
+        val moved = account.state.value.positions.single()
+        assertEquals(5_490_000_000, moved.stopLoss)
+        val past = account.modifyProtection("past", moved.id, moved.version, 5_495_000_000, moved.takeProfit)
+        assertTrue(past.accepted, past.message)
+    }
+    @Test fun aMarketOrderTargetMustClearItsFillPrice() = runTest {
+        val (broker, _) = ready()
+        val account = broker.openSession("100")
+        fun target(side: Side, price: Long) = account.preview(OrderRequest("MESZ6", side, OrderKind.MARKET, 100, takeProfit = price))
+        assertFalse(target(Side.BUY, 5_500_250_000).valid, "A buy fills at the ask")
+        assertTrue(target(Side.BUY, 5_500_500_000).valid)
+        assertFalse(target(Side.SELL, 5_500_000_000).valid, "A sell fills at the bid")
+        assertTrue(target(Side.SELL, 5_499_750_000).valid)
+    }
     @Test fun pendingBracketPricesMoveOneLineAtATimeBeforeTheEntryFills() = runTest {
         val (broker, wire) = ready()
         wire.account.entity("order", obj("""{"id":700,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Working","timestamp":"$TEST_INSTANT"}"""))

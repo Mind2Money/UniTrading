@@ -13,6 +13,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.OrderTagButtons
 import com.unitrading.chart.PriceScale
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -68,8 +69,9 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
 @OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 class ProtectionUiTest {
     @get:Rule val compose = createComposeRule()
-    private fun render(broker: OfflineProtectionBroker) {
+    private fun render(broker: OfflineProtectionBroker, skipConfirmation: Boolean = false) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
+        if (skipConfirmation) runBlocking { assertTrue(runtime.tradingPreferences.setSkipConfirmation(true)) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
         compose.onNodeWithTag("broker-picker").performClick()
         compose.onNodeWithText(broker.descriptor.name).performClick()
@@ -143,6 +145,43 @@ class ProtectionUiTest {
         compose.onNodeWithTag("confirm-protection").performClick()
         compose.waitUntil(5000) { broker.protectionCalls == 1 }
         assertEquals(0, broker.entryCalls)
+    }
+    @Test fun theDialogChecksTheMovedLineAgainstTheMarketAndNeverTheEntry() {
+        val broker = OfflineProtectionBroker()
+        render(broker)
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
+        compose.onNodeWithTag("protect-position-100:200").performClick()
+        val stop = compose.onNodeWithTag("protect-sl")
+        val confirm = compose.onNodeWithTag("confirm-protection")
+        val error = compose.onNodeWithTag("protection-price-error")
+        // Break-even at the 5500.00 entry, then one tick under the 5505.00 bid.
+        for (price in listOf(550000L, 550475L)) {
+            stop.performTextReplacement(broker.spec.formatPrice(price))
+            error.assertDoesNotExist()
+            confirm.assertIsEnabled()
+        }
+        stop.performTextReplacement(broker.spec.formatPrice(550500))
+        error.assertTextContains("买入仓位的止损须低于当前 Bid 5505.00")
+        confirm.assertIsNotEnabled()
+        stop.performTextReplacement(broker.spec.formatPrice(549000))
+        compose.onNodeWithTag("protect-tp").performTextReplacement(broker.spec.formatPrice(550500))
+        error.assertTextContains("买入仓位的止盈须高于当前 Bid 5505.00")
+        confirm.assertIsNotEnabled()
+        assertEquals(0, broker.protectionCalls)
+    }
+    @Test fun aDropPastTheMarketNeverReachesTheBrokerWhenConfirmationsAreSkipped() {
+        val broker = OfflineProtectionBroker()
+        render(broker, skipConfirmation = true)
+        val chart = compose.onNodeWithTag("trading-chart")
+        val bounds = chart.fetchSemanticsNode().size
+        val scale = PriceScale.from(broker.history("TESTZ6", Timeframe.M5).takeLast(80), listOf(550500, 550525, 550000, 549000, 552000), 18f * .6f, bounds.height - 30f * .6f)
+        val from = scale.y(549000)
+        val distance = scale.y(551000) - from
+        chart.performTouchInput { down(Offset(bounds.width * .55f, from)); moveBy(Offset(0f, distance / 4)); moveBy(Offset(0f, distance * 3 / 4)); up() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
+        compose.onNodeWithText("买入仓位的止损须低于当前 Bid 5505.00").assertExists()
+        assertEquals(0, broker.protectionCalls)
     }
     @Test fun unresolvedRowsCannotBeEditedAsEntries() {
         val broker = OfflineProtectionBroker(unresolved = true)
