@@ -263,6 +263,18 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
     }
     fun copySelected() { clipboard = selected }
     fun paste() { clipboard?.let { val copy = it.copy(id = newId()); commit(drawings + copy); selectedId = copy.id } }
+    /**
+     * Draws a horizontal line through [point] in one step, as the plot's context menu does, and selects it. Hidden drawings
+     * come back, because the new line would not show among them.
+     */
+    fun addHorizontalLine(point: DrawingPoint) {
+        menuAt = null
+        if (drawings.size >= MAX_DRAWINGS_PER_SYMBOL) { notice = "每个品种最多 $MAX_DRAWINGS_PER_SYMBOL 个绘图。"; return }
+        val line = defaultsFor(DrawingTool.HORIZONTAL_LINE, newDrawing(DrawingTool.HORIZONTAL_LINE, newId(), listOf(point)))
+        hideDrawings = false
+        commit(drawings + line)
+        selectedId = line.id
+    }
     fun toggleLock(id: String) { drawings.firstOrNull { it.id == id }?.let { update(it.copy(locked = !it.locked)) }; menuAt = null }
     fun hide(id: String) { drawings.firstOrNull { it.id == id }?.let { update(it.copy(hidden = true)) }; if (selectedId == id) selectedId = null; menuAt = null }
     /** Moves a drawing in the paint order; a positive [delta] brings it towards the front. */

@@ -302,6 +302,27 @@ class ChartDrawingsTest {
         assertEquals(1, drawings.drawings.size)
     }
 
+    @Test fun theContextMenuDrawsAHorizontalLineInOneStepAndItCanBeUndone() {
+        drawings.hideDrawings = true
+        drawings.addHorizontalLine(DrawingPoint(START + 20 * HOUR, 40_125.0))
+        val line = drawings.drawings.single()
+        assertEquals(DrawingTool.HORIZONTAL_LINE, line.tool)
+        assertEquals(listOf(DrawingPoint(START + 20 * HOUR, 40_125.0)), line.points)
+        assertTrue(line.style.showPrices, "the tool's default look, with its price on the axis")
+        assertEquals(line.id, drawings.selectedId)
+        assertFalse(drawings.hideDrawings, "hidden drawings come back, or the new line would not show")
+        assertNull(drawings.tool, "no tool is armed by it")
+        assertEquals(1, ChartDrawings(store, Dispatchers.Unconfined).apply { bind("TEST") }.drawings.size, "saved like any drawing")
+        drawings.undo()
+        assertTrue(drawings.drawings.isEmpty())
+    }
+
+    @Test fun theLayerAnchorsTheMenuLineOnTheBarUnderThePointerAtTheMenuPrice() {
+        val layer = DrawingLayer(drawings).also { it.ctx = ctx }
+        layer.addHorizontalLine(at(20, 39_990), 40_000)
+        assertEquals(DrawingPoint(START + 20 * HOUR, 40_000.0), drawings.drawings.single().points.single(), "the tick price of the menu, not the raw pointer price")
+    }
+
     @Test fun rightClickCancelsAPlacement() {
         drawings.chooseTool(DrawingTool.TREND_LINE)
         click(at(10, 39_000))

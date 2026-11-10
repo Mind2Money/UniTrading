@@ -90,6 +90,12 @@ internal class DrawingLayer(val controller: ChartDrawings) {
 
     fun indicatorValues(x: Float): List<Double> = ctx?.coords?.candleIndexAt(x)?.let(indicatorValuesAt).orEmpty()
 
+    /** Draws a horizontal line at [price], anchored on the bar under [position]: the plot's context menu. */
+    fun addHorizontalLine(position: Offset, price: Long) {
+        val coords = ctx?.coords ?: return
+        controller.addHorizontalLine(coords.pointAt(position).copy(price = price.toDouble()))
+    }
+
     /** Which pointer shape the chart shows; null leaves it to the order lines. */
     val cursor: PointerIcon? get() = when {
         controller.tool != null || controller.zooming || controller.cursor == ChartCursor.DEMONSTRATION -> PointerIcon.Crosshair

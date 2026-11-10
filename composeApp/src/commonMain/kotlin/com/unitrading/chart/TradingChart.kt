@@ -105,6 +105,7 @@ fun TradingChart(
     /** Where the mouse rests; the tag button under it lights up and names itself. */
     var hoverPoint by remember { mutableStateOf<Offset?>(null) }
     var lineMenu by remember(accountKey, instrument.symbol) { mutableStateOf<LineMenu?>(null) }
+    var plotMenu by remember(accountKey, instrument.symbol) { mutableStateOf<PlotMenu?>(null) }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
     var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
@@ -159,6 +160,8 @@ fun TradingChart(
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
     val currentActions by rememberUpdatedState(actions)
+    val currentQuote by rememberUpdatedState(quote)
+    val currentDrawingLayer by rememberUpdatedState(drawingLayer)
     val currentTotal by rememberUpdatedState(candles.size)
     val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths, it.request, it.protectionEditable) }
     val activeDraft = drag?.let { edit ->
@@ -310,22 +313,31 @@ fun TradingChart(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。"
+                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。"
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
                         .pointerHoverIcon(chartCursor)
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
-                            // On the Initial pass, so the tap and drag detectors below never see the press that opens the menu.
+                            // On the Initial pass, so the tap and drag detectors below never see the press that opens a menu.
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+                                    // The drawing layer saw the press first: it opened a drawing's menu or cancelled a placement.
+                                    if (event.changes.any { it.isConsumed }) continue
                                     val point = event.changes.firstOrNull()?.position ?: continue
                                     if (point.x !in left..right || point.y !in top..currentPlotBottom) continue
-                                    val line = lineAt(point, currentTags, currentLines, currentScale, 8 * density.density) ?: continue
-                                    lineMenu = LineMenu(point, line.cells.filter { it.action != null })
+                                    val line = lineAt(point, currentTags, currentLines, currentScale, 8 * density.density)
+                                    if (line != null) lineMenu = LineMenu(point, line.cells.filter { it.action != null })
+                                    else {
+                                        // Nothing under the pointer: the plot's own menu, at the price the crosshair shows there.
+                                        val price = currentScale.price(point.y, instrument.tickSize)
+                                        val orders = plotOrders(price, currentQuote, currentActions.entryKinds)
+                                        if (orders.isEmpty() && currentDrawingLayer == null) continue
+                                        plotMenu = PlotMenu(point, price, orders)
+                                    }
                                     event.changes.forEach { it.consume() }
                                 }
                             }
@@ -389,7 +401,7 @@ fun TradingChart(
                                     val point = down.position
                                     crosshair = null
                                     mode = when {
-                                        lineMenu != null -> ChartDragMode.NONE
+                                        lineMenu != null || plotMenu != null -> ChartDragMode.NONE
                                         point.x >= right && point.y < currentPlotBottom -> ChartDragMode.PRICE
                                         point.y >= bottom && point.x < right -> ChartDragMode.TIME
                                         point.x in left..right && point.y in top..currentPlotBottom -> ChartDragMode.PLOT
@@ -617,6 +629,11 @@ fun TradingChart(
                     }
                 }
                 lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
+                plotMenu?.let { menu ->
+                    PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
+                        onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
+                        onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price) })
+                }
                 val bar = visible.getOrNull(readoutIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + readoutIndex - 1)
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)

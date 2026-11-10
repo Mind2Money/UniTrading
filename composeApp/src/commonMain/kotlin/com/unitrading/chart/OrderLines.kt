@@ -236,6 +236,10 @@ internal data class OrderLineOptions(
  * What dragging an order line or pressing one of its buttons does. A drag only reports where the line was dropped: the
  * draft takes the price at once, while a pending order or position changes on the broker only after the screen's
  * confirmation. The estimates feed the readout during a drag. Grouped in one parameter for the same reason as [ChartChrome].
+ *
+ * The plot's context menu offers limit and stop entries of [entryKinds] at the clicked price. [entryLots] is the quantity
+ * they would carry, the order panel's, or null while that does not parse; [onEntryOrder] hands the pick to the screen,
+ * which sends it through the order panel's checks and confirmation. No [entryKinds], no orders in the menu.
  */
 class ChartOrderActions(
     val estimateDraft: (OrderRequest) -> OrderPreview,
@@ -251,4 +255,7 @@ class ChartOrderActions(
     val onLineAction: (LineAction) -> Unit = {},
     val addProtection: Boolean = false,
     val removeProtection: Boolean = false,
+    val entryKinds: Set<OrderKind> = emptySet(),
+    val entryLots: Long? = null,
+    val onEntryOrder: (side: Side, kind: OrderKind, price: Long) -> Unit = { _, _, _ -> },
 )

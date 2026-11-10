@@ -201,6 +201,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val preview = remember(session, instrument, request, market.revision, account, capacity) {
             request?.let(session::preview)?.withCapacity(request, capacity)
         }
+        /**
+         * The quantity limit [order] is checked against. The order panel's limit belongs to its own side; an order on the
+         * other side, which only the chart's context menu creates, takes the last limit the server gave for that side, or none.
+         */
+        fun capacityFor(order: OrderRequest): QuantityCapacityState = if (localDemo || order.side == draft.side) capacity else
+            runtime.orderCapacity.entries.value[OrderCapacityCache.key(plugin.descriptor.id, session.account.id, order.symbol, order.side)]
+                ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
         val indicatorSettings by runtime.indicators.settings.collectAsState()
         val visiblePositions = account.positions.filter { it.symbol == executionSymbol }
@@ -405,9 +412,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (busy) return
                     when (action) {
                         is Confirmation.Place -> {
-                            val checked = session.preview(action.request).withCapacity(action.request, capacity)
+                            val checked = session.preview(action.request).withCapacity(action.request, capacityFor(action.request))
                             if (!checked.valid) { showNotice(checked.errors.firstOrNull() ?: "订单参数无效", attention = true); return }
-                            perform({ if (compact) closeOrder() }) { session.placeOrder(requestId(), action.request) }
+                            perform({ if (compact && !action.fromChart) closeOrder() }) { session.placeOrder(requestId(), action.request) }
                         }
                         is Confirmation.Close -> {
                             val current = session.state.value.positions.firstOrNull { it.id == action.position.id }
@@ -449,6 +456,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }
+                /**
+                 * A limit or stop entry picked from the chart's context menu: the order panel's quantity at the clicked price,
+                 * without a stop loss or take profit, through the same checks and confirmation as the panel's own order.
+                 */
+                fun orderFromChart(side: Side, kind: OrderKind, price: Long) {
+                    val order = OrderDraft(side, kind, draft.quantity, instrument.formatPrice(price)).request(instrument)
+                    if (order == null) { showNotice("请先在下单面板输入有效数量", attention = true); return }
+                    reviewTrade(Confirmation.Place(order, fromChart = true))
+                }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
@@ -473,6 +489,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onLineAction = { runLineAction(it) },
                         addProtection = plugin.capabilities.addProtection,
                         removeProtection = plugin.capabilities.removeProtection,
+                        entryKinds = plugin.capabilities.orderKinds,
+                        entryLots = instrument.parseQuantity(draft.quantity),
+                        onEntryOrder = { side, kind, price -> orderFromChart(side, kind, price) },
                     )
                     val drawings = runtime.drawings
                     BoxWithConstraints(m) {
@@ -677,7 +696,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     target == null || catalog.instruments.any { it.symbol == target }
                 }?.let { action ->
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
-                    val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacity) }
+                    val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacityFor(it.request)) }
                     val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
                     val confirmColor = when (action) {
                         is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)

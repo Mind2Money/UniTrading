@@ -82,7 +82,8 @@ internal data class PendingEntryEdit(val order: PendingOrder, val entry: String)
 internal data class PendingProtectionEdit(val order: PendingOrder, val stopLoss: String, val takeProfit: String)
 internal data class ProtectionEdit(val position: Position, val stopLoss: String, val takeProfit: String)
 internal sealed interface Confirmation {
-    data class Place(val request: OrderRequest) : Confirmation
+    /** [fromChart] marks an order picked from the chart's context menu: it is not the order panel's draft, so placing it leaves the panel as it is. */
+    data class Place(val request: OrderRequest, val fromChart: Boolean = false) : Confirmation
     data class Close(val position: Position) : Confirmation
     data class Cancel(val order: PendingOrder) : Confirmation
     data object Reset : Confirmation

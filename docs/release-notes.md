@@ -13,6 +13,8 @@
 ✅ 十字线竖线不再停在最新一根 K 线上：指针移到 K 线之外的留白时竖线跟随指针，时间轴按周期顺推显示该位置的时间（不跳过休市时段）；图例和指标读数此时显示最近一根 K 线
 ✅ 自选品种的 K 线在后台预读并缓存：当前周期和收藏周期都读全 2000 根，添加品种后随即开始。打开已缓存的图表直接显示，只补取之后缺少的 K 线，指标不再随着历史一页页加载反复重绘
 ✅ 打开已缓存的图表时，最新一根 K 线不再先紧挨着旧的末根画出来，等缺少的 K 线补齐后一起显示
+✅ 在图表空白处点鼠标右键打开菜单：在该价位画水平线，或在该价位挂限价单、突破单。价位在市价下方时给出买入限价和卖出突破，在上方时给出卖出限价和买入突破；数量取下单面板当前的数量，不带止损止盈。默认弹确认框，开启“跳过交易确认”后点击即下单
+⚠️ 右键菜单需要鼠标，触屏没有对应入口；菜单下单只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单
 ⚠️ Tradovate 的预读不限速：首次补齐时会超过服务器每小时 180 次图表请求的额度，超出期间打开图表和主力核实的每次请求多等 1～3 秒；手机和桌面各自预读，共用这份额度。Rithmic 的预读只在离线测试中验证过
 
 ## English
@@ -28,6 +30,8 @@
 ✅ The crosshair's vertical line no longer stops at the newest bar: in the empty space beside the bars it follows the pointer, and the time axis shows that position's time, counted on at one interval per bar without skipping closed hours; the legend and indicator readouts then show the nearest bar
 ✅ Watch-list history is read ahead and cached in the background: the shown interval and the starred intervals each get their full 2,000 bars, starting as soon as a symbol is added. A cached chart opens at once and only fetches the bars since, so indicators no longer redraw as history arrives page by page
 ✅ A cached chart no longer draws the newest bar right next to its old last bar first; it appears together with the bars in between
+✅ A right click on empty chart space opens a menu: draw a horizontal line at that price, or place a limit or stop order there. Under the market it offers a buy limit and a sell stop, over it a sell limit and a buy stop; the order takes the order panel's quantity and carries no stop or target. A confirmation appears unless you turned confirmations off
+⚠️ The menu needs a mouse and has no touch equivalent; orders from it were only checked in offline tests, never placed on a Tradovate or Rithmic account
 ⚠️ Tradovate read-ahead is not rate-limited: the first fill goes over the server's 180 chart requests per hour, and while it is over, every chart request waits 1–3 seconds more, including opening a chart and leader checks; phone and desktop each read ahead and share that budget. Rithmic read-ahead has only been verified in offline tests
 
 # v1.4.0
