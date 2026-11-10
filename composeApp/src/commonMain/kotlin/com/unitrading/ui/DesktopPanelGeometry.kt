@@ -24,7 +24,6 @@ internal fun orderFlowPanelDimension(chartAreaWidth: Float, fraction: Float): Pa
 internal data class DesktopPanelGeometry(
     val sidebar: PanelDimension,
     val order: PanelDimension,
-    val accounts: PanelDimension,
     val terminal: PanelDimension,
 )
 
@@ -44,10 +43,8 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
     val order = if (orderOpen) dimension(preferred.orderWidth, 260f, minOf(560f, room - sidebar.value)) else closed
     val availableHeight = (height - PANEL_DIVIDER).coerceAtLeast(0f)
     val terminalMin = minOf(128f, availableHeight * .35f)
-    val accountsMin = minOf(100f, availableHeight * .4f)
     return DesktopPanelGeometry(
         if (preferred.marketOpen) sidebar.copy(max = minOf(sidebar.max, room - order.value).coerceAtLeast(sidebar.min)) else closed, order,
-        dimension(preferred.accountsHeight, accountsMin, minOf(1000f, maxOf(accountsMin, availableHeight - 140f))),
         dimension(preferred.terminalHeight, terminalMin, minOf(1000f, maxOf(terminalMin, availableHeight - 240f))),
     )
 }

@@ -9,7 +9,7 @@ class DesktopLayoutTest {
         val store = MemorySnapshotStore()
         store.write("chart-v1", "unchanged")
         val controller = DesktopLayoutController(store)
-        val custom = DesktopLayoutPreferences(310f, 370f, 180f, 300f, orderFlowFraction = .65f)
+        val custom = DesktopLayoutPreferences(310f, 370f, 300f, orderFlowFraction = .65f)
         controller.update(custom)
         assertNull(store.read("desktop-layout-v1"), "dragging only updates memory")
         assertTrue(controller.save())
@@ -61,12 +61,24 @@ class DesktopLayoutTest {
         assertNotNull(loaded.error.value)
     }
 
+    /** The accounts panel left the workspace on 2026-11-11; a layout that still names it opens with everything else kept. */
+    @Test fun aLayoutWithTheRemovedAccountsPanelStillOpens() {
+        val store = MemorySnapshotStore()
+        store.write("desktop-layout-v1", """{"sidebarWidth":300.0,"accountsHeight":180.0,"detached":["ACCOUNTS","CHART"],""" +
+            """"windows":{"CHART":{"x":10.0,"y":20.0,"width":900.0,"height":600.0}}}""")
+        val controller = DesktopLayoutController(store)
+        assertNull(controller.error.value)
+        assertEquals(300f, controller.preferences.value.sidebarWidth)
+        assertEquals(setOf(WorkspacePanel.CHART), controller.preferences.value.detached)
+        assertEquals(WindowBounds(10f, 20f, 900f, 600f), controller.preferences.value.windows["CHART"])
+    }
+
     @Test fun foldedPanelsPersistAndALayoutSavedBeforeThemOpensWithEverythingShown() = runTest {
         val store = MemorySnapshotStore()
         store.write("desktop-layout-v1", """{"orderWidth":260.0,"accountsHeight":196.125,"terminalHeight":179.875}""")
         val controller = DesktopLayoutController(store)
         assertNull(controller.error.value)
-        assertEquals(DesktopLayoutPreferences(orderWidth = 260f, accountsHeight = 196.125f, terminalHeight = 179.875f), controller.preferences.value)
+        assertEquals(DesktopLayoutPreferences(orderWidth = 260f, terminalHeight = 179.875f), controller.preferences.value, "the removed accounts height is dropped")
         controller.setOpen(DesktopPanel.MARKET, false)
         controller.setOpen(DesktopPanel.TERMINAL, false)
         assertTrue(controller.save())

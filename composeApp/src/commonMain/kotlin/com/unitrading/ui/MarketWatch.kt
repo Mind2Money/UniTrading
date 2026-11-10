@@ -39,6 +39,8 @@ internal fun MarketWatch(
     preferences: MarketWatchPreferences = remember { MarketWatchPreferences(MemorySnapshotStore()) },
     subtitle: String? = null,
     panel: Boolean = false,
+    /** Folds the desktop market panel; its button closes the title row's actions. */
+    onClose: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
@@ -84,7 +86,11 @@ internal fun MarketWatch(
     NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None), isBackEnabled = adding || editing,
         onBackCompleted = { if (adding) stepBack() else editing = false })
     Column(modifier.background(colors.Surface).testTag("market-watch")) {
-        if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back", panel = panel)
+        val close: @Composable RowScope.() -> Unit = {
+            onClose?.let { ActionIcon(AppIcons.Close, "收起行情面板", "desktop-market-minimize", tint = MaterialTheme.colorScheme.onSurfaceVariant, onClick = it) }
+        }
+        if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back", panel = panel,
+            actions = close)
         else PageTopBar(if (editing) "编辑自选" else "行情", subtitle.takeUnless { editing }, panel = panel, actions = {
             barActions()
             if (editing) IconButton({ editing = false }, Modifier.testTag("market-edit-done")) {
@@ -96,6 +102,7 @@ internal fun MarketWatch(
                     Icon(AppIcons.Edit, "编辑自选")
                 }
             }
+            close()
         })
         if (adding) {
             OutlinedTextField(query, { query = it.take(32) }, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp).testTag("symbol-search"),

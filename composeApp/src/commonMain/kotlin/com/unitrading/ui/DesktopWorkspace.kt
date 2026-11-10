@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * The chart with the trade list under it, then the order ticket and the accounts and market panel, as on TradingView.
+ * The chart with the trade list under it, then the order ticket and the market panel, as on TradingView.
  * The Material rail folds the surrounding panels and opens order flow in the chart area's right half.
  *
  * Where the platform has windows, any panel can leave for a window of its own from the rail's window menu; closing that
@@ -60,8 +60,7 @@ internal fun DesktopWorkspace(
     controller: DesktopLayoutController,
     wide: Boolean,
     modifier: Modifier = Modifier,
-    accounts: @Composable () -> Unit,
-    market: @Composable (Modifier) -> Unit,
+    market: @Composable (Modifier, minimize: () -> Unit) -> Unit,
     chart: @Composable (Modifier) -> Unit,
     order: @Composable (Modifier, minimize: () -> Unit) -> Unit,
     terminal: @Composable (Modifier) -> Unit,
@@ -87,9 +86,7 @@ internal fun DesktopWorkspace(
     val chartInline = WorkspacePanel.CHART !in detached
     val terminalInline = WorkspacePanel.TERMINAL !in detached
     val orderInline = wide && preferred.orderOpen && WorkspacePanel.ORDER !in detached
-    val accountsInline = WorkspacePanel.ACCOUNTS !in detached
-    val marketInline = WorkspacePanel.MARKET !in detached
-    val sidebarInline = preferred.marketOpen && (accountsInline || marketInline)
+    val sidebarInline = preferred.marketOpen && WorkspacePanel.MARKET !in detached
     Column(modifier.testTag("desktop-workspace")) {
         error?.let { message ->
             Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -147,21 +144,7 @@ internal fun DesktopWorkspace(
                         onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
                         onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
                     Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-sidebar")) {
-                        Column(Modifier.fillMaxSize()) {
-                            // Either half takes the whole column while the other is in a window of its own.
-                            if (accountsInline) Column((if (marketInline) Modifier.height(layout.accounts.value.dp) else Modifier.weight(1f)).fillMaxWidth()
-                                .testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
-                            if (accountsInline && marketInline) PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,
-                                onChange = { controller.update(preferred.copy(accountsHeight = it)) }, onFinish = ::save,
-                                onReset = { controller.update(preferred.copy(accountsHeight = defaults.accountsHeight)); save() })
-                            if (marketInline) market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
-                        }
-                        // In its own box: ActionIcon applies its modifier inside the tooltip, where alignment means nothing.
-                        Box(Modifier.align(Alignment.TopEnd).padding(end = 4.dp)) {
-                            ActionIcon(AppIcons.Close, "收起行情面板", "desktop-market-minimize", tint = MaterialTheme.colorScheme.onSurfaceVariant) {
-                                setOpen(DesktopPanel.MARKET, false)
-                            }
-                        }
+                        market(Modifier.fillMaxSize().testTag("desktop-market")) { setOpen(DesktopPanel.MARKET, false) }
                     }
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -192,10 +175,9 @@ internal fun DesktopWorkspace(
             }
             // A folded panel has no window either: the rail's toggles fold and unfold it wherever it lives.
             if (WorkspacePanel.CHART in detached) window(WorkspacePanel.CHART, 1000, 680) { chart(Modifier.fillMaxSize()) }
-            if (WorkspacePanel.ACCOUNTS in detached && preferred.marketOpen) window(WorkspacePanel.ACCOUNTS, 380, 360) {
-                Column(Modifier.fillMaxSize().background(TradingColors.Surface).verticalScroll(rememberScrollState())) { accounts() }
+            if (WorkspacePanel.MARKET in detached && preferred.marketOpen) window(WorkspacePanel.MARKET, 380, 640) {
+                market(Modifier.fillMaxSize()) { setOpen(DesktopPanel.MARKET, false) }
             }
-            if (WorkspacePanel.MARKET in detached && preferred.marketOpen) window(WorkspacePanel.MARKET, 380, 640) { market(Modifier.fillMaxSize()) }
             if (WorkspacePanel.ORDER in detached && preferred.orderOpen) window(WorkspacePanel.ORDER, 360, 760) { order(Modifier.fillMaxSize()) { setOpen(DesktopPanel.ORDER, false) } }
             if (WorkspacePanel.TERMINAL in detached && preferred.terminalOpen) window(WorkspacePanel.TERMINAL, 960, 360) {
                 Column(Modifier.fillMaxSize()) {

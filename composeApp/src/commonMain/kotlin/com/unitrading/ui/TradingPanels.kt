@@ -34,12 +34,11 @@ internal fun BrokerAccountChooser(
     accountId: String,
     onBroker: (String) -> Unit,
     onAccount: (String) -> Unit,
-    panel: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val type = MaterialTheme.typography
     Column(Modifier.padding(bottom = 8.dp)) {
-        if (panel) PanelHeader("交易商与账户") else ListSubheader("交易商与账户")
+        ListSubheader("交易商与账户")
         Box(Modifier.padding(horizontal = 16.dp)) {
             OutlinedButton({ expanded = true }, Modifier.fillMaxWidth().testTag("broker-picker"), shape = MaterialTheme.shapes.small,
                 contentPadding = PaddingValues(start = 16.dp, end = 8.dp)) {

@@ -120,10 +120,7 @@ class DesktopWindowsUiTest {
         inWindow(WorkspacePanel.ORDER, "order-quantity").assertExists()
         inWindow(WorkspacePanel.TERMINAL, "trade-terminal").assertExists()
         compose.onNodeWithTag("fake-window-MARKET").assertExists()
-        val accounts = compose.onNodeWithTag("desktop-accounts").fetchSemanticsNode().boundsInRoot
-        val sidebar = compose.onNodeWithTag("desktop-sidebar").fetchSemanticsNode().boundsInRoot
-        assertEquals(sidebar.height, accounts.height, 1f, "the accounts take the whole column while the market list is out")
-        compose.onNodeWithTag("resize-accounts").assertDoesNotExist()
+        compose.onNodeWithTag("desktop-sidebar").assertDoesNotExist() // the market list was all the side column held
 
         // The rail folds a panel wherever it lives: its window goes, and comes back on the next press.
         compose.onNodeWithTag("rail-order").performClick()
@@ -137,12 +134,8 @@ class DesktopWindowsUiTest {
         compose.waitForIdle()
         compose.onNodeWithTag("fake-window-TERMINAL").assertDoesNotExist()
 
-        toggle(WorkspacePanel.ACCOUNTS)
-        compose.onNodeWithTag("desktop-sidebar").assertDoesNotExist() // nothing is left for the side column
-        compose.onNodeWithTag("fake-window-ACCOUNTS").assertExists()
         compose.onNodeWithTag("rail-market").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("fake-window-ACCOUNTS").assertDoesNotExist()
         compose.onNodeWithTag("fake-window-MARKET").assertDoesNotExist()
     }
 

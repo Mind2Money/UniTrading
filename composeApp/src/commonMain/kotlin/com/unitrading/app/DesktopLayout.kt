@@ -9,6 +9,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /** The panels the desktop workspace can fold away. */
 enum class DesktopPanel { MARKET, ORDER, TERMINAL }
@@ -16,7 +21,7 @@ enum class DesktopPanel { MARKET, ORDER, TERMINAL }
 /** Every part of the desktop workspace; each can leave the main window for a window of its own. */
 @Serializable
 enum class WorkspacePanel(val title: String) {
-    CHART("图表"), ACCOUNTS("交易子账户"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
+    CHART("图表"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
 }
 
 /** Where a window of the app sits on the desktop and how large it is, in dp. */
@@ -31,7 +36,6 @@ data class WindowBounds(val x: Float, val y: Float, val width: Float, val height
 data class DesktopLayoutPreferences(
     val sidebarWidth: Float = 320f,
     val orderWidth: Float = 296f,
-    val accountsHeight: Float = 260f,
     val terminalHeight: Float = 220f,
     val marketOpen: Boolean = true,
     val orderOpen: Boolean = true,
@@ -43,7 +47,7 @@ data class DesktopLayoutPreferences(
     val windows: Map<String, WindowBounds> = emptyMap(),
 ) {
     fun validate() {
-        require(listOf(sidebarWidth, orderWidth, accountsHeight, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
+        require(listOf(sidebarWidth, orderWidth, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
             "面板尺寸超出范围"
         }
         require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {
@@ -60,11 +64,24 @@ data class DesktopLayoutPreferences(
     companion object { const val MAX_WINDOWS = 64 }
 }
 
+/**
+ * Reads a saved layout. Fields and panels the app no longer has are dropped rather than failing the whole layout:
+ * layouts saved before 2026-11-11 hold the removed accounts panel's height and may list it among the detached panels.
+ */
+internal fun decodeDesktopLayout(text: String): DesktopLayoutPreferences {
+    val json = Json { ignoreUnknownKeys = true }
+    val saved = json.parseToJsonElement(text).jsonObject
+    val panels = WorkspacePanel.entries.map { it.name }.toSet()
+    val detached = saved["detached"]?.jsonArray?.filter { it.jsonPrimitive.content in panels }
+    return json.decodeFromJsonElement(DesktopLayoutPreferences.serializer(),
+        if (detached == null) saved else JsonObject(saved + ("detached" to JsonArray(detached))))
+}
+
 class DesktopLayoutController(private val store: SnapshotStore) {
     private val saveMutex = Mutex()
     val error = MutableStateFlow<String?>(null)
     private val state = MutableStateFlow(try {
-        store.read("desktop-layout-v1")?.let { Json.decodeFromString<DesktopLayoutPreferences>(it).also(DesktopLayoutPreferences::validate) }
+        store.read("desktop-layout-v1")?.let { decodeDesktopLayout(it).also(DesktopLayoutPreferences::validate) }
             ?: DesktopLayoutPreferences()
     } catch (_: Exception) {
         error.value = "桌面布局无法读取，已使用默认尺寸。"

@@ -46,7 +46,7 @@ class DesktopWorkspaceTest {
     /** Every panel names itself at one size and one inset, and says so to screen readers. */
     @Test fun panelTitlesShareOneSizeAndInset() {
         render()
-        mapOf("新建订单" to "desktop-order", "交易子账户" to "desktop-sidebar", "行情" to "desktop-sidebar", "交易" to "desktop-terminal").forEach { (title, panel) ->
+        mapOf("新建订单" to "desktop-order", "行情" to "desktop-sidebar", "交易" to "desktop-terminal").forEach { (title, panel) ->
             val node = compose.onNode(hasText(title) and hasAnyAncestor(hasTestTag(panel)) and isHeading(), useUnmergedTree = true).fetchSemanticsNode()
             val layout = mutableListOf<TextLayoutResult>().also { node.config[SemanticsActions.GetTextLayoutResult].action!!(it) }.single()
             assertEquals(16.sp, layout.layoutInput.style.fontSize, title)
@@ -56,21 +56,18 @@ class DesktopWorkspaceTest {
         assertTrue(bounds("desktop-market-minimize").bottom <= bounds("desktop-sidebar").top + PANEL_BAR * .6f + .5f, "The fold button sits in the title row")
     }
 
-    @Test fun allFourDividersResizeTheirPanelsAndPersistWithoutTrading() {
+    @Test fun everyDividerResizesItsPanelAndPersistsWithoutTrading() {
         render()
         val plugin = runtime.registry.plugins.first()
         val session = plugin.openSession(plugin.accounts.first().id)
         val account = session.state.value
         val sidebar = bounds("desktop-sidebar").width
         val order = bounds("desktop-order").width
-        val accounts = bounds("desktop-accounts").height
         val terminal = bounds("desktop-terminal").height
         drag("resize-sidebar", Offset(-54f, 0f))
         assertTrue(bounds("desktop-sidebar").width > sidebar + 30f)
         drag("resize-order", Offset(-54f, 0f))
         assertTrue(bounds("desktop-order").width > order + 30f)
-        drag("resize-accounts", Offset(0f, 42f))
-        assertTrue(bounds("desktop-accounts").height > accounts + 20f)
         drag("resize-terminal", Offset(0f, -54f))
         assertTrue(bounds("desktop-terminal").height > terminal + 30f)
         assertTrue(bounds("desktop-chart").width >= 320f * .6f - 1f)
@@ -155,7 +152,7 @@ class DesktopWorkspaceTest {
     }
 
     @Test fun windowResizingAndMobileModeDoNotDestroyPreferredDimensions() {
-        val custom = DesktopLayoutPreferences(400f, 480f, 370f, 340f)
+        val custom = DesktopLayoutPreferences(400f, 480f, 340f)
         runtime.desktopLayout.update(custom)
         render()
         val original = bounds("desktop-order").width

@@ -950,16 +950,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     if (desktop) {
                         DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
-                            accounts = {
-                                Column(Modifier.padding(bottom = 8.dp)) {
-                                    PanelHeader("交易子账户")
-                                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(session.account.name, style = MaterialTheme.typography.titleSmall)
-                                        TextButton({ showOverview = true }, Modifier.testTag("sidebar-account-overview")) { Text("查看当前子账户") }
-                                    }
-                                }
-                            },
-                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true) },
+                            market = { m, minimize -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true, onClose = minimize) },
                             chart = chart,
                             order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                 { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,

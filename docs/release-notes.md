@@ -21,7 +21,7 @@
 ⚠️ 右键菜单需要鼠标，触屏没有对应入口；菜单下单只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单
 
 🖥️ **桌面窗口**
-✅ 任意面板都能以独立窗口显示：面板栏底部新增“窗口”菜单，图表、交易子账户、行情、下单、交易、订单流可以分别移到独立的系统窗口，关闭窗口即收回主窗口
+✅ 任意面板都能以独立窗口显示：面板栏底部新增“窗口”菜单，图表、行情、下单、交易、订单流可以分别移到独立的系统窗口，关闭窗口即收回主窗口
 ✅ 移出的面板不占主窗口空间，剩下的面板自动接管；行情、下单、交易图标照常收起和展开独立窗口里的面板
 ✅ 窗口的位置和大小会保存，重启后照原样打开；“重置布局”把全部面板收回主窗口
 ✅ 在独立窗口里下单、改单时，确认框和操作提示出现在当前操作的窗口里
@@ -47,6 +47,7 @@
 ✅ 手机和桌面顶部新增“登录账户”“交易子账户”两个下拉，直接切换交易商和子账户；切换时关闭上一个账户未提交的下单、改单和确认框
 ✅ 交易分析：按芝加哥、北京时间或 UTC 的平仓自然日统计当前子账户已加载的平仓记录，显示净盈亏、胜率、盈利因子、平均盈亏比、已实现最大回撤、累计或每日盈亏图，以及带周汇总的每日盈亏日历；缺少净盈亏的记录标为“待确认”，不按零计
 ✅ 桌面端点工具栏的“账户总览”在对话框里打开这三页，工作区和独立窗口保持不动
+✅ 桌面右侧栏去掉了交易子账户面板，行情列表占满侧栏，收起按钮移到行情标题栏右端；之前保存的布局照常恢复
 ⚠️ 统计只覆盖券商已返回的历史记录，自然日不等于交易所结算日
 
 📱 **手机图表**
@@ -76,7 +77,7 @@
 ⚠️ The menu needs a mouse and has no touch equivalent; orders from it were only checked in offline tests, never placed on a Tradovate or Rithmic account
 
 🖥️ **Desktop windows**
-✅ Any panel can live in a window of its own: the panel rail has a new "windows" menu that moves the chart, accounts, market list, order ticket, trade list or order flow into a separate system window; closing the window brings the panel back
+✅ Any panel can live in a window of its own: the panel rail has a new "windows" menu that moves the chart, market list, order ticket, trade list or order flow into a separate system window; closing the window brings the panel back
 ✅ A panel that left takes no room in the main window and the others take over its space; the rail's market, order and trade icons still fold and unfold a panel in its own window
 ✅ Window positions and sizes are saved and restored on the next start; "reset layout" brings every panel back into the main window
 ✅ When you trade from a separate window, confirmations and notices appear in the window you are working in
@@ -102,6 +103,7 @@
 ✅ Phones and the desktop toolbar get two pickers at the top, for the login and for the trading child account; switching closes the previous account's unsent order, edits and confirmations
 ✅ Analytics: the current child's loaded closed trades by calendar day in Chicago, Beijing or UTC time, with net P&L, win rate, profit factor, average win/loss, realized maximum drawdown, a cumulative or daily P&L chart and a daily P&L calendar with weekly totals; a trade without net P&L is marked as pending and not counted as zero
 ✅ On the desktop, the toolbar's account overview button opens these tabs in a dialog; the workspace and any panel windows stay as they are
+✅ The desktop side column no longer has the accounts panel: the market list fills it, and its fold button sits at the right end of its title row; saved layouts open as before
 ⚠️ The statistics cover only the history the broker returned, and a calendar day is not an exchange settlement day
 
 📱 **Phone charts**
