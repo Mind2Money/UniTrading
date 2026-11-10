@@ -209,10 +209,19 @@ fun TradingChart(
     val periodMs = timeframe.minutes * 60_000L
     val step = plotWidth / viewport.count.toFloat()
     val currentViewport by rememberUpdatedState(viewport)
-    fun visibleIndex(x: Float, view: ChartViewport = currentViewport): Int {
-        val shown = view.range(currentTotal)
-        return ((x - left) / (plotWidth / view.count) + view.start(currentTotal) - shown.first).toInt().coerceIn(0, (shown.last - shown.first).coerceAtLeast(0))
-    }
+    /**
+     * The bar slot under [x], counted from the first bar on screen. It does not stop at the loaded bars: in the empty space
+     * before the oldest bar it is negative, after the newest one it exceeds the last index of [visible].
+     */
+    fun visibleIndex(x: Float, view: ChartViewport = currentViewport): Int =
+        view.slotAt(((x - left) / plotWidth).toDouble(), currentTotal) - view.range(currentTotal).first
+    /** The first and last slot the crosshair can stand on, counted like [visibleIndex]. */
+    val crosshairSlots = viewport.slots(candles.size).let { (it.first - range.first)..(it.last - range.first) }
+    /**
+     * The bar the legend and the pane titles read: the one under the crosshair, the nearest one while the crosshair stands
+     * past either end of the bars, the newest without a crosshair.
+     */
+    val readoutIndex = (crosshair ?: visible.lastIndex).coerceAtMost(visible.lastIndex).coerceAtLeast(0)
 
     LaunchedEffect(focusedTrade?.id, instrument.symbol, timeframe) {
         if (focusedTrade != null && focusedTrade.symbol == instrument.executionSymbol) {
@@ -360,11 +369,11 @@ fun TradingChart(
                                     val index = visibleIndex(point.x)
                                     crosshair = index
                                     crosshairY = point.y
-                                    if (showHistory) selectedTrade = currentTrades.firstOrNull { trade ->
-                                        trade.closedAtMs in bars[index].timeMs until (bars[index].timeMs + periodMs)
-                                    }
+                                    // A tap in the empty space beside the bars has no bar to pick trades from and clears the selection.
+                                    val barTime = bars.getOrNull(index)?.let { it.timeMs until (it.timeMs + periodMs) } ?: LongRange.EMPTY
+                                    if (showHistory) selectedTrade = currentTrades.firstOrNull { trade -> trade.closedAtMs in barTime }
                                     if (showHistory) {
-                                        selectedExecution = currentExecutions.filter { it.timeMs in bars[index].timeMs until (bars[index].timeMs + periodMs) }
+                                        selectedExecution = currentExecutions.filter { it.timeMs in barTime }
                                             .minByOrNull { abs(currentScale.y(it.price) - point.y) }?.takeIf { abs(currentScale.y(it.price) - point.y) <= 24 * density.density }
                                         if (selectedExecution != null) selectedTrade = null
                                     }
@@ -431,8 +440,8 @@ fun TradingChart(
                         }
                         .onKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) false else when (event.key) {
-                                Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(0); crosshairY = null; true }
-                                Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(visible.lastIndex); crosshairY = null; true }
+                                Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(crosshairSlots.first); crosshairY = null; true }
+                                Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(crosshairSlots.last); crosshairY = null; true }
                                 Key.Escape -> { drag = null; crosshair = null; true }
                                 else -> false
                             }
@@ -540,7 +549,7 @@ fun TradingChart(
                     val tagStyle = OrderTagStyle(colors, 3.dp.toPx(), 13.dp.toPx(), closeIcon) { tagText(it) }
                     orderTags.forEach { drawOrderTag(it, tagStyle, right, hoveredButton) }
                     }
-                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + (crosshair ?: visible.lastIndex), instrument, left, right, paneLayout, step,
+                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, range, range.first + readoutIndex, instrument, left, right, paneLayout, step,
                         textMeasurer, labelStyle, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawLine(colors.Border, Offset(right, top), Offset(right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
@@ -575,13 +584,14 @@ fun TradingChart(
                             }
                         }
                     }
-                    crosshair?.takeIf { drawingLayer?.showsCrosshair != false }?.let { index ->
-                        val candle = visible.getOrNull(index) ?: return@let
+                    // A view that moved under a resting crosshair (zoom buttons, a jump to a trade) can leave its slot outside the plot.
+                    crosshair?.takeIf { it in crosshairSlots && drawingLayer?.showsCrosshair != false }?.let { index ->
+                        val slotTimeMs = slotTime(candles, range.first + index, periodMs) ?: return@let
                         val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
                         val line = colors.Ink.copy(alpha = if (drawingLayer?.showsCrosshairLines != false) .55f else 0f)
                         drawLine(line, Offset(x, top), Offset(x, bottom), 1f, pathEffect = dash)
-                        val timeLabel = crosshairTimeLabel(candle.timeMs, timeframe)
+                        val timeLabel = crosshairTimeLabel(slotTimeMs, timeframe)
                         val timeWidth = textMeasurer.measure(timeLabel, labelStyle).size.width + labelPadding * 2
                         val timeLeft = (x - timeWidth / 2).coerceIn(left, maxOf(left, right - timeWidth))
                         drawRect(colors.Ink, Offset(timeLeft, bottom + 1f), Size(timeWidth, lineHeight))
@@ -607,14 +617,13 @@ fun TradingChart(
                     }
                 }
                 lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
-                val barIndex = crosshair ?: visible.lastIndex
-                val bar = visible.getOrNull(barIndex)
-                val previous = if (bar == null) null else candles.getOrNull(range.first + barIndex - 1)
+                val bar = visible.getOrNull(readoutIndex)
+                val previous = if (bar == null) null else candles.getOrNull(range.first + readoutIndex - 1)
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
-                    if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + barIndex, instrument))
+                    if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
                 ChartNavigation(

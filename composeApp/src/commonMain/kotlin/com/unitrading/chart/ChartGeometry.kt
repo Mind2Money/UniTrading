@@ -47,6 +47,16 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
         if (total == 0) return IntRange.EMPTY
         return floor(start(total)).toInt().coerceIn(0, total) until ceil(total - offset).toInt().coerceIn(0, total)
     }
+    /**
+     * Bar slots at least partly inside the view, as bar indices. Unlike [range] they do not stop at the loaded bars: the
+     * view may hold empty slots before the oldest bar (negative indices) and after the newest one ([total] and up).
+     */
+    fun slots(total: Int): IntRange = floor(start(total)).toInt()..(ceil(total - offset).toInt() - 1)
+    /** The slot at [across], the share of the plot width from its left edge; a point outside the plot takes the nearest of [slots]. */
+    fun slotAt(across: Double, total: Int): Int {
+        val inside = slots(total)
+        return floor(start(total) + across * count).toInt().coerceAtMost(inside.last).coerceAtLeast(inside.first)
+    }
     fun pan(pixels: Float, width: Float, total: Int): ChartViewport =
         copy(offset = offset + pixels / width.coerceAtLeast(1f) * count).bounded(total)
     fun zoom(pixels: Float, width: Float, total: Int): ChartViewport {
@@ -74,6 +84,17 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
         val edge = previous[(ceil(previous.size - offset).toInt() - 1).coerceIn(0, previous.lastIndex)].timeMs
         return copy(offset = offset + next.count { it.timeMs > edge } - previous.count { it.timeMs > edge }).bounded(next.size)
     }
+}
+
+/**
+ * Opening time of bar slot [index]; null without bars. Slots past either end of [candles] continue at one [periodMs] per
+ * slot, as drawing anchors do, so the market's closed hours are not skipped there.
+ */
+fun slotTime(candles: List<Candle>, index: Int, periodMs: Long): Long? = when {
+    candles.isEmpty() -> null
+    index < 0 -> candles.first().timeMs + index * periodMs
+    index > candles.lastIndex -> candles.last().timeMs + (index - candles.lastIndex) * periodMs
+    else -> candles[index].timeMs
 }
 
 fun visibleRange(total: Int, count: Int, offset: Int): IntRange {

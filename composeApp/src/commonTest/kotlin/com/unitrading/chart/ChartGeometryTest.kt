@@ -99,6 +99,36 @@ class ChartGeometryTest {
         assertEquals(moved, moved.following(emptyList(), bars(0..199)))
         assertEquals(0.0, moved.following(bars(0..99), emptyList()).offset, "an emptied series cannot leave the view past its end")
     }
+    @Test fun slotsContinuePastTheLoadedBars() {
+        val following = ChartViewport(80.0, 0.0)
+        assertEquals(120..199, following.slots(200), "a following view ends on the newest bar")
+        assertEquals(160, following.slotAt(.5, 200))
+        assertEquals(199, following.slotAt(1.0, 200), "the right edge belongs to the last slot")
+        assertEquals(199, following.slotAt(5.0, 200), "right of the plot")
+        assertEquals(120, following.slotAt(-.2, 200), "left of the plot")
+        val space = ChartViewport(80.0, -10.0)
+        assertEquals(130..199, space.range(200))
+        assertEquals(130..209, space.slots(200), "ten empty slots follow the newest bar")
+        assertEquals(199, space.slotAt(69.5 / 80, 200))
+        assertEquals(200, space.slotAt(70.5 / 80, 200), "the first slot after the newest bar")
+        assertEquals(209, space.slotAt(.999, 200))
+        assertEquals(130..210, ChartViewport(80.0, -10.4).slots(200), "a slot cut by an edge of the plot counts")
+        val short = ChartViewport(80.0, 0.0)
+        assertEquals(0..29, short.range(30))
+        assertEquals(-50..29, short.slots(30), "a short history leaves slots before its oldest bar")
+        assertEquals(-50, short.slotAt(.001, 30))
+        assertEquals(-1, short.slotAt(49.5 / 80, 30))
+        assertEquals(0, short.slotAt(50.5 / 80, 30))
+    }
+    @Test fun slotTimesContinueOnePeriodPerSlotPastEitherEnd() {
+        val bars = listOf(1_000L, 1_060L, 1_300L).map { Candle(it, 100, 100, 100, 100) }
+        assertEquals(1_060L, slotTime(bars, 1, 60))
+        assertEquals(1_300L, slotTime(bars, 2, 60), "a loaded bar keeps its own time after a gap")
+        assertEquals(1_360L, slotTime(bars, 3, 60))
+        assertEquals(1_480L, slotTime(bars, 5, 60))
+        assertEquals(940L, slotTime(bars, -1, 60))
+        assertNull(slotTime(emptyList(), 0, 60))
+    }
     @Test fun viewportCannotEscapeHistory() {
         assertEquals(IntRange.EMPTY, visibleRange(0, 100, 0))
         assertEquals(0..9, visibleRange(10, 100, 10000))

@@ -26,7 +26,7 @@
 | 图表指标 | 已实现并测试 | `Indicators.kt`、`ChartIndicators.kt`、`IndicatorSettingsDialog.kt`；MA/EXPMA/BOLL 叠加，RSI/MACD/KDJ/ATR 副图，多指标、参数与颜色自定义，周期上限 1000，`indicators-v1` 本机保存；无自定义公式与按品种模板，见[图表指标](indicators.md) |
 | 实时盈亏通知 | 已实现；Android 设备测试在 CI 运行，iOS 未构建验证 | `LivePnlController`、`LivePnlNotifier` + `LivePnlService` dataSync 前台服务（Android 16+ 在系统允许时提升为 Live Update / 超级岛，更早版本常驻通知）、`AppleLivePnl` + `UniTradingWidgets` 扩展（iOS 16.2+ Live Activity / 灵动岛）；仅进程存活时刷新，90 秒无刷新自动过期，见[实时盈亏通知](live-pnl-notifications.md) |
 | 应用内更新 | 已实现；Windows 打包版与 Android 模拟器端到端实测，正式签名版之间的更新和真机未测 | `AppUpdateRows`、`ReleaseUpdater`、`SelfUpdate`（Windows）、`ApkUpdateTarget`（Android）；只在点击时读取 GitHub 公开发布信息，有持仓、挂单或账户状态无法确认时不能更新，见[应用内更新](app-update.md) |
-| 十字线、图层及时间缺口 | 部分实现 | 悬停、点击或长按显示虚线十字线：底轴标注所指 K 线时间（UTC），右轴标注所指价格，横线落在副图内时标注该指标值；方向键移动时只保留竖线。保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
+| 十字线、图层及时间缺口 | 部分实现 | 悬停、点击或长按显示虚线十字线：底轴标注所指 K 线位置的时间（UTC；K 线之外的留白按周期顺推，不跳过休市时段），右轴标注所指价格，横线落在副图内时标注该指标值；方向键移动时只保留竖线。保护线无独立开关；K 线按序号等距排布，不展示连续时间空档 |
 | iOS | 缺实现且未构建验证 | `MainViewController` 未传入 `TradovateLogin` / `CredentialStore`，空注册表启动后没有可用登录路径 |
 | macOS 桌面 | 已实现，未在真实 Mac 上实测登录 | Apple Silicon、macOS 13+。CI 编译打包并运行钥匙串与登录组件策略测试；授权、Tradovate 网页登录、Rithmic、已保存登录都没有在 Mac 上跑过。ad-hoc 签名、未公证，登录窗口不保存密码 |
 | Rithmic R \| Protocol 接入 | 已实现，应用内入口已开启（`RITHMIC_LOGIN_ENABLED=true`）；探针在 Rithmic Test 与 Paper Trading（TPT）实测登录、账户、行情、历史；`RithmicBroker` 只读流程已在 Paper Trading 上通过，用户已在应用内完成下单、改单和撤单，并确认行情、图表和历史配对；平仓未实测 | `rithmic-broker`、`RithmicConnectionDialog`、`SavedTradovateAccounts.signInRithmic`；四个 plant、静态括号单、净额持仓；验证范围见[Rithmic 接入](rithmic.md) |
