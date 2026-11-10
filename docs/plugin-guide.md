@@ -41,6 +41,7 @@ TradingScreen(runtime)
 | `searchInstruments` / `watch` / `disconnect` | 搜索服务器合约、订阅所选行情/周期、关闭连接；本地 Demo 可为空实现 |
 | `market: StateFlow<MarketSnapshot>` | 报价、模拟/服务器时间、连接状态与递增 revision |
 | `history(symbol, timeframe)` | 时间升序 OHLC；各周期来自同源价格，不能重新随机生成 |
+| `preloadHistory(series)` | 按优先级给出要在后台读全并缓存的序列，每次调用替换上一份列表；不改变当前图表，不发交易指令。历史在本地生成的插件可为空实现，见 [K 线缓存](candle-cache.md#后台预读) |
 | `openSession(accountId)` | 返回独立会话；未知账户应拒绝 |
 | `state: StateFlow<AccountSnapshot>` | 余额、净值、保证金、仓位、挂单、已平仓历史、活动日志 |
 | `preview(request)` | 纯估算，不下单、不占用资金；返回错误与当前估值 |

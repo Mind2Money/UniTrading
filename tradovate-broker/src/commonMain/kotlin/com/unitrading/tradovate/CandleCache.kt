@@ -29,6 +29,22 @@ internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0,
 /** Bounds a fresh chart's requests against the server's hourly chart budget, whatever a custom timeframe asks for. */
 internal const val MAX_FRESH_HISTORY_PAGES = 24
 
+/** How long a cached chart keeps showing its cached bars alone while the bars it lacks are read. */
+internal const val CHART_JOIN_HOLD_MS = 5_000L
+
+/** A background page that has not ended by then is given up, and its subscription cancelled. */
+internal const val PRELOAD_PAGE_TIMEOUT_MS = 30_000L
+/** How often an idle background reader looks for work without being woken. */
+internal const val PRELOAD_IDLE_MS = 15_000L
+/** Pause of the whole background reader after a series fails; doubles with each failure in a row. */
+internal const val PRELOAD_PAUSE_MS = 30_000L
+/** Pause after a background request went unanswered and the market connection was closed to release it. */
+internal const val PRELOAD_RESET_PAUSE_MS = 10 * 60_000L
+/** Before a failed series is read again; multiplied by its number of failures. */
+internal const val PRELOAD_RETRY_MS = 5 * 60_000L
+/** Before a series the server had no bars for is asked for again. */
+internal const val PRELOAD_EMPTY_RETRY_MS = 60 * 60_000L
+
 /**
  * A partial historical response must never become the next incremental checkpoint. One request returns only about
  * a month of intraday bars, so a fresh chart pages backward to [freshFloor] as well. It stays uncached until it

@@ -22,7 +22,7 @@
 - [桌面布局](desktop-layout.md)：拖动分隔线调整各面板尺寸、本机记忆、窗口边界及重置操作。
 - [图表指标](indicators.md)：MA/EXPMA/BOLL 叠加线与 RSI/MACD/KDJ/ATR 副图，多指标叠加、参数与颜色自定义、本机保存。
 - [图表画图工具](chart-drawing.md)：TradingView 式左侧工具栏，趋势线、斐波那契、江恩、形态、测量、形状与注释，按品种保存。
-- [K 线缓存](candle-cache.md)：本地持久化、重启恢复、按缺失区间分页补取与实时更新合并。
+- [K 线缓存](candle-cache.md)：本地持久化、重启恢复、自选品种后台预读、按缺失区间分页补取与实时更新合并。
 - [实时盈亏通知](live-pnl-notifications.md)：Android Live Update / 常驻通知与 iOS 灵动岛 Live Activity 显示当前账户浮动盈亏，刷新规则、权限与边界。
 - [今日盈亏](daily-pnl.md)：直接使用券商当日总盈亏快照，标明交易日、更新时间和缺失数据。
 - [验证记录索引](verification.md)：当前摘要及首版本地 Demo 的历史证据。

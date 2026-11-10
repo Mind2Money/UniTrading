@@ -100,10 +100,10 @@ class IncrementalChartTest {
         override fun close() = delegate.close()
     }
 
-    private suspend fun TestScope.ready(wire: Wire, store: Store = Store()): TradovateBroker {
+    private suspend fun TestScope.ready(wire: Wire, store: Store = Store(), now: () -> Long = { CACHE_NOW }): TradovateBroker {
         val session = TradovateSession(TradovateEnvironment.DEMO, "synthetic-cache-test-token-123456", null, 42, "test", 4_102_444_800_000)
         val scope = CoroutineScope(backgroundScope.coroutineContext + SupervisorJob(backgroundScope.coroutineContext[Job]))
-        return TradovateBroker(session, wire, scope, now = { CACHE_NOW }, candleCacheStore = store).also { it.connect() }
+        return TradovateBroker(session, wire, scope, now = now, candleCacheStore = store).also { it.connect() }
     }
 
     private fun lastRange(wire: Wire) = wire.charts.last().getValue("timeRange").jsonObject
@@ -259,6 +259,43 @@ class IncrementalChartTest {
         wire.bars(wire.liveId, anchor, "5501")
         wire.bars(wire.liveId - 1, anchor, "5500.25"); runCurrent()
         assertEquals(5_501_000_000L, broker.history("MESZ6", Timeframe.M5).single().close)
+    }
+
+    /** A reopened chart would otherwise draw the live bar right after a last bar that can be hours old. */
+    @Test fun cachedChartShowsLiveBarsOnlyOnceTheBarsItLacksAreRead() = runTest {
+        val store = Store()
+        val anchor = CACHE_NOW - 3 * BAR_STEP
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5, listOf(Candle(anchor, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000)))
+        val wire = Wire().apply { automatic = false }
+        val broker = ready(wire, store)
+        fun times() = broker.history("MESZ6", Timeframe.M5).map { (CACHE_NOW - it.timeMs) / BAR_STEP }
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.bars(wire.liveId, CACHE_NOW, "5501"); runCurrent()
+        assertEquals(listOf(3L), times())
+        wire.page(wire.historicalId, listOf(anchor, anchor + BAR_STEP, anchor + 2 * BAR_STEP)); runCurrent()
+        assertEquals(listOf(3L), times())
+        wire.eoh(); runCurrent()
+        assertEquals(listOf(3L, 2L, 1L, 0L), times())
+        assertEquals(5_501_000_000L, broker.history("MESZ6", Timeframe.M5).last().close)
+        wire.bars(wire.liveId, CACHE_NOW, "5502"); runCurrent()
+        assertEquals(5_502_000_000L, broker.history("MESZ6", Timeframe.M5).last().close)
+    }
+
+    @Test fun cachedChartStopsWaitingForBarsThatDoNotArrive() = runTest {
+        val store = Store()
+        val anchor = CACHE_NOW - 3 * BAR_STEP
+        CandleCache(store, NAMESPACE).write("MESZ6" to Timeframe.M5, listOf(Candle(anchor, 5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000)))
+        var time = CACHE_NOW
+        val wire = Wire().apply { automatic = false }
+        val broker = ready(wire, store) { time }
+        fun times() = broker.history("MESZ6", Timeframe.M5).map { (CACHE_NOW - it.timeMs) / BAR_STEP }
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        time += CHART_JOIN_HOLD_MS - 1
+        wire.bars(wire.liveId, CACHE_NOW, "5501"); runCurrent()
+        assertEquals(listOf(3L), times())
+        time += 1
+        wire.bars(wire.liveId, CACHE_NOW, "5502"); runCurrent()
+        assertEquals(listOf(3L, 0L), times())
     }
 
     @Test fun switchingWhileCancellingStillCleansEveryOldIdAndRetriesFailures() = runTest {

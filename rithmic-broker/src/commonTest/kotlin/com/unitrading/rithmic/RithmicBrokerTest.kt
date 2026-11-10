@@ -633,6 +633,43 @@ class RithmicBrokerTest {
         assertEquals(listOf("MES"), later.requests(Rt.REQUEST_TIME_BAR_REPLAY).map { it.str(Rf.SYMBOL) })
     }
 
+    /** The watch list's history is read whole in the background, so a chart opens from the cache and asks only for the bars since. */
+    @Test fun listedSeriesAreReadInTheBackgroundAndOpenFromTheCache() = runTest {
+        val store = MemoryCandleStore()
+        val server = FakeRithmicServer().apply { frontMonthAlias = true }
+        val broker = chart(server, store)
+        broker.preloadHistory(listOf("@MES" to Timeframe.M5, "@MES" to Timeframe.M15, "MESZ6" to Timeframe.H1))
+        runCurrent()
+        assertEquals(5, broker.history("@MES", Timeframe.M15).size)
+        assertEquals(3, broker.history("MESZ6", Timeframe.H1).size)
+        // The shown series stays the chart's; a continuous one replays its alias, as it does on the chart.
+        assertEquals(listOf("MES" to 5, "MES" to 15, "MESZ6" to 60), server.requests(Rt.REQUEST_TIME_BAR_REPLAY).map { it.str(Rf.SYMBOL) to it.int(Rf.BAR_PERIOD) })
+        assertEquals(1, server.requests(Rt.REQUEST_TIME_BAR_UPDATE).size)
+        assertEquals(3, store.values.size)
+
+        broker.watch("@MES", Timeframe.M15)
+        runCurrent()
+        assertEquals(5, broker.history("@MES", Timeframe.M15).size)
+        val tail = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).last()
+        assertEquals((broker.history("@MES", Timeframe.M15).last().timeMs / 1_000).toInt(), tail.int(Rf.START_INDEX))
+    }
+
+    @Test fun cachedSeriesComeFromTheDiskAndAFailedOneStaysOffTheStatusLine() = runTest {
+        val store = MemoryCandleStore()
+        val saved = listOf(Candle(FAKE_TIME - 3_600_000, 550000, 550100, 549900, 550000, 7))
+        CandleCache(store, "rithmic-v2-${credentials().brokerId}", RITHMIC_CHART_BARS).write("MESZ6" to Timeframe.H1, saved)
+        val server = FakeRithmicServer()
+        val broker = chart(server, store)
+        val replays = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size
+        val status = broker.market.value.statusMessage
+        broker.preloadHistory(listOf("MESZ6" to Timeframe.H1, "NOPE9" to Timeframe.H1))
+        runCurrent()
+        assertEquals(saved, broker.history("MESZ6", Timeframe.H1))
+        assertTrue(broker.history("NOPE9", Timeframe.H1).isEmpty())
+        assertEquals(replays, server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size)
+        assertEquals(status, broker.market.value.statusMessage)
+    }
+
     @Test fun continuousSymbolTradesTheFrontMonthContractTheServerNames() = runTest {
         val server = FakeRithmicServer()
         val broker = broker(server)

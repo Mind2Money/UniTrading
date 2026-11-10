@@ -20,6 +20,11 @@ interface BrokerPlugin {
     /** Subscribe an independent quote list without changing the chart or sending trade commands. */
     fun watchQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
+    /**
+     * Series to read whole and cache in the background, most wanted first; each call replaces the list. A chart
+     * that opens one of them then only fetches the bars since. Never changes the chart or sends trade commands.
+     */
+    fun preloadHistory(series: List<Pair<String, Timeframe>>) {}
     suspend fun resynchronize() {}
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession

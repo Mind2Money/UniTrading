@@ -189,6 +189,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val intervals = IntervalOptions(chartPreferences.favorites, chartPreferences.custom,
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
+        // The watch list's history is read ahead and cached, so a chart that opens only fetches the bars since.
+        val preload = remember(watchLists[plugin.descriptor.id], symbol, timeframe, chartPreferences.favoriteMinutes) {
+            historyPreloadSeries(watchLists[plugin.descriptor.id].orEmpty(), symbol, timeframe, chartPreferences.favorites)
+        }
+        LaunchedEffect(plugin, preload) { plugin.preloadHistory(preload) }
+        DisposableEffect(plugin) { onDispose { plugin.preloadHistory(emptyList()) } }
         val request = draft.request(instrument)
         val (capacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
             market.tradingReady, localDemo)

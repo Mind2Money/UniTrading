@@ -92,6 +92,7 @@ tasks.register<JavaExec>("tradovateReadOnlyLoginProbe") {
         providers.gradleProperty("probeDailyDiagnostic").orNull == "true" -> "--demo-daily-diagnostic-read-only"
         providers.gradleProperty("probeSavedContinuous").orNull == "true" -> "--demo-continuous-read-only"
         providers.gradleProperty("probeChartHistory").orNull == "true" -> "--demo-chart-history-read-only"
+        providers.gradleProperty("probeHistoryPreload").orNull == "true" -> "--demo-history-preload-read-only"
         else -> "--demo-read-only"
     })
     systemProperty("file.encoding", "UTF-8")

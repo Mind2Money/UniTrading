@@ -3,6 +3,7 @@ package com.unitrading.rithmic
 import com.unitrading.broker.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -17,6 +18,14 @@ const val RITHMIC_CHART_BARS = 2000
 private const val QUOTE_FRESH_MS = 15_000L
 /** Upper bound for the list loaded at login; anything beyond it stays reachable through search. */
 private const val PRODUCT_LIST_LIMIT = 200
+/** How often an idle background history reader looks for work without being woken. */
+private const val PRELOAD_IDLE_MS = 15_000L
+/** Before a continuous series whose front month is not resolved yet is tried again. */
+private const val PRELOAD_ROUTE_RETRY_MS = 15_000L
+/** Before a failed series is read again; multiplied by its number of failures. */
+private const val PRELOAD_RETRY_MS = 5 * 60_000L
+/** Before a series the server had no bars for is asked for again. */
+private const val PRELOAD_EMPTY_RETRY_MS = 60 * 60_000L
 
 /**
  * R | Protocol API adapter. Four plant connections (ticker, order, PnL, history) share one login;
@@ -98,6 +107,12 @@ class RithmicBroker(
     /** Continuous series showing their dated contract alone because the alias had no bars. They stay out of the cache, so the next run asks the alias again. */
     private val singleContractSeries = mutableSetOf<Pair<String, Timeframe>>()
     private var barSubscription: Pair<String, Timeframe>? = null
+    /** Series read whole in the background so that their charts open from the cache, most wanted first. */
+    private val preloadTargets = MutableStateFlow<List<Pair<String, Timeframe>>>(emptyList())
+    private val preloadWake = Channel<Unit>(Channel.CONFLATED)
+    private var preloadJob: Job? = null
+    private val preloadRetryAt = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val preloadFailures = mutableMapOf<Pair<String, Timeframe>, Int>()
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private val results = mutableMapOf<String, Pair<String, TradeResult>>()
@@ -190,6 +205,7 @@ class RithmicBroker(
         onProgress(problem)
         watching?.let { watch(it.first, it.second) }
         refreshQuoteWatch()
+        preloadWake.trySend(Unit)
         scope.launch { syncOrderFlow() }
         startMaintenance()
         productListJob?.cancel()
@@ -403,6 +419,7 @@ class RithmicBroker(
         scope.launch {
             lock.withLock { connected = false; marketReady = false; problem = "已断开"; resetOrderFlow("已断开，逐笔窗口已清空"); publish() }
             maintenance?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); quoteWatchJob?.cancel(); recoveryJob?.cancel(); continuousJob?.cancel(); productListJob?.cancel()
+            lock.withLock { preloadJob }?.cancel()
             closePlants(logout = true)
             saveCandleCache()
             wire.close(); scope.cancel()
@@ -929,6 +946,72 @@ class RithmicBroker(
                 catch (error: Exception) { lock.withLock { problem = "历史数据加载失败：${safeRithmicMessage(error.message ?: "")}"; publish() } }
             }
         }
+    }
+
+    override fun preloadHistory(series: List<Pair<String, Timeframe>>) {
+        if (stopped) return
+        preloadTargets.value = series.distinct()
+        if (series.isEmpty()) return
+        scope.launch {
+            lock.withLock { if (!stopped && preloadJob?.isActive != true) preloadJob = scope.launch { preloadLoop() } }
+            preloadWake.trySend(Unit)
+        }
+    }
+
+    /** The disk first, so that every listed chart opens from memory; then the series the cache lacks, one at a time. */
+    private suspend fun preloadLoop() {
+        while (!stopped) {
+            val targets = preloadTargets.value
+            for (series in targets) {
+                if (lock.withLock { series in history }) continue
+                val bars = candleCache.read(series, now())
+                lock.withLock { if (series !in history) history = history + (series to bars) }
+            }
+            val next = lock.withLock {
+                val time = now()
+                if (!marketReady) null
+                else targets.firstOrNull { it != watching && history[it]?.isEmpty() == true && (preloadRetryAt[it] ?: 0) <= time }
+            }
+            if (next == null) {
+                withTimeoutOrNull(PRELOAD_IDLE_MS) { preloadWake.receive() }
+                continue
+            }
+            val wait = try { preloadSeries(next) }
+                catch (_: TimeoutCancellationException) { null }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { null }
+            lock.withLock {
+                when (wait) {
+                    0L -> { preloadFailures.remove(next); preloadRetryAt.remove(next) }
+                    // A failed series lets the others go first, and waits longer each time it fails.
+                    null -> {
+                        val failures = (preloadFailures[next] ?: 0) + 1
+                        preloadFailures[next] = failures
+                        preloadRetryAt[next] = now() + PRELOAD_RETRY_MS * minOf(failures, 6)
+                    }
+                    else -> preloadRetryAt[next] = now() + wait
+                }
+            }
+        }
+    }
+
+    /** Reads [series] whole and caches it. Returns how long to wait before asking again; 0 once it is stored or the chart has taken it over. */
+    private suspend fun preloadSeries(series: Pair<String, Timeframe>): Long {
+        val (symbol, timeframe) = series
+        val plant = historyPlant ?: return PRELOAD_ROUTE_RETRY_MS
+        // A continuous series waits for the front month, which the watch list resolves.
+        val execution = lock.withLock { executionSymbol(symbol) } ?: return PRELOAD_ROUTE_RETRY_MS
+        val route = lock.withLock { continuousRoutes[symbol] }
+        if (lock.withLock { execution !in specs }) hydrateSpecs(listOf(execution to ""), quiet = true)
+        val spec = lock.withLock { specs[execution] } ?: throw RithmicRemoteException("spec", "合约规格尚未加载")
+        // Only the alias holds a continuous series across rolls; the dated contract alone is not cached, here as on the chart.
+        val bars = if (route == null) loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, emptyList())
+            else loadBars(plant, route.productCode, route.exchange, spec, timeframe, emptyList())
+        if (bars.isEmpty()) return PRELOAD_EMPTY_RETRY_MS
+        // Opened meanwhile: the chart has its own load of this series, and shows that.
+        val stored = lock.withLock { (watching != series && history[series].isNullOrEmpty()).also { if (it) history = history + (series to bars) } }
+        if (stored) saveCandleCache(series)
+        return 0
     }
 
     private suspend fun switchBarSubscription(plant: RithmicPlant, series: Pair<String, Timeframe>, spec: RithmicSpec) {

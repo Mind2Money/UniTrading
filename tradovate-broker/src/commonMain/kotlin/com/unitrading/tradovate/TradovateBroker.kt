@@ -4,6 +4,7 @@ import com.unitrading.broker.*
 import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -93,6 +94,22 @@ class TradovateBroker(
         val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false)
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
+    /** Series read whole in the background so that their charts open from the cache, most wanted first. */
+    private val preloadTargets = MutableStateFlow<List<Pair<String, Timeframe>>>(emptyList())
+    private val preloadWake = Channel<Unit>(Channel.CONFLATED)
+    private var preloadJob: Job? = null
+    private var preloading: Pair<String, Timeframe>? = null
+    private var preloadSeriesJob: Job? = null
+    private val preloadRetryAt = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val preloadFailures = mutableMapOf<Pair<String, Timeframe>, Int>()
+    private var preloadFailureStreak = 0
+    private var preloadPausedUntil = 0L
+    private class PreloadPage(val load: ChartLoad, val historyOnly: Boolean) {
+        val ended = CompletableDeferred<Unit>()
+        var historicalKey: String? = null
+        var shared = false
+    }
+    private val preloadCharts = mutableMapOf<String, PreloadPage>()
     private val earlyCharts = mutableListOf<JsonObject>()
     private var earlyChartOverflow = 0L
     private val subscribedQuotes = mutableSetOf<String>()
@@ -175,6 +192,7 @@ class TradovateBroker(
         onProgress(status)
         watching?.let { watch(it.first, it.second) }
         refreshQuoteWatch()
+        startPreload()
         maintenance?.cancel()
         maintenance = scope.launch {
             while (isActive && !stopped) {
@@ -346,10 +364,11 @@ class TradovateBroker(
                     continuousJob?.cancelAndJoin()
                     watchJob?.cancelAndJoin()
                     chartBackfillJob?.cancelAndJoin()
+                    lock.withLock { preloadJob }?.cancelAndJoin()
                     cancelledChartIds.clear()
                     pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
-                    charts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
+                    charts.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
                     volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
                     connect()
                     return@launch
@@ -370,6 +389,7 @@ class TradovateBroker(
             pendingQuotes.joinAll()
             watchJob?.join()
             chartBackfillJob?.cancelAndJoin()
+            lock.withLock { preloadJob }?.cancelAndJoin()
             runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }
             cacheSaveJob?.cancelAndJoin()
             saveCandleCache()
@@ -434,6 +454,7 @@ class TradovateBroker(
                         syncWatchQuotes()
                         if (symbol in continuousRoutes) refreshContinuous(symbol)
                         syncWatchQuotes()
+                        preloadWake.trySend(Unit)
                     }
                 }
             }
@@ -594,7 +615,8 @@ class TradovateBroker(
             val key = requireNotNull(chartSubscriptionKey(response["historicalId"])) { "日成交量历史通道缺失" }
             lock.withLock {
                 require(overflow == earlyChartOverflow) { "日成交量历史包丢失，请重试" }
-                ids.mapNotNull(::chartSubscriptionKey).forEach(discardedCharts::remove)
+                // Background reads retire many subscriptions; an identifier the server hands out again is a new one.
+                ids.mapNotNull(::chartSubscriptionKey).forEach { discardedCharts.remove(it); cancelledChartIds.remove(it); pendingChartCancellations.remove(it) }
                 volumeCharts[key] = collector
                 // Also observe target-date corrections before cancellation; newer dates do not enter the ranking.
                 chartSubscriptionKey(response["realtimeId"])?.takeIf { it != key }?.let {
@@ -826,6 +848,9 @@ class TradovateBroker(
         watchJob = scope.launch {
             chartWatchLock.withLock {
                 val series = symbol to timeframe
+                // The chart reads the series it shows itself; the background read of it would repeat every request.
+                lock.withLock { if (preloading == series) preloadSeriesJob?.cancel() }
+                preloadWake.trySend(Unit)
                 val cached = lock.withLock { cachedHistory[series] } ?: candleCache.read(series, now()).also { bars ->
                     lock.withLock {
                         cachedHistory[series] = bars
@@ -982,6 +1007,182 @@ class TradovateBroker(
         }
     }
 
+    override fun preloadHistory(series: List<Pair<String, Timeframe>>) {
+        if (stopped) return
+        preloadTargets.value = series.distinct()
+        startPreload()
+    }
+
+    /** One reader per connection: a reconnect ends the old one before the new connection starts its own. */
+    private fun startPreload() {
+        if (stopped || preloadTargets.value.isEmpty()) return
+        scope.launch {
+            lock.withLock { if (!stopped && preloadJob?.isActive != true) preloadJob = scope.launch { preloadLoop() } }
+            preloadWake.trySend(Unit)
+        }
+    }
+
+    /** The disk first, so that every listed chart opens from memory; then the series the cache lacks, one at a time. */
+    private suspend fun preloadLoop() {
+        while (!stopped) {
+            val targets = preloadTargets.value
+            for (series in targets) {
+                if (lock.withLock { cachedHistory[series] } != null) continue
+                val bars = candleCache.read(series, now())
+                lock.withLock {
+                    if (cachedHistory[series] == null) {
+                        cachedHistory[series] = bars
+                        if (bars.isNotEmpty() && series !in history) history = history + (series to bars)
+                    }
+                }
+            }
+            val next = lock.withLock {
+                val time = now()
+                // Leader checks share the server's chart budget and gate orders, so they go first.
+                val verifying = quoteWatchJobs.values.any { it.isActive } || continuousJob?.isActive == true
+                if (!marketReady || marketSocket == null || time < preloadPausedUntil || verifying) null
+                else targets.firstOrNull { it != watching && cachedHistory[it]?.isEmpty() == true && (preloadRetryAt[it] ?: 0) <= time }
+            }
+            if (next == null) {
+                withTimeoutOrNull(PRELOAD_IDLE_MS) { preloadWake.receive() }
+                continue
+            }
+            try {
+                coroutineScope {
+                    val reader = launch(start = CoroutineStart.LAZY) { preloadSeries(next) }
+                    // The chart reads the series it shows; watch() ends this reader when the chart opens its series.
+                    val owned = lock.withLock { (watching != next).also { if (it) { preloading = next; preloadSeriesJob = reader } } }
+                    if (owned) reader.join() else reader.cancel()
+                }
+            } finally {
+                withContext(NonCancellable) { lock.withLock { preloading = null; preloadSeriesJob = null } }
+            }
+        }
+    }
+
+    private suspend fun preloadSeries(series: Pair<String, Timeframe>) {
+        val bars = try { readSeries(series) }
+            catch (_: TimeoutCancellationException) { null }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { null }
+        lock.withLock {
+            val time = now()
+            when {
+                bars == null -> {
+                    // The other series go first. What refused this one (a rate limit, a lost connection) would refuse
+                    // them too, so the whole reader also waits, longer after each failure in a row.
+                    val failures = (preloadFailures[series] ?: 0) + 1
+                    preloadFailures[series] = failures
+                    preloadRetryAt[series] = time + PRELOAD_RETRY_MS * minOf(failures, 6)
+                    preloadPausedUntil = maxOf(preloadPausedUntil, time + minOf(PRELOAD_PAUSE_MS shl minOf(preloadFailureStreak++, 5), 2 * PRELOAD_RETRY_MS))
+                }
+                // The server has no bars for it; asking again at once would never end.
+                bars.isEmpty() -> { preloadFailureStreak = 0; preloadRetryAt[series] = time + PRELOAD_EMPTY_RETRY_MS }
+                else -> {
+                    preloadFailureStreak = 0
+                    preloadFailures.remove(series)
+                    preloadRetryAt.remove(series)
+                    // Opened meanwhile: the chart has its own load of this series, and shows that.
+                    if (watching == series) return
+                    cachedHistory[series] = bars
+                    history = history + (series to bars)
+                    dirtyHistory[series] = bars
+                    cacheRevision++
+                    scheduleCandleCacheSave()
+                }
+            }
+        }
+    }
+
+    /** The requests a fresh chart makes, without the chart. Null when the series could not be read whole. */
+    private suspend fun readSeries(series: Pair<String, Timeframe>): List<Candle>? {
+        val load = ChartLoad(emptyList(), chartHistoryFloor(series.second, now()))
+        var range = chartTimeRange(emptyList())
+        var historyOnly = false
+        while (true) {
+            lock.withLock { load.beginPage() }
+            preloadPage(series, load, range, historyOnly)
+            val before = lock.withLock {
+                if (load.failed) return null
+                if (load.complete) return load.candles
+                load.nextPageBefore ?: return null
+            }
+            range = chartBackfillRange(requireNotNull(load.floor), before)
+            historyOnly = true
+        }
+    }
+
+    /** One page of a background read. Whatever ends the page, its subscription does not outlive it. */
+    private suspend fun preloadPage(series: Pair<String, Timeframe>, load: ChartLoad, range: JsonObject, historyOnly: Boolean) {
+        val socket = checkNotNull(marketSocket) { "行情连接不可用" }
+        val page = PreloadPage(load, historyOnly)
+        var ids = emptyList<JsonPrimitive>()
+        var retired = true
+        try {
+            // An acknowledgement arriving after a cancellation would leave a subscription this client never learns of.
+            withContext(NonCancellable) {
+                check(marketReady && !stopped) { "行情尚未就绪" }
+                val overflow = lock.withLock { earlyChartOverflow }
+                val response = try {
+                    requestMarketChart(socket, buildJsonObject {
+                        put("symbol", series.first)
+                        put("chartDescription", chartDescription(series.second))
+                        put("timeRange", range)
+                    })
+                } catch (error: Exception) {
+                    // As for a chart: only closing the socket releases a subscription whose identifiers never arrived.
+                    // The quotes and orders use that connection too, so the reader then stays away from it for a while.
+                    if (error is TimeoutCancellationException) lock.withLock { preloadPausedUntil = now() + PRELOAD_RESET_PAUSE_MS }
+                    if (error is TimeoutCancellationException || (error is TradovateRemoteException && error.status == 0)) resetChartConnection(socket)
+                    throw error
+                }
+                ids = listOfNotNull(response["historicalId"] as? JsonPrimitive, response["realtimeId"] as? JsonPrimitive).distinct()
+                lock.withLock {
+                    page.historicalKey = chartSubscriptionKey(response["historicalId"])
+                    page.shared = page.historicalKey == chartSubscriptionKey(response["realtimeId"])
+                    for (key in ids.mapNotNull(::chartSubscriptionKey)) {
+                        preloadCharts[key] = page
+                        cancelledChartIds.remove(key); pendingChartCancellations.remove(key); discardedCharts.remove(key)
+                    }
+                    if (overflow != earlyChartOverflow) load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
+                    drainEarlyCharts()
+                }
+            }
+            if (lock.withLock { !load.failed }) withTimeout(PRELOAD_PAGE_TIMEOUT_MS) { page.ended.await() }
+        } finally {
+            withContext(NonCancellable) { retired = cancelPreloadCharts(socket, ids) }
+        }
+        // Reading on would open one more subscription for each one the server keeps.
+        check(retired) { "历史订阅未能取消" }
+    }
+
+    /**
+     * Retires a background page's subscriptions and says whether the server confirmed it. What it did not confirm
+     * stays pending for the next cleanup, here or the chart's; the connection the quotes use is not reset for it.
+     */
+    private suspend fun cancelPreloadCharts(socket: TradovateSocket, ids: List<JsonPrimitive>): Boolean {
+        val pending = lock.withLock {
+            for (id in ids) {
+                val key = chartSubscriptionKey(id) ?: continue
+                preloadCharts.remove(key)
+                cancelledChartIds.add(key)
+                pendingChartCancellations[key] = id
+            }
+            earlyCharts.removeAll { chartSubscriptionKey(it["id"]) in cancelledChartIds }
+            pendingChartCancellations.toMap()
+        }
+        withTimeoutOrNull(5_000) {
+            for ((key, id) in pending) {
+                try {
+                    socket.request("md/cancelChart", buildJsonObject { put("subscriptionId", id) })
+                    lock.withLock { pendingChartCancellations.remove(key) }
+                } catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { /* Stays pending. */ }
+            }
+        }
+        return lock.withLock { ids.none { chartSubscriptionKey(it) in pendingChartCancellations } }
+    }
+
     /** Coalesce streaming updates; failed writes stay dirty for the next update or disconnect. */
     private fun scheduleCandleCacheSave() {
         if (cacheSaveJob?.isActive == true) return
@@ -1039,6 +1240,17 @@ class TradovateBroker(
             collector.accept(chart)
             return
         }
+        preloadCharts[subscription]?.let { page ->
+            // Nothing of a background read reaches the chart or the cache before its last page has ended.
+            if (page.ended.isCompleted) return
+            val incoming = chartBars(chart)
+            val endOfHistory = chart.bool("eoh") == true
+            val historical = page.historyOnly || endOfHistory ||
+                if (page.shared) chart.str("s") !in listOf("", "s") else subscription == page.historicalKey
+            page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size)
+            if (endOfHistory || page.load.failed) page.ended.complete(Unit)
+            return
+        }
         if (subscription in discardedCharts) return
         val channel = subscription?.let { charts[it] }
         if (channel == null) {
@@ -1048,23 +1260,16 @@ class TradovateBroker(
         val page = channel.page
         if (page.historyOnly && page.ended) return
         val key = page.series
-        val incoming = chart.array("bars").mapNotNull { bar ->
-            val time = bar.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null
-            val o = bar.priceValue("open") ?: return@mapNotNull null
-            val h = bar.priceValue("high") ?: return@mapNotNull null
-            val l = bar.priceValue("low") ?: return@mapNotNull null
-            val c = bar.priceValue("close") ?: return@mapNotNull null
-            if (l <= 0 || h < maxOf(o, c) || l > minOf(o, c)) return@mapNotNull null
-            val volume = listOfNotNull(bar.long("upVolume"), bar.long("downVolume")).takeIf { it.isNotEmpty() }?.sum()?.takeIf { it >= 0 }
-            Candle(time, o, h, l, c, volume)
-        }
+        val incoming = chartBars(chart)
         val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true
         val historical = page.historyOnly || endOfHistory ||
             if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
+        // A cached chart still reading the bars it lacks would draw the live bar right after its stale last one.
+        val joining = page.load.anchor != null && !page.load.complete && !page.load.failed && now() - page.startedAt < CHART_JOIN_HOLD_MS
         // The server replays a page newest day first; shown packet by packet, a chart would fill from right to left.
-        if (chart.str("s") != "db" || chart.bool("eoh") == true) history = history + (key to bars)
+        if (!joining && (chart.str("s") != "db" || chart.bool("eoh") == true)) history = history + (key to bars)
         if (page.load.complete && bars.isNotEmpty()) {
             cachedHistory[key] = bars
             dirtyHistory[key] = bars
@@ -1076,6 +1281,17 @@ class TradovateBroker(
             if (page.load.failed) problem = "历史补取未接上缓存，已保留原缓存；可重新选择品种或周期重试"
             if (page.historyOnly || !page.liveOnly && page.load.nextPageBefore != null) continueChartHistory(page)
         }
+    }
+
+    private fun chartBars(chart: JsonObject): List<Candle> = chart.array("bars").mapNotNull { bar ->
+        val time = bar.str("timestamp")?.let(::timestamp) ?: return@mapNotNull null
+        val o = bar.priceValue("open") ?: return@mapNotNull null
+        val h = bar.priceValue("high") ?: return@mapNotNull null
+        val l = bar.priceValue("low") ?: return@mapNotNull null
+        val c = bar.priceValue("close") ?: return@mapNotNull null
+        if (l <= 0 || h < maxOf(o, c) || l > minOf(o, c)) return@mapNotNull null
+        val volume = listOfNotNull(bar.long("upVolume"), bar.long("downVolume")).takeIf { it.isNotEmpty() }?.sum()?.takeIf { it >= 0 }
+        Candle(time, o, h, l, c, volume)
     }
 
     private fun drainEarlyCharts() {

@@ -10,6 +10,9 @@
 
 📈 **图表**
 ✅ 修复打开画图工具栏“图标”的表情面板时报错、面板打不开的问题；表情、贴纸、符号三个标签页现在都能打开并选用
+✅ 自选品种的 K 线在后台预读并缓存：当前周期和收藏周期都读全 2000 根，添加品种后随即开始。打开已缓存的图表直接显示，只补取之后缺少的 K 线，指标不再随着历史一页页加载反复重绘
+✅ 打开已缓存的图表时，最新一根 K 线不再先紧挨着旧的末根画出来，等缺少的 K 线补齐后一起显示
+⚠️ Tradovate 的预读不限速：首次补齐时会超过服务器每小时 180 次图表请求的额度，超出期间打开图表和主力核实的每次请求多等 1～3 秒；手机和桌面各自预读，共用这份额度。Rithmic 的预读只在离线测试中验证过
 
 ## English
 
@@ -21,6 +24,9 @@
 
 📈 **Charts**
 ✅ Fixed an error that kept the icon picker of the drawing toolbar from opening; its emoji, sticker and symbol tabs now open and can be picked from
+✅ Watch-list history is read ahead and cached in the background: the shown interval and the starred intervals each get their full 2,000 bars, starting as soon as a symbol is added. A cached chart opens at once and only fetches the bars since, so indicators no longer redraw as history arrives page by page
+✅ A cached chart no longer draws the newest bar right next to its old last bar first; it appears together with the bars in between
+⚠️ Tradovate read-ahead is not rate-limited: the first fill goes over the server's 180 chart requests per hour, and while it is over, every chart request waits 1–3 seconds more, including opening a chart and leader checks; phone and desktop each read ahead and share that budget. Rithmic read-ahead has only been verified in offline tests
 
 # v1.4.0
 

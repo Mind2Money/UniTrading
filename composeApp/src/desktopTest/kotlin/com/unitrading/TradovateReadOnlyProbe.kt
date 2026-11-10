@@ -127,6 +127,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
                         }
                     }
                 }
+                if (route == "md/cancelChart" && logChartPages) println("CHART_CANCEL " + text.substringAfter("\n\n"))
                 socket.send(text)
             }
             override suspend fun receive() = socket.receive().also { text ->
@@ -278,7 +279,78 @@ private suspend fun chartHistoryDepth(): Boolean {
     return verified
 }
 
+/**
+ * Reads a few series in the background beside a live chart with the saved Demo session, then opens one of them:
+ * the requests, pages and cancellations of the background reader against the real server, and how long they take.
+ */
+private suspend fun historyPreload(): Boolean {
+    val wire = ReadOnlyProbeWire(logChartPages = true)
+    val store = object : CandleCacheStore {
+        val values = ConcurrentHashMap<String, String>()
+        override suspend fun read(key: String) = values[key]
+        override suspend fun write(key: String, value: String) { values[key] = value }
+    }
+    var broker: TradovateBroker? = null
+    var verified = true
+    fun stamp(time: Long?) = time?.let { kotlin.time.Instant.fromEpochMilliseconds(it).toString() }
+    try {
+        println("HISTORY_PRELOAD: saved Demo session; all order endpoints including dryrun are blocked.")
+        val connected = TradovateBroker(savedDemoSession(), wire, candleCacheStore = store)
+        broker = connected
+        withTimeout(90_000) { connected.connect { } }
+        val chart = "@MES" to Timeframe.M5
+        withTimeout(60_000) { connected.searchInstruments("MES") }
+        connected.watch(chart.first, chart.second)
+        withTimeoutOrNull(60_000) { while (connected.history(chart.first, chart.second).size < CHART_BARS) delay(250) }
+        println("HISTORY_PRELOAD_CHART bars=${connected.history(chart.first, chart.second).size}")
+        val series = listOf("@ES" to Timeframe(240), "@ES" to Timeframe.M1, "@NQ" to Timeframe.H1, "@GC" to Timeframe(1440))
+        val started = System.nanoTime()
+        connected.preloadHistory(listOf(chart) + series)
+        for ((symbol, timeframe) in series) {
+            val read = withTimeoutOrNull(240_000) { while (connected.history(symbol, timeframe).isEmpty()) delay(250); true } == true
+            val bars = connected.history(symbol, timeframe)
+            verified = verified && read && wire.refusedWrites == 0
+            println("HISTORY_PRELOAD_RESULT " + asciiJson(buildJsonObject {
+                put("symbol", symbol); put("minutes", timeframe.minutes); put("bars", bars.size)
+                put("oldest", stamp(bars.firstOrNull()?.timeMs)); put("newest", stamp(bars.lastOrNull()?.timeMs))
+                put("ordered", bars.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs })
+                put("secondsSinceStart", (System.nanoTime() - started) / 1_000_000_000); put("status", connected.market.value.statusMessage)
+            }))
+        }
+        // The chart must still be live after the reader retired its own subscriptions.
+        val before = connected.history(chart.first, chart.second).lastOrNull()
+        delay(20_000)
+        val after = connected.history(chart.first, chart.second).lastOrNull()
+        println("HISTORY_PRELOAD_LIVE " + asciiJson(buildJsonObject {
+            put("lastBar", stamp(after?.timeMs)); put("changed", before != after); put("status", connected.market.value.statusMessage)
+        }))
+        println("HISTORY_PRELOAD_OPEN @ES/240")
+        val shown = connected.history("@ES", Timeframe(240)).size
+        connected.watch("@ES", Timeframe(240))
+        delay(8_000)
+        val opened = connected.history("@ES", Timeframe(240))
+        println("HISTORY_PRELOAD_OPENED " + asciiJson(buildJsonObject {
+            put("barsAtOnce", shown); put("bars", opened.size); put("newest", stamp(opened.lastOrNull()?.timeMs))
+            put("cachedSeries", store.values.size); put("refusedWriteRequests", wire.refusedWrites); put("sentOrderRequests", 0)
+        }))
+    } catch (error: Exception) {
+        verified = false
+        println("HISTORY_PRELOAD_ERROR " + asciiJson(buildJsonObject {
+            put("errorType", error.javaClass.simpleName); put("message", (error.message ?: "").take(200)); put("sentOrderRequests", 0)
+        }))
+    } finally {
+        broker?.disconnect()
+        if (broker == null) wire.close()
+        delay(200)
+    }
+    return verified
+}
+
 fun main(args: Array<String>) = runBlocking {
+    if (args.contentEquals(arrayOf("--demo-history-preload-read-only"))) {
+        if (!historyPreload()) kotlin.system.exitProcess(2)
+        return@runBlocking
+    }
     if (args.contentEquals(arrayOf("--demo-daily-diagnostic-read-only"))) {
         if (!dailyDiagnostic()) kotlin.system.exitProcess(2)
         return@runBlocking

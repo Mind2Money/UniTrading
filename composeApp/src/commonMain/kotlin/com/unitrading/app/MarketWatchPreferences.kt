@@ -1,6 +1,7 @@
 package com.unitrading.app
 
 import com.unitrading.broker.Instrument
+import com.unitrading.broker.Timeframe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
@@ -26,4 +27,15 @@ class MarketWatchPreferences(private val store: SnapshotStore) {
             error.value = null
         } catch (_: Exception) { error.value = "自选保存失败，当前列表仍有效" }
     }
+}
+
+/**
+ * Series a broker reads ahead and caches so that their charts open without a wait, most wanted first: the watch
+ * list on the shown interval, then the shown symbol on the other starred intervals, then the list on each of
+ * those, shortest interval first.
+ */
+internal fun historyPreloadSeries(watch: List<String>, symbol: String, timeframe: Timeframe, favorites: List<Timeframe>): List<Pair<String, Timeframe>> {
+    val others = favorites.filter { it != timeframe }.sortedBy { it.minutes }
+    return (watch.map { it to timeframe } + others.filter { symbol in watch }.map { symbol to it } +
+        others.flatMap { frame -> watch.map { it to frame } }).distinct()
 }
