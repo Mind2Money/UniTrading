@@ -179,6 +179,19 @@ class PostTest(unittest.TestCase):
         self.assertEqual(headers['Content-Type'], 'application/json')
         self.assertIn('UniTrading', headers['User-Agent'])
 
+    def test_chinese_text_goes_as_utf8_not_escapes(self):
+        payload = {'content': '🎉 UniTrading v1.2.3', 'embeds': [{'description': '账户页与交易分析' * 200}]}
+        release_discord.post(self.url, payload, None)
+        _, _, body = self.server.received[0]
+        self.assertEqual(json.loads(body.decode('utf-8')), payload)
+        self.assertIn('账户页'.encode('utf-8'), body)
+        self.assertLess(len(body), len(json.dumps(payload).encode()) * 2 // 3)
+
+    def test_a_refusal_names_discords_reason(self):
+        self.server.reply = (413, {}, json.dumps({'message': 'Request entity too large', 'code': 40005}).encode())
+        with self.assertRaisesRegex(release_discord.DiscordRefused, r'413 \(Request entity too large, code 40005\)'):
+            release_discord.post(self.url, PAYLOAD, None)
+
     def test_sends_the_complete_notes_as_a_file(self):
         attachment = {'name': 'notes.md', 'text': '完整说明\n'}
         release_discord.post(self.url, PAYLOAD, attachment)

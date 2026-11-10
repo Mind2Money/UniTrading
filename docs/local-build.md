@@ -181,7 +181,7 @@ macOS 包只有 Apple Silicon，ad-hoc 签名，未公证，只在推 `v*` 标�
 ### Discord 公告
 
 Release 成功后，`notify-discord` job 用 `DISCORD_RELEASE_WEBHOOK` secret 发一条消息：版本号、Release 链接和该版本的 `## 简体中文` 小节，不带英文和提交记录。
-内容超过 Discord 上限时发节选，完整说明作为附件。发版前可以预览：
+内容超过 Discord 上限时发节选，完整说明作为附件。请求体用 UTF-8 JSON，中文不转义成 `\uXXXX`：v1.5.0 首次发送时转义后的请求体有 20 KB，被 Discord 以 HTTP 413 拒收，而 v1.4.0 的 14 KB 发送成功；失败时日志带上 Discord 返回的原因。发版前可以预览：
 
 ```powershell
 python scripts/release-discord.py vX.Y.Z --dry-run

@@ -97,16 +97,37 @@ def build_announcement(tag, notes):
 
 
 def request_body(payload, attachment):
-    """JSON, or multipart/form-data when the complete notes go along as a file."""
+    """JSON, or multipart/form-data when the complete notes go along as a file.
+
+    The JSON is UTF-8 rather than \\u escapes, which take six bytes per Chinese character: the escaped v1.5.0
+    announcement came to 20 KB and Discord refused it with HTTP 413, while 14 KB had gone through for v1.4.0.
+    """
+    text = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if attachment is None:
-        return json.dumps(payload).encode(), 'application/json'
+        return text.encode('utf-8'), 'application/json'
     boundary = uuid.uuid4().hex
     body = (f'--{boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\n'
-            f'Content-Type: application/json\r\n\r\n{json.dumps(payload)}\r\n'
+            f'Content-Type: application/json\r\n\r\n{text}\r\n'
             f'--{boundary}\r\nContent-Disposition: form-data; name="files[0]"; filename="{attachment["name"]}"\r\n'
             f'Content-Type: text/markdown; charset=utf-8\r\n\r\n{attachment["text"]}\r\n'
             f'--{boundary}--\r\n')
     return body.encode(), f'multipart/form-data; boundary={boundary}'
+
+
+def refusal_reason(error):
+    """Discord's own message and code from an error reply, such as ' (Request entity too large, code 40005)'."""
+    try:
+        reply = json.loads(error.read(2000) or b'{}')
+    except Exception:
+        reply = {}
+    finally:
+        error.close()
+    if not isinstance(reply, dict):
+        return ''
+    parts = [str(reply[key])[:200] for key in ('message', 'code') if reply.get(key) not in (None, '')]
+    if len(parts) == 2:
+        parts[1] = f'code {parts[1]}'
+    return f" ({', '.join(parts)})" if parts else ''
 
 
 def post(url, payload, attachment):
@@ -118,10 +139,10 @@ def post(url, payload, attachment):
         with OPENER.open(request, timeout=15) as response:
             message_id = json.load(response).get('id')
     except urllib.error.HTTPError as error:
-        error.close()
+        reason = refusal_reason(error)
         # A 5xx can follow a saved message; a refused redirect or a 4xx cannot.
         if error.code < 500:
-            raise DiscordRefused(f'Discord returned HTTP {error.code}; nothing was posted') from None
+            raise DiscordRefused(f'Discord returned HTTP {error.code}{reason}; nothing was posted') from None
         raise ReleaseError(f'Discord returned HTTP {error.code}; {unknown}') from None
     except Exception:
         raise ReleaseError(f'Discord send outcome is unknown; {unknown}') from None
