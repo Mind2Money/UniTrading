@@ -10,6 +10,7 @@
 
 📈 **图表**
 ✅ 修复打开画图工具栏“图标”的表情面板时报错、面板打不开的问题；表情、贴纸、符号三个标签页现在都能打开并选用
+✅ 绘图的设置可以保存为工具默认：设置对话框底部新增“保存为默认”，保存样式、层级（例如斐波那契的各层数值、颜色和显示与否）、参数和可见周期，之后新画的同类绘图都用这份设置；“恢复初始默认”回到内置设置。以前的“设为此工具的默认样式”只保存颜色线型，斐波那契设好的层级在新画时会丢
 ✅ 十字线竖线不再停在最新一根 K 线上：指针移到 K 线之外的留白时竖线跟随指针，时间轴按周期顺推显示该位置的时间（不跳过休市时段）；图例和指标读数此时显示最近一根 K 线
 ✅ 自选品种的 K 线在后台预读并缓存：当前周期和收藏周期都读全 2000 根，添加品种后随即开始。打开已缓存的图表直接显示，只补取之后缺少的 K 线，指标不再随着历史一页页加载反复重绘
 ✅ 打开已缓存的图表时，最新一根 K 线不再先紧挨着旧的末根画出来，等缺少的 K 线补齐后一起显示
@@ -46,6 +47,7 @@
 
 📈 **Charts**
 ✅ Fixed an error that kept the icon picker of the drawing toolbar from opening; its emoji, sticker and symbol tabs now open and can be picked from
+✅ Drawing settings can be saved as the tool's default: "save as default" at the bottom of the settings dialog keeps the look, the levels (a Fibonacci's values, colours and which ones show, for example), the parameters and the intervals shown on, and every new drawing of that tool starts with them; "restore built-in defaults" goes back. The old "set as this tool's default style" kept colours and lines only, so a Fibonacci's levels were lost on the next one
 ✅ The crosshair's vertical line no longer stops at the newest bar: in the empty space beside the bars it follows the pointer, and the time axis shows that position's time, counted on at one interval per bar without skipping closed hours; the legend and indicator readouts then show the nearest bar
 ✅ Watch-list history is read ahead and cached in the background: the shown interval and the starred intervals each get their full 2,000 bars, starting as soon as a symbol is added. A cached chart opens at once and only fetches the bars since, so indicators no longer redraw as history arrives page by page
 ✅ A cached chart no longer draws the newest bar right next to its old last bar first; it appears together with the bars in between

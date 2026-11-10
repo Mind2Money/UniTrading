@@ -15,6 +15,7 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.chart.drawing.ChartCursor
 import com.unitrading.chart.drawing.DrawingTool
+import com.unitrading.chart.drawing.formatRatio
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -102,6 +103,48 @@ class DrawingToolbarUiTest {
         compose.onNodeWithTag("drawing-settings-save").performClick()
         compose.waitForIdle()
         assertEquals(1f, drawings.drawings.single().style.width)
+    }
+
+    /** A reported bug: a Fibonacci set up in its settings could not be kept for the next one. */
+    @Test fun theSettingsDialogSavesEverySettingAsTheToolsDefault() {
+        show()
+        fun drawFib(top: Float) {
+            compose.onNodeWithTag("drawing-group-FIB-menu").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("drawing-tool-FIB_RETRACEMENT").performClick()
+            compose.waitForIdle()
+            clickChart(.3f, .7f)
+            clickChart(.6f, top)
+        }
+        drawFib(.25f)
+        val factory = drawings.drawings.single().levels
+        compose.onNodeWithTag("drawing-bar-settings").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("settings-default-status").assertTextContains("使用初始设置", substring = true)
+        compose.onNodeWithTag("settings-levels-value-1").performTextReplacement("0.3")
+        compose.onNodeWithTag("settings-levels-visible-2").performClick()
+        compose.onNodeWithTag("settings-make-default").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("settings-default-status").assertTextContains("已保存为默认", substring = true)
+        compose.onNodeWithTag("drawing-settings-save").performClick()
+        compose.waitForIdle()
+        val saved = drawings.drawings.single().levels
+        assertEquals(.3, saved[1].value)
+        assertFalse(saved[2].visible)
+
+        drawFib(.35f)
+        assertEquals(saved, drawings.drawings.last().levels, "the next Fibonacci starts with the saved levels")
+        compose.onNodeWithTag("drawing-bar-settings").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("settings-default-status").assertTextContains("使用保存的默认设置", substring = true)
+        compose.onNodeWithTag("settings-reset-default").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("settings-levels-value-1").assertTextContains(formatRatio(factory[1].value).replace('−', '-'))
+        compose.onNodeWithTag("drawing-settings-save").performClick()
+        compose.waitForIdle()
+        assertEquals(factory, drawings.drawings.last().levels)
+        drawFib(.45f)
+        assertEquals(factory, drawings.drawings.last().levels, "back to the built-in levels")
     }
 
     @Test fun textToolAsksForItsText() {

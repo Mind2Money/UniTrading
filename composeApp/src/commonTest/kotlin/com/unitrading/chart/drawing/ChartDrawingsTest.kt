@@ -416,6 +416,63 @@ class ChartDrawingsTest {
         assertTrue(second.drawings.isEmpty())
     }
 
+    /** A Fibonacci set up once is drawn that way again: the default keeps its levels, look, settings and intervals. */
+    @Test fun aToolsSavedDefaultKeepsEverySettingAndNewDrawingsStartWithIt() {
+        line(at(10, 39_000), at(30, 40_000), DrawingTool.FIB_RETRACEMENT)
+        val fib = drawings.drawings.single()
+        val levels = fib.levels.map { if (it.value == .5) it.copy(value = .55, color = "#FF0000") else it } + DrawingLevel(2.618, "#00FF00")
+        val custom = fib.copy(style = fib.style.copy(color = "#123456", reverse = true, showPrices = false), levels = levels,
+            hiddenIntervals = setOf(IntervalBucket.SECONDS), text = "own text")
+        assertFalse(drawings.hasDefault(DrawingTool.FIB_RETRACEMENT))
+        drawings.setAsDefault(custom)
+        assertTrue(drawings.hasDefault(DrawingTool.FIB_RETRACEMENT))
+        line(at(40, 39_000), at(50, 40_000), DrawingTool.FIB_RETRACEMENT)
+        val next = drawings.drawings.last()
+        assertEquals(Triple(custom.style, levels, setOf(IntervalBucket.SECONDS)), Triple(next.style, next.levels, next.hiddenIntervals))
+        assertEquals("", next.text, "content is the drawing's own")
+        assertNotEquals(custom.points, next.points)
+        assertEquals(fib.style, drawings.drawings.first().style, "drawings made before keep their settings")
+
+        // Settings kept as params go with it; a param that places one drawing does not.
+        line(at(10, 39_000), at(30, 40_000), DrawingTool.REGRESSION_TREND)
+        drawings.setAsDefault(drawings.drawings.last().let { it.copy(params = it.params + ("upper" to 3.5)) })
+        line(at(40, 39_000), at(60, 40_000), DrawingTool.REGRESSION_TREND)
+        assertEquals(3.5, drawings.drawings.last().param("upper"))
+        val table = newDrawing(DrawingTool.TABLE, "t", listOf(DrawingPoint(START, 40_000.0)))
+        assertEquals(emptyMap(), DrawingDefaults.of(table.copy(params = table.params + ("screenX" to .9))).params)
+
+        // The built-in settings come back, for the tool and in the dialog, the drawing's own content kept.
+        val factory = drawings.builtInSettings(custom)
+        assertEquals(Triple(fib.style, fib.levels, emptySet<IntervalBucket>()), Triple(factory.style, factory.levels, factory.hiddenIntervals))
+        assertEquals(Triple(custom.id, custom.points, "own text"), Triple(factory.id, factory.points, factory.text))
+        drawings.clearDefault(DrawingTool.FIB_RETRACEMENT)
+        assertFalse(drawings.hasDefault(DrawingTool.FIB_RETRACEMENT))
+        line(at(70, 39_000), at(80, 40_000), DrawingTool.FIB_RETRACEMENT)
+        assertEquals(fib.levels, drawings.drawings.last().levels)
+    }
+
+    @Test fun savedDefaultsComeBackAfterARestartAndOldStyleOnlyDefaultsStillApply() {
+        drawings.addHorizontalLine(DrawingPoint(START + 20 * HOUR, 40_125.0))
+        val line = drawings.drawings.single()
+        drawings.setAsDefault(line.copy(style = line.style.copy(color = "#ABCDEF", width = 3f), hiddenIntervals = setOf(IntervalBucket.DAYS)))
+        val reopened = ChartDrawings(store, Dispatchers.Unconfined).apply { bind("OTHER") }
+        assertTrue(reopened.hasDefault(DrawingTool.HORIZONTAL_LINE))
+        reopened.addHorizontalLine(DrawingPoint(START, 39_000.0))
+        val restored = reopened.drawings.single()
+        assertEquals(Triple("#ABCDEF", 3f, setOf(IntervalBucket.DAYS)), Triple(restored.style.color, restored.style.width, restored.hiddenIntervals))
+
+        // A file saved before whole defaults existed holds a look per tool; it still applies until a new default replaces it.
+        val legacy = MemorySnapshotStore().apply {
+            write("chart-drawing-tools-v1", kotlinx.serialization.json.Json.encodeToString(DrawingToolPrefs(defaults = mapOf(DrawingTool.HORIZONTAL_LINE to DrawingStyle("#FEDCBA")))))
+        }
+        val old = ChartDrawings(legacy, Dispatchers.Unconfined).apply { bind("TEST") }
+        assertTrue(old.hasDefault(DrawingTool.HORIZONTAL_LINE))
+        old.addHorizontalLine(DrawingPoint(START, 39_000.0))
+        assertEquals("#FEDCBA", old.drawings.single().style.color)
+        old.clearDefault(DrawingTool.HORIZONTAL_LINE)
+        assertFalse(old.hasDefault(DrawingTool.HORIZONTAL_LINE))
+    }
+
     @Test fun anUnreadableFileIsSetAsideNotOverwritten() {
         store.write("chart-drawings-v1", "{broken")
         val reopened = ChartDrawings(store, Dispatchers.Unconfined)

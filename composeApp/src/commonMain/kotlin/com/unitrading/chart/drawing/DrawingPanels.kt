@@ -211,6 +211,13 @@ private fun TableDialog(drawings: ChartDrawings, source: Drawing) {
 /** Numeric or on/off settings of a tool beyond its style and levels. */
 private class ParamSpec(val key: String, val label: String, val fallback: Double, val range: ClosedFloatingPointRange<Double>? = null, val toggle: Boolean = false)
 
+/** The params the settings dialog sets for [tool], which its saved default keeps; any other param belongs to one drawing. */
+internal fun settingParams(tool: DrawingTool): Set<String> = paramSpecs(tool).map { it.key }.toSet() + when (tool) {
+    DrawingTool.BARS_PATTERN -> setOf("mode")
+    DrawingTool.ELLIOTT_IMPULSE, DrawingTool.ELLIOTT_CORRECTION, DrawingTool.ELLIOTT_TRIANGLE, DrawingTool.ELLIOTT_DOUBLE, DrawingTool.ELLIOTT_TRIPLE -> setOf("degree")
+    else -> emptySet()
+}
+
 private fun paramSpecs(tool: DrawingTool): List<ParamSpec> = when (tool) {
     DrawingTool.REGRESSION_TREND -> listOf(ParamSpec("upper", "上偏差", 2.0, .0..10.0), ParamSpec("lower", "下偏差", 2.0, .0..10.0))
     DrawingTool.LONG_POSITION, DrawingTool.SHORT_POSITION -> listOf(ParamSpec("accountSize", "账户规模", 1000.0, 1.0..1e9), ParamSpec("riskPercent", "风险 %", 25.0, .01..100.0))
@@ -268,6 +275,10 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
     var d by remember(id) { mutableStateOf(original) }
     var tab by remember(id) { mutableStateOf(0) }
     var invalidCoordinates by remember(id) { mutableStateOf(false) }
+    /** What the last press on the default buttons did. */
+    var defaultStatus by remember(id) { mutableStateOf<String?>(null) }
+    /** Counts the times the built-in settings replaced the fields, whose typed texts then start again from the values. */
+    var generation by remember(id) { mutableStateOf(0) }
     fun change(value: Drawing) { d = value; drawings.preview(value) }
     fun style(transform: DrawingStyle.() -> DrawingStyle) = change(d.copy(style = d.style.transform()))
     fun close() = drawings.closeSettings()
@@ -278,6 +289,7 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
         close()
     }, { drawings.preview(original); close() }, "drawing-settings", "drawing-settings-cancel", "drawing-settings-save") {
         PrimaryTabRow(tab) { tabs.forEachIndexed { index, title -> Tab(tab == index, { tab = index }, text = { Text(title) }, modifier = Modifier.testTag("drawing-settings-tab-$index")) } }
+        key(generation) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (tabs[tab]) {
                 "样式" -> {
@@ -337,7 +349,6 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                             }, Modifier.fillMaxWidth().testTag("settings-param-${spec.key}"), label = { Text(spec.label) }, singleLine = true, isError = parsed == null, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                         }
                     }
-                    TextButton({ drawings.setAsDefault(d) }, Modifier.testTag("settings-make-default")) { Text("设为此工具的默认样式") }
                 }
                 "文字" -> {
                     OutlinedTextField(d.text, { change(d.copy(text = it)) }, Modifier.fillMaxWidth().testTag("settings-text"), label = { Text("文字") }, minLines = 3)
@@ -379,6 +390,26 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                         SwitchRow(bucket.label, bucket !in d.hiddenIntervals, "settings-visible-${bucket.name}") { on -> change(d.copy(hiddenIntervals = if (on) d.hiddenIntervals - bucket else d.hiddenIntervals + bucket)) }
                     }
                 }
+            }
+        }
+        }
+        // On every tab: the settings above become the tool's default, or the tool goes back to its built-in settings.
+        DividerLine()
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val label = d.tool.label
+            Text(defaultStatus ?: if (drawings.hasDefault(d.tool)) "新画的$label 使用保存的默认设置" else "新画的$label 使用初始设置",
+                Modifier.testTag("settings-default-status"), style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                TextButton({
+                    drawings.clearDefault(d.tool)
+                    change(drawings.builtInSettings(d))
+                    generation++
+                    defaultStatus = "已恢复初始默认：新画的$label 使用初始设置，点“确定”后这个图形也改用"
+                }, Modifier.testTag("settings-reset-default")) { Text("恢复初始默认") }
+                FilledTonalButton({
+                    drawings.setAsDefault(d)
+                    defaultStatus = "已保存为默认：之后新画的$label 都使用这些设置"
+                }, Modifier.testTag("settings-make-default")) { Text("保存为默认") }
             }
         }
     }

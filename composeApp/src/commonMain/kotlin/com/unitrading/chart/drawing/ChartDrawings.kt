@@ -33,8 +33,33 @@ internal data class DrawingToolPrefs(
     val removeLocked: Boolean = false,
     val favoritesBarVisible: Boolean = true,
     /** The look a tool starts with after "设为默认". */
+    /** A tool's look as saved before [toolDefaults] existed; read for a tool without one, never written again. */
     val defaults: Map<DrawingTool, DrawingStyle> = emptyMap(),
+    val toolDefaults: Map<DrawingTool, DrawingDefaults> = emptyMap(),
 )
+
+/**
+ * What a tool's settings dialog sets, saved as the tool's default so new drawings of the tool start with it: the look
+ * (text formatting included), the levels, the settings kept as params, and the intervals the drawing shows on. A drawing's
+ * own content stays its own: points, text, link, glyph, image, and params such as where a table sits.
+ */
+@Serializable
+internal data class DrawingDefaults(
+    val style: DrawingStyle,
+    val levels: List<DrawingLevel> = emptyList(),
+    val levels2: List<DrawingLevel> = emptyList(),
+    val levels3: List<DrawingLevel> = emptyList(),
+    val params: Map<String, Double> = emptyMap(),
+    val hiddenIntervals: Set<IntervalBucket> = emptySet(),
+) {
+    fun applyTo(drawing: Drawing): Drawing = drawing.copy(style = style, levels = levels, levels2 = levels2, levels3 = levels3,
+        params = drawing.params + params.filterKeys { it in settingParams(drawing.tool) }, hiddenIntervals = hiddenIntervals)
+
+    companion object {
+        fun of(drawing: Drawing) = DrawingDefaults(drawing.style, drawing.levels, drawing.levels2, drawing.levels3,
+            drawing.params.filterKeys { it in settingParams(drawing.tool) }, drawing.hiddenIntervals)
+    }
+}
 
 /** A pen stroke of the demonstration cursor; it fades and goes away by itself. */
 internal class DemoStroke(val points: List<Offset>, val endedAtMs: Long?, val opacity: Float)
@@ -333,8 +358,14 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     }
     fun closeMenu() { menuAt = null }
     fun clearNotice() { notice = null }
-    /** The default look for new drawings of a tool. */
-    fun setAsDefault(value: Drawing) = updatePrefs { it.copy(defaults = it.defaults + (value.tool to value.style)) }
+    /** Saves everything [value]'s settings dialog sets as the default of its tool: new drawings of the tool start with it. */
+    fun setAsDefault(value: Drawing) = updatePrefs { it.copy(toolDefaults = it.toolDefaults + (value.tool to DrawingDefaults.of(value)), defaults = it.defaults - value.tool) }
+    /** Forgets the saved default of [tool]: new drawings of it start with the built-in settings again. */
+    fun clearDefault(tool: DrawingTool) = updatePrefs { it.copy(toolDefaults = it.toolDefaults - tool, defaults = it.defaults - tool) }
+    fun hasDefault(tool: DrawingTool): Boolean = tool in prefs.toolDefaults || tool in prefs.defaults
+    /** [value] with the built-in settings of its tool, its own content kept. */
+    fun builtInSettings(value: Drawing): Drawing =
+        DrawingDefaults.of(newDrawing(value.tool, value.id, value.points, value.glyph)).applyTo(value)
 
     fun drawingCount(): Int = drawings.size
     /** Removes the symbol's drawings; locked ones only with the "always remove locked" option. */
@@ -404,7 +435,8 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
         return if (snapped === raw) raw.copy(price = ctx.snapToTick(raw.price)) else snapped
     }
 
-    private fun defaultsFor(value: DrawingTool, base: Drawing): Drawing = prefs.defaults[value]?.let { base.copy(style = it) } ?: base
+    private fun defaultsFor(value: DrawingTool, base: Drawing): Drawing =
+        prefs.toolDefaults[value]?.applyTo(base) ?: prefs.defaults[value]?.let { base.copy(style = it) } ?: base
 
     private fun startDraft(value: DrawingTool, first: DrawingPoint, ctx: DrawingContext) {
         val points = if (value.anchors == 1 || value.anchors == FREEHAND) listOf(first) else listOf(first, first)
