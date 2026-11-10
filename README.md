@@ -98,7 +98,7 @@ xattr -cr UniTrading.app
 ./gradlew :broker-api:desktopTest :demo-broker:desktopTest :tradovate-broker:desktopTest :rithmic-broker:desktopTest :composeApp:desktopTest
 ```
 
-包含领域测试、图表坐标测试与 Compose UI 交互测试。1.4.0 常规套件为 919 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows、创建 GitHub Release 并发送 Discord 公告；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
+包含领域测试、图表坐标测试与 Compose UI 交互测试。1.5.0 常规套件为 1041 项；当前证据与平台限制见 [验证记录](docs/verification.md)。CI 执行 Android R8 release 编译、签名及 Telegram 通知，`v*` tag 另外打包 Windows、创建 GitHub Release 并发送 Discord 公告；测试在本地完成。运行 `pwsh -File scripts/build-local.ps1` 可执行桌面测试、打包与 Android 编译；后台运行、签名、发布和 Mac/iOS 用法见[本地构建与 CI](docs/local-build.md)。
 
 ### iOS（必须在 Mac 上）
 

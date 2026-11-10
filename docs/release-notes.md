@@ -1,6 +1,24 @@
 # Unreleased
 
+# v1.5.0
+
 ## 简体中文
+
+🎉 UniTrading 更新至 **v1.5.0**！新增账户页与交易分析、账户别名、多图表窗口和面板独立窗口、秒级周期、手机双指缩放、图表右键下单和键盘下单，Android 新增内置浏览器版安装包。
+
+🙏 **特别鸣谢**
+感谢 DC 群的 @XAU真爱粉 提交 [PR #2](https://github.com/Mind2Money/UniTrading/pull/2)：账户页（总览 / 交易 / 分析）、交易分析与盈亏日历、双指缩放、手机常驻收藏周期和短横屏布局都来自这次贡献。
+
+📖 **新功能使用说明**
+1. 切换账户与别名：顶部“登录账户”“交易子账户”两个下拉直接切换；点下拉里每行右侧的铅笔可以起别名，留空保存即恢复原名，别名只存在本机
+2. 账户页与交易分析：手机点底部第一个“账户”，桌面点顶栏“账户总览”；“分析”页按合约和时区（芝加哥 / 北京 / UTC）看净盈亏、胜率、盈利因子和最大回撤，点盈亏日历的某一天看当日明细，“交易明细”列出本月的平仓记录
+3. 手机图表：双指张合缩放、双指移动平移；工具栏常驻显示收藏周期，点 ▾ 打开全部周期，在菜单里点星号收藏或取消
+4. 秒级周期：周期菜单的“秒”分组，或在“添加自定义周期”里选“秒”作单位
+5. 多图表与独立窗口（桌面）：最右侧面板栏底部的“窗口”菜单可以把面板移到独立窗口，“新建图表窗口”同时打开多个图表
+6. 右键与键盘下单（桌面）：在图表空白处右键画水平线或挂限价单、突破单；在「设置 → 交易」打开“键盘下单”，点一下图表后按 W / S（或 ↑ / ↓）市价买卖
+7. 绘图默认设置：绘图设置对话框底部点“保存为默认”，之后新画的同类绘图都用这份设置
+8. 单独修改止损止盈：无法配对的止损止盈，在图表上拖动它的线改价，或在交易页点保护单上的铅笔修改
+9. 内置浏览器版：鸿蒙等系统 WebView 不满足要求、登录不了 Tradovate 的手机，安装文件名以 `-webview.apk` 结尾的版本
 
 📱 **Android 安装包**
 ✅ 发布页新增内置浏览器版 APK（文件名以 `-webview.apk` 结尾，约 95 MB，只支持 arm64）：Tradovate 登录改用 APK 自带的 GeckoView，不依赖手机的 System WebView，鸿蒙等系统 WebView 不满足要求的手机可以安装这个版本
@@ -58,6 +76,22 @@
 ⚠️ 双指手势只在桌面测试里用模拟触摸验证过，没有在真机上试过
 
 ## English
+
+🎉 UniTrading **v1.5.0** is out! It adds the account page with trade analytics, account aliases, several chart windows and panels in windows of their own, second intervals, pinch zoom on phones, orders from the chart's context menu and from the keyboard, and a built-in browser APK for Android.
+
+🙏 **Special thanks**
+Thanks to @XAU真爱粉 from our Discord for [PR #2](https://github.com/Mind2Money/UniTrading/pull/2): the account page (overview / trading / analytics), the trade analytics and P&L calendar, pinch zoom, the starred intervals on the phone toolbar and the short landscape layout all come from it.
+
+📖 **How to use the new features**
+1. Switching accounts and aliases: the "login" and "trading account" pickers at the top switch directly; the pencil at the end of a row gives it an alias, saving it empty brings the broker's name back, and aliases stay on the device
+2. Account page and analytics: on a phone tap "Account", first in the bottom bar; on the desktop click "account overview" in the toolbar. The Analytics tab shows net P&L, win rate, profit factor and maximum drawdown by contract and time zone (Chicago / Beijing / UTC); tap a day in the P&L calendar for its trades, and "trades" lists the month's closed trades
+3. Phone charts: pinch to zoom, move two fingers to pan; the toolbar shows the starred intervals, ▾ opens all intervals, and the star in that menu adds or removes one
+4. Second intervals: the "seconds" group of the interval menu, or "seconds" as the unit of a custom interval
+5. Several charts and panel windows (desktop): the "windows" menu at the bottom of the right-hand panel rail moves a panel into a window of its own, and "new chart window" opens another chart
+6. Context-menu and keyboard orders (desktop): right-click empty chart space to draw a horizontal line or place a limit or stop order; turn on "keyboard trading" in Settings → Trading, click the chart, and W / S (or ↑ / ↓) buy and sell at the market
+7. Drawing defaults: "save as default" at the bottom of a drawing's settings dialog makes every new drawing of that tool start with them
+8. Changing a stop or target on its own: drag the line of a stop or target that cannot be paired, or use the pencil on its protection chip in the trade list
+9. Built-in browser APK: on phones whose System WebView cannot sign in to Tradovate, such as HarmonyOS, install the APK whose name ends in `-webview.apk`
 
 📱 **Android packages**
 ✅ The release page now has a built-in browser APK (file name ending in `-webview.apk`, about 95 MB, arm64 only): the Tradovate login uses GeckoView inside the APK instead of the phone's System WebView, for phones whose System WebView falls short, such as HarmonyOS devices

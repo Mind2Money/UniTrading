@@ -101,7 +101,7 @@ $env:RITHMIC_PASSWORD = Read-Host 'Rithmic 密码' -MaskInput  # PowerShell 7；
 .\gradlew.bat :rithmic-broker:rithmicProbe -q --console=plain --no-daemon
 ```
 
-可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.4.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）、`RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`（只跑连续历史检查：只登录行情和历史 plant，打印合约列表、别名回放、最近 52 个月份合约的日线、分钟数据深度和回放截断情况）。
+可选：`RITHMIC_APP_NAME` / `RITHMIC_APP_VERSION`（默认 `UniTrading` / `1.5.0`）、`RITHMIC_PRODUCT` / `RITHMIC_EXCHANGE`（默认 `MES` / `CME`）、`RITHMIC_SYMBOL`（跳过主力查询）、`RITHMIC_ACCOUNT`（默认第一个账户）、`RITHMIC_PLANTS`（`order,pnl,ticker,history` 子集）、`RITHMIC_LISTEN_SECONDS`（实时订阅保持时间，默认 75 秒）、`RITHMIC_PROBE_READONLY=1`（跳过下单测试，只读）、`RITHMIC_CONTINUOUS_PROBE=MNQ,MGC,MCL`（只跑连续历史检查：只登录行情和历史 plant，打印合约列表、别名回放、最近 52 个月份合约的日线、分钟数据深度和回放截断情况）。
 
 逐请求检查绕过 `RithmicBroker`，不能证明应用流程可用。所以探针最后会退出这些连接，再用 `RithmicBroker`（应用实际使用的适配器）跑约 45 秒：连接、解析 `@<产品>` 连续合约、订阅行情、加载并跟踪 1 分钟图。这一段在任何系统上都只读，不调用下单接口；应用是否可用以 `[broker] RESULT` 这一行为准。可把 `RITHMIC_LISTEN_SECONDS` 设小以缩短前面的监听时间。
 

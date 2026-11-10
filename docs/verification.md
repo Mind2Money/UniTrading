@@ -1,6 +1,16 @@
 # 验证记录索引
 
-## 当前：1.4.0 / v1.4.0
+## 当前：1.5.0 / v1.5.0
+
+2026-11-11 发布前在 Windows 上核对 `7291c85` 加版本号改动（版本号、GeckoView 160、发布说明）。
+
+- 桌面回归 1041 项：broker-api 30、demo-broker 36、tradovate-broker 269、composeApp 598、rithmic-broker 108，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.py` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。脚本末尾归档报告时路径过长（WinError 206）使脚本返回非零，测试、打包和 R8 三个阶段都通过。
+- 脚本测试：`test_build_local.py` 24 项、`test_release_notes.py` 5 项、`test_release_discord.py` 15 项通过；Discord 公告用 `--dry-run` 预览，简体中文小节 4021 字符，一条消息发完，没有发送。
+- Android：两个 R8 release APK 构建通过（标准版 3.40 MiB；内置浏览器版 90.78 MiB，GeckoView 160.0.20261104181552）；没有运行模拟器设备测试。
+- Windows 包：`UniTrading.exe --version` 为 1.5.0，含登录 host（自测 60 项通过）。从仓库外目录启动，应用数据目录隔离，只放入授权记录，通过授权校验后显示登录页和 Tradovate、Rithmic 两个入口；这次检查没有连接任何账户。
+- 未验证：真机上的双指缩放、旋转和短横屏布局，鸿蒙真机和内置浏览器版的真实登录，真实账户下的账户页、交易分析和别名，多图表窗口与预读是否触到 Tradovate 的订阅上限，Tradovate 和 Rithmic 的真实下单与单独改单，iOS，macOS 包的启动和登录。
+
+## 1.4.0 / v1.4.0
 
 2026-11-10 发布前在 Windows、JDK 21 上核对 `6c834ec` 加版本号改动。之后只改了本记录、发布说明和其他文档的文字，以及下面 macOS 条目所述的构建脚本和 CI 检查。
 
