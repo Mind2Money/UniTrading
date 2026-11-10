@@ -47,6 +47,7 @@
 ✅ 手机和桌面顶部新增“登录账户”“交易子账户”两个下拉，直接切换交易商和子账户；切换时关闭上一个账户未提交的下单、改单和确认框
 ✅ 交易分析：按芝加哥、北京时间或 UTC 的平仓自然日统计当前子账户已加载的平仓记录，显示净盈亏、胜率、盈利因子、平均盈亏比、已实现最大回撤、累计或每日盈亏图，以及带周汇总的每日盈亏日历；缺少净盈亏的记录标为“待确认”，不按零计
 ✅ 桌面端点工具栏的“账户总览”在对话框里打开这三页，工作区和独立窗口保持不动
+✅ 登录账户和交易子账户可以起别名：点顶部两个下拉里每行右侧的铅笔输入，留空即恢复原名。别名显示在各处账户名的位置，下拉和总览里原名作为小字保留，实时盈亏通知的标题也用别名；别名只保存在本机，手机和电脑各自设置
 ✅ 桌面右侧栏去掉了交易子账户面板，行情列表占满侧栏，收起按钮移到行情标题栏右端；之前保存的布局照常恢复
 ⚠️ 统计只覆盖券商已返回的历史记录，自然日不等于交易所结算日
 
@@ -103,6 +104,7 @@
 ✅ Phones and the desktop toolbar get two pickers at the top, for the login and for the trading child account; switching closes the previous account's unsent order, edits and confirmations
 ✅ Analytics: the current child's loaded closed trades by calendar day in Chicago, Beijing or UTC time, with net P&L, win rate, profit factor, average win/loss, realized maximum drawdown, a cumulative or daily P&L chart and a daily P&L calendar with weekly totals; a trade without net P&L is marked as pending and not counted as zero
 ✅ On the desktop, the toolbar's account overview button opens these tabs in a dialog; the workspace and any panel windows stay as they are
+✅ Logins and trading accounts can have aliases: tap the pencil at the end of a row in either top picker and type one; an empty alias brings the broker's name back. The alias shows wherever the name did, with the broker's name in small text in the pickers and the overview, and it titles the live P&L notice; aliases stay on the device, so phone and desktop are set separately
 ✅ The desktop side column no longer has the accounts panel: the market list fills it, and its fold button sits at the right end of its title row; saved layouts open as before
 ⚠️ The statistics cover only the history the broker returned, and a calendar day is not an exchange settlement day
 

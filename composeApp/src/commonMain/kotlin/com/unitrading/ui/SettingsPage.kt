@@ -63,6 +63,9 @@ internal fun SettingsPage(
     val paused by runtime.paused.collectAsState()
     val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
     val account = plugin.accounts.firstOrNull { it.id == accountId }
+    val names = LocalAccountAliases.current
+    val loginName = names.login(plugin.descriptor)
+    val accountName = account?.let { names.account(plugin.descriptor.id, it) }
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
@@ -78,10 +81,10 @@ internal fun SettingsPage(
                 val status = if (localDemo) { if (paused) "模拟已暂停" else "模拟运行中" }
                     else if (!market.connected) "已断开" else if (ready) "已连接" else "交易未就绪"
                 ListItem(
-                    headlineContent = { Text(account?.name ?: accountId) },
+                    headlineContent = { Text(accountName ?: accountId) },
                     supportingContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("${plugin.descriptor.name} · ${account?.currency.orEmpty()}")
+                            Text(listOfNotNull(account?.name?.takeIf { it != accountName }, loginName, account?.currency).joinToString(" · "))
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 StatusDot(if (localDemo || ready) colors.Profit else colors.Loss)
                                 Text("${plugin.descriptor.environment.label} · $status")
@@ -99,7 +102,7 @@ internal fun SettingsPage(
                     onSync, enabled = plugin.capabilities.resynchronize && market.connected && !busy)
                 SettingsRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", AppIcons.Add, "settings-connect", onConnect)
                 if (onConnectRithmic != null) SettingsRow("连接 Rithmic", "登录 Test / Paper / Live 系统", AppIcons.Add, "settings-connect-rithmic", onConnectRithmic)
-                if (!localDemo) SettingsRow("断开 ${plugin.descriptor.name}", "断开当前连接，保留本机登录", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
+                if (!localDemo) SettingsRow("断开 $loginName", "断开当前连接，保留本机登录", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 
             SettingsSection("交易") {

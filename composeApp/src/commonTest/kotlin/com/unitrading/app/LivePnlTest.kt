@@ -142,6 +142,29 @@ class LivePnlTest {
         assertEquals(1, presenter.cleared)
     }
 
+    @Test fun renamingTheShownLoginOrAccountRetitlesTheNotice() = runTest {
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
+        val demo = runtime.brokers.first()
+        val session = demo.openSession(demo.accounts.first().id)
+        val presenter = RecordingLivePnlPresenter()
+        val job = launch { runtime.livePnl.run(presenter) { currentTime } }
+        runCurrent()
+        runtime.livePnl.track(demo, session)
+        runCurrent()
+        assertTrue(runtime.accountAliases.setLogin(demo.descriptor.id, "主号"))
+        assertTrue(runtime.accountAliases.setAccount(demo.descriptor.id, session.account.id, "日内"))
+        advanceTimeBy(LivePnlController.MIN_INTERVAL_MS + 1)
+        runCurrent()
+        assertEquals("主号 · 日内", presenter.shown.last().title)
+        job.cancelAndJoin()
+    }
+
+    @Test fun titleUsesTheAliasesGiven() {
+        val names = AccountAliases(logins = mapOf("atlas" to "主号"), accounts = mapOf("atlas" to mapOf("a1" to "日内")))
+        assertEquals("主号 · 日内", LivePnlUpdate.from(broker, account, AccountSnapshot("a1", 1), connected = true, nowMs = 1, names = names).title)
+        assertEquals("Atlas · 主账户", LivePnlUpdate.from(broker, account, AccountSnapshot("a1", 1), connected = true, nowMs = 1).title)
+    }
+
     @Test fun corruptOrFailingStoreKeepsTheDefaultAndReportsErrors() = runTest {
         val store = object : SnapshotStore {
             override fun read(key: String) = "broken"

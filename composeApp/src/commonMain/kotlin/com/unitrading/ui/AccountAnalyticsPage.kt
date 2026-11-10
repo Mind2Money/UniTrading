@@ -38,7 +38,7 @@ private fun ratio(value: Double?, percent: Boolean = false): String = when {
 
 /** Realized results of the trading child's loaded closed trades: totals, a P&L curve and a daily calendar. */
 @Composable
-internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier) {
+internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name) {
     var symbol by remember { mutableStateOf<String?>(null) }
     var zoneId by remember { mutableStateOf("America/Chicago") }
     val zone = remember(zoneId) { TimeZone.of(zoneId) }
@@ -64,7 +64,7 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("交易分析", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-            Text("${account.name} · 已加载平仓记录 · $currency", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+            Text("$name · 已加载平仓记录 · $currency", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -178,7 +178,7 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
                             Text(trade.symbol, fontWeight = FontWeight.SemiBold)
-                            Text(account.name, color = colors.Muted, style = MaterialTheme.typography.labelSmall)
+                            Text(name, color = colors.Muted, style = MaterialTheme.typography.labelSmall)
                             Text(kotlin.time.Instant.fromEpochMilliseconds(trade.closedAtMs).toLocalDateTime(zone).toString().replace('T', ' ').take(19), color = colors.Muted, style = MaterialTheme.typography.labelSmall)
                         }
                         Text(trade.netPnlMicros?.let { money(it, true) } ?: "待确认", color = colors.pnl(trade.netPnlMicros))

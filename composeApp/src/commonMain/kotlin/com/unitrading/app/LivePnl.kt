@@ -15,7 +15,7 @@ data class LivePnlSettings(val enabled: Boolean = true)
 data class LivePnlUpdate(
     val brokerId: String,
     val accountId: String,
-    /** "Broker · Account". */
+    /** "Login · Account", each by the alias the user gave it where there is one. */
     val title: String,
     /** Signed floating P&L with currency, or "—" when balance or equity is unknown. */
     val pnlText: String,
@@ -32,7 +32,9 @@ data class LivePnlUpdate(
     val key: String get() = "$brokerId/$accountId|$title|$pnlText|$detail"
 
     companion object {
-        fun from(broker: BrokerDescriptor, account: AccountInfo, snapshot: AccountSnapshot, connected: Boolean, nowMs: Long): LivePnlUpdate {
+        /** [names] puts the user's aliases of the login and the account in the title. */
+        fun from(broker: BrokerDescriptor, account: AccountInfo, snapshot: AccountSnapshot, connected: Boolean, nowMs: Long,
+            names: AccountAliases = AccountAliases()): LivePnlUpdate {
             val pnl = snapshot.floatingPnlMicros.takeIf { snapshot.balanceKnown && snapshot.equityKnown }
             val detail = buildString {
                 append(if (snapshot.equityKnown) "净值 ${money(snapshot.equityMicros)}" else "净值未知")
@@ -41,7 +43,7 @@ data class LivePnlUpdate(
                 if (!connected) append(" · 已断开")
             }
             val text = if (pnl == null) "—" else "${money(pnl, signed = true)} ${account.currency}"
-            return LivePnlUpdate(broker.id, account.id, "${broker.name} · ${account.name}", text, pnl, detail, connected, nowMs)
+            return LivePnlUpdate(broker.id, account.id, "${names.login(broker)} · ${names.account(broker.id, account)}", text, pnl, detail, connected, nowMs)
         }
     }
 }
@@ -57,7 +59,12 @@ interface LivePnlPresenter {
  * platform runs [run] once with its presenter. A refresh is posted when the rendered text changes, at most once
  * per [MIN_INTERVAL_MS], and repeated every [HEARTBEAT_MS] so platform expiry timers keep a quiet account alive.
  */
-class LivePnlController(private val store: SnapshotStore, private val writer: CoroutineDispatcher = Dispatchers.Default) {
+class LivePnlController(
+    private val store: SnapshotStore,
+    private val writer: CoroutineDispatcher = Dispatchers.Default,
+    /** The user's aliases; renaming the shown login or account refreshes the notice. */
+    private val names: StateFlow<AccountAliases> = MutableStateFlow(AccountAliases()),
+) {
     private class Tracked(val plugin: BrokerPlugin, val session: AccountSession)
 
     val error = MutableStateFlow<String?>(null)
@@ -94,8 +101,8 @@ class LivePnlController(private val store: SnapshotStore, private val writer: Co
             combine(settings, source) { current, tracked -> tracked.takeIf { current.enabled } }
                 .flatMapLatest { tracked ->
                     if (tracked == null) flowOf(null)
-                    else combine(tracked.session.state, tracked.plugin.market) { account, market ->
-                        LivePnlUpdate.from(tracked.plugin.descriptor, tracked.session.account, account, market.connected, nowMs())
+                    else combine(tracked.session.state, tracked.plugin.market, names) { account, market, aliases ->
+                        LivePnlUpdate.from(tracked.plugin.descriptor, tracked.session.account, account, market.connected, nowMs(), aliases)
                     }
                 }
                 .collect { latest.value = it }

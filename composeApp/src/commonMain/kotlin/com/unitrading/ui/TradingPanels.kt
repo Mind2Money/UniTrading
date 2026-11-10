@@ -37,17 +37,18 @@ internal fun BrokerAccountChooser(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val type = MaterialTheme.typography
+    val names = LocalAccountAliases.current
     Column(Modifier.padding(bottom = 8.dp)) {
         ListSubheader("交易商与账户")
         Box(Modifier.padding(horizontal = 16.dp)) {
             OutlinedButton({ expanded = true }, Modifier.fillMaxWidth().testTag("broker-picker"), shape = MaterialTheme.shapes.small,
                 contentPadding = PaddingValues(start = 16.dp, end = 8.dp)) {
-                Text(plugin.descriptor.name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(names.login(plugin.descriptor), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Icon(AppIcons.ExpandMore, contentDescription = "选择交易商")
             }
             DropdownMenu(expanded, { expanded = false }) {
                 registry.plugins.forEach { broker ->
-                    DropdownMenuItem(text = { Text(broker.descriptor.name) }, onClick = { expanded = false; onBroker(broker.descriptor.id) })
+                    DropdownMenuItem(text = { Text(names.login(broker.descriptor)) }, onClick = { expanded = false; onBroker(broker.descriptor.id) })
                 }
             }
         }
@@ -59,8 +60,9 @@ internal fun BrokerAccountChooser(
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     RadioButton(selected, onClick = null)
                     Column(Modifier.weight(1f)) {
-                        Text(account.name, style = type.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${account.id} · ${account.currency}", color = TradingColors.Muted, style = type.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val label = names.account(plugin.descriptor.id, account)
+                        Text(label, style = type.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(account.name.takeIf { it != label }, account.id, account.currency).joinToString(" · "), color = TradingColors.Muted, style = type.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

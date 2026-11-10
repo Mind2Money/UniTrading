@@ -58,6 +58,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
     val player = remember(soundPlayer) { soundPlayer ?: platformTradeSoundPlayer() }
     LaunchedEffect(runtime, player) { TradeSoundController(player).run(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
+    val aliases by runtime.accountAliases.aliases.collectAsState()
+    CompositionLocalProvider(LocalAccountAliases provides aliases) {
     TradingTheme(theme) {
         val colors = TradingColors
         val registry = runtime.registry
@@ -99,7 +101,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             var searchError by remember(plugin) { mutableStateOf<String?>(null) }
             Surface(Modifier.fillMaxSize(), color = colors.Shell) {
                 Column(Modifier.safeDrawingPadding()) {
-                    PageTopBar(plugin.descriptor.name, feed.statusMessage, actions = {
+                    PageTopBar(aliases.login(plugin.descriptor), feed.statusMessage, actions = {
                         EnvironmentBadge(plugin.descriptor.environment)
                         ActionIcon(AppIcons.Palette, "外观与主题", "open-theme") { showTheme = true }
                     })
@@ -132,6 +134,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onDispose { runtime.livePnl.untrack(session) }
         }
         val account by key(session) { session.state.collectAsState() }
+        val loginName = aliases.login(plugin.descriptor)
+        val accountName = aliases.account(plugin.descriptor.id, session.account)
         val market by key(plugin) { plugin.market.collectAsState() }
         val paused by runtime.paused.collectAsState()
         val startupError by runtime.startupError.collectAsState()
@@ -363,7 +367,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         fun perform(onAccepted: () -> Unit = {}, action: suspend () -> TradeResult) {
             if (busy) return
             busy = true
-            val origin = session.account.name
+            val origin = accountName
             scope.launch {
                 try {
                     val result = action()
@@ -741,7 +745,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
                         text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${plugin.descriptor.name} / ${session.account.name} / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            Text("$loginName / $accountName / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             when (action) {
                                 is Confirmation.Place -> {
                                     val r = action.request
@@ -895,7 +899,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             0 -> AccountOverviewPage(plugin, session.account, account, market, { if (!busy) accountTab = 1 },
                                 Modifier.weight(1f).fillMaxWidth(), busy)
                             1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
-                                PageTopBar("持仓与订单", session.account.name, actions = { barStatus() })
+                                PageTopBar("持仓与订单", accountName, actions = { barStatus() })
                                 TradeTerminal(plugin, account, market, selectedPositionId, compact,
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1; showOverview = false },
                                     onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1; showOverview = false },
@@ -904,7 +908,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
                                     header = { AccountSummary(account, connected = market.connected) })
                             }
-                            else -> key(plugin, accountId) { AccountAnalyticsPage(session.account, account.trades, Modifier.weight(1f).fillMaxWidth()) }
+                            else -> key(plugin, accountId) { AccountAnalyticsPage(session.account, account.trades, Modifier.weight(1f).fillMaxWidth(), name = accountName) }
                         }
                     }
                 }
@@ -917,7 +921,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             AppLogo(24.dp)
                             if (wide) Text("UniTrading", style = MaterialTheme.typography.titleMedium)
                             if (wide) EnvironmentBadge(environment)
-                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, Modifier.weight(1f), enabled = !busy)
+                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, Modifier.weight(1f), enabled = !busy,
+                                aliases = runtime.accountAliases)
                             TextButton({ showOverview = true }, Modifier.testTag("toggle-account-overview")) {
                                 Icon(AppIcons.AccountCircle, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
@@ -943,7 +948,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Column(Modifier.fillMaxWidth()) {
                                 AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                     Modifier.fillMaxWidth().background(colors.Surface).padding(horizontal = 6.dp),
-                                    enabled = !busy && showAccountBar, dense = denseLandscape)
+                                    enabled = !busy && showAccountBar, dense = denseLandscape, aliases = runtime.accountAliases)
                                 DividerLine()
                             }
                         }
@@ -985,7 +990,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     } else {
                         when (mobileTab) {
                             4 -> accountHub(Modifier.weight(1f).fillMaxWidth())
-                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, accountName) { barStatus() }
                             1 -> key(orderSession) {
                                 // The sheet keeps a full-height host while the chart dock changes continuously.
                                 val idleDock = if (rail) tradeDockHeight else tradeDockHeight + MobileNavigationHeight
@@ -1029,7 +1034,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     })
                             }
                             else -> if (showActivity) {
-                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
@@ -1058,7 +1063,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
                         Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
                             if (showActivity) {
-                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
@@ -1076,5 +1081,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 )
             }
         }
+    }
     }
 }

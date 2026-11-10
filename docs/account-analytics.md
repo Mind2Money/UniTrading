@@ -4,6 +4,14 @@
 
 手机图表工具栏常驻显示收藏周期并可横向滚动；安卓图表支持双指缩放和平移，加入第二根手指时取消未提交的订单线和画线拖动。短横屏使用紧凑导航和交易栏。
 
+## 账户别名
+
+顶部“登录账户”“交易子账户”两个下拉的每一行右侧有铅笔按钮，可以给登录或子账户起别名（最多 30 个字），留空保存即恢复券商的原名。别名按登录区分：子账户的别名属于它所在的登录，两个登录下编号相同的子账户互不影响。
+
+- 别名显示在原来显示账户名的地方：顶部下拉、账户总览、交易分析、设置页、活动记录标题、下单确认框和实时盈亏通知。下拉里登录和子账户的原名、总览和设置页里子账户的原名作为小字保留。
+- 只保存在本机的 `account-aliases-v1`，不发给券商，也不在设备之间同步。
+- 入口：[AccountAliases.kt](../composeApp/src/commonMain/kotlin/com/unitrading/app/AccountAliases.kt)、[AccountAliasViews.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/AccountAliasViews.kt)。
+
 ## 统计口径
 
 - 使用实际返回的平仓 `ClosedTrade.netPnlMicros`，不把账户余额变动当作交易盈亏。只统计当前一个子账户，因此只有一种币种。
