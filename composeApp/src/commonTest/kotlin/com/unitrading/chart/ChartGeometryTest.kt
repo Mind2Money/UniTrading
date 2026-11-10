@@ -5,6 +5,21 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class ChartGeometryTest {
+    @Test fun pinchKeepsTimeAndPriceAnchoredAndHonorsLimits() {
+        val original = ChartViewport(80.0, 100.0)
+        val zoomed = original.pinch(2.0, .3f, .6f, 1000)
+        assertEquals(40.0, zoomed.count)
+        assertEquals(original.start(1000) + .3 * original.count, zoomed.start(1000) + .6 * zoomed.count, .00001)
+        val scale = PriceScale(100.0, 500.0, 0f, 400f)
+        val prices = scale.pinch(2.0, .25f, .75f, 4.0)
+        assertEquals(200.0, prices.high - prices.low)
+        assertEquals(400.0, prices.high - .75 * (prices.high - prices.low))
+        assertEquals(12.0, original.pinch(100000.0, .5f, .5f, 1000).count)
+        assertEquals(600.0, original.pinch(.00001, .5f, .5f, 1000).count)
+        assertEquals(original, original.pinch(Double.NaN, .5f, .5f, 1000))
+        assertEquals(scale, scale.pinch(0.0, .5f, .5f, 4.0))
+    }
+
     @Test fun axesZoomIndependentlyAndContinuousPanAllowsFutureSpace() {
         val original = ChartViewport()
         val zoomed = original.zoom(100f, 500f, 200)

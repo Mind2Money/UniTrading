@@ -12,6 +12,8 @@ coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", ve
 coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
 coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+# Calendar days in a chosen time zone for the account analytics.
+datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version = "0.7.1" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 # Already resolved through Compose UI; declared for system Back from the activity log to settings.
 navigationevent-compose = { module = "org.jetbrains.androidx.navigationevent:navigationevent-compose", version = "1.1.0" }

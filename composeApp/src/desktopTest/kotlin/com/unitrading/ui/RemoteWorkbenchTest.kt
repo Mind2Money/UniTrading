@@ -138,8 +138,8 @@ class RemoteWorkbenchTest {
     private fun render(plugin: BrokerPlugin) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin), includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText("Remote test").performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${plugin.descriptor.id}").performClick()
     }
     @Test fun remoteEnvironmentAndIntegerContractsAreVisibleBeforeConfirmation() {
         render(remote())

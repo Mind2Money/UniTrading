@@ -179,8 +179,8 @@ class DesktopWindowsUiTest {
 
     @Test fun tradingFromADetachedChartAsksAndConfirmsLikeTheMainWindow() {
         render()
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText(broker.descriptor.name).performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
         toggle(WorkspacePanel.CHART, WorkspacePanel.ORDER)
         val chart = inWindow(WorkspacePanel.CHART, "trading-chart")
         val size = chart.fetchSemanticsNode().size

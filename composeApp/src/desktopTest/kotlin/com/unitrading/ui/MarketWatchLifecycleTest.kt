@@ -46,7 +46,8 @@ class MarketWatchLifecycleTest {
         compose.onNodeWithTag("nav-0").performClick()
         compose.onNodeWithTag("market-quotes").assertIsDisplayed()
         compose.onNodeWithTag("nav-1").performClick()
-        compose.onNodeWithTag("nav-2").performClick()
+        compose.onNodeWithTag("nav-4").performClick()
+        compose.onNodeWithTag("account-tab-1").performClick()
         compose.onNodeWithTag("nav-0").performClick()
         compose.runOnIdle { assertEquals(listOf(saved.toSet()), subscriptions) }
 

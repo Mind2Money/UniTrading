@@ -255,11 +255,11 @@ class OrderFlowUiTest {
         assertEquals(terminalHeight, bounds("desktop-terminal").height)
         assertEquals(preferred, runtime.desktopLayout.preferences.value, "Window constraints must not overwrite saved panel sizes")
         onNodeWithTag("chart-toolbar").assertIsDisplayed()
-        onNodeWithTag("interval-current").performScrollTo().assertIsDisplayed()
+        onNodeWithTag("interval-menu").performScrollTo().assertIsDisplayed()
         onNodeWithTag("chart-symbol").performScrollTo().assertIsDisplayed()
         onNodeWithTag("open-order-flow").assertDoesNotExist()
         onNodeWithTag("close-order-flow").assertIsDisplayed()
-        assertTrue(bounds("orderflow-footprint-prices").height >= 36f, "The short analysis panel must show at least one complete footprint row")
+        assertTrue(bounds("orderflow-footprint-prices").height >= 36f, "The short analysis panel must show at least one complete footprint row: prices=${bounds("orderflow-footprint-prices")}, panel=${bounds("order-flow-panel")}")
         val firstPrice = source.market.value.quotes.getValue(spec.symbol).bid + 4 * spec.tickSize
         onNodeWithTag("orderflow-footprint-price-$firstPrice").assertIsDisplayed()
         capture("narrow-desktop-workspace")

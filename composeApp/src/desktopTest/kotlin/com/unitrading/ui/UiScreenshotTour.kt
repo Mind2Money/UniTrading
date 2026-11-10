@@ -104,7 +104,8 @@ class UiScreenshotTour {
     })
 
     @Test fun phoneTradeAndSettings() = phone({ _ ->
-        tap("nav-2")
+        tap("nav-4")
+        tap("account-tab-1")
         shot("phone-20-trade")
         compose.onNodeWithTag("trade-terminal").performScrollToKey("section-history"); settle()
         shot("phone-21-trade-history")
@@ -155,7 +156,8 @@ class UiScreenshotTour {
         tap("open-order")
         shot("phone-71-landscape-order")
         tap("close-order")
-        tap("nav-2")
+        tap("nav-4")
+        tap("account-tab-1")
         shot("phone-72-landscape-trade")
     }
 
@@ -207,7 +209,8 @@ class UiScreenshotTour {
         } }
         settle()
         shot("tablet-75-chart")
-        tap("nav-2")
+        tap("nav-4")
+        tap("account-tab-1")
         shot("tablet-76-trade")
     }
 

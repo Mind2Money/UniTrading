@@ -88,7 +88,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("mobile-navigation").assertExists()
         compose.onNodeWithTag("chart-readout").assertExists()
         compose.onNodeWithTag("panel-positions").performClick()
-        compose.onNodeWithTag("nav-2").assertIsSelected()
+        compose.onNodeWithTag("nav-4").assertIsSelected()
         compose.onNodeWithText("余额 USD").assertExists()
         compose.onNodeWithTag("trade-terminal").assertExists()
     }
@@ -128,7 +128,8 @@ class MobileLayoutTest {
         compose.onNodeWithTag("indicator-readout").assertDoesNotExist()
         compose.waitUntil(timeoutMillis = 5_000) { runtime.chartPreferences.preferences.value.legendCollapsed == true }
         // Leaving the chart tab drops the chart from composition; it comes back folded.
-        compose.onNodeWithTag("nav-2").performClick()
+        compose.onNodeWithTag("nav-4").performClick()
+        compose.onNodeWithTag("account-tab-1").performClick()
         compose.onNodeWithTag("nav-1").performClick()
         compose.onNodeWithTag("indicator-readout").assertDoesNotExist()
         assertEquals(true, ChartPreferencesController(store).preferences.value.legendCollapsed, "a restart reads the saved fold")
@@ -305,10 +306,10 @@ class MobileLayoutTest {
         assertEquals(zoomed, viewport())
         compose.onNodeWithTag("close-order").performClick()
         assertEquals(zoomed, viewport())
-        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
         compose.onNodeWithTag("layer-3").performClick()
         // Layer choices keep the popup open; dismiss it before interacting with the sheet.
-        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
         compose.onNodeWithTag("layer-3").assertDoesNotExist()
         compose.onNodeWithTag("ohlc-table").assertExists()
         compose.onNodeWithTag("open-order").performClick()
@@ -316,10 +317,10 @@ class MobileLayoutTest {
         compose.onNodeWithTag("ohlc-table").assertExists()
         compose.onNodeWithTag("close-order").performClick()
         compose.onNodeWithTag("ohlc-table").assertExists()
-        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
         compose.onNodeWithTag("layer-3").performClick()
         // Layer choices keep the popup open; dismiss it before interacting with the sheet.
-        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
         compose.onNodeWithTag("layer-3").assertDoesNotExist()
         assertEquals(zoomed, viewport())
     }
@@ -327,14 +328,15 @@ class MobileLayoutTest {
     @Test fun toolbarRowKeepsIntervalsIndicatorsAndLayers() = phoneTest {
         render()
         val instrument = plugin.instruments.first()
-        compose.onNodeWithTag("interval-current").assertTextContains("5分钟").performClick()
+        compose.onNodeWithTag("interval-inline-5").assertTextContains("5m")
+        compose.onNodeWithTag("interval-menu").performScrollTo().performClick()
         // The second intervals come first, so on a phone the hour intervals start below the fold of the menu.
         compose.onNodeWithTag("interval-option-240").performScrollTo().performClick()
         compose.onNodeWithText("${instrument.name} · 4小时 · ${instrument.category}").assertExists()
-        compose.onNodeWithTag("chart-indicators").performClick()
+        compose.onNodeWithTag("chart-indicators").performScrollTo().performClick()
         compose.onNodeWithTag("indicator-settings").assertExists()
         compose.onNodeWithTag("indicators-cancel").performClick()
-        compose.onNodeWithTag("chart-layers").performClick()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
         compose.onNodeWithTag("layer-3").performClick()
         compose.onNodeWithTag("ohlc-table").assertExists()
         compose.onNodeWithTag("chart-toolbar").assertExists()
@@ -345,7 +347,8 @@ class MobileLayoutTest {
         val rail = compose.onNodeWithTag("mobile-navigation").fetchSemanticsNode().boundsInRoot
         assertTrue(rail.height > rail.width, "Navigation sits at the side once the window is wide")
         compose.onNodeWithTag("trade-bar").assertExists()
-        compose.onNodeWithTag("nav-2").performClick().assertIsSelected()
+        compose.onNodeWithTag("nav-4").performClick().assertIsSelected()
+        compose.onNodeWithTag("account-tab-1").performClick()
         compose.onNodeWithTag("trade-terminal").assertIsDisplayed()
         compose.onNodeWithTag("nav-1").performClick()
         compose.onNodeWithTag("trade-bar").assertExists()

@@ -178,6 +178,10 @@ internal fun Modifier.drawingInput(layer: DrawingLayer): Modifier {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.isConsumed }) {
+                            hold?.cancel(); taken = false
+                            continue
+                        }
                         val change = event.changes.firstOrNull() ?: continue
                         val ctx = layer.ctx ?: continue
                         val touch = change.type == PointerType.Touch

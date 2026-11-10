@@ -150,7 +150,8 @@ class TradingScreenTest {
         compose.onNodeWithText("取消").performClick()
         assertEquals(position, session.state.value.positions.first())
         compose.onNodeWithTag("order-quantity").performTextReplacement("0.30")
-        compose.onNodeWithText(plugin.accounts[1].name).performClick()
+        compose.onNodeWithTag("quick-account-picker").performClick()
+        compose.onNodeWithTag("quick-account-${plugin.accounts[1].id}").performClick()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
         assertEquals(position, session.state.value.positions.first())
     }
@@ -168,8 +169,8 @@ class TradingScreenTest {
     }
     @Test fun switchingBrokerChangesCatalog() {
         render()
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText(runtime.registry.plugins[1].descriptor.name).performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${runtime.registry.plugins[1].descriptor.id}").performClick()
         compose.onNodeWithTag("symbol-BTCUSD").assertExists()
         compose.onNodeWithTag("symbol-EURUSD").assertDoesNotExist()
         compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
@@ -359,7 +360,7 @@ class TradingScreenTest {
     @Test fun intervalMenuOffersPresetsFavouritesCustomIntervalsAndSymbols() {
         render()
         compose.onNodeWithTag("interval-menu").performClick()
-        compose.onNodeWithTag("interval-option-240").performClick()
+        compose.onNodeWithTag("interval-option-240").performScrollTo().performClick()
         compose.onNodeWithText("${instrument.name} · 4小时 · ${instrument.category}").assertExists()
         compose.onNodeWithTag("interval-inline-240").assertExists()
         compose.onNodeWithTag("interval-menu").performClick()
