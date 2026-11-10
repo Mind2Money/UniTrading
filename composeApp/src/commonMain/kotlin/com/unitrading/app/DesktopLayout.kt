@@ -16,7 +16,7 @@ enum class DesktopPanel { MARKET, ORDER, TERMINAL }
 /** Every part of the desktop workspace; each can leave the main window for a window of its own. */
 @Serializable
 enum class WorkspacePanel(val title: String) {
-    CHART("图表"), ACCOUNTS("交易商与账户"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
+    CHART("图表"), ACCOUNTS("交易子账户"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
 }
 
 /** Where a window of the app sits on the desktop and how large it is, in dp. */

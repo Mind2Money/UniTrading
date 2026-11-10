@@ -2,6 +2,8 @@ package com.unitrading.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -33,10 +35,11 @@ internal fun WatchListEditor(symbols: List<String>, onChange: (List<String>) -> 
         ) {
             Row(Modifier.weight(1f).heightIn(min = RowHeight).testTag("market-row-${row.value}").then(row.grip), verticalAlignment = Alignment.CenterVertically) {
                 ReorderGrip("market-drag-${row.value}")
-                Text(row.value, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(row.value, color = TradingColors.Ink, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            ActionIcon(AppIcons.RemoveCircle, "移除 ${row.value}", "market-remove-${row.value}", tint = TradingColors.Loss) {
-                if (!row.dragging) change(rows - row.value)
+            // Rows move immediately after removal. A tooltip popup can intercept the next pointer event.
+            IconButton({ change(rows - row.value) }, Modifier.testTag("market-remove-${row.value}"), enabled = !row.dragging) {
+                Icon(AppIcons.RemoveCircle, "移除 ${row.value}", tint = TradingColors.Loss)
             }
         }
     }

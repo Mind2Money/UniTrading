@@ -36,8 +36,8 @@ class KeyboardTradingUiTest {
             if (skipConfirmation) assertTrue(runtime.tradingPreferences.setSkipConfirmation(true))
         }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText(broker.descriptor.name).performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
         compose.waitForIdle()
     }
     private fun chart() = compose.onNodeWithTag("trading-chart")

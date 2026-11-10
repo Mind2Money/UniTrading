@@ -89,8 +89,8 @@ fun axisTimeLabel(timeMs: Long, timeframe: Timeframe): String =
     if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else clockLabel(timeMs, seconds = timeframe.isSeconds)
 
 /**
- * Chart controls: symbol, interval, indicators and layers. Wide layouts float them over the plot with the favourite
- * intervals inline; phones pin one row above the plot, scrolling sideways when it is too narrow, with [trailing] (the
+ * Chart controls: symbol, interval, indicators and layers, with the favourite intervals inline. Wide layouts float them
+ * over the plot; phones pin one row above the plot, scrolling sideways when it is too narrow, with [trailing] (the
  * account environment) fixed at the end.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -110,7 +110,7 @@ internal fun ChartToolbar(
 ) {
     val controls: @Composable () -> Unit = {
         SymbolChip(instrument, instruments, onSymbol)
-        IntervalControl(timeframe, onTimeframe, intervals, inline = !compact)
+        IntervalControl(timeframe, onTimeframe, intervals)
         indicators?.let { IndicatorChip(it, compact) }
         LayerMenu(layers, compact)
     }
@@ -194,26 +194,32 @@ private fun SymbolChip(instrument: Instrument, instruments: List<Instrument>, on
     }
 }
 
-/**
- * Starred intervals inline plus a dropdown with minute / hour / day presets, favourites and custom intervals.
- * Without [inline] only the current interval shows, and tapping it opens the dropdown.
- */
+/** Toolbar name of an interval, short enough for a row of them on a phone: 15s, 5m, 4h, D, 2D. */
+private val Timeframe.shortLabel: String get() = when {
+    seconds == Timeframe.DAY -> "D"
+    isDaily -> "${seconds / Timeframe.DAY}D"
+    seconds % Timeframe.HOUR == 0 -> "${seconds / Timeframe.HOUR}h"
+    isSeconds -> "${seconds}s"
+    else -> "${seconds / Timeframe.MINUTE}m"
+}
+
+/** Starred intervals inline plus a dropdown with second / minute / hour / day presets, favourites and custom intervals. */
 @Composable
-private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions, inline: Boolean) {
+private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     var expanded by remember { mutableStateOf(false) }
     Box {
-        if (inline) ToolbarPill(Modifier.height(32.dp)) {
+        ToolbarPill(Modifier.height(32.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val shown = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
-                shown.forEach { frame -> PillSegment(frame.label, frame == timeframe, Modifier.testTag("interval-inline-${frame.id}")) { onTimeframe(frame) } }
+                shown.forEach { frame -> PillSegment(frame.shortLabel, frame == timeframe, Modifier.testTag("interval-inline-${frame.id}")) { onTimeframe(frame) } }
                 Box(Modifier.clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { expanded = true }
                     .semantics { contentDescription = "选择时间周期" }.testTag("interval-menu").padding(horizontal = 4.dp, vertical = 6.dp)) {
                     Icon(AppIcons.ExpandMore, contentDescription = null, Modifier.size(18.dp), tint = colors.Muted)
                 }
             }
-        } else ToolbarChip(timeframe.label, { expanded = true }, "interval-current", trailing = AppIcons.ExpandMore)
+        }
         DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 220.dp)) {
             CustomIntervalRow { frame -> intervals.onAddCustom(frame); onTimeframe(frame); expanded = false }
             val listed = (Timeframe.presets + intervals.custom + intervals.favorites + timeframe).distinct().sortedBy { it.seconds }

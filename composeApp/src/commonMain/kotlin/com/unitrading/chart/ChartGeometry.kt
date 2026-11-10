@@ -27,6 +27,14 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
         val center = (low + high) / 2
         return copy(low = center - span / 2, high = center + span / 2)
     }
+    /** Keep the price under the fingers' previous centroid beneath their new centroid. */
+    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, minimumSpan: Double): PriceScale {
+        if (!factor.isFinite() || factor <= 0.0) return this
+        val span = ((high - low) / factor).coerceIn(minimumSpan, 1e16)
+        val price = high - previousAnchor.coerceIn(0f, 1f) * (high - low)
+        val nextHigh = price + anchor.coerceIn(0f, 1f) * span
+        return copy(low = nextHigh - span, high = nextHigh)
+    }
     /** The wheel over the price axis: [ticks] are notches, positive when rolling towards the user, which zooms out. */
     fun zoomWheel(ticks: Float, minimumSpan: Double): PriceScale = zoom((ticks * WHEEL_ZOOM / 3.0).toFloat() * (bottom - top), minimumSpan)
     companion object {
@@ -72,6 +80,13 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
         val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, 600.0)
         val moved = if (offset <= 0.0) offset else (offset + (1 - anchor) * (count - next)).coerceAtLeast(0.0)
         return copy(count = next, offset = moved).bounded(total)
+    }
+    /** Continuous pinch scaling and panning, anchored to the two-finger centroid. */
+    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, total: Int): ChartViewport {
+        if (!factor.isFinite() || factor <= 0.0) return this
+        val next = (count / factor).coerceIn(12.0, 600.0)
+        return copy(count = next, offset = offset + (1 - previousAnchor.coerceIn(0f, 1f)) * count -
+            (1 - anchor.coerceIn(0f, 1f)) * next).bounded(total)
     }
     fun bounded(total: Int) = copy(offset = offset.coerceIn(-count * .8, (total - count * .2).coerceAtLeast(0.0)))
     /**

@@ -331,9 +331,45 @@ fun TradingChart(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size) {
+                            // Initial pass wins over drawing/order-line gestures. Once two fingers take
+                            // ownership, consume through the LAST finger up: never commit a leftover drag.
+                            awaitPointerEventScope {
+                                var pinchOwned = false
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val fingers = event.changes.filter { it.pressed && it.type == PointerType.Touch }
+                                    if (!pinchOwned && fingers.size >= 2 && fingers.all {
+                                        it.position.x in left..right && it.position.y in top..currentPlotBottom
+                                    }) {
+                                        pinchOwned = true
+                                        drag = null; crosshair = null; crosshairY = null; hoverPoint = null; lineMenu = null; plotMenu = null
+                                        currentDrawingLayer?.controller?.cancelPointerGesture()
+                                    }
+                                    if (!pinchOwned) continue
+                                    val stable = fingers.filter { it.previousPressed }.take(2)
+                                    if (stable.size == 2) {
+                                        val a = stable[0]; val b = stable[1]
+                                        val before = (a.previousPosition + b.previousPosition) / 2f
+                                        val after = (a.position + b.position) / 2f
+                                        val oldDistance = (a.previousPosition - b.previousPosition).getDistance()
+                                        val distance = (a.position - b.position).getDistance()
+                                        if (oldDistance > 8 * density.density && distance > 8 * density.density) {
+                                            val factor = (distance / oldDistance).toDouble().coerceIn(.2, 5.0)
+                                            viewport = viewport.pinch(factor, (before.x - left) / plotWidth, (after.x - left) / plotWidth, currentTotal)
+                                            val s = manualScale?.copy(top = top, bottom = currentPlotBottom) ?: currentScale
+                                            manualScale = s.pinch(factor, (before.y - top) / (currentPlotBottom - top),
+                                                (after.y - top) / (currentPlotBottom - top), instrument.tickSize * 4.0)
+                                        }
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                    if (event.changes.none { it.pressed }) pinchOwned = false
+                                }
+                            }
+                        }
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。" +
+                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。" +
                                 (actions.tradingKeys?.let { "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。" } ?: "")
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }

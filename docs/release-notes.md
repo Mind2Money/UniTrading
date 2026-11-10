@@ -21,7 +21,7 @@
 ⚠️ 右键菜单需要鼠标，触屏没有对应入口；菜单下单只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单
 
 🖥️ **桌面窗口**
-✅ 任意面板都能以独立窗口显示：面板栏底部新增“窗口”菜单，图表、交易商与账户、行情、下单、交易、订单流可以分别移到独立的系统窗口，关闭窗口即收回主窗口
+✅ 任意面板都能以独立窗口显示：面板栏底部新增“窗口”菜单，图表、交易子账户、行情、下单、交易、订单流可以分别移到独立的系统窗口，关闭窗口即收回主窗口
 ✅ 移出的面板不占主窗口空间，剩下的面板自动接管；行情、下单、交易图标照常收起和展开独立窗口里的面板
 ✅ 窗口的位置和大小会保存，重启后照原样打开；“重置布局”把全部面板收回主窗口
 ✅ 在独立窗口里下单、改单时，确认框和操作提示出现在当前操作的窗口里
@@ -41,6 +41,19 @@
 ✅ 图例显示当前按键、数量和是否需要确认；键盘焦点不在图表上时（例如正在输入框里打字）按键不下单，图例提示先点一下图表
 ⚠️ 只经过离线测试，没有在 Tradovate、Rithmic 账户上用按键实际下单；中文输入法开启时字母键是否生效尚未验证
 ⚠️ Tradovate 的预读不限速：首次补齐时会超过服务器每小时 180 次图表请求的额度，超出期间打开图表和主力核实的每次请求多等 1～3 秒；手机和桌面各自预读，共用这份额度。Rithmic 的预读只在离线测试中验证过
+
+👤 **账户页**
+✅ 手机底部导航的“交易”改为“账户”，放在首位，分总览、交易、分析三页；持仓与订单在“交易”页，点图表下方的持仓栏直接进入
+✅ 手机和桌面顶部新增“登录账户”“交易子账户”两个下拉，直接切换交易商和子账户；切换时关闭上一个账户未提交的下单、改单和确认框
+✅ 交易分析：按芝加哥、北京时间或 UTC 的平仓自然日统计当前子账户已加载的平仓记录，显示净盈亏、胜率、盈利因子、平均盈亏比、已实现最大回撤、累计或每日盈亏图，以及带周汇总的每日盈亏日历；缺少净盈亏的记录标为“待确认”，不按零计
+✅ 桌面端点工具栏的“账户总览”在对话框里打开这三页，工作区和独立窗口保持不动
+⚠️ 统计只覆盖券商已返回的历史记录，自然日不等于交易所结算日
+
+📱 **手机图表**
+✅ 图表支持双指缩放和平移，以两指中心为锚点；按下第二根手指时取消尚未提交的订单线和画线拖动，不会因此改单或下单
+✅ 手机图表工具栏常驻显示收藏周期，用 15s、5m、1h、D 这样的短标签，其余周期仍在下拉菜单里；桌面工具栏的收藏周期也改用短标签
+✅ 横屏的矮屏幕改用窄侧边导航和更矮的交易栏，给 K 线留出更多高度；旋转屏幕不再重建界面，图表缩放和当前页面保持不变
+⚠️ 双指手势只在桌面测试里用模拟触摸验证过，没有在真机上试过
 
 ## English
 
@@ -83,6 +96,19 @@
 ✅ The legend shows the keys, the quantity and whether a key still asks; while the keyboard focus is not on the chart, for example while you type in a field, the keys place nothing and the legend says to click the chart first
 ⚠️ Only checked in offline tests; no order was placed with a key on a Tradovate or Rithmic account. Whether the letter keys work while a Chinese input method is on has not been checked
 ⚠️ Tradovate read-ahead is not rate-limited: the first fill goes over the server's 180 chart requests per hour, and while it is over, every chart request waits 1–3 seconds more, including opening a chart and leader checks; phone and desktop each read ahead and share that budget. Rithmic read-ahead has only been verified in offline tests
+
+👤 **Account page**
+✅ On phones the bottom bar's "Trade" becomes "Account", placed first, with Overview, Trading and Analytics tabs; positions and orders are under Trading, and the position bar under the chart opens it directly
+✅ Phones and the desktop toolbar get two pickers at the top, for the login and for the trading child account; switching closes the previous account's unsent order, edits and confirmations
+✅ Analytics: the current child's loaded closed trades by calendar day in Chicago, Beijing or UTC time, with net P&L, win rate, profit factor, average win/loss, realized maximum drawdown, a cumulative or daily P&L chart and a daily P&L calendar with weekly totals; a trade without net P&L is marked as pending and not counted as zero
+✅ On the desktop, the toolbar's account overview button opens these tabs in a dialog; the workspace and any panel windows stay as they are
+⚠️ The statistics cover only the history the broker returned, and a calendar day is not an exchange settlement day
+
+📱 **Phone charts**
+✅ Pinch to zoom and pan the chart around the point between the two fingers; a second finger cancels an order-line or drawing drag that was not committed, so it changes no order
+✅ The phone chart toolbar shows the starred intervals inline with short labels such as 15s, 5m, 1h and D, and the other intervals stay in the dropdown; the desktop toolbar's starred intervals use the same short labels
+✅ Short landscape screens get a narrow side rail and a lower trade bar, leaving more height for the bars; turning the phone no longer rebuilds the screen, so the chart zoom and the open page stay
+⚠️ The pinch gesture was only checked with simulated touches in desktop tests, not on a phone
 
 # v1.4.0
 

@@ -89,8 +89,8 @@ class ProtectionUiTest {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
         if (skipConfirmation) runBlocking { assertTrue(runtime.tradingPreferences.setSkipConfirmation(true)) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText(broker.descriptor.name).performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
     }
     private fun chart() = compose.onNodeWithTag("trading-chart")
     private fun chartState() = chart().fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
@@ -109,6 +109,31 @@ class ProtectionUiTest {
         chart().performTouchInput { down(at); moveBy(Offset(0f, dy / 4)); moveBy(Offset(0f, dy * 3 / 4)); up() }
         compose.waitForIdle()
         return price
+    }
+
+    @Test fun addingSecondFingerCancelsProtectionPreviewEvenWithConfirmationsSkipped() {
+        val broker = OfflineProtectionBroker(unprotected = true)
+        render(broker, skipConfirmation = true)
+        val at = button("拖动设置止盈")
+        val before = chartState().getValue("bars").toDouble()
+        chart().performTouchInput {
+            down(0, at)
+            moveTo(0, at + Offset(0f, -35f))
+            down(1, Offset(width * .2f, height * .55f))
+            repeat(5) { i ->
+                updatePointerTo(0, at + Offset(0f, -35f - i * 4f))
+                updatePointerTo(1, Offset(width * (.2f - i * .015f), height * .55f))
+                move()
+            }
+            up(1)
+            moveTo(0, at + Offset(0f, -80f))
+            up(0)
+        }
+        assertTrue(chartState().getValue("bars").toDouble() < before)
+        assertEquals(0, broker.protectionCalls)
+        assertEquals(0, broker.entryCalls)
+        compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
     }
 
     @Test fun protectionIsDraggedOutOfItsButtonAndATapAddsNothing() {

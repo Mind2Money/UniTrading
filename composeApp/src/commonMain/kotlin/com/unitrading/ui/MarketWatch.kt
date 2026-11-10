@@ -87,10 +87,14 @@ internal fun MarketWatch(
         if (adding) PageTopBar(if (query.isBlank()) category ?: "添加交易品种" else "添加交易品种", onBack = ::stepBack, backTag = "market-back", panel = panel)
         else PageTopBar(if (editing) "编辑自选" else "行情", subtitle.takeUnless { editing }, panel = panel, actions = {
             barActions()
-            if (editing) ActionIcon(AppIcons.Check, "完成编辑", "market-edit-done") { editing = false }
+            if (editing) IconButton({ editing = false }, Modifier.testTag("market-edit-done")) {
+                Icon(AppIcons.Check, "完成编辑")
+            }
             else {
                 ActionIcon(AppIcons.Add, "添加交易品种", "market-add") { adding = true }
-                ActionIcon(AppIcons.Edit, "编辑自选", "market-edit") { editing = true }
+                IconButton({ editing = true }, Modifier.testTag("market-edit")) {
+                    Icon(AppIcons.Edit, "编辑自选")
+                }
             }
         })
         if (adding) {

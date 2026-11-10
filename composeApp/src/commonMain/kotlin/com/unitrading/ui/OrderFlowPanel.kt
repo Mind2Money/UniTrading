@@ -107,7 +107,7 @@ internal fun OrderFlowPanel(
             } else if (snapshot.trades.isEmpty()) {
                 FlowEmpty("等待实时逐笔成交", "从打开订单流后开始采集；不使用 K 线还原逐笔。", Modifier.weight(1f))
             } else when (tab) {
-                0 -> FlowFootprint(analysis, instrument, Modifier.weight(1f).fillMaxWidth())
+                0 -> FlowFootprint(analysis, instrument, Modifier.weight(1f).fillMaxWidth(), compact = shortPanel)
                 1 -> FlowProfile(analysis, instrument, Modifier.weight(1f).fillMaxWidth())
                 2 -> FlowDelta(analysis, Modifier.weight(1f).fillMaxWidth())
                 else -> key(plugin, contract) { FlowTape(snapshot, instrument, Modifier.weight(1f).fillMaxWidth()) }
@@ -156,7 +156,7 @@ private fun FlowFigure(label: String, value: String, color: Color) {
 
 /** A fixed cell width preserves Bid × Ask numbers. Both axes scroll independently on phones. */
 @Composable
-private fun FlowFootprint(analysis: OrderFlowAnalysis, instrument: Instrument, modifier: Modifier = Modifier) {
+private fun FlowFootprint(analysis: OrderFlowAnalysis, instrument: Instrument, modifier: Modifier = Modifier, compact: Boolean = false) {
     val colors = TradingColors
     val bars = analysis.bars.takeLast(12)
     val prices = remember(bars) { bars.flatMap { it.levels.map(ProfileLevel::price) }.distinct().sortedDescending() }
@@ -166,7 +166,7 @@ private fun FlowFootprint(analysis: OrderFlowAnalysis, instrument: Instrument, m
     LaunchedEffect(bars.lastOrNull()?.timeMs) { scroll.scrollTo(scroll.maxValue) }
     Column(modifier.testTag("orderflow-footprint")) {
         Text("Bid 卖 × Ask 买 · 蓝底为 POC · 最近 12 根",
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = if (compact) 4.dp else 6.dp),
             style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1)
         Column(Modifier.weight(1f).fillMaxWidth()) {
             // Every strip shares one horizontal offset; only the bar cells move. Prices remain

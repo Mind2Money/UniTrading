@@ -111,6 +111,7 @@ class MarketWatchUiTest {
         render(320)
         compose.onNodeWithTag("market-edit").performClick()
         compose.onNodeWithTag("market-remove-XAUUSD").performClick()
+        compose.onNodeWithTag("market-remove-XAUUSD").assertDoesNotExist()
         // The next row slides under the pointer and shows its tooltip; a person's pointer leaves it before clicking elsewhere.
         compose.onNodeWithTag("market-quotes").performMouseInput { moveTo(androidx.compose.ui.geometry.Offset(1f, height - 1f)) }
         compose.onNodeWithTag("market-edit-done").performClick()
