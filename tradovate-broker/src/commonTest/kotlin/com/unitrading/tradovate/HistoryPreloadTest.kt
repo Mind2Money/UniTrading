@@ -144,6 +144,60 @@ class HistoryPreloadTest {
         assertWhole(CandleCache(store, NAMESPACE).read("@MES" to Timeframe.ofMinutes(1440), NOW), Timeframe.ofMinutes(1440))
     }
 
+    /** Each open chart keeps its own live subscription; closing or changing one leaves the others alone. */
+    @Test fun severalChartsStayLiveAtOnceAndClosingOneEndsOnlyItsSubscription() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        broker.watchAll(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
+        val five = wire.of(M5).single { it.firstPage }
+        val hour = wire.of(H1).single { it.firstPage }
+        assertWhole(broker.history("MESZ6", M5), M5)
+        assertWhole(broker.history("MESZ6", H1), H1)
+        assertTrue((five.ids + hour.ids).none { it in wire.cancelled }, "both charts keep their live subscription")
+        wire.live(hour.realtimeId, NOW, "5501.5"); runCurrent()
+        assertEquals(5_501_500_000L, broker.history("MESZ6", H1).last().close)
+        assertEquals(5_500_250_000L, broker.history("MESZ6", M5).last().close, "a live bar goes to its own series only")
+        wire.live(five.realtimeId, NOW, "5501"); runCurrent()
+        assertEquals(5_501_000_000L, broker.history("MESZ6", M5).last().close)
+
+        // A background read never repeats a series a chart is showing.
+        broker.preloadHistory(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
+        assertEquals(1, wire.of(H1).count { it.firstPage })
+
+        // The second window changes its interval: its old chart ends, the first one is neither cancelled nor asked for again.
+        val daily = Timeframe.D1
+        broker.watchAll(listOf("MESZ6" to M5, "MESZ6" to daily)); runCurrent()
+        assertTrue(wire.of(H1).flatMap { it.ids }.all { it in wire.cancelled })
+        assertTrue(five.ids.none { it in wire.cancelled })
+        assertEquals(1, wire.of(M5).count { it.firstPage })
+        assertTrue(broker.history("MESZ6", daily).isNotEmpty())
+
+        // The second window closes.
+        broker.watchAll(listOf("MESZ6" to M5)); runCurrent()
+        assertTrue(wire.of(daily).filter { it.realtimeId != it.historicalId || it.firstPage }.flatMap { it.ids }.all { it in wire.cancelled })
+        assertTrue(five.ids.none { it in wire.cancelled })
+        wire.live(five.realtimeId, NOW, "5499.5"); runCurrent()
+        assertEquals(5_499_500_000L, broker.history("MESZ6", M5).last().close)
+    }
+
+    /** The chart being worked on changes; the other chart keeps its subscription, and the old one's ends. */
+    @Test fun switchingTheWorkingChartLeavesTheOtherChartsLive() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        broker.watchAll(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
+        val five = wire.of(M5).single { it.firstPage }
+        val hour = wire.of(H1).single { it.firstPage }
+        // The user clicks the hour chart, then changes the five minute chart's place to the daily interval.
+        broker.watchAll(listOf("MESZ6" to H1, "MESZ6" to M5)); runCurrent()
+        assertTrue(wire.cancelled.isEmpty() || (five.ids + hour.ids).none { it in wire.cancelled }, "reordering alone cancels nothing")
+        assertEquals(1, wire.of(H1).count { it.firstPage })
+        broker.watchAll(listOf("MESZ6" to H1)); runCurrent()
+        assertTrue(five.ids.all { it in wire.cancelled })
+        assertTrue(hour.ids.none { it in wire.cancelled })
+        wire.live(hour.realtimeId, NOW, "5501.75"); runCurrent()
+        assertEquals(5_501_750_000L, broker.history("MESZ6", H1).last().close)
+    }
+
     @Test fun preloadedChartShowsItsBarsAtOnceAndFetchesOnlyTheBarsSince() = runTest {
         val wire = Wire()
         val broker = ready(wire)

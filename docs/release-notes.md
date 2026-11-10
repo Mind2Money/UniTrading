@@ -23,6 +23,10 @@
 ✅ 移出的面板不占主窗口空间，剩下的面板自动接管；行情、下单、交易图标照常收起和展开独立窗口里的面板
 ✅ 窗口的位置和大小会保存，重启后照原样打开；“重置布局”把全部面板收回主窗口
 ✅ 在独立窗口里下单、改单时，确认框和操作提示出现在当前操作的窗口里
+✅ 图表可以多开：“窗口”菜单的“新建图表窗口”打开新的图表窗口，每个窗口有自己的品种和周期，最多 8 个。下单面板、行情选中和订单流跟随最后点击的图表；每个图表都能画图、拖订单线、右键下单和按键下单
+✅ 同一品种的画线在所有图表间共享，撤销按品种进行，不会撤掉另一个图表后画的线
+✅ 图表窗口的品种、周期、位置和大小会保存，重启后照原样打开；所有打开的图表都保持实时更新
+⚠️ Rithmic 的多图表同时订阅只经过离线测试；Tradovate 对同时订阅的图表数量有上限，8 个窗口加预读是否会触到上限尚未实测
 
 ⌨️ **键盘下单**
 ✅ 「设置 → 交易」新增“键盘下单”开关，默认关闭。开启后在 W / S 和 ↑ / ↓ 两组按键里选一组：点一下图表后，按 W（或 ↑）市价买入，按 S（或 ↓）市价卖出，数量取下单面板，不带止损止盈
@@ -54,6 +58,10 @@
 ✅ A panel that left takes no room in the main window and the others take over its space; the rail's market, order and trade icons still fold and unfold a panel in its own window
 ✅ Window positions and sizes are saved and restored on the next start; "reset layout" brings every panel back into the main window
 ✅ When you trade from a separate window, confirmations and notices appear in the window you are working in
+✅ Several charts at once: "new chart window" in the windows menu opens another chart window with its own symbol and interval, up to 8. The order panel, the market list's selection and the order flow follow the chart you clicked last; every chart can draw, drag order lines, and place orders from its context menu or the trading keys
+✅ A symbol's drawings are shared by every chart that shows it, and undo works per symbol, so it never takes back a line another chart drew since
+✅ Chart windows keep their symbol, interval, position and size and open as they were on the next start; every open chart stays live
+⚠️ Several live charts at once on Rithmic were only checked in offline tests; Tradovate caps simultaneous chart subscriptions, and whether 8 windows plus the read-ahead reach that cap has not been tried
 
 ⌨️ **Keyboard trading**
 ✅ Settings → Trading has a new "keyboard trading" switch, off by default. Turn it on and pick one pair of keys, W / S or ↑ / ↓: after a click on the chart, W (or ↑) buys at the market and S (or ↓) sells at the market, with the order panel's quantity and no stop or target

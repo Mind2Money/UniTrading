@@ -41,6 +41,19 @@
 - 交易确认框、改价和止损止盈对话框、指标设置，在用户当时操作的那个窗口里打开；操作提示跟随用户最后操作的窗口。设置页、主题和连接对话框仍在主窗口。
 - 入口：[PanelWindow.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/PanelWindow.kt)、[PanelWindow.desktop.kt](../composeApp/src/desktopMain/kotlin/com/unitrading/ui/PanelWindow.desktop.kt)。
 
+## 多个图表
+
+实现日期：2026-11-10。只在桌面工作区提供；手机布局和没有独立窗口的平台只显示主图表。
+
+- “窗口”菜单最后一项“新建图表窗口”打开一个新的图表窗口，起始品种和周期取当前图表。每个窗口有自己的品种和周期，各自切换；最多同时打开 8 个（`ChartPreferences.MAX_EXTRA_CHARTS`），到上限后菜单项变灰。
+- 当前图表是用户最后按下鼠标的那个图表。下单面板、行情列表的选中、订单流和交易区的定位都跟随它；在图表上改周期、选品种、右键下单、拖动订单线、按键下单时，那次按下先把该图表设为当前图表。键盘下单在非当前图表上第一下只切换，不下单。
+- 每个图表都能画图、拖订单线、右键下单。同一品种的画线在所有图表间共享，撤销和重做也按品种共享：一个图表里撤销，撤掉的是这个品种最后一步操作，不会删掉另一个图表后画的线。选中的画线和正在用的工具各图表独立。
+- 所有打开的图表都保持实时订阅，当前图表排在第一位；两个窗口显示同一品种同一周期时只占一个订阅。窗口里的品种和行情列表一样会加载、核实主力并订阅报价。
+- 关闭图表窗口即删除这个图表，它的窗口位置一并清除；它是当前图表时，主图表接管。
+- 窗口的品种（按交易商分别记录）、周期写入 `chart-v1` 的 `extraCharts`，窗口位置写入 `desktop-layout-v1`，重启后照原样打开，主图表是当前图表。主图表自己的品种和周期仍记在 `lastSymbols` 和上次周期里，无论退出时哪个图表是当前图表。
+- 交易商侧：`BrokerPlugin.watchAll` 接收全部图表序列。Tradovate 每个序列一份 `md/getChart` 订阅，关闭或更换一个只取消它自己的订阅；Rithmic 每个序列一份 `TIME_BAR` 订阅，成交按合约推进所有日内周期。Rithmic 的多序列订阅只在离线测试中验证过。
+- 入口：[TradingScreen.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt) 的 `activateChart`、`openChart`、`closeChart` 和 `chartView`；画线共享见 [ChartDrawings.kt](../composeApp/src/commonMain/kotlin/com/unitrading/chart/drawing/ChartDrawings.kt) 的 `DrawingLibrary`。
+
 ## 窗口与尺寸限制
 
 - 布局切换条件：宽度至少 900dp 且高度至少 600dp 时使用桌面工作区；宽度至少 1240dp 时下单栏固定在右侧，较窄桌面窗口通过“下单”打开下单表单。

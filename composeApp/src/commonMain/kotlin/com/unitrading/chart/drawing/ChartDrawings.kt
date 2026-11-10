@@ -55,37 +55,85 @@ private const val DEMO_FADE_MS = 1500L
 private val json = Json { ignoreUnknownKeys = true }
 
 /**
- * The drawings of every symbol and the left toolbar's state. A chart [bind]s the symbol it shows; time anchors are absolute,
- * so one list serves every interval. Writes go to the snapshot store on their own coroutine, latest state wins.
+ * The drawings of every symbol and the toolbar's saved preferences, shared by every chart that is open. Writes go to the
+ * snapshot store on their own coroutine, latest state wins.
  */
 @Stable
-class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) {
-    private val saveScope = CoroutineScope(SupervisorJob() + saveDispatcher)
+class DrawingLibrary(internal val store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) {
+    internal val scope = CoroutineScope(SupervisorJob() + saveDispatcher)
     private val saves = Channel<Unit>(Channel.CONFLATED)
     private val prefSaves = Channel<Unit>(Channel.CONFLATED)
-    /** Replaced rather than changed in place, so the saving coroutine always reads a whole map. */
-    private var perSymbol: Map<String, List<Drawing>> = emptyMap()
-
-    private var prefs by mutableStateOf(load<DrawingToolPrefs>(PREFS_KEY) ?: DrawingToolPrefs())
-    var notice by mutableStateOf<String?>(null); private set
+    /** One list per symbol. Each chart reads and replaces the list of the symbol it shows, so two charts of one symbol show the same drawings. */
+    internal val lists = mutableStateMapOf<String, List<Drawing>>()
+    internal var prefs by mutableStateOf(load<DrawingToolPrefs>(PREFS_KEY) ?: DrawingToolPrefs()); private set
+    var notice by mutableStateOf<String?>(null); internal set
+    internal val images = mutableStateMapOf<String, ImageBitmap>()
+    private val histories = mutableMapOf<String, DrawingHistory>()
+    /** The undo history of [symbol]'s drawings, kept while the app runs. */
+    internal fun history(symbol: String) = histories.getOrPut(symbol) { DrawingHistory() }
 
     init {
         // A file that cannot be read is kept aside, so saving the empty state does not destroy it.
         try {
-            store.read(STATE_KEY)?.let { perSymbol = json.decodeFromString<Map<String, List<Drawing>>>(it) }
+            store.read(STATE_KEY)?.let { lists.putAll(json.decodeFromString<Map<String, List<Drawing>>>(it)) }
         } catch (_: Exception) {
             store.read(STATE_KEY)?.let { runCatching { store.write("$STATE_KEY-unreadable", it) } }
             notice = "图表绘图无法读取，原文件已另存。"
         }
-        saveScope.launch { for (ignored in saves) runCatching { store.write(STATE_KEY, json.encodeToString(perSymbolSnapshot())) } }
-        saveScope.launch { for (ignored in prefSaves) runCatching { store.write(PREFS_KEY, json.encodeToString(prefs)) } }
+        scope.launch { for (ignored in saves) runCatching { store.write(STATE_KEY, json.encodeToString(lists.toMap().filterValues { it.isNotEmpty() })) } }
+        scope.launch { for (ignored in prefSaves) runCatching { store.write(PREFS_KEY, json.encodeToString(prefs)) } }
     }
 
     private inline fun <reified T> load(key: String): T? = runCatching { store.read(key)?.let { json.decodeFromString<T>(it) } }.getOrNull()
-    private fun perSymbolSnapshot(): Map<String, List<Drawing>> = perSymbol.filterValues { it.isNotEmpty() }
+    internal fun save() { saves.trySend(Unit) }
+    internal fun updatePrefs(change: (DrawingToolPrefs) -> DrawingToolPrefs) { prefs = change(prefs); prefSaves.trySend(Unit) }
+}
+
+/**
+ * The steps taken on one symbol's drawings, newest last. Every chart of the symbol works on the one list, so they share
+ * its history too: undoing in one chart takes back the last step on the symbol, whichever chart made it, and never the
+ * drawings another chart added since.
+ */
+internal class DrawingHistory {
+    private val undone = ArrayDeque<List<Drawing>>()
+    private val redone = ArrayDeque<List<Drawing>>()
+    var canUndo by mutableStateOf(false); private set
+    var canRedo by mutableStateOf(false); private set
+
+    /** A step from [before] to a new list. */
+    fun record(before: List<Drawing>) {
+        undone.addLast(before)
+        if (undone.size > 100) undone.removeFirst()
+        redone.clear()
+        refresh()
+    }
+    /** The list before the last step, or null when there is none; [current] can be brought back with [redo]. */
+    fun undo(current: List<Drawing>): List<Drawing>? = undone.removeLastOrNull()?.also { redone.addLast(current); refresh() }
+    fun redo(current: List<Drawing>): List<Drawing>? = redone.removeLastOrNull()?.also { undone.addLast(current); refresh() }
+    private fun refresh() { canUndo = undone.isNotEmpty(); canRedo = redone.isNotEmpty() }
+}
+
+/**
+ * One chart's drawings and its toolbar's state: the tool armed, the selection and the placement under way. A chart
+ * [bind]s the symbol it shows; time anchors are absolute, so one list serves every interval. The lists and their undo
+ * history live in the [DrawingLibrary], which every open chart shares.
+ */
+@Stable
+class ChartDrawings internal constructor(private val library: DrawingLibrary) {
+    /** A chart with a library of its own, for an app that shows one chart. */
+    constructor(store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) : this(DrawingLibrary(store, saveDispatcher))
+
+    private val store get() = library.store
+    private val saveScope get() = library.scope
+    private val prefs get() = library.prefs
+    var notice: String?
+        get() = library.notice
+        private set(value) { library.notice = value }
 
     var symbol by mutableStateOf(""); private set
-    var drawings by mutableStateOf<List<Drawing>>(emptyList()); private set
+    var drawings: List<Drawing>
+        get() = library.lists[symbol].orEmpty()
+        private set(value) { library.lists[symbol] = value }
 
     // Toolbar state --------------------------------------------------------------------------------------------------
     var tool by mutableStateOf<DrawingTool?>(null); private set
@@ -119,7 +167,7 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
     /** Whether a phone shows the toolbar; wider layouts always do. */
     var toolbarOpen by mutableStateOf(false)
 
-    private fun updatePrefs(change: (DrawingToolPrefs) -> DrawingToolPrefs) { prefs = change(prefs); prefSaves.trySend(Unit) }
+    private fun updatePrefs(change: (DrawingToolPrefs) -> DrawingToolPrefs) = library.updatePrefs(change)
 
     internal fun recentTool(group: ToolGroup): DrawingTool = prefs.recent[group.name]?.takeIf { it in group.tools } ?: group.sections.first().tools.first()
     fun toggleFavorite(value: DrawingTool) = updatePrefs { p -> p.copy(favorites = if (value in p.favorites) p.favorites - value else p.favorites + value) }
@@ -162,7 +210,7 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
     var settingsId by mutableStateOf<String?>(null); private set
     var pendingImageId by mutableStateOf<String?>(null); private set
     internal var tooltipAt by mutableStateOf<Offset?>(null); private set
-    internal val images = mutableStateMapOf<String, ImageBitmap>()
+    internal val images get() = library.images
 
     private var placed = 0
     private var scenes: List<DrawingScene> = emptyList()
@@ -181,10 +229,9 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
     private var lastClickDrawing: String? = null
     private var demoPoints: MutableList<Offset>? = null
     private var clipboard: Drawing? = null
-    private val undoStack = ArrayDeque<List<Drawing>>()
-    private val redoStack = ArrayDeque<List<Drawing>>()
-    var canUndo by mutableStateOf(false); private set
-    var canRedo by mutableStateOf(false); private set
+    private val history get() = library.history(symbol)
+    val canUndo: Boolean get() = history.canUndo
+    val canRedo: Boolean get() = history.canRedo
 
     private fun cancelPlacement() {
         draft = null
@@ -202,38 +249,27 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
         hoveredId = null
         measured = null
         menuAt = null
-        drawings = perSymbol[value].orEmpty()
-        undoStack.clear(); redoStack.clear(); refreshHistory()
         loadImages(drawings)
     }
 
-    private fun refreshHistory() { canUndo = undoStack.isNotEmpty(); canRedo = redoStack.isNotEmpty() }
-
     /** Records [next] as the symbol's list; `before` goes on the undo stack. */
     private fun commit(next: List<Drawing>, before: List<Drawing> = drawings) {
-        undoStack.addLast(before)
-        if (undoStack.size > 100) undoStack.removeFirst()
-        redoStack.clear()
+        history.record(before)
         drawings = next
         persist()
-        refreshHistory()
     }
 
-    private fun persist() { perSymbol = perSymbol + (symbol to drawings); saves.trySend(Unit) }
+    private fun persist() { library.save() }
 
     fun undo() {
-        val previous = undoStack.removeLastOrNull() ?: return
-        redoStack.addLast(drawings)
-        drawings = previous
+        drawings = history.undo(drawings) ?: return
         if (drawings.none { it.id == selectedId }) selectedId = null
-        persist(); refreshHistory()
+        persist()
     }
 
     fun redo() {
-        val next = redoStack.removeLastOrNull() ?: return
-        undoStack.addLast(drawings)
-        drawings = next
-        persist(); refreshHistory()
+        drawings = history.redo(drawings) ?: return
+        persist()
     }
 
     private fun newId() = Random.nextLong().toULong().toString(16)

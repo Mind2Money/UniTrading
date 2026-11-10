@@ -21,6 +21,12 @@ interface BrokerPlugin {
     fun watchQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     /**
+     * Keeps every chart series in [series] live at once; each call replaces the list. The first is the chart the user is
+     * working on. A broker that serves one live chart at a time keeps only that one, and the others show what
+     * [history] already has.
+     */
+    fun watchAll(series: List<Pair<String, Timeframe>>) { series.firstOrNull()?.let { watch(it.first, it.second) } }
+    /**
      * Series to read whole and cache in the background, most wanted first; each call replaces the list. A chart
      * that opens one of them then only fetches the bars since. Never changes the chart or sends trade commands.
      */

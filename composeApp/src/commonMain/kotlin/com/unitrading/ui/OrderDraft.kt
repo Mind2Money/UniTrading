@@ -78,6 +78,12 @@ internal data class OrderDraft(
     }
 }
 
+/** What one chart window shows. [MAIN_CHART] is the chart of the main window; every other id is a window of its own. */
+internal data class ChartSlot(val id: String, val symbol: String, val timeframe: Timeframe)
+internal const val MAIN_CHART = "main"
+/** The key a chart window's bounds are saved under. */
+internal fun chartWindowKey(id: String) = "chart-$id"
+
 internal data class PendingEntryEdit(val order: PendingOrder, val entry: String)
 internal data class PendingProtectionEdit(val order: PendingOrder, val stopLoss: String, val takeProfit: String)
 internal data class ProtectionEdit(val position: Position, val stopLoss: String, val takeProfit: String)

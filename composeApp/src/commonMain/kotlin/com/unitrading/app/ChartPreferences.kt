@@ -17,6 +17,10 @@ import kotlinx.serialization.json.Json
  * Intervals are saved in seconds. The three `Minutes` fields are what a file written before second intervals existed
  * holds; they are read until the matching `Seconds` field is first written and are never written again.
  */
+/** A chart in a window of its own, beside the main chart: the symbol it shows at each broker, and its interval. */
+@Serializable
+data class SavedChart(val id: String, val symbols: Map<String, String> = emptyMap(), val timeframeSeconds: Int)
+
 @Serializable
 data class ChartPreferences(
     val favoriteMinutes: List<Int> = Timeframe.defaultFavorites.map { it.seconds / Timeframe.MINUTE },
@@ -28,6 +32,8 @@ data class ChartPreferences(
     val favoriteSeconds: List<Int>? = null,
     val customSeconds: List<Int>? = null,
     val lastTimeframeSeconds: Int? = null,
+    /** The chart windows open beside the main chart, in the order they were opened. */
+    val extraCharts: List<SavedChart> = emptyList(),
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -41,6 +47,10 @@ data class ChartPreferences(
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
         require(indicatorPaneFractions.all { (id, fraction) -> id.isNotBlank() && fraction.isFinite() && fraction > 0f && fraction <= .75f }) { "指标窗口比例超出范围" }
         require(lastSymbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }) { "上次图表品种无效" }
+        require(extraCharts.size <= MAX_EXTRA_CHARTS && extraCharts.map { it.id }.distinct().size == extraCharts.size && extraCharts.all { chart ->
+            chart.id.isNotBlank() && chart.id.length <= 16 && chart.timeframeSeconds in 1..Timeframe.MAX_SECONDS &&
+                chart.symbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }
+        }) { "图表窗口设置无效" }
     }
     val favorites: List<Timeframe> get() = favoriteLengths.map(Timeframe::ofSeconds)
     val custom: List<Timeframe> get() = customLengths.map(Timeframe::ofSeconds)
@@ -50,7 +60,11 @@ data class ChartPreferences(
     fun withCustom(value: List<Timeframe>) = copy(customSeconds = value.map { it.seconds })
     fun withLastTimeframe(value: Timeframe) = copy(lastTimeframeSeconds = value.seconds)
 
-    companion object { const val MAX_FAVORITES = 12 }
+    companion object {
+        const val MAX_FAVORITES = 12
+        /** Each chart holds a live subscription at the broker, and brokers cap those. */
+        const val MAX_EXTRA_CHARTS = 8
+    }
 }
 
 class ChartPreferencesController(private val store: SnapshotStore) {
@@ -91,6 +105,17 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean =
         preferences.value.indicatorPaneFractions == fractions || apply(preferences.value.copy(indicatorPaneFractions = fractions))
+
+    /**
+     * Saves the chart windows open beside the main chart: each one's id, the symbol it shows at [broker] and its interval.
+     * The symbols a chart showed at other brokers are kept.
+     */
+    suspend fun setExtraCharts(broker: String, charts: List<Triple<String, String, Timeframe>>): Boolean {
+        val current = preferences.value
+        val known = current.extraCharts.associateBy { it.id }
+        val next = charts.map { (id, symbol, timeframe) -> SavedChart(id, known[id]?.symbols.orEmpty() + (broker to symbol), timeframe.seconds) }
+        return next == current.extraCharts || apply(current.copy(extraCharts = next))
+    }
 
     /** Saves the shown chart; a null [symbol] keeps the saved one, e.g. while it is still being restored. */
     suspend fun setLastChart(broker: String, symbol: String?, timeframe: Timeframe): Boolean {

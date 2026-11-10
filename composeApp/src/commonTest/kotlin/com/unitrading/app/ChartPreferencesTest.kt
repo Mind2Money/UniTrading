@@ -31,6 +31,36 @@ class ChartPreferencesTest {
         assertFailsWith<IllegalArgumentException> { first.apply(ChartPreferences(lastTimeframeMinutes = 0)) }
         assertFailsWith<IllegalArgumentException> { first.apply(ChartPreferences(lastTimeframeSeconds = 0)) }
     }
+    @Test fun chartWindowsPersistWithASymbolPerBrokerAndTheirInterval() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15],"lastSymbols":{"tradovate-demo-1":"@GC"},"lastTimeframeSeconds":300}""") }
+        val first = ChartPreferencesController(store)
+        assertTrue(first.preferences.value.extraCharts.isEmpty(), "a file from before chart windows opens with the main chart alone")
+        assertTrue(first.setExtraCharts("tradovate-demo-1", listOf(Triple("c1", "@ES", Timeframe.ofSeconds(30)), Triple("c2", "@NQ", Timeframe.H1))))
+        // The same windows at another broker show that broker's symbols; the first broker's are kept for when it is back.
+        assertTrue(first.setExtraCharts("atlas-demo", listOf(Triple("c1", "XAUUSD", Timeframe.M15), Triple("c2", "EURUSD", Timeframe.H1))))
+        val reopened = ChartPreferencesController(store).preferences.value
+        assertEquals(listOf(
+            SavedChart("c1", mapOf("tradovate-demo-1" to "@ES", "atlas-demo" to "XAUUSD"), 900),
+            SavedChart("c2", mapOf("tradovate-demo-1" to "@NQ", "atlas-demo" to "EURUSD"), 3_600),
+        ), reopened.extraCharts)
+        assertEquals(mapOf("tradovate-demo-1" to "@GC"), reopened.lastSymbols, "the main chart's symbol is saved apart")
+        assertEquals(Timeframe.M5, reopened.lastTimeframe)
+
+        // A closed window is forgotten, with the symbols it showed anywhere.
+        assertTrue(first.setExtraCharts("atlas-demo", listOf(Triple("c2", "EURUSD", Timeframe.H1))))
+        assertEquals(listOf("c2"), ChartPreferencesController(store).preferences.value.extraCharts.map { it.id })
+        val base = first.preferences.value
+        val tooMany = (1..ChartPreferences.MAX_EXTRA_CHARTS + 1).map { SavedChart("c$it", mapOf("atlas-demo" to "EURUSD"), 60) }
+        for (invalid in listOf(tooMany, listOf(SavedChart("c1", timeframeSeconds = 60), SavedChart("c1", timeframeSeconds = 300)), listOf(SavedChart("", timeframeSeconds = 60)),
+            listOf(SavedChart("c1", timeframeSeconds = 0)), listOf(SavedChart("c1", mapOf("atlas-demo" to ""), 60)))) {
+            assertFailsWith<IllegalArgumentException> { first.apply(base.copy(extraCharts = invalid)) }
+        }
+        store.write("chart-v1", """{"extraCharts":[{"id":"c1","timeframeSeconds":0}]}""")
+        val broken = ChartPreferencesController(store)
+        assertNotNull(broken.error.value)
+        assertEquals(ChartPreferences(), broken.preferences.value)
+    }
+
     @Test fun favoritesAndCustomIntervalsPersistAcrossRestart() = runTest {
         val store = MemorySnapshotStore()
         val first = TradingRuntime(store)

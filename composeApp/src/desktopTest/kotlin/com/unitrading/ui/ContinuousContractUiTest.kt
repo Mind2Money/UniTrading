@@ -74,7 +74,8 @@ class ContinuousContractUiTest {
         val plugin = object : BrokerPlugin by demo {
             override val catalog = changes
             override val instruments get() = changes.value.instruments
-            override fun watch(symbol: String, timeframe: Timeframe) { chartSymbol = symbol }
+            // The screen asks for every open chart at once; the first is the one being worked on.
+            override fun watchAll(series: List<Pair<String, Timeframe>>) { chartSymbol = series.first().first }
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(dated.symbol, timeframe)
             override fun openSession(accountId: String): AccountSession {
                 val session = demo.openSession(accountId)
@@ -100,7 +101,7 @@ class ContinuousContractUiTest {
         val plugin = object : BrokerPlugin by demo {
             override val catalog = changes
             override val instruments get() = changes.value.instruments
-            override fun watch(symbol: String, timeframe: Timeframe) { charts += symbol }
+            override fun watchAll(series: List<Pair<String, Timeframe>>) { charts += series.first().first }
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(saved.symbol, timeframe)
         }
         val store = MemorySnapshotStore()

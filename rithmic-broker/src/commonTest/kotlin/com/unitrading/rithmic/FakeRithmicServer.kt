@@ -198,10 +198,12 @@ internal class FakeRithmicServer : RithmicWire {
                 val alias = frontMonthAlias && symbol == "MES"
                 // The answer the real server gives for an expired month, and on a system without an alias.
                 if (!alias && symbol !in knownSymbols) { reply(Rt.RESPONSE_TIME_BAR_REPLAY, codes = listOf("7", "reference data not available")); return }
-                val period = (m.int(Rf.BAR_PERIOD) ?: 1) * 60L
+                // Second bars count their period in seconds, minute bars in minutes.
+                val seconds = m.int(Rf.BAR_TYPE) == RithmicEnums.BAR_SECOND
+                val period = (m.int(Rf.BAR_PERIOD) ?: 1) * if (seconds) 1L else 60L
                 val lastClose = FAKE_TIME / 1_000 / period * period
                 parts(Rt.RESPONSE_TIME_BAR_REPLAY, ((if (alias) aliasBars else bars) downTo 1).map { back -> {
-                    string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); int32(Rf.BAR_TYPE, RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, (period / 60).toString())
+                    string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); int32(Rf.BAR_TYPE, if (seconds) RithmicEnums.BAR_SECOND else RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, (if (seconds) period else period / 60).toString())
                     int32(Rf.BAR_MARKER, (lastClose - (back - 1) * period).toInt()); int64(Rf.BAR_VOLUME, 100L * back)
                     double(Rf.OPEN_PRICE, 5499.0); double(Rf.HIGH_PRICE, 5501.0); double(Rf.LOW_PRICE, 5498.5); double(Rf.CLOSE_PRICE, 5500.0)
                 } })

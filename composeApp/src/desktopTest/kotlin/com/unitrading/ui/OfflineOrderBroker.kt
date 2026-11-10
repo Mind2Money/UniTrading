@@ -4,8 +4,8 @@ import com.unitrading.broker.*
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * A remote-style broker for chart order tests: bars between 5480 and 5520 around a 5500.00 / 5500.25 quote, an empty
- * account, and a record of every order sent. Nothing leaves the process.
+ * A remote-style broker for chart order tests: two contracts with bars between 5480 and 5520 around a 5500.00 / 5500.25
+ * quote, an empty account, and a record of every order sent and of the charts asked to stay live. Nothing leaves the process.
  */
 internal class OfflineOrderBroker : BrokerPlugin {
     val spec = Instrument("TESTZ6", "Offline futures", "离线测试", 2, 25, 1_250_000, minLotsHundredths = 100,
@@ -13,11 +13,16 @@ internal class OfflineOrderBroker : BrokerPlugin {
     val time = 1_798_589_000_000L
     override val descriptor = BrokerDescriptor("offline-orders", "离线下单测试", "Only synthetic fixtures", true, BrokerEnvironment.REMOTE_DEMO)
     override val capabilities = BrokerCapabilities(hedging = false)
-    override val instruments = listOf(spec)
+    /** A second contract, for a chart that shows another symbol. */
+    val other = spec.copy(symbol = "OTHRZ6", name = "Other offline futures")
+    override val instruments = listOf(spec, other)
     override val accounts = listOf(AccountInfo("100", "离线测试账户"))
     override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
-    override val market = MutableStateFlow(MarketSnapshot(mapOf(spec.symbol to Quote(550000, 550025, time)), time, connected = true))
+    override val market = MutableStateFlow(MarketSnapshot(instruments.associate { it.symbol to Quote(550000, 550025, time) }, time, connected = true))
     val placed = mutableListOf<OrderRequest>()
+    /** The charts the screen asked to keep live, the one being worked on first; one entry for each time it asked. */
+    val watched = mutableListOf<List<Pair<String, Timeframe>>>()
+    override fun watchAll(series: List<Pair<String, Timeframe>>) { watched += series }
     /** What the broker's own check answers; an error stands for any order it would refuse. */
     var refusal: String? = null
     override fun history(symbol: String, timeframe: Timeframe) = (0..100).map { i ->

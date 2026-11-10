@@ -89,7 +89,7 @@ class TradovateBroker(
     private val chartWatchLock = Mutex()
     private val cancelledChartIds = mutableSetOf<String>()
     private val pendingChartCancellations = mutableMapOf<String, JsonPrimitive>()
-    private var chartBackfillJob: Job? = null
+    private val chartBackfillJobs = mutableMapOf<Pair<String, Timeframe>, Job>()
     private class ChartPage(val series: Pair<String, Timeframe>, val load: ChartLoad, val startedAt: Long,
         val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false)
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
@@ -123,12 +123,14 @@ class TradovateBroker(
     private var problem = "正在连接 Tradovate"
     private val queuedEvents = mutableListOf<JsonObject>()
     private var maintenance: Job? = null
-    private var watchJob: Job? = null
+    private val watchJobs = mutableMapOf<Pair<String, Timeframe>, Job>()
     private var reconnectJob: Job? = null
     private var metadataJob: Job? = null
     private var balanceJob: Job? = null
     private var recoveryJob: Job? = null
-    private var watching: Pair<String, Timeframe>? = null
+    /** Every chart series kept live. The first is the chart the user works on: it is served first and owns the leader check. */
+    private var watched: List<Pair<String, Timeframe>> = emptyList()
+    private val watching: Pair<String, Timeframe>? get() = watched.firstOrNull()
     private var quoteWatchSymbols = emptySet<String>()
     private var quoteWatchJob: Job? = null
     private val quoteWatchJobs = mutableMapOf<String, Job>()
@@ -190,7 +192,7 @@ class TradovateBroker(
             problem
         }
         onProgress(status)
-        watching?.let { watch(it.first, it.second) }
+        watched.forEach(::startWatch)
         refreshQuoteWatch()
         startPreload()
         maintenance?.cancel()
@@ -208,7 +210,7 @@ class TradovateBroker(
                     continuousJob = scope.launch {
                         val before = continuousRoutes[selected.first]?.spec?.tradeSymbol
                         refreshContinuous(selected.first)
-                        if (watching == selected && before != continuousRoutes[selected.first]?.spec?.tradeSymbol) watch(selected.first, selected.second)
+                        if (watching == selected && before != continuousRoutes[selected.first]?.spec?.tradeSymbol) startWatch(selected)
                     }
                 }
                 val recover = lock.withLock {
@@ -242,7 +244,7 @@ class TradovateBroker(
         publish()
         synchronizeAccount(socket)
         hydrateContracts()
-        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); watch(it.first, it.second) }
+        watching?.takeIf { it.first in continuousRoutes }?.let { refreshContinuous(it.first, force = true); startWatch(it) }
         refreshBalances()
         problem = "账户状态已重新同步"
         publish()
@@ -362,8 +364,7 @@ class TradovateBroker(
                     pendingQuotes.forEach { it.cancel() }
                     pendingQuotes.joinAll()
                     continuousJob?.cancelAndJoin()
-                    watchJob?.cancelAndJoin()
-                    chartBackfillJob?.cancelAndJoin()
+                    (watchJobs.values + chartBackfillJobs.values).toList().forEach { it.cancelAndJoin() }
                     lock.withLock { preloadJob }?.cancelAndJoin()
                     cancelledChartIds.clear()
                     pendingChartCancellations.clear()
@@ -382,13 +383,13 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJob?.cancel(); metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
             pendingQuotes.forEach { it.cancel() }
             pendingQuotes.joinAll()
-            watchJob?.join()
-            chartBackfillJob?.cancelAndJoin()
+            watchJobs.values.toList().joinAll()
+            chartBackfillJobs.values.toList().forEach { it.cancelAndJoin() }
             lock.withLock { preloadJob }?.cancelAndJoin()
             runCatching { accountSocket?.close() }; runCatching { marketSocket?.close() }
             cacheSaveJob?.cancelAndJoin()
@@ -470,8 +471,7 @@ class TradovateBroker(
 
     /** Called under chartWatchLock; chart and watch-list subscriptions share one owner. */
     private suspend fun syncQuoteSubscriptions(socket: TradovateSocket) {
-        val selected = watching?.first
-        val requested = quoteWatchSymbols + listOfNotNull(selected)
+        val requested = quoteWatchSymbols + watched.map { it.first }
         // Quotes only map to loaded specs; an unconfirmed series' last contract waits for its spec.
         val loaded = instruments.filterNot { it.isContinuous }.mapTo(HashSet()) { it.symbol }
         val wanted = (accountFlows.values.flatMap { flow ->
@@ -840,14 +840,38 @@ class TradovateBroker(
     }
 
     override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
-    override fun watch(symbol: String, timeframe: Timeframe) {
+    override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
+
+    override fun watchAll(series: List<Pair<String, Timeframe>>) {
         if (stopped) return
-        if (watching?.first != symbol) { continuousJob?.cancel(); continuousJob = null }
-        watching = symbol to timeframe
-        watchJob?.cancel()
-        watchJob = scope.launch {
+        val next = series.distinct()
+        val previous = watched
+        if (previous.firstOrNull()?.first != next.firstOrNull()?.first) { continuousJob?.cancel(); continuousJob = null }
+        watched = next
+        (previous - next.toSet()).forEach(::stopWatch)
+        // The chart the user works on is asked for again on every call, as before; the others only when they are new.
+        next.forEachIndexed { index, one -> if (index == 0 || one !in previous) startWatch(one) }
+    }
+
+    /** Ends the live chart of a series no window shows any more. */
+    private fun stopWatch(series: Pair<String, Timeframe>) {
+        watchJobs.remove(series)?.cancel()
+        chartBackfillJobs.remove(series)?.cancel()
+        scope.launch {
             chartWatchLock.withLock {
-                val series = symbol to timeframe
+                val socket = marketSocket ?: return@launch
+                // Asked for again while this waited: the new watch owns the series' charts.
+                if (stopped || series in watched) return@launch
+                withContext(NonCancellable) { cancelCharts(socket, series = series) }
+            }
+        }
+    }
+
+    private fun startWatch(series: Pair<String, Timeframe>) {
+        val (symbol, timeframe) = series
+        watchJobs[series]?.cancel()
+        watchJobs[series] = scope.launch {
+            chartWatchLock.withLock {
                 // The chart reads the series it shows itself; the background read of it would repeat every request.
                 lock.withLock { if (preloading == series) preloadSeriesJob?.cancel() }
                 preloadWake.trySend(Unit)
@@ -861,21 +885,23 @@ class TradovateBroker(
                 val socket = marketSocket ?: return@launch
                 if (!marketReady) return@launch
                 try {
-                    if (symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
+                    // The leader of the chart being worked on is checked here; the other charts' symbols are checked with the watch list.
+                    if (series == watching && symbol in continuousRoutes && continuousJob?.isActive != true) continuousJob = scope.launch {
                         val before = continuousRoutes[symbol]?.spec?.tradeSymbol
                         refreshContinuous(symbol)
-                        if (watching == (symbol to timeframe) && before != continuousRoutes[symbol]?.spec?.tradeSymbol) watch(symbol, timeframe)
+                        if (watching == series && before != continuousRoutes[symbol]?.spec?.tradeSymbol) startWatch(series)
                     }
                     syncQuoteSubscriptions(socket)
                     if (lock.withLock { charts.values.any { it.page.let { page -> page.series == series &&
                             !page.load.failed && (page.load.complete || now() - page.startedAt < 30_000) } } }) return@launch
                     // Serialize both cancellation and binding so rapid switches cannot orphan IDs.
                     withContext(NonCancellable) {
-                        cancelCharts(socket)
-                        if (watching != series || stopped || !marketReady) return@withContext
+                        // This series' own stale charts, and those of series that no chart shows any more.
+                        cancelCharts(socket, keep = watched.filter { it != series })
+                        if (series !in watched || stopped || !marketReady) return@withContext
                         val load = ChartLoad(cached, chartHistoryFloor(timeframe, now()))
                         requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false), chartTimeRange(cached))
-                        if (cached.isNotEmpty() && watching == series && !stopped) {
+                        if (cached.isNotEmpty() && series in watched && !stopped) {
                             lock.withLock { load.beginPage() }
                             requestChart(socket, ChartPage(series, load, now(), liveOnly = false, historyOnly = true),
                                 chartBackfillRange(cached.last().timeMs, now()))
@@ -948,9 +974,17 @@ class TradovateBroker(
         }
     }
 
-    private suspend fun cancelCharts(socket: TradovateSocket, page: ChartPage? = null) {
+    /**
+     * Cancels chart subscriptions: those of [page] alone, those of [series] alone, or otherwise every one whose series is not
+     * in [keep].
+     */
+    private suspend fun cancelCharts(socket: TradovateSocket, page: ChartPage? = null, series: Pair<String, Timeframe>? = null, keep: List<Pair<String, Timeframe>> = emptyList()) {
         val pending = lock.withLock {
-            val retired = charts.filterValues { page == null || it.page === page }
+            val retired = charts.filterValues { when {
+                page != null -> it.page === page
+                series != null -> it.page.series == series
+                else -> it.page.series !in keep
+            } }
             cancelledChartIds.addAll(retired.keys)
             retired.forEach { (key, channel) -> pendingChartCancellations[key] = channel.wireId; charts.remove(key) }
             earlyCharts.removeAll { chartSubscriptionKey(it["id"]) in cancelledChartIds }
@@ -980,16 +1014,16 @@ class TradovateBroker(
     }
 
     private fun continueChartHistory(page: ChartPage) {
-        chartBackfillJob = scope.launch {
+        chartBackfillJobs[page.series] = scope.launch {
             chartWatchLock.withLock {
                 val socket = marketSocket ?: return@launch
-                if (stopped || !marketReady || watching != page.series || lock.withLock { charts.values.none { it.page === page } }) return@launch
+                if (stopped || !marketReady || page.series !in watched || lock.withLock { charts.values.none { it.page === page } }) return@launch
                 withContext(NonCancellable) {
                     // A fresh chart's first page also carries the live stream.
                     if (page.historyOnly) cancelCharts(socket, page)
                     if (!marketReady) return@withContext
                     val before = lock.withLock { page.load.nextPageBefore }
-                    if (before != null && !page.load.failed && watching == page.series && !stopped) {
+                    if (before != null && !page.load.failed && page.series in watched && !stopped) {
                         lock.withLock { page.load.beginPage() }
                         try {
                             requestChart(socket, ChartPage(page.series, page.load, page.startedAt, liveOnly = false, historyOnly = true),
@@ -1041,7 +1075,7 @@ class TradovateBroker(
                 // Leader checks share the server's chart budget and gate orders, so they go first.
                 val verifying = quoteWatchJobs.values.any { it.isActive } || continuousJob?.isActive == true
                 if (!marketReady || marketSocket == null || time < preloadPausedUntil || verifying) null
-                else targets.firstOrNull { it != watching && cachedHistory[it]?.isEmpty() == true && (preloadRetryAt[it] ?: 0) <= time }
+                else targets.firstOrNull { it !in watched && cachedHistory[it]?.isEmpty() == true && (preloadRetryAt[it] ?: 0) <= time }
             }
             if (next == null) {
                 withTimeoutOrNull(PRELOAD_IDLE_MS) { preloadWake.receive() }
@@ -1051,7 +1085,7 @@ class TradovateBroker(
                 coroutineScope {
                     val reader = launch(start = CoroutineStart.LAZY) { preloadSeries(next) }
                     // The chart reads the series it shows; watch() ends this reader when the chart opens its series.
-                    val owned = lock.withLock { (watching != next).also { if (it) { preloading = next; preloadSeriesJob = reader } } }
+                    val owned = lock.withLock { (next !in watched).also { if (it) { preloading = next; preloadSeriesJob = reader } } }
                     if (owned) reader.join() else reader.cancel()
                 }
             } finally {
@@ -1083,7 +1117,7 @@ class TradovateBroker(
                     preloadFailures.remove(series)
                     preloadRetryAt.remove(series)
                     // Opened meanwhile: the chart has its own load of this series, and shows that.
-                    if (watching == series) return
+                    if (series in watched) return
                     cachedHistory[series] = bars
                     history = history + (series to bars)
                     dirtyHistory[series] = bars

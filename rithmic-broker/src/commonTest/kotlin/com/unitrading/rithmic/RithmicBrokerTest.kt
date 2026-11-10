@@ -765,6 +765,58 @@ class RithmicBrokerTest {
         assertEquals(4, broker.history("MESZ6", Timeframe.M5).size)
     }
 
+    /** Each open chart keeps its own live bars: a bar names its interval, and a trade extends every intraday chart of its contract. */
+    @Test fun severalChartsStayLiveAtOnceAndEachGetsItsOwnBars() = runTest {
+        val server = FakeRithmicServer()
+        val broker = ready(server)
+        val m15 = Timeframe.M15
+        val s30 = Timeframe.ofSeconds(30)
+        broker.watchAll(listOf("MESZ6" to Timeframe.M5, "MESZ6" to m15, "MESZ6" to s30))
+        runCurrent()
+        fun updates() = server.requests(Rt.REQUEST_TIME_BAR_UPDATE).map { Triple(it.int(Rf.REQUEST), it.int(Rf.BAR_TYPE), it.int(Rf.BAR_PERIOD)) }
+        assertEquals(listOf(Triple(RithmicEnums.REQUEST_SUBSCRIBE, RithmicEnums.BAR_MINUTE, 5), Triple(RithmicEnums.REQUEST_SUBSCRIBE, RithmicEnums.BAR_MINUTE, 15),
+            Triple(RithmicEnums.REQUEST_SUBSCRIBE, RithmicEnums.BAR_SECOND, 30)), updates(), "the chart already open is not subscribed again")
+        assertEquals(3, broker.history("MESZ6", m15).size)
+        assertEquals(3, broker.history("MESZ6", s30).size)
+        assertTrue(broker.history("MESZ6", s30).zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == 30_000L }, "second bars are timed by their own period")
+
+        // A closed 15 minute bar goes to the 15 minute chart alone.
+        val before5 = broker.history("MESZ6", Timeframe.M5)
+        val close15 = FAKE_TIME / 1_000 / 900 * 900 * 1_000 + 900_000
+        server.plant(RithmicEnums.INFRA_HISTORY).push {
+            int32(Rf.TEMPLATE_ID, Rt.TIME_BAR); string(Rf.SYMBOL, "MESZ6"); int32(Rf.BAR_TYPE, RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, "15")
+            int32(Rf.BAR_MARKER, (close15 / 1_000).toInt())
+            double(Rf.OPEN_PRICE, 5501.0); double(Rf.HIGH_PRICE, 5503.0); double(Rf.LOW_PRICE, 5500.0); double(Rf.CLOSE_PRICE, 5502.5); int64(Rf.BAR_VOLUME, 40)
+        }
+        runCurrent()
+        assertEquals(Candle(close15 - 900_000, 550100, 550300, 550000, 550250, 40), broker.history("MESZ6", m15).last())
+        assertEquals(before5, broker.history("MESZ6", Timeframe.M5))
+
+        // A trade extends the forming bar of every intraday chart of the contract.
+        val tradeTime = FAKE_TIME / 1_000 / 300 * 300 * 1_000 + 70_000
+        server.plant(RithmicEnums.INFRA_TICKER).push { int32(Rf.TEMPLATE_ID, Rt.LAST_TRADE); string(Rf.SYMBOL, "MESZ6"); double(Rf.TRADE_PRICE, 5504.0); int32(Rf.TRADE_SIZE, 2); int32(Rf.SSBOE, (tradeTime / 1_000).toInt()) }
+        runCurrent()
+        assertEquals(550400L, broker.history("MESZ6", Timeframe.M5).last().close)
+        assertEquals(550400L, broker.history("MESZ6", m15).last().close)
+        broker.history("MESZ6", s30).last().let { bar ->
+            assertEquals(tradeTime / 30_000 * 30_000, bar.timeMs, "the trade lands in its own thirty seconds")
+            assertEquals(550400L to 550400L, bar.high to bar.close)
+        }
+
+        // Closing a window ends only its own subscription; the charts that stay are not asked for again.
+        val replays = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size
+        broker.watchAll(listOf("MESZ6" to Timeframe.M5, "MESZ6" to s30))
+        runCurrent()
+        assertEquals(Triple(RithmicEnums.REQUEST_UNSUBSCRIBE, RithmicEnums.BAR_MINUTE, 15), updates().last())
+        assertEquals(4, updates().size)
+        val closed = broker.history("MESZ6", m15)
+        server.plant(RithmicEnums.INFRA_TICKER).push { int32(Rf.TEMPLATE_ID, Rt.LAST_TRADE); string(Rf.SYMBOL, "MESZ6"); double(Rf.TRADE_PRICE, 5505.0); int32(Rf.TRADE_SIZE, 1); int32(Rf.SSBOE, (tradeTime / 1_000).toInt() + 1) }
+        runCurrent()
+        assertEquals(550500L, broker.history("MESZ6", s30).last().close)
+        assertEquals(closed, broker.history("MESZ6", m15), "a chart that is closed keeps what it had and takes no more trades")
+        assertTrue(server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size <= replays + 1, "only the chart being worked on may be read again")
+    }
+
     @Test fun orderCapacityComesFromServerRmsLimits() = runTest {
         val broker = ready(FakeRithmicServer().apply { maxOrderQuantity = 3 })
         val session = broker.openSession("ACC1")

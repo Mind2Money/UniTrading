@@ -45,7 +45,7 @@ class DesktopWindowsUiTest {
     private fun newRuntime() = TradingRuntime(store, listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
 
     /**
-     * The screen above, 760 dp of it, and the open windows in a row of 440 dp below. Without [windowed] the platform has
+     * The screen above, 760 dp of it, and the open windows in a strip of 440 dp below. Without [windowed] the platform has
      * no windows to offer. A new [runtime] starts the screen afresh on the same store, as a restart does.
      */
     private fun render(windowed: Boolean = true) {
@@ -54,10 +54,8 @@ class DesktopWindowsUiTest {
             val fake = windows
             key(current, fake) {
                 CompositionLocalProvider(LocalPanelWindowHost provides fake.takeIf { windowed }) {
-                    Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.fillMaxWidth().height(760.dp)) { TradingScreen(current) }
-                        fake.WindowRow(Modifier.fillMaxWidth().height(440.dp))
-                    }
+                    // The strip under the screen is where the fake windows stand.
+                    Column(Modifier.fillMaxSize()) { Box(Modifier.fillMaxWidth().height(760.dp)) { TradingScreen(current) } }
                 }
             }
         } }
@@ -70,9 +68,10 @@ class DesktopWindowsUiTest {
     private fun layout() = runtime.desktopLayout.preferences.value
     private fun awaitSaved() = compose.waitUntil(5_000) { DesktopLayoutController(store).preferences.value == layout() }
     private fun inWindow(panel: WorkspacePanel, tag: String) = compose.onNode(hasTestTag(tag) and hasAnyAncestor(hasTestTag("fake-window-${panel.name}")))
-    private fun toggle(vararg panels: WorkspacePanel) {
+    /** One panel at each opening of the menu: a window that opens comes up over the menu that opened it. */
+    private fun toggle(vararg panels: WorkspacePanel) = panels.forEach {
         compose.onNodeWithTag("rail-windows").performClick()
-        panels.forEach { compose.onNodeWithTag("window-menu-${it.name}").performClick() }
+        compose.onNodeWithTag("window-menu-${it.name}").performClick()
         // The menu stays open for several choices; the rail entry under it closes it again.
         compose.onNodeWithTag("rail-windows").performClick()
         compose.waitForIdle()

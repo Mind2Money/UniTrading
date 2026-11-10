@@ -355,6 +355,67 @@ class ChartDrawingsTest {
         assertEquals(listOf(DrawingTool.FIB_RETRACEMENT), reopened.favorites)
     }
 
+    /** Two chart windows: one library, a controller each. */
+    @Test fun chartsOfOneLibraryShareASymbolsDrawingsAndKeepTheirOwnToolAndSelection() {
+        val library = DrawingLibrary(store, Dispatchers.Unconfined)
+        val first = ChartDrawings(library).apply { bind("TEST") }
+        val second = ChartDrawings(library).apply { bind("TEST") }
+        first.addHorizontalLine(DrawingPoint(START + 20 * HOUR, 40_125.0))
+        val line = first.drawings.single()
+        assertEquals(listOf(line), second.drawings, "the other chart of the symbol shows it at once")
+        assertEquals(line.id, first.selectedId)
+        assertNull(second.selectedId, "a selection belongs to the chart it was made in")
+        second.chooseTool(DrawingTool.RECTANGLE)
+        assertNull(first.tool, "so does the armed tool")
+        second.cancelTool()
+
+        // A chart of another symbol has that symbol's list.
+        second.bind("OTHER")
+        assertTrue(second.drawings.isEmpty())
+        second.addHorizontalLine(DrawingPoint(START + 5 * HOUR, 39_500.0))
+        assertEquals(listOf(line), first.drawings)
+        second.bind("TEST")
+        assertEquals(listOf(line), second.drawings)
+
+        // A drawing removed in one chart is gone from the other, whose selection of it ends without a trace.
+        second.remove(line.id)
+        assertTrue(first.drawings.isEmpty())
+        assertNull(first.selected)
+        assertEquals(setOf("OTHER"), ChartDrawings(store, Dispatchers.Unconfined).let { reopened -> listOf("TEST", "OTHER").filter { reopened.bind(it); reopened.drawings.isNotEmpty() }.toSet() },
+            "what is saved is the library, whichever chart changed it")
+    }
+
+    /** A symbol's history is one, so undoing in a chart never drops what another chart of the symbol drew since. */
+    @Test fun chartsOfOneSymbolShareItsUndoHistory() {
+        val library = DrawingLibrary(store, Dispatchers.Unconfined)
+        val first = ChartDrawings(library).apply { bind("TEST") }
+        val second = ChartDrawings(library).apply { bind("TEST") }
+        val other = ChartDrawings(library).apply { bind("OTHER") }
+        first.addHorizontalLine(DrawingPoint(START + 20 * HOUR, 40_125.0))
+        second.addHorizontalLine(DrawingPoint(START + 30 * HOUR, 40_500.0))
+        val (one, two) = first.drawings
+        assertTrue(first.canUndo && second.canUndo)
+        assertFalse(other.canUndo, "another symbol's history is its own")
+        first.undo()
+        assertEquals(listOf(one), second.drawings, "the last step on the symbol goes, not the first chart's own older one")
+        assertNull(second.selected, "the chart that had drawn it no longer has it selected")
+        assertTrue(second.canRedo)
+        second.redo()
+        assertEquals(listOf(one, two), first.drawings)
+        first.undo(); second.undo()
+        assertTrue(first.drawings.isEmpty())
+        assertFalse(first.canUndo || second.canUndo)
+
+        // The history of a symbol waits for the chart that comes back to it.
+        first.redo()
+        first.bind("OTHER")
+        assertFalse(first.canUndo)
+        first.bind("TEST")
+        assertTrue(first.canUndo)
+        first.undo()
+        assertTrue(second.drawings.isEmpty())
+    }
+
     @Test fun anUnreadableFileIsSetAsideNotOverwritten() {
         store.write("chart-drawings-v1", "{broken")
         val reopened = ChartDrawings(store, Dispatchers.Unconfined)

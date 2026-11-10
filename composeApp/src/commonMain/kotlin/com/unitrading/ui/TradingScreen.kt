@@ -14,6 +14,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
@@ -22,6 +26,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.navigationevent.NavigationEventInfo
@@ -141,12 +146,27 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val executionSymbol = instrument.executionSymbol
         var previousExecutionSymbol by remember(accountKey, symbol) { mutableStateOf(executionSymbol) }
         val quote = market.quotes[executionSymbol]
-        var timeframe by remember { mutableStateOf(savedChart.lastTimeframe ?: Timeframe.M5) }
+        // The main chart's interval outlives a change of broker, whichever chart was being worked on then.
+        val mainTimeframe = remember { arrayOf(savedChart.lastTimeframe ?: Timeframe.M5) }
+        var timeframe by remember(plugin) { mutableStateOf(mainTimeframe[0]) }
+        /**
+         * The chart the user last worked in is the active chart: [chosenSymbol] and [timeframe] are its symbol and interval,
+         * and the order panel, the market list's selection and the order flow follow it. Every other chart window waits in
+         * [parkedCharts] with its own symbol and interval until a press makes it the active one, when the two trade places.
+         */
+        var activeChart by remember(plugin) { mutableStateOf(MAIN_CHART) }
+        var parkedCharts by remember(plugin) {
+            mutableStateOf(savedChart.extraCharts.associate { it.id to ChartSlot(it.id, it.symbols[plugin.descriptor.id] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds)) })
+        }
+        /** The chart windows beside the main chart, in the order they were opened. */
+        var chartOrder by remember(plugin) { mutableStateOf(savedChart.extraCharts.map { it.id }) }
         // The chart's symbol menu lists the market page's watch list, in its order.
         val watchLists by runtime.marketWatch.lists.collectAsState()
         val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
-        // Keep loading and verifying the saved list while mobile navigation shows another page.
-        LaunchedEffect(plugin, watchSymbols) { plugin.watchQuotes(watchSymbols) }
+        // Keep loading and verifying the saved list while mobile navigation shows another page. A chart window's symbol is
+        // loaded, verified and quoted the same way, so its chart is complete before it is the one being worked on.
+        val chartSymbols = parkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
+        LaunchedEffect(plugin, watchSymbols, chartSymbols) { plugin.watchQuotes(watchSymbols + chartSymbols) }
         DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
         val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
@@ -217,14 +237,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         fun capacityFor(order: OrderRequest): QuantityCapacityState = if (localDemo || order.side == draft.side) capacity else
             runtime.orderCapacity.entries.value[OrderCapacityCache.key(plugin.descriptor.id, session.account.id, order.symbol, order.side)]
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
-        val candles = remember(plugin, symbol, timeframe, market.revision) { plugin.history(symbol, timeframe) }
         val indicatorSettings by runtime.indicators.settings.collectAsState()
         val visiblePositions = account.positions.filter { it.symbol == executionSymbol }
         val visibleTrades = account.trades.filter { it.symbol == executionSymbol }
         val visibleOrders = account.orders.filter { it.request.symbol == executionSymbol }
 
         LaunchedEffect(runtime) { runtime.run() }
-        LaunchedEffect(plugin, symbol, executionSymbol, timeframe) { plugin.watch(symbol, timeframe) }
+        // Every chart window stays live; the broker serves the one being worked on first.
+        val parkedSeries = parkedCharts.values.map { it.symbol to it.timeframe }
+        LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
         LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow) { plugin.watchOrderFlow(symbol.takeIf { showOrderFlow }) }
         DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
@@ -254,8 +275,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             if (catalog.instruments.none { it.symbol == saved }) restoring = null
         }
         // Saved on every change, so the chart reopens where the user left it however the app exits.
-        LaunchedEffect(plugin, symbol, timeframe, restoring) {
-            runtime.chartPreferences.setLastChart(plugin.descriptor.id, symbol.takeIf { restoring == null }, timeframe)
+        // Each chart reopens with what it showed, whichever of them was the active one at the end.
+        fun chartSlot(id: String): ChartSlot? = if (id == activeChart) ChartSlot(id, restoring ?: symbol, timeframe) else parkedCharts[id]
+        val mainChart = chartSlot(MAIN_CHART) ?: ChartSlot(MAIN_CHART, symbol, timeframe)
+        SideEffect { mainTimeframe[0] = mainChart.timeframe }
+        // A symbol still being restored is the saved one itself, so saving it changes nothing until it loads or is given up.
+        LaunchedEffect(plugin, mainChart) { runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) }
+        val extraCharts = chartOrder.mapNotNull(::chartSlot)
+        LaunchedEffect(plugin, extraCharts) {
+            runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) })
         }
 
         fun showSymbol(value: String) {
@@ -280,6 +308,36 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             pendingProtection = null
             confirmation = null
             mobileTab = 1
+        }
+        /** Makes [id] the chart the screen works on. It trades places with the active chart; each keeps its symbol and interval. */
+        fun activateChart(id: String) {
+            if (id == activeChart) return
+            val target = parkedCharts[id] ?: return
+            // The chart being left keeps what it was asked to show, also while that symbol is still being loaded.
+            parkedCharts = parkedCharts - id + (activeChart to ChartSlot(activeChart, restoring ?: chosenSymbol, timeframe))
+            activeChart = id
+            if (target.symbol != chosenSymbol) {
+                focusedTrade = null; focusedExecution = null; selectedPositionId = null
+                protection = null; pendingEdit = null; pendingProtection = null; confirmation = null
+            }
+            // A symbol the broker has not loaded yet waits the way the saved chart does at start, and is not saved over meanwhile.
+            if (catalog.instruments.any { it.symbol == target.symbol }) showSymbol(target.symbol) else restoring = target.symbol
+            timeframe = target.timeframe
+        }
+        /** Opens one more chart window, on the symbol and interval of the chart being worked on. */
+        fun openChart() {
+            if (chartOrder.size >= ChartPreferences.MAX_EXTRA_CHARTS) { showNotice("最多同时打开 ${ChartPreferences.MAX_EXTRA_CHARTS} 个图表窗口", attention = true); return }
+            val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
+            parkedCharts = parkedCharts + (id to ChartSlot(id, restoring ?: chosenSymbol, timeframe))
+            chartOrder = chartOrder + id
+        }
+        /** Closes a chart window for good; the main chart takes over when it was the one being worked on. */
+        fun closeChart(id: String) {
+            if (id == activeChart) activateChart(MAIN_CHART)
+            parkedCharts = parkedCharts - id
+            chartOrder = chartOrder - id
+            runtime.desktopLayout.setWindowBounds(chartWindowKey(id), null)
+            scope.launch { runtime.desktopLayout.save() }
         }
         fun chooseBroker(value: String) { if (!busy) selectBroker(value) }
         fun chooseAccount(value: String) {
@@ -394,6 +452,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val desktop = maxWidth >= 900.dp && maxHeight >= 600.dp
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
+                // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
+                val chartWindowsShown = desktop && panelWindows
+                LaunchedEffect(chartWindowsShown, activeChart) { if (!chartWindowsShown) activateChart(MAIN_CHART) }
                 val compactShort = compact && maxHeight < 550.dp
                 // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
                 val rail = compact && maxWidth >= 600.dp
@@ -482,15 +543,37 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
-                val chart: @Composable (Modifier) -> Unit = { m ->
+                val activate by rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
+                // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
+                // its own symbol and interval and becomes the active one at the first press inside it.
+                // What every chart shows, as this pass of the screen saw it. A chart's content decides from these alone, never from
+                // the state behind them: in a window it is composed apart from the screen, and a newer active chart beside the
+                // instrument of the previous one would show a wrong chart for a frame and drop its view.
+                val workingChart = activeChart
+                val shownCharts = parkedCharts + (workingChart to ChartSlot(workingChart, symbol, timeframe))
+                val chartView: @Composable (String, Modifier) -> Unit = { chartId, m ->
+                    val active = chartId == workingChart
+                    val parked = shownCharts[chartId]
+                    val shownInstrument = if (active) instrument else parked?.let { slot -> catalog.instruments.firstOrNull { it.symbol == slot.symbol } }
+                    // A symbol this broker has not loaded: the window says so, and a press makes it the active chart, where another can be chosen.
+                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate(chartId) } }.testTag("chart-unavailable-$chartId"),
+                        contentAlignment = Alignment.Center) {
+                        EmptyState("品种未加载", "${parked?.symbol.orEmpty()} 不在当前交易商已加载的合约里。点一下这里，再在图表上另选品种。", icon = AppIcons.Candlestick)
+                    } else {
+                    val shownTimeframe = parked?.timeframe ?: timeframe
+                    val shownExecution = shownInstrument.executionSymbol
+                    val shownQuote = if (active) quote else market.quotes[shownExecution]
+                    val shownCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
+                    /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
+                    fun onActive(block: () -> Unit) { if (active) block() else activateChart(chartId) }
                     // Minimizing hides only the form; the active draft remains editable on the chart.
-                    val draftShown = if (compact) orderActive else showDraft
+                    val draftShown = active && if (compact) orderActive else showDraft
                     // Draft lines take a drop at once; pending orders and positions wait for the confirmation dialogs.
                     val actions = ChartOrderActions(
                         estimateDraft = session::preview,
-                        onDraftEntry = { changeDraft(draft.copy(entry = instrument.formatPrice(it))) },
+                        onDraftEntry = { price -> onActive { changeDraft(draft.copy(entry = instrument.formatPrice(price))) } },
                         onDraftProtection = { stop, price ->
-                            changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price)))
+                            onActive { changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price))) }
                         },
                         editPending = plugin.capabilities.modifyPendingOrders,
                         estimatePending = session::previewOrderModification,
@@ -503,25 +586,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         addProtection = plugin.capabilities.addProtection,
                         removeProtection = plugin.capabilities.removeProtection,
                         entryKinds = plugin.capabilities.orderKinds,
-                        entryLots = instrument.parseQuantity(draft.quantity),
-                        onEntryOrder = { side, kind, price -> orderFromChart(side, kind, price) },
+                        // A chart that is not the active one shows the quantity its symbol's order panel was left with.
+                        entryLots = shownInstrument.parseQuantity(if (active) draft.quantity else
+                            orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
+                        onEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price) } },
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
-                        onMarketOrder = { side -> orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) },
+                        onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
                     )
-                    val drawings = runtime.drawings
-                    BoxWithConstraints(m) {
+                    // Every chart has its own tools and selection; the drawings themselves are shared through the library.
+                    val drawings = if (chartId == MAIN_CHART) runtime.drawings else remember(chartId) { com.unitrading.chart.drawing.ChartDrawings(runtime.drawingLibrary) }
+                    BoxWithConstraints(m.pointerInput(chartId) {
+                        // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
+                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate(chartId) } }
+                    }.testTag("chart-view-$chartId")) {
                     val chartCompact = compact || (showOrderFlow && maxWidth < 600.dp)
                     val chartShort = chartCompact && maxHeight < 550.dp
                     Row(Modifier.fillMaxSize()) {
                     if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { runtime.indicators.apply(com.unitrading.app.IndicatorSettings()) } })
-                    TradingChart(accountKey, instrument, quote, candles, timeframe, { timeframe = it }, visiblePositions, visibleTrades,
-                        selectedPositionId, focusedTrade, request.takeIf { draftShown }, preview.takeIf { draftShown }, visibleOrders, actions,
-                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == executionSymbol }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution,
-                        instruments = watchInstruments, onSymbol = ::chooseSymbol, intervals = intervals, connected = market.connected,
+                    TradingChart(accountKey, shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
+                        if (active) visiblePositions else account.positions.filter { it.symbol == shownExecution },
+                        if (active) visibleTrades else account.trades.filter { it.symbol == shownExecution },
+                        selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, request.takeIf { draftShown }, preview.takeIf { draftShown },
+                        if (active) visibleOrders else account.orders.filter { it.request.symbol == shownExecution }, actions,
+                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
+                        instruments = watchInstruments, onSymbol = { value -> activateChart(chartId); chooseSymbol(value) }, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
-                        onSide = { side ->
+                        onSide = { side -> onActive {
                             val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
                                 OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
                             changeDraft(base.withSide(side, instrument, quote))
@@ -534,7 +626,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     scope.launch { runtime.desktopLayout.save() }
                                 }
                             }
-                        },
+                        } },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
@@ -548,7 +640,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }))
                     }
                     }
+                    }
                 }
+                val chart: @Composable (Modifier) -> Unit = { m -> chartView(MAIN_CHART, m) }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
                 Column(Modifier.align(if (end) Alignment.TopEnd else Alignment.TopCenter)
@@ -716,8 +810,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val dialogsOpen = showIndicators || showOrder || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
-                val dialogWindow = remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows }
-                val noticeWindow = activeWindow.takeIf { it in liveWindows }
+                // Read as state where a window draws its overlay: that content belongs to another composition than this one.
+                val dialogWindow by rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
+                val noticeWindow by rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
                 val mainFocused = LocalWindowInfo.current.isWindowFocused
                 LaunchedEffect(mainFocused) { if (mainFocused) activeWindow = null }
                 val windowOverlay: @Composable (String) -> Unit = { window ->
@@ -773,7 +868,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
-                            orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay)
+                            orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
+                            windowMenuExtra = { close ->
+                                DividerLine(Modifier.padding(vertical = 4.dp))
+                                DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
+                                    leadingIcon = { Icon(AppIcons.Add, contentDescription = null) }, modifier = Modifier.testTag("window-menu-new-chart"))
+                            })
+                        // The chart windows beside the main chart; closing one closes that chart for good.
+                        val chartWindows = LocalPanelWindowHost.current
+                        val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
+                        if (chartWindows != null) chartOrder.forEach { id -> key(id) {
+                            val slot = chartSlot(id)
+                            val window = chartWindowKey(id)
+                            chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
+                                onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
+                                onClose = { closeChart(id) }) { WindowSurface(window, windowOverlay) { chartView(id, Modifier.fillMaxSize()) } }
+                        } }
                     } else if (showOrderFlow) {
                         OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
                     } else {
