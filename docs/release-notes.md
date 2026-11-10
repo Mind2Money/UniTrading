@@ -18,6 +18,12 @@
 ✅ 在图表空白处点鼠标右键打开菜单：在该价位画水平线，或在该价位挂限价单、突破单。价位在市价下方时给出买入限价和卖出突破，在上方时给出卖出限价和买入突破；数量取下单面板当前的数量，不带止损止盈。默认弹确认框，开启“跳过交易确认”后点击即下单
 ⚠️ 右键菜单需要鼠标，触屏没有对应入口；菜单下单只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单
 
+🖥️ **桌面窗口**
+✅ 任意面板都能以独立窗口显示：面板栏底部新增“窗口”菜单，图表、交易商与账户、行情、下单、交易、订单流可以分别移到独立的系统窗口，关闭窗口即收回主窗口
+✅ 移出的面板不占主窗口空间，剩下的面板自动接管；行情、下单、交易图标照常收起和展开独立窗口里的面板
+✅ 窗口的位置和大小会保存，重启后照原样打开；“重置布局”把全部面板收回主窗口
+✅ 在独立窗口里下单、改单时，确认框和操作提示出现在当前操作的窗口里
+
 ⌨️ **键盘下单**
 ✅ 「设置 → 交易」新增“键盘下单”开关，默认关闭。开启后在 W / S 和 ↑ / ↓ 两组按键里选一组：点一下图表后，按 W（或 ↑）市价买入，按 S（或 ↓）市价卖出，数量取下单面板，不带止损止盈
 ✅ 沿用交易确认设置：默认按键后弹确认框，Enter 确认、Esc 取消；开启“跳过交易确认”后按键即成交，按住不放只下一单
@@ -42,6 +48,12 @@
 ⚠️ Second intervals work on the local demo and on Tradovate (checked on a Demo account with `@MES` at 30, 5 and 1 seconds: 2,000 bars each, then live updates); the Rithmic request for second bars has not been checked against a real server
 ✅ A right click on empty chart space opens a menu: draw a horizontal line at that price, or place a limit or stop order there. Under the market it offers a buy limit and a sell stop, over it a sell limit and a buy stop; the order takes the order panel's quantity and carries no stop or target. A confirmation appears unless you turned confirmations off
 ⚠️ The menu needs a mouse and has no touch equivalent; orders from it were only checked in offline tests, never placed on a Tradovate or Rithmic account
+
+🖥️ **Desktop windows**
+✅ Any panel can live in a window of its own: the panel rail has a new "windows" menu that moves the chart, accounts, market list, order ticket, trade list or order flow into a separate system window; closing the window brings the panel back
+✅ A panel that left takes no room in the main window and the others take over its space; the rail's market, order and trade icons still fold and unfold a panel in its own window
+✅ Window positions and sizes are saved and restored on the next start; "reset layout" brings every panel back into the main window
+✅ When you trade from a separate window, confirmations and notices appear in the window you are working in
 
 ⌨️ **Keyboard trading**
 ✅ Settings → Trading has a new "keyboard trading" switch, off by default. Turn it on and pick one pair of keys, W / S or ↑ / ↓: after a click on the chart, W (or ↑) buys at the market and S (or ↓) sells at the market, with the order panel's quantity and no stop or target

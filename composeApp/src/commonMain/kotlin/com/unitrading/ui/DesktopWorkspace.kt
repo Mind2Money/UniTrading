@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -34,16 +37,23 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.DesktopLayoutPreferences
 import com.unitrading.app.DesktopPanel
+import com.unitrading.app.WorkspacePanel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
  * The chart with the trade list under it, then the order ticket and the accounts and market panel, as on TradingView.
  * The Material rail folds the surrounding panels and opens order flow in the chart area's right half.
+ *
+ * Where the platform has windows, any panel can leave for a window of its own from the rail's window menu; closing that
+ * window brings it back. A panel that left takes no room here, and what stays shares the space. [windowOverlay] is drawn
+ * over the content of each such window, for the dialogs and notices that belong to the window the user works in, and
+ * [windowMenuExtra] adds the caller's own entries to the window menu.
  */
 @Composable
 internal fun DesktopWorkspace(
@@ -59,6 +69,8 @@ internal fun DesktopWorkspace(
     orderFlow: (@Composable (Modifier) -> Unit)? = null,
     orderFlowOpen: Boolean = false,
     onOrderFlowOpenChange: (Boolean) -> Unit = {},
+    windowOverlay: @Composable (window: String) -> Unit = {},
+    windowMenuExtra: @Composable (close: () -> Unit) -> Unit = {},
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -66,6 +78,18 @@ internal fun DesktopWorkspace(
     fun save() { scope.launch { controller.save() } }
     fun setOpen(panel: DesktopPanel, open: Boolean) { controller.setOpen(panel, open); save() }
     val defaults = DesktopLayoutPreferences()
+    val host = LocalPanelWindowHost.current
+    // Without windows to move to, a saved detachment is ignored and every panel stays here.
+    val detached = if (host == null) emptySet() else preferred.detached
+    fun setDetached(panel: WorkspacePanel, value: Boolean) { controller.setDetached(panel, value); save() }
+    val flowOpen = orderFlow != null && orderFlowOpen
+    val flowInline = flowOpen && WorkspacePanel.ORDER_FLOW !in detached
+    val chartInline = WorkspacePanel.CHART !in detached
+    val terminalInline = WorkspacePanel.TERMINAL !in detached
+    val orderInline = wide && preferred.orderOpen && WorkspacePanel.ORDER !in detached
+    val accountsInline = WorkspacePanel.ACCOUNTS !in detached
+    val marketInline = WorkspacePanel.MARKET !in detached
+    val sidebarInline = preferred.marketOpen && (accountsInline || marketInline)
     Column(modifier.testTag("desktop-workspace")) {
         error?.let { message ->
             Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -74,56 +98,63 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val flowOpen = orderFlow != null && orderFlowOpen
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred, flowOpen)
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().testTag("desktop-chart-area")) {
+                    // With the chart in its own window and no order flow beside it, the trade list takes the chart's room.
+                    val chartArea = chartInline || flowInline
+                    if (chartArea) BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().testTag("desktop-chart-area")) {
                         val flowWidth = orderFlowPanelDimension(maxWidth.value, preferred.orderFlowFraction)
                         val splitWidth = (maxWidth.value - PANEL_DIVIDER).coerceAtLeast(0f)
                         Row(Modifier.fillMaxSize()) {
-                            chart(Modifier.weight(1f).fillMaxHeight().testTag("desktop-chart"))
-                            if (flowOpen) {
-                                PanelResizeHandle("订单流宽度", "resize-order-flow", horizontal = true, dimension = flowWidth, direction = -1f,
+                            if (chartInline) chart(Modifier.weight(1f).fillMaxHeight().testTag("desktop-chart"))
+                            if (flowInline) {
+                                if (chartInline) PanelResizeHandle("订单流宽度", "resize-order-flow", horizontal = true, dimension = flowWidth, direction = -1f,
                                     onChange = { if (splitWidth > 0f) controller.update(preferred.copy(orderFlowFraction = it / splitWidth)) },
                                     onFinish = ::save,
                                     onReset = { controller.update(preferred.copy(orderFlowFraction = defaults.orderFlowFraction)); save() })
-                                Box(Modifier.width(flowWidth.value.dp).fillMaxHeight().testTag("desktop-order-flow")) {
+                                Box((if (chartInline) Modifier.width(flowWidth.value.dp) else Modifier.weight(1f)).fillMaxHeight().testTag("desktop-order-flow")) {
                                     orderFlow?.invoke(Modifier.fillMaxSize())
                                 }
                             }
                         }
                     }
-                    if (preferred.terminalOpen) {
-                        PanelResizeHandle("交易区高度", "resize-terminal", horizontal = false, dimension = layout.terminal, direction = -1f,
+                    if (!chartInline) DetachedBar(WorkspacePanel.CHART) { setDetached(WorkspacePanel.CHART, false) }
+                    if (terminalInline && preferred.terminalOpen) {
+                        if (chartArea) PanelResizeHandle("交易区高度", "resize-terminal", horizontal = false, dimension = layout.terminal, direction = -1f,
                             onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
                             onReset = { controller.update(preferred.copy(terminalHeight = defaults.terminalHeight)); save() })
-                        Column(Modifier.fillMaxWidth().height(layout.terminal.value.dp).testTag("desktop-terminal")) {
+                        Column((if (chartArea) Modifier.height(layout.terminal.value.dp) else Modifier.weight(1f)).fillMaxWidth().testTag("desktop-terminal")) {
                             TerminalBar(terminalSummary, open = true) { setOpen(DesktopPanel.TERMINAL, false) }
                             terminal(Modifier.weight(1f).fillMaxWidth())
                         }
                     } else {
-                        DividerLine()
-                        Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false) { setOpen(DesktopPanel.TERMINAL, true) } }
+                        if (terminalInline) {
+                            DividerLine()
+                            Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false) { setOpen(DesktopPanel.TERMINAL, true) } }
+                        }
+                        if (!chartArea) Spacer(Modifier.weight(1f))
                     }
                 }
-                if (wide && preferred.orderOpen) {
+                if (orderInline) {
                     PanelResizeHandle("下单栏宽度", "resize-order", horizontal = true, dimension = layout.order, direction = -1f,
                         onChange = { controller.update(preferred.copy(orderWidth = it)) }, onFinish = ::save,
                         onReset = { controller.update(preferred.copy(orderWidth = defaults.orderWidth)); save() })
                     order(Modifier.width(layout.order.value.dp).fillMaxHeight().testTag("desktop-order")) { setOpen(DesktopPanel.ORDER, false) }
                 }
-                if (preferred.marketOpen) {
+                if (sidebarInline) {
                     PanelResizeHandle("行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
                         onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
                         onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
                     Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-sidebar")) {
                         Column(Modifier.fillMaxSize()) {
-                            Column(Modifier.fillMaxWidth().height(layout.accounts.value.dp).testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
-                            PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,
+                            // Either half takes the whole column while the other is in a window of its own.
+                            if (accountsInline) Column((if (marketInline) Modifier.height(layout.accounts.value.dp) else Modifier.weight(1f)).fillMaxWidth()
+                                .testTag("desktop-accounts").verticalScroll(rememberScrollState())) { accounts() }
+                            if (accountsInline && marketInline) PanelResizeHandle("账户区高度", "resize-accounts", horizontal = false, dimension = layout.accounts,
                                 onChange = { controller.update(preferred.copy(accountsHeight = it)) }, onFinish = ::save,
                                 onReset = { controller.update(preferred.copy(accountsHeight = defaults.accountsHeight)); save() })
-                            market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
+                            if (marketInline) market(Modifier.weight(1f).fillMaxWidth().testTag("desktop-market"))
                         }
                         // In its own box: ActionIcon applies its modifier inside the tooltip, where alignment means nothing.
                         Box(Modifier.align(Alignment.TopEnd).padding(end = 4.dp)) {
@@ -139,14 +170,77 @@ internal fun DesktopWorkspace(
                     header = { Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium) }) {
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                     RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
-                    if (wide) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
+                    // The ticket only fits beside a wide chart, but its own window has room at any width.
+                    if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
                         onOrderFlowOpenChange(!flowOpen)
                     }
                     }
+                    if (host != null) WindowMenu(detached, WorkspacePanel.entries.filter { it != WorkspacePanel.ORDER_FLOW || orderFlow != null },
+                        { panel -> setDetached(panel, panel !in detached) }, windowMenuExtra)
                 }
             }
+        }
+        if (host != null) {
+            @Composable
+            fun window(panel: WorkspacePanel, width: Int, height: Int, content: @Composable () -> Unit) {
+                host.Window(panel.name, "UniTrading · ${panel.title}", preferred.windows[panel.name], DpSize(width.dp, height.dp),
+                    onBounds = { controller.setWindowBounds(panel.name, it); save() }, onClose = { setDetached(panel, false) }) {
+                    WindowSurface(panel.name, windowOverlay, content)
+                }
+            }
+            // A folded panel has no window either: the rail's toggles fold and unfold it wherever it lives.
+            if (WorkspacePanel.CHART in detached) window(WorkspacePanel.CHART, 1000, 680) { chart(Modifier.fillMaxSize()) }
+            if (WorkspacePanel.ACCOUNTS in detached && preferred.marketOpen) window(WorkspacePanel.ACCOUNTS, 380, 360) {
+                Column(Modifier.fillMaxSize().background(TradingColors.Surface).verticalScroll(rememberScrollState())) { accounts() }
+            }
+            if (WorkspacePanel.MARKET in detached && preferred.marketOpen) window(WorkspacePanel.MARKET, 380, 640) { market(Modifier.fillMaxSize()) }
+            if (WorkspacePanel.ORDER in detached && preferred.orderOpen) window(WorkspacePanel.ORDER, 360, 760) { order(Modifier.fillMaxSize()) { setOpen(DesktopPanel.ORDER, false) } }
+            if (WorkspacePanel.TERMINAL in detached && preferred.terminalOpen) window(WorkspacePanel.TERMINAL, 960, 360) {
+                Column(Modifier.fillMaxSize()) {
+                    PanelHeader("交易", Modifier.background(TradingColors.Surface), terminalSummary.ifBlank { null })
+                    terminal(Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+            if (WorkspacePanel.ORDER_FLOW in detached && flowOpen) window(WorkspacePanel.ORDER_FLOW, 760, 680) { orderFlow?.invoke(Modifier.fillMaxSize()) }
+        }
+    }
+}
+
+/** What fills a window that holds part of the workspace: the app's background, the content, and the caller's overlay above it. */
+@Composable
+internal fun WindowSurface(window: String, overlay: @Composable (String) -> Unit, content: @Composable () -> Unit) {
+    Surface(Modifier.fillMaxSize().testTag("window-$window"), color = TradingColors.Shell) {
+        Box(Modifier.fillMaxSize()) { content(); overlay(window) }
+    }
+}
+
+/** Stands where a panel was while it is in a window of its own, and brings it back. */
+@Composable
+private fun DetachedBar(panel: WorkspacePanel, onDock: () -> Unit) {
+    PanelHeader(panel.title, Modifier.background(TradingColors.Surface).testTag("detached-${panel.name}"), "在独立窗口中显示") {
+        TextButton(onDock, Modifier.testTag("dock-${panel.name}")) { Text("收回") }
+    }
+}
+
+/** The rail's last entry: which panels are in windows of their own. The menu stays open, so several can be moved in a row. */
+@Composable
+private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePanel>, onToggle: (WorkspacePanel) -> Unit, extra: @Composable (close: () -> Unit) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("rail-windows-item"), contentAlignment = Alignment.Center) {
+        NavigationRailItem(detached.isNotEmpty(), { expanded = true }, { Icon(AppIcons.OpenInNew, contentDescription = null) },
+            Modifier.testTag("rail-windows").semantics { stateDescription = if (detached.isEmpty()) "没有独立窗口" else "${detached.size} 个面板在独立窗口中" },
+            label = { Text("窗口", maxLines = 1) }, alwaysShowLabel = true)
+        DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 200.dp)) {
+            Text("在独立窗口中显示", Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp), style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
+            panels.forEach { panel ->
+                val out = panel in detached
+                DropdownMenuItem(text = { Text(panel.title) }, onClick = { onToggle(panel) },
+                    trailingIcon = { if (out) Icon(AppIcons.Check, contentDescription = "已在独立窗口中", tint = TradingColors.Accent) },
+                    modifier = Modifier.testTag("window-menu-${panel.name}").semantics { stateDescription = if (out) "独立窗口" else "主窗口" })
+            }
+            extra { expanded = false }
         }
     }
 }

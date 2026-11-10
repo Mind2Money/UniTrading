@@ -20,6 +20,47 @@ class DesktopLayoutTest {
         assertEquals("unchanged", store.read("chart-v1"))
     }
 
+    @Test fun detachedPanelsAndWindowBoundsPersistAndResetBringsEveryPanelHome() = runTest {
+        val store = MemorySnapshotStore()
+        store.write("desktop-layout-v1", """{"orderWidth":260.0}""")
+        val controller = DesktopLayoutController(store)
+        assertTrue(controller.preferences.value.detached.isEmpty(), "a layout saved before windows existed keeps every panel in the main window")
+        controller.setDetached(WorkspacePanel.CHART, true)
+        controller.setDetached(WorkspacePanel.ORDER, true)
+        controller.setDetached(WorkspacePanel.CHART, true)
+        val bounds = WindowBounds(1700f, -40f, 900f, 640f)
+        controller.setWindowBounds("CHART", bounds)
+        controller.setWindowBounds("chart-2", WindowBounds(10f, 10f, 500f, 400f))
+        assertTrue(controller.save())
+        val reopened = DesktopLayoutController(store)
+        assertEquals(setOf(WorkspacePanel.CHART, WorkspacePanel.ORDER), reopened.preferences.value.detached)
+        assertEquals(bounds, reopened.preferences.value.windows["CHART"])
+        assertEquals(260f, reopened.preferences.value.orderWidth)
+        reopened.setDetached(WorkspacePanel.ORDER, false)
+        reopened.setWindowBounds("chart-2", null)
+        assertEquals(setOf(WorkspacePanel.CHART), reopened.preferences.value.detached)
+        assertEquals(setOf("CHART"), reopened.preferences.value.windows.keys, "a closed chart window's bounds are forgotten")
+        reopened.reset()
+        assertEquals(DesktopLayoutPreferences(), reopened.preferences.value)
+    }
+
+    @Test fun windowBoundsThatCannotBeAWindowAreNeitherKeptNorLoaded() = runTest {
+        val controller = DesktopLayoutController(MemorySnapshotStore())
+        for (bad in listOf(WindowBounds(0f, 0f, 50f, 400f), WindowBounds(0f, 0f, 400f, 50f), WindowBounds(Float.NaN, 0f, 400f, 400f),
+            WindowBounds(0f, 30_000f, 400f, 400f), WindowBounds(0f, 0f, 20_000f, 400f))) {
+            controller.setWindowBounds("CHART", bad)
+            assertTrue(controller.preferences.value.windows.isEmpty(), "$bad")
+            assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(windows = mapOf("CHART" to bad))) }
+        }
+        assertFailsWith<IllegalArgumentException> { controller.update(DesktopLayoutPreferences(windows = mapOf("" to WindowBounds(0f, 0f, 400f, 400f)))) }
+        repeat(DesktopLayoutPreferences.MAX_WINDOWS + 5) { controller.setWindowBounds("chart-$it", WindowBounds(it.toFloat(), 0f, 400f, 400f)) }
+        assertEquals(DesktopLayoutPreferences.MAX_WINDOWS, controller.preferences.value.windows.size, "the list of remembered windows is bounded")
+        val damaged = MemorySnapshotStore().apply { write("desktop-layout-v1", """{"detached":["CHART"],"windows":{"CHART":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}}}""") }
+        val loaded = DesktopLayoutController(damaged)
+        assertEquals(DesktopLayoutPreferences(), loaded.preferences.value)
+        assertNotNull(loaded.error.value)
+    }
+
     @Test fun foldedPanelsPersistAndALayoutSavedBeforeThemOpensWithEverythingShown() = runTest {
         val store = MemorySnapshotStore()
         store.write("desktop-layout-v1", """{"orderWidth":260.0,"accountsHeight":196.125,"terminalHeight":179.875}""")

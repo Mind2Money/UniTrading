@@ -13,6 +13,19 @@ import kotlinx.serialization.json.Json
 /** The panels the desktop workspace can fold away. */
 enum class DesktopPanel { MARKET, ORDER, TERMINAL }
 
+/** Every part of the desktop workspace; each can leave the main window for a window of its own. */
+@Serializable
+enum class WorkspacePanel(val title: String) {
+    CHART("图表"), ACCOUNTS("交易商与账户"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
+}
+
+/** Where a window of the app sits on the desktop and how large it is, in dp. */
+@Serializable
+data class WindowBounds(val x: Float, val y: Float, val width: Float, val height: Float) {
+    val valid: Boolean get() = listOf(x, y, width, height).all { it.isFinite() } && x in -20_000f..20_000f && y in -20_000f..20_000f &&
+        width in 120f..10_000f && height in 120f..10_000f
+}
+
 /** Preferred panel dimensions in dp, and which panels are open. Window constraints affect display, never overwrite these preferences. */
 @Serializable
 data class DesktopLayoutPreferences(
@@ -24,6 +37,10 @@ data class DesktopLayoutPreferences(
     val orderOpen: Boolean = true,
     val terminalOpen: Boolean = true,
     val orderFlowFraction: Float = .5f,
+    /** Panels shown in a window of their own instead of in the main window. */
+    val detached: Set<WorkspacePanel> = emptySet(),
+    /** Last bounds of each window other than the main one, by its key: a panel's name, or a chart window's id. */
+    val windows: Map<String, WindowBounds> = emptyMap(),
 ) {
     fun validate() {
         require(listOf(sidebarWidth, orderWidth, accountsHeight, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
@@ -32,12 +49,15 @@ data class DesktopLayoutPreferences(
         require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {
             "订单流面板比例超出范围"
         }
+        require(windows.size <= MAX_WINDOWS && windows.all { (key, bounds) -> key.isNotBlank() && key.length <= 64 && bounds.valid }) { "窗口位置超出范围" }
     }
     fun withOpen(panel: DesktopPanel, open: Boolean) = when (panel) {
         DesktopPanel.MARKET -> copy(marketOpen = open)
         DesktopPanel.ORDER -> copy(orderOpen = open)
         DesktopPanel.TERMINAL -> copy(terminalOpen = open)
     }
+
+    companion object { const val MAX_WINDOWS = 64 }
 }
 
 class DesktopLayoutController(private val store: SnapshotStore) {
@@ -55,6 +75,16 @@ class DesktopLayoutController(private val store: SnapshotStore) {
     fun update(value: DesktopLayoutPreferences) { value.validate(); state.value = value }
     fun reset() = update(DesktopLayoutPreferences())
     fun setOpen(panel: DesktopPanel, open: Boolean) = update(state.value.withOpen(panel, open))
+    /** Moves [panel] into a window of its own, or back into the main window. */
+    fun setDetached(panel: WorkspacePanel, detached: Boolean) =
+        update(state.value.let { it.copy(detached = if (detached) it.detached + panel else it.detached - panel) })
+    /** Remembers where the window [key] sits; null forgets it, as when a chart window is closed for good. */
+    fun setWindowBounds(key: String, bounds: WindowBounds?) {
+        val current = state.value
+        if (bounds == null) { if (key in current.windows) update(current.copy(windows = current.windows - key)); return }
+        if (!bounds.valid || current.windows[key] == bounds || key !in current.windows && current.windows.size >= DesktopLayoutPreferences.MAX_WINDOWS) return
+        update(current.copy(windows = current.windows + (key to bounds)))
+    }
 
     /** Called after dragging finishes. Serialize writes, read the latest state, and never roll back newer UI changes. */
     suspend fun save(): Boolean = saveMutex.withLock {

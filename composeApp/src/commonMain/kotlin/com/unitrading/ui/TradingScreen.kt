@@ -19,7 +19,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.navigationevent.NavigationEventInfo
@@ -70,7 +72,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showTheme by remember { mutableStateOf(false) }
         if (showTheme) ThemeSettingsDialog(runtime.theme) { showTheme = false }
         var showIndicators by remember { mutableStateOf(false) }
-        if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
         var showConnection by remember { mutableStateOf(false) }
         if (showConnection) TradovateConnectionDialog(runtime, login, ::selectBroker, { showConnection = false })
         var showRithmicConnection by remember { mutableStateOf(false) }
@@ -169,6 +170,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
         var busy by remember { mutableStateOf(false) }
+        /** The window the user last worked in: null for the main window, else the key of a window that holds part of the workspace. */
+        var activeWindow by remember { mutableStateOf<String?>(null) }
+        val liveWindows = remember { mutableStateListOf<String>() }
+        val panelWindows = LocalPanelWindowHost.current != null
+        /** Whether the order ticket has a window of its own, where it fits whatever the main window's width. */
+        fun orderDetached() = panelWindows && WorkspacePanel.ORDER in runtime.desktopLayout.preferences.value.detached
         var notice by remember { mutableStateOf<TradingNotice?>(null) }
         var nextNoticeId by remember { mutableLongStateOf(0) }
         val scope = rememberCoroutineScope()
@@ -520,7 +527,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             changeDraft(base.withSide(side, instrument, quote))
                             when {
                                 compact -> orderPanelState = MobileOrderPanelState.EDITING
-                                !wide -> showOrder = true
+                                !wide && !orderDetached() -> showOrder = true
                                 // The form is what this button is for, so a folded order panel opens.
                                 !runtime.desktopLayout.preferences.value.orderOpen -> {
                                     runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
@@ -542,121 +549,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     }
                 }
-                Row(Modifier.fillMaxSize()) {
-                if (rail) MobileNavigationRail(mobileTab, selectTab)
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    if (desktop) {
-                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AppLogo(24.dp)
-                            Text("UniTrading", style = MaterialTheme.typography.titleMedium)
-                            EnvironmentBadge(environment)
-                            Text(session.account.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (!localDemo) ConnectionStatusControl(market, compact = false, busy, syncAction)
-                            if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
-                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
-                            ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
-                            if (!wide) Button({ showOrder = true; showDraft = true }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
-                        }
-                        DividerLine()
-                    }
-                    if (desktop) {
-                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
-                            accounts = {
-                                BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, panel = true)
-                            },
-                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true) },
-                            chart = chart,
-                            order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
-                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
-                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize") },
-                            terminal = { m ->
-                                TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
-                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = m, onProtectOrder = { editPendingProtection(it) })
-                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
-                            orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
-                            orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it })
-                    } else if (showOrderFlow) {
-                        OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
-                    } else {
-                        when (mobileTab) {
-                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }
-                            1 -> key(orderSession) {
-                                // The sheet keeps a full-height host while the chart dock changes continuously.
-                                val idleDock = if (rail) MobileTradeBarHeight else MobileTradeBarHeight + MobileNavigationHeight
-                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else idleDock,
-                                    animationSpec = tween(250), label = "chart-order-dock")
-                                MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
-                                    orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
-                                    Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
-                                    onHidden = {
-                                        if (orderPanelState == MobileOrderPanelState.CLOSED)
-                                            draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
-                                    },
-                                    content = {
-                                        notice?.let { current ->
-                                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
-                                                .padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
-                                            }
-                                        }
-                                        OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                            ::reviewMobileOrder, Modifier.weight(1f),
-                                            environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
-                                    },
-                                    body = {
-                                        Column(Modifier.fillMaxSize()) {
-                                            chart(Modifier.weight(1f))
-                                            Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
-                                                androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
-                                                    Column(Modifier.fillMaxWidth().requiredHeight(idleDock)) {
-                                                        Box(Modifier.height(MobileTradeBarHeight)) {
-                                                            MobileTradeBar(account, onOpen = {
-                                                                draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
-                                                                orderPanelState = MobileOrderPanelState.EDITING
-                                                            }, onPositions = { mobileTab = 2 })
-                                                        }
-                                                        if (!rail) MobileNavigation(mobileTab, selectTab)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    })
-                            }
-                            2 -> Column(Modifier.weight(1f).background(colors.Surface)) {
-                                PageTopBar("交易", session.account.name, actions = { barStatus() })
-                                TradeTerminal(plugin, account, market, selectedPositionId, true,
-                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
-                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1 },
-                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account, connected = market.connected) })
-                            }
-                            else -> if (showActivity) {
-                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
-                                    onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
-                            } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
-                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
-                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
-                        }
-                    }
-                    if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
-                    else if (desktop) {
-                        DividerLine()
-                        AccountStrip(account, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
-                            else "状态以服务器为准 · ${environment.label}", connected = market.connected)
-                    }
-                }
-                }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
-                Column(Modifier.align(if (desktop) Alignment.TopEnd else Alignment.TopCenter)
-                    .padding(start = 12.dp, end = 12.dp, top = if (desktop) 56.dp else if (keyboardOpen) 8.dp else 56.dp)
-                    .widthIn(max = 420.dp).fillMaxWidth().heightIn(max = maxHeight * .65f)
+                val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
+                Column(Modifier.align(if (end) Alignment.TopEnd else Alignment.TopCenter)
+                    .padding(start = 12.dp, end = 12.dp, top = top)
+                    .widthIn(max = 420.dp).fillMaxWidth().heightIn(max = limit)
                     .verticalScroll(rememberScrollState()).testTag("notification-overlay"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     storageError?.let { message ->
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
@@ -670,20 +567,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         if (!dismissed) FloatingNoticeCard(TradingNotice(0, message, persistent = true), "saved-login-status", { dismissed = true }, title = "登录状态")
                     } }
                 }
-                if (desktop && showSettings) {
-                    Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
-                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
-                            if (showActivity) {
-                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
-                                    onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
-                            } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
-                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
-                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
-                        }
-                    }
                 }
+                // Everything a trade or a chart can ask for in a dialog; it opens in the window the user is working in.
+                val tradeDialogs: @Composable () -> Unit = {
+                if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
                 if (showOrder) {
                     Dialog(onDismissRequest = { if (!busy) showOrder = false }) {
                         Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -825,6 +712,157 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
+                }
+                val dialogsOpen = showIndicators || showOrder || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null
+                // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
+                // has gone hands both back to the main one.
+                val dialogWindow = remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows }
+                val noticeWindow = activeWindow.takeIf { it in liveWindows }
+                val mainFocused = LocalWindowInfo.current.isWindowFocused
+                LaunchedEffect(mainFocused) { if (mainFocused) activeWindow = null }
+                val windowOverlay: @Composable (String) -> Unit = { window ->
+                    val focused = LocalWindowInfo.current.isWindowFocused
+                    LaunchedEffect(focused) { if (focused) activeWindow = window }
+                    DisposableEffect(window) {
+                        liveWindows += window
+                        onDispose { liveWindows -= window; if (activeWindow == window) activeWindow = null }
+                    }
+                    Box(Modifier.fillMaxSize()) {
+                        if (noticeWindow == window) notices(12.dp, Dp.Unspecified, true)
+                        if (dialogWindow == window) tradeDialogs()
+                    }
+                }
+                Row(Modifier.fillMaxSize()) {
+                if (rail) MobileNavigationRail(mobileTab, selectTab)
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    if (desktop) {
+                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AppLogo(24.dp)
+                            Text("UniTrading", style = MaterialTheme.typography.titleMedium)
+                            EnvironmentBadge(environment)
+                            Text(session.account.name, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (!localDemo) ConnectionStatusControl(market, compact = false, busy, syncAction)
+                            if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
+                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
+                            ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
+                            if (!wide) Button({
+                                showDraft = true
+                                if (!orderDetached()) showOrder = true
+                                else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
+                            }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
+                        }
+                        DividerLine()
+                    }
+                    if (desktop) {
+                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
+                            accounts = {
+                                BrokerAccountChooser(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, panel = true)
+                            },
+                            market = { m -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true) },
+                            chart = chart,
+                            order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
+                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
+                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize") },
+                            terminal = { m ->
+                                TradeTerminal(plugin, account, market, selectedPositionId, false,
+                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
+                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
+                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
+                                    modifier = m, onProtectOrder = { editPendingProtection(it) })
+                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
+                            orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay)
+                    } else if (showOrderFlow) {
+                        OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
+                    } else {
+                        when (mobileTab) {
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, session.account.name) { barStatus() }
+                            1 -> key(orderSession) {
+                                // The sheet keeps a full-height host while the chart dock changes continuously.
+                                val idleDock = if (rail) MobileTradeBarHeight else MobileTradeBarHeight + MobileNavigationHeight
+                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else idleDock,
+                                    animationSpec = tween(250), label = "chart-order-dock")
+                                MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
+                                    orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
+                                    Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
+                                    onHidden = {
+                                        if (orderPanelState == MobileOrderPanelState.CLOSED)
+                                            draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                    },
+                                    content = {
+                                        notice?.let { current ->
+                                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
+                                                .padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                                            }
+                                        }
+                                        OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                            ::reviewMobileOrder, Modifier.weight(1f),
+                                            environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
+                                    },
+                                    body = {
+                                        Column(Modifier.fillMaxSize()) {
+                                            chart(Modifier.weight(1f))
+                                            Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
+                                                androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
+                                                    Column(Modifier.fillMaxWidth().requiredHeight(idleDock)) {
+                                                        Box(Modifier.height(MobileTradeBarHeight)) {
+                                                            MobileTradeBar(account, onOpen = {
+                                                                draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                                                orderPanelState = MobileOrderPanelState.EDITING
+                                                            }, onPositions = { mobileTab = 2 })
+                                                        }
+                                                        if (!rail) MobileNavigation(mobileTab, selectTab)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    })
+                            }
+                            2 -> Column(Modifier.weight(1f).background(colors.Surface)) {
+                                PageTopBar("交易", session.account.name, actions = { barStatus() })
+                                TradeTerminal(plugin, account, market, selectedPositionId, true,
+                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1 },
+                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1 },
+                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) }, header = { AccountSummary(account, connected = market.connected) })
+                            }
+                            else -> if (showActivity) {
+                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                    onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
+                            } else SettingsPage(runtime, plugin, accountId, market, busy,
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
+                        }
+                    }
+                    if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
+                    else if (desktop) {
+                        DividerLine()
+                        AccountStrip(account, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
+                            else "状态以服务器为准 · ${environment.label}", connected = market.connected)
+                    }
+                }
+                }
+                if (noticeWindow == null) notices(if (desktop) 56.dp else if (keyboardOpen) 8.dp else 56.dp, maxHeight * .65f, desktop)
+                if (desktop && showSettings) {
+                    Dialog(onDismissRequest = { if (showActivity) showActivity = false else showSettings = false }) {
+                        Surface(Modifier.widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Surface) {
+                            if (showActivity) {
+                                ActivityLogPage("${plugin.descriptor.name} · ${session.account.name}", account.events,
+                                    onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
+                            } else SettingsPage(runtime, plugin, accountId, market, busy,
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
+                        }
+                    }
+                }
+                if (dialogWindow == null) tradeDialogs()
                 if (startupError != null && confirmation !is Confirmation.Reset) AlertDialog(
                     onDismissRequest = {}, title = { Text("模拟存档无法读取") },
                     text = { Text(startupError!! + "\n请先备份原文件。继续重置会覆盖所有模拟账户。") },
