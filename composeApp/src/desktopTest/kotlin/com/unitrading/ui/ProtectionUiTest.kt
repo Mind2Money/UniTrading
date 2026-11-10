@@ -20,12 +20,13 @@ import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
 
-private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false) : BrokerPlugin {
+/** [standalone]: the unresolved orders change on their own, price and quantity, as Tradovate's do. */
+private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false, standalone: Boolean = false) : BrokerPlugin {
     val spec = Instrument("TESTZ6", "Offline futures", "离线测试", 2, 25, 1_250_000, minLotsHundredths = 100,
         lotStepHundredths = 100, quantityUnit = "张", quantityDecimals = 0, estimatesIncludeFees = false)
     val time = 1_798_589_000_000L
     override val descriptor = BrokerDescriptor("offline-protection", "离线保护单测试", "Only synthetic fixtures", true, BrokerEnvironment.REMOTE_DEMO)
-    override val capabilities = BrokerCapabilities(hedging = false)
+    override val capabilities = BrokerCapabilities(hedging = false, modifyOrderQuantity = standalone)
     override val instruments = listOf(spec)
     override val accounts = listOf(AccountInfo("100", "离线测试账户"))
     override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
@@ -35,13 +36,17 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
         protectionEditable = !unresolved, feesKnown = false, stopLossOrderId = if (unresolved || unprotected) null else "702", takeProfitOrderId = if (unresolved || unprotected) null else "701")
     val orders = if (unprotected) emptyList() else listOf(
         PendingOrder("701", OrderRequest(spec.symbol, Side.SELL, OrderKind.LIMIT, 100, 552000), time,
-            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.TAKE_PROFIT, positionId = if (unresolved) null else position.id, editable = !unresolved),
+            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.TAKE_PROFIT, positionId = if (unresolved) null else position.id, editable = !unresolved,
+            standaloneEditable = standalone),
         PendingOrder("702", OrderRequest(spec.symbol, Side.SELL, OrderKind.STOP, 100, 549000), time,
-            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.STOP_LOSS, positionId = if (unresolved) null else position.id, editable = !unresolved),
+            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.STOP_LOSS, positionId = if (unresolved) null else position.id, editable = !unresolved,
+            standaloneEditable = standalone),
     )
     val accountState = MutableStateFlow(AccountSnapshot("100", 25_000_000_000, positions = listOf(position), orders = orders))
     var entryCalls = 0
     var protectionCalls = 0
+    /** Every order changed on its own: id, price and quantity. */
+    val changes = mutableListOf<Triple<String, Long, Long>>()
     override fun history(symbol: String, timeframe: Timeframe) = (0..100).map { i ->
         val close = 550000L + i % 5 * 25
         Candle(time - (100 - i) * timeframe.millis, close, close + 50, close - 50, close)
@@ -55,6 +60,17 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
             return OrderPreview(null, errors = listOf("Fixture must not use entry flow for TP/SL"))
         }
         override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long): TradeResult { entryCalls++; return TradeResult(false, "offline") }
+        /** A sell stop at or over the 5505.00 bid would trigger at once, a sell limit at or under it would fill. */
+        override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview {
+            val order = state.value.orders.first { it.id == orderId }
+            val crossed = if (order.request.kind == OrderKind.STOP) price >= 550500 else price <= 550500
+            return if (crossed) OrderPreview(null, errors = listOf(CROSSED_ORDER_PRICE), marginKnown = false, feesKnown = false)
+            else OrderPreview(price, marginKnown = false, feesKnown = false, warnings = listOfNotNull("数量大于当前净仓 1 张，全部成交后会反向持仓".takeIf { lotsHundredths > 100 }))
+        }
+        override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long): TradeResult {
+            changes += Triple(orderId, price, lotsHundredths)
+            return TradeResult(true, "离线订单已单独修改")
+        }
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?): TradeResult {
             protectionCalls++
             state.value = state.value.copy(positions = listOf(position.copy(stopLoss = stopLoss, takeProfit = takeProfit, version = 2)))
@@ -195,6 +211,59 @@ class ProtectionUiTest {
         assertEquals(0, broker.entryCalls)
         assertEquals(0, broker.protectionCalls)
     }
+    /** A stop or target the broker could not pair changes on its own: the trade list's button opens the dialog for it. */
+    @Test fun anUnpairedOrderChangesOnItsOwnFromTheTradeList() {
+        val broker = OfflineProtectionBroker(unresolved = true, standalone = true)
+        render(broker)
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("order-702")
+        compose.onNodeWithTag("edit-order-702").assertIsEnabled().assertTextContains("单独改单").performClick()
+        compose.onNodeWithTag("standalone-order-dialog").assertExists()
+        val price = compose.onNodeWithTag("standalone-price")
+        val confirm = compose.onNodeWithTag("confirm-standalone-order")
+        price.assertTextContains("5490.00")
+        compose.onNodeWithTag("standalone-quantity").assertTextContains("1")
+        price.performTextReplacement("5506.00")
+        compose.onNodeWithText(CROSSED_ORDER_PRICE).assertExists()
+        confirm.assertIsNotEnabled()
+        price.performTextReplacement("5480.00")
+        compose.onNodeWithTag("standalone-quantity").performTextReplacement("2")
+        compose.onNodeWithText("数量大于当前净仓 1 张，全部成交后会反向持仓").assertExists()
+        confirm.assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
+        assertEquals(listOf(Triple("702", 548_000L, 200L)), broker.changes)
+        assertEquals(0, broker.entryCalls)
+        assertEquals(0, broker.protectionCalls)
+    }
+
+    /** Its line on the chart drags like any order line; the drop opens the same dialog at the dropped price, its size kept. */
+    @Test fun anUnpairedOrderLineDragsToANewPrice() {
+        val broker = OfflineProtectionBroker(unresolved = true, standalone = true)
+        render(broker)
+        val state = chartState()
+        val scale = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(), 18f * .6f, state.getValue("plotBottom").toFloat())
+        val from = scale.y(549000)
+        val bounds = chart().fetchSemanticsNode().size
+        chart().performTouchInput { down(Offset(bounds.width * .55f, from)); moveBy(Offset(0f, 10f)); moveBy(Offset(0f, 30f)); up() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("standalone-order-dialog").assertExists()
+        compose.onNodeWithTag("standalone-price").assertTextContains(broker.spec.formatPrice(scale.price(from + 40f, broker.spec.tickSize)))
+        compose.onNodeWithTag("standalone-quantity").assertTextContains("1")
+        assertTrue(broker.changes.isEmpty(), "nothing reaches the broker before the confirmation")
+    }
+
+    @Test fun aDraggedUnpairedLineGoesOutAtOnceWhenConfirmationsAreSkipped() {
+        val broker = OfflineProtectionBroker(unresolved = true, standalone = true)
+        render(broker, skipConfirmation = true)
+        val state = chartState()
+        val scale = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(), 18f * .6f, state.getValue("plotBottom").toFloat())
+        val from = scale.y(549000)
+        val bounds = chart().fetchSemanticsNode().size
+        chart().performTouchInput { down(Offset(bounds.width * .55f, from)); moveBy(Offset(0f, 10f)); moveBy(Offset(0f, 30f)); up() }
+        compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
+        assertEquals(listOf(Triple("702", scale.price(from + 40f, broker.spec.tickSize), 100L)), broker.changes)
+        compose.onNodeWithTag("standalone-order-dialog").assertDoesNotExist()
+    }
+
     @Test fun chartButtonsAskForTheSameConfirmationAsTheTradeList() {
         val broker = OfflineProtectionBroker()
         render(broker)

@@ -31,7 +31,7 @@ class TradovateBroker(
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -1385,9 +1385,14 @@ class TradovateBroker(
                 val associated = relation.role == OrderRole.STOP_LOSS && protection?.stopId == id ||
                     relation.role == OrderRole.TAKE_PROFIT && protection?.targetId == id
                 val editable = if (relation.role == OrderRole.ENTRY) classifier.entryEditable(id) else associated && protection?.editable == true
+                // A stop or target that cannot move with its position still moves on its own: modifyorder changes it by its id. A
+                // suspended one waits for its entry to fill and moves with that entry's brackets, or with the strategy that prices it.
+                val standalone = relation.role != OrderRole.ENTRY && !editable && order.str("ordStatus") == "Working" &&
+                    (classifier.remainingQuantity(id) ?: 0) > 0
                 val note = relation.note ?: when {
                     relation.role == OrderRole.ENTRY && !editable -> "订单正在处理或已部分成交，暂不可改价"
-                    relation.role in setOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT) && !editable -> protection?.note ?: "保护关联尚未匹配当前净仓，仅显示"
+                    relation.role in setOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT) && !editable ->
+                        protection?.note ?: if (standalone) "保护关联尚未匹配当前净仓，只能单独修改这张单" else "保护关联尚未匹配当前净仓，仅显示"
                     else -> null
                 }
                 PendingOrder(id.toString(), OrderRequest(spec.symbol, side, kind, (version.long("orderQty") ?: return@mapNotNull null) * 100, price,
@@ -1396,7 +1401,7 @@ class TradovateBroker(
                     role = relation.role, positionId = if (protection != null && id in protection.confirmed) "$aid:$contract" else null, editable = editable, note = note,
                     filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100),
                     stopLossOrderId = stop?.toString(), takeProfitOrderId = target?.toString(),
-                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id))
+                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id), standaloneEditable = standalone)
             }
             val fills = book.list("fill").filter { f -> f.bool("active") != false && orders.any { it.long("id") == f.long("orderId") } }.mapNotNull { f ->
                 val spec = contractSpecs[f.long("contractId")] ?: return@mapNotNull null
@@ -1510,6 +1515,25 @@ class TradovateBroker(
                 if (order.role != OrderRole.ENTRY || !order.editable || !order.protectionEditable) return OrderPreview(null, errors = listOf(PENDING_BRACKETS_LOCKED))
                 return estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
             }
+            override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview {
+                val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
+                return changeEstimate(accountId, order, price, lotsHundredths)
+            }
+            override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long) =
+                command(accountId, requestId, "change:$orderId:$expectedVersion:$price:$lotsHundredths") {
+                    val order = state.value.orders.firstOrNull { it.id == orderId } ?: errorArgument("挂单已成交、撤销或不属于当前账户")
+                    require(order.version == expectedVersion) { "挂单版本已变化，请重新选择" }
+                    val estimate = changeEstimate(accountId, order, price, lotsHundredths)
+                    require(estimate.valid) { estimate.errors.joinToString("；") }
+                    val spec = instruments.first { it.symbol == order.request.symbol }
+                    val raw = lock.withLock { book.item("order", orderId.toLong()) }
+                    require(raw?.str("ordStatus") == "Working") { "订单正在处理，暂不可修改" }
+                    val limit = order.request.kind == OrderKind.LIMIT
+                    sendWrite(accountId, requestId, "modify", orderId.toLong(), "order/modifyorder", buildJsonObject {
+                        put("orderId", orderId.toLong()); put("orderQty", lotsHundredths / 100); put("orderType", if (limit) "Limit" else "Stop")
+                        put(if (limit) "price" else "stopPrice", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
+                    })
+                }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
                 request.sourceSymbol?.let { refreshContinuous(it) }
                 val estimate = estimate(accountId, request)
@@ -1598,6 +1622,21 @@ class TradovateBroker(
                 })
             }
         }
+    }
+
+    /**
+     * [order] changed on its own to [price] and [lotsHundredths]: the checks of an entry at that price, said of an order that
+     * may close a position, and a warning when it would close more than the position holds.
+     */
+    private fun changeEstimate(accountId: String, order: PendingOrder, price: Long, lotsHundredths: Long): OrderPreview {
+        fun refused(message: String) = OrderPreview(null, errors = listOf(message), marginKnown = false, feesKnown = false)
+        if (!order.standaloneEditable) return refused("这张订单不能单独修改，请刷新后重试")
+        if (lotsHundredths <= order.filledLotsHundredths) return refused("数量须大于已成交的 ${order.filledLotsHundredths / 100} 张")
+        val estimate = estimate(accountId, order.request.copy(entryPrice = price, lotsHundredths = lotsHundredths, stopLoss = null, takeProfit = null), modifying = true)
+        val position = accountFlows[accountId]?.value?.positions?.firstOrNull { it.symbol == order.request.symbol }
+        val reverses = position != null && position.side != order.request.side && lotsHundredths > position.lotsHundredths
+        return estimate.copy(errors = estimate.errors.map { if (it == "Limit/Stop 入场方向或距离无效") CROSSED_ORDER_PRICE else it },
+            warnings = estimate.warnings + listOfNotNull(position?.takeIf { reverses }?.let { "数量大于当前净仓 ${it.lotsHundredths / 100} 张，全部成交后会反向持仓" }))
     }
 
     private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false): OrderPreview = try {

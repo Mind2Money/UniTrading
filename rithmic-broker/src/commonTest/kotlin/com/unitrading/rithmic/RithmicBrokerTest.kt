@@ -282,6 +282,30 @@ class RithmicBrokerTest {
         assertTrue(stops.all { it.positionId == position.id && !it.editable && it.note != null })
     }
 
+    /** Two stops leave the position's protection locked; each leg still changes on its own, by its basket id, its price only. */
+    @Test fun bracketLegsLockedByTheirPositionChangeOnTheirOwn() = runTest {
+        val server = FakeRithmicServer().apply {
+            positions += positionRow(1, 5500.0)
+            openOrders += limitEntry("S1", RithmicEnums.SELL, 1, 5490.0, originalBasket = "E1", priceType = RithmicEnums.PRICE_STOP_MARKET)
+            openOrders += limitEntry("S2", RithmicEnums.SELL, 1, 5480.0, originalBasket = "E9", priceType = RithmicEnums.PRICE_STOP_MARKET)
+            openOrders += limitEntry("T1", RithmicEnums.SELL, 1, 5510.0, originalBasket = "E1")
+        }
+        val broker = ready(server)
+        val session = broker.openSession("ACC1")
+        assertFalse(session.state.value.positions.single().protectionEditable)
+        val orders = session.state.value.orders.associateBy { it.id }
+        assertTrue(listOf("S1", "S2", "T1").all { orders.getValue(it).standaloneEditable }, "the lone target is locked with the position too")
+        assertFalse(broker.capabilities.modifyOrderQuantity)
+        assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("S2", 550000, 100).errors, "a sell stop at the bid would trigger at once")
+        assertFalse(session.previewOrderChange("S2", 548500, 200).valid, "the size stays")
+        assertTrue(session.previewOrderChange("S2", 548500, 100).valid)
+        val result = session.changeOrder("req-70", "S2", orders.getValue("S2").version, 548500, 100)
+        assertTrue(result.accepted, result.message)
+        val sent = server.requests(Rt.REQUEST_MODIFY_ORDER).single()
+        assertEquals("S2", sent.str(Rf.BASKET_ID)); assertEquals(5485.0, sent.double(Rf.TRIGGER_PRICE))
+        assertEquals(RithmicEnums.PRICE_STOP_MARKET, sent.int(Rf.PRICE_TYPE)); assertEquals(1, sent.int(Rf.QUANTITY))
+    }
+
     /** The quote is 5500.00 / 5500.25 against a 5490 entry, and the target has been reached without filling. */
     @Test fun aStopMovesToBreakEvenAndPastItButNotThroughTheMarket() = runTest {
         val server = FakeRithmicServer().apply {

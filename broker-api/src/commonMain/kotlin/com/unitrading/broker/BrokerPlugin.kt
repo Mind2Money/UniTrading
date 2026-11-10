@@ -53,6 +53,12 @@ interface AccountSession {
         OrderPreview(null, errors = listOf("当前交易商不支持修改挂单止损/止盈"))
     suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?): TradeResult =
         TradeResult(false, "当前交易商不支持修改挂单止损/止盈")
+    /** Estimate for a [PendingOrder.standaloneEditable] order changed on its own to [price] and [lotsHundredths]. */
+    fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview =
+        OrderPreview(null, errors = listOf(STANDALONE_UNSUPPORTED))
+    /** Changes a [PendingOrder.standaloneEditable] order on its own, by its id. */
+    suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long): TradeResult =
+        TradeResult(false, STANDALONE_UNSUPPORTED)
     suspend fun placeOrder(requestId: String, request: OrderRequest): TradeResult
     suspend fun closePosition(requestId: String, positionId: String): TradeResult
     suspend fun cancelOrder(requestId: String, orderId: String): TradeResult
@@ -64,6 +70,11 @@ interface AccountSession {
         takeProfit: Long?,
     ): TradeResult
 }
+
+private const val STANDALONE_UNSUPPORTED = "当前交易商不支持单独修改这张订单"
+
+/** The message for a stop or limit price that has already crossed the market, said of an order that may close a position. */
+const val CROSSED_ORDER_PRICE = "价格已越过当前报价，改后会立即触发或成交"
 
 class BrokerRegistry(plugins: List<BrokerPlugin>) {
     private val mutablePlugins = kotlinx.coroutines.flow.MutableStateFlow(plugins)

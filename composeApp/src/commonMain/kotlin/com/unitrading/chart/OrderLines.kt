@@ -15,6 +15,8 @@ internal sealed interface EditableLine {
     data class PendingProtection(val order: PendingOrder, val stop: Boolean, override val price: Long) : EditableLine
     data class Draft(val request: OrderRequest) : EditableLine { override val price get() = request.entryPrice!! }
     data class DraftProtection(val request: OrderRequest, val stop: Boolean, override val price: Long) : EditableLine
+    /** A stop or target that changes on its own, by its id: see [PendingOrder.standaloneEditable]. */
+    data class Standalone(val order: PendingOrder) : EditableLine { override val price get() = order.request.entryPrice!! }
 }
 
 /** A line being dragged, with the price scale frozen at the start so the line follows the pointer exactly. */
@@ -68,11 +70,12 @@ internal fun resultLabel(pnl: Long?, gross: Boolean) = "${if (gross) "毛 " else
 internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: OrderPreview?, line: OrderLine?): String {
     val price = instrument.formatPrice(drag.price)
     val errors = estimate?.errors.orEmpty().joinToString("；")
+    if (drag.line is EditableLine.Standalone) return "单独改价预览 $price   ${line?.pnl?.let { resultLabel(it, line.gross) } ?: ""}   $errors".replace(Regex(" {4,}"), "   ").trimEnd()
     val stop = when (val edit = drag.line) {
         is EditableLine.Protection -> edit.stop
         is EditableLine.PendingProtection -> edit.stop
         is EditableLine.DraftProtection -> edit.stop
-        is EditableLine.Pending, is EditableLine.Draft -> null
+        is EditableLine.Pending, is EditableLine.Draft, is EditableLine.Standalone -> null
     }
     if (stop != null) return "${if (stop) "止损" else "止盈"}预览 $price   ${resultLabel(line?.pnl, line?.gross == true)}   $errors".trimEnd()
     val e = estimate ?: return "入场预览 $price"
@@ -163,12 +166,15 @@ internal fun orderLines(
             val base = request.entryPrice ?: return@forEach
             val position = positions.firstOrNull { it.id == order.positionId }
             val edit = when {
+                // The broker marks an order that changes on its own only where no other route moves it.
+                order.standaloneEditable && request.kind != OrderKind.MARKET -> EditableLine.Standalone(order)
                 !options.editPending || !order.editable -> null
                 order.role == OrderRole.ENTRY -> EditableLine.Pending(order)
                 order.isProtection && position?.protectionEditable == true -> EditableLine.Protection(position, order.role == OrderRole.STOP_LOSS, base)
                 else -> null
             }
             val dragged = when (moving) {
+                is EditableLine.Standalone -> moving.order.id == order.id
                 is EditableLine.Pending -> moving.order.id == order.id
                 is EditableLine.Protection -> order.id == if (moving.stop) moving.position.stopLossOrderId else moving.position.takeProfitOrderId
                 else -> false
@@ -267,6 +273,9 @@ class ChartOrderActions(
     val tradingKeys: TradingKeys? = null,
     val instantOrders: Boolean = false,
     val onMarketOrder: (Side) -> Unit = {},
+    /** The broker's check of an order changed on its own to a price, its quantity kept; see [PendingOrder.standaloneEditable]. */
+    val estimateStandalone: (PendingOrder, Long) -> OrderPreview = { _, _ -> OrderPreview(null) },
+    val onStandalone: (PendingOrder, Long) -> Unit = { _, _ -> },
 )
 
 /** The side [key] trades under these trading keys; null for every other key, and for any key held with a modifier. */

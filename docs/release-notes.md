@@ -30,6 +30,11 @@
 ✅ 图表窗口的品种、周期、位置和大小会保存，重启后照原样打开；所有打开的图表都保持实时更新
 ⚠️ Rithmic 的多图表同时订阅只经过离线测试；Tradovate 对同时订阅的图表数量有上限，8 个窗口加预读是否会触到上限尚未实测
 
+🛡️ **止损止盈**
+✅ 无法配对的止损、止盈不再只能看不能改：关联待确认的单，以及因为配对不完整而锁住仓位保护的止损止盈，可以逐张单独修改。图表上拖动这条线改价格；交易页的“单独改单”（持仓行里是保护单上的铅笔按钮）打开对话框，Tradovate 可同时改数量，Rithmic 只改价格
+✅ 只改这一张单，同一仓位的其他单不变；止损价越过当前报价会立即触发、限价越过会立即成交，这两种直接拒绝；数量大于当前净仓时提示全部成交后会反向持仓。沿用交易确认设置
+⚠️ 只经过离线测试，没有在 Tradovate、Rithmic 账户上实际改过单；Rithmic 单独改括号子单数量未开放，等待在服务器上核实
+
 ⌨️ **键盘下单**
 ✅ 「设置 → 交易」新增“键盘下单”开关，默认关闭。开启后在 W / S 和 ↑ / ↓ 两组按键里选一组：点一下图表后，按 W（或 ↑）市价买入，按 S（或 ↓）市价卖出，数量取下单面板，不带止损止盈
 ✅ 沿用交易确认设置：默认按键后弹确认框，Enter 确认、Esc 取消；开启“跳过交易确认”后按键即成交，按住不放只下一单
@@ -66,6 +71,11 @@
 ✅ A symbol's drawings are shared by every chart that shows it, and undo works per symbol, so it never takes back a line another chart drew since
 ✅ Chart windows keep their symbol, interval, position and size and open as they were on the next start; every open chart stays live
 ⚠️ Several live charts at once on Rithmic were only checked in offline tests; Tradovate caps simultaneous chart subscriptions, and whether 8 windows plus the read-ahead reach that cap has not been tried
+
+🛡️ **Stops and targets**
+✅ A stop or target that cannot be paired is no longer read-only: an order whose link is unconfirmed, and a stop or target whose incomplete pairing locks the position's protection, can each be changed on its own. Drag its line on the chart to change the price; "change on its own" in the trade list (a pencil on the protection chip in a position row) opens a dialog where Tradovate also takes a new quantity and Rithmic the price only
+✅ Only that order changes, nothing else on the position; a stop past the current quote would trigger at once and a limit past it would fill, so both are refused; a quantity above the net position warns that a full fill reverses it. Confirmations follow your setting
+⚠️ Checked in offline tests only, never on a Tradovate or Rithmic account; changing the size of a Rithmic bracket leg on its own stays off until it is checked against the server
 
 ⌨️ **Keyboard trading**
 ✅ Settings → Trading has a new "keyboard trading" switch, off by default. Turn it on and pick one pair of keys, W / S or ↑ / ↓: after a click on the chart, W (or ↑) buys at the market and S (or ↓) sells at the market, with the order panel's quantity and no stop or target

@@ -240,7 +240,7 @@ internal fun TradeTerminal(
                     }
                     if (orders.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         orders.forEach { order ->
-                            ProtectionChip(order, instrument, order.request.entryPrice?.let { estimatedExitPnl(instrument, p, order.request.lotsHundredths, it) }, !p.feesKnown, busy, onCancel)
+                            ProtectionChip(order, instrument, order.request.entryPrice?.let { estimatedExitPnl(instrument, p, order.request.lotsHundredths, it) }, !p.feesKnown, busy, onCancel, onEditOrder)
                         }
                     }
                     (listOfNotNull(p.protectionNote) + orders.mapNotNull { it.note }).distinct().forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
@@ -277,15 +277,15 @@ internal fun TradeTerminal(
                     if (brackets.isNotEmpty()) FlowRow(Modifier.padding(vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         brackets.forEach { bracket ->
                             val pnl = r.entryPrice?.let { entry -> bracket.request.entryPrice?.let { exit -> estimatedExitPnl(instrument, r.side, bracket.request.lotsHundredths, entry, exit) } }
-                            ProtectionChip(bracket, instrument, pnl, !instrument.estimatesIncludeFees, busy, onCancel)
+                            ProtectionChip(bracket, instrument, pnl, !instrument.estimatesIncludeFees, busy, onCancel, onEditOrder)
                         }
                     }
                     if (order.filledLotsHundredths > 0) Text("已成交 ${instrument.formatQuantity(order.filledLotsHundredths)} ${instrument.quantityUnit}", color = colors.Muted, style = type.bodySmall)
                     (listOfNotNull(order.note) + brackets.mapNotNull { it.note }).distinct().forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton({ onEditOrder(order) }, enabled = !busy && order.editable &&
-                            (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders),
-                            modifier = Modifier.testTag("edit-order-${order.id}")) { Text(order.role.editLabel()) }
+                        TextButton({ onEditOrder(order) }, enabled = !busy && (order.standaloneEditable || order.editable &&
+                            (if (order.isProtection) plugin.capabilities.modifyProtection else plugin.capabilities.modifyPendingOrders)),
+                            modifier = Modifier.testTag("edit-order-${order.id}")) { Text(if (order.standaloneEditable) "单独改单" else order.role.editLabel()) }
                         if (order.role == OrderRole.ENTRY && plugin.capabilities.modifyPendingProtection &&
                             (r.stopLoss != null || r.takeProfit != null || plugin.capabilities.addProtection)) {
                             TextButton({ onProtectOrder(order) }, enabled = !busy && order.editable && order.protectionEditable, modifier = Modifier.testTag("protect-order-${order.id}")) { Text("止损/止盈") }
@@ -340,9 +340,13 @@ internal fun TradeTerminal(
     }
 }
 
-/** A stop loss or take profit on the row it belongs to: price, size, the result if it fills ([pnl], [gross] without fees), and the button that cancels it. */
+/**
+ * A stop loss or take profit on the row it belongs to: price, size, the result if it fills ([pnl], [gross] without fees),
+ * the button that changes it on its own where it cannot move with its position, and the button that cancels it.
+ */
 @Composable
-private fun ProtectionChip(order: PendingOrder, instrument: Instrument, pnl: Long?, gross: Boolean, busy: Boolean, onCancel: (PendingOrder) -> Unit) {
+private fun ProtectionChip(order: PendingOrder, instrument: Instrument, pnl: Long?, gross: Boolean, busy: Boolean, onCancel: (PendingOrder) -> Unit,
+    onEdit: (PendingOrder) -> Unit) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     val r = order.request
@@ -353,6 +357,8 @@ private fun ProtectionChip(order: PendingOrder, instrument: Instrument, pnl: Lon
             Box(Modifier.testTag("order-role-${order.id}")) { StatusBadge(order.role.label(), if (stop) colors.Stop else colors.Target) }
             Text("${r.entryPrice?.let(instrument::formatPrice) ?: "—"} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}$filled", style = type.bodySmall, maxLines = 1)
             Text(resultLabel(pnl, gross), color = colors.pnl(pnl), style = type.bodySmall, maxLines = 1)
+            if (order.standaloneEditable) ActionIcon(AppIcons.Edit, "单独修改${if (stop) "止损" else "止盈"} #${shortId(order.id)}", "edit-order-${order.id}",
+                Modifier.size(32.dp), enabled = !busy, iconSize = 16.dp) { onEdit(order) }
             ActionIcon(AppIcons.Close, "撤销${if (stop) "止损" else "止盈"} #${shortId(order.id)}", "cancel-order-${order.id}", Modifier.size(32.dp), enabled = !busy,
                 tint = MaterialTheme.colorScheme.error, iconSize = 16.dp) { onCancel(order) }
         }

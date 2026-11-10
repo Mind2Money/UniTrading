@@ -178,6 +178,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var focusedExecution by remember(accountKey) { mutableStateOf<Execution?>(null) }
         var protection by remember(accountKey) { mutableStateOf<ProtectionEdit?>(null) }
         var pendingEdit by remember(accountKey) { mutableStateOf<PendingEntryEdit?>(null) }
+        var standaloneEdit by remember(accountKey) { mutableStateOf<StandaloneOrderEdit?>(null) }
         var pendingProtection by remember(accountKey) { mutableStateOf<PendingProtectionEdit?>(null) }
         var confirmation by remember(accountKey, symbol, executionSymbol) { mutableStateOf<Confirmation?>(null) }
         var mobileTab by remember { mutableStateOf(1) }
@@ -251,7 +252,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         LaunchedEffect(symbol, executionSymbol) {
             if (previousExecutionSymbol != executionSymbol) {
                 selectedPositionId = null; focusedTrade = null; focusedExecution = null
-                protection = null; pendingEdit = null; pendingProtection = null
+                protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null
                 previousExecutionSymbol = executionSymbol
             }
         }
@@ -261,7 +262,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val target = if (saved != null && catalog.instruments.any { it.symbol == saved }) saved.also { restoring = null } else symbol
             if (chosenSymbol != target) {
                 chosenSymbol = target
-                selectedPositionId = null; focusedTrade = null; focusedExecution = null; protection = null; pendingEdit = null; pendingProtection = null; confirmation = null
+                selectedPositionId = null; focusedTrade = null; focusedExecution = null; protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null; confirmation = null
             }
         }
         LaunchedEffect(plugin, catalog.instruments.isEmpty()) { runtime.marketWatch.initialize(plugin.descriptor.id, catalog.instruments, symbol) }
@@ -306,6 +307,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             protection = null
             pendingEdit = null
             pendingProtection = null
+            standaloneEdit = null
             confirmation = null
             mobileTab = 1
         }
@@ -318,7 +320,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             activeChart = id
             if (target.symbol != chosenSymbol) {
                 focusedTrade = null; focusedExecution = null; selectedPositionId = null
-                protection = null; pendingEdit = null; pendingProtection = null; confirmation = null
+                protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null; confirmation = null
             }
             // A symbol the broker has not loaded yet waits the way the saved chart does at start, and is not saved over meanwhile.
             if (catalog.instruments.any { it.symbol == target.symbol }) showSymbol(target.symbol) else restoring = target.symbol
@@ -411,6 +413,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             pendingProtection = PendingProtectionEdit(current, sl?.let(spec::formatPrice) ?: "", tp?.let(spec::formatPrice) ?: "")
         }
 
+        /**
+         * One order changed on its own, apart from the position or entry it may belong to: a line dragged on the chart, or
+         * the trade list's button. A drag goes out at once without confirmations; anything else opens the dialog.
+         */
+        fun changeAlone(order: PendingOrder, price: Long, lots: Long, fromChart: Boolean) {
+            if (busy) return
+            val current = session.state.value.orders.firstOrNull { it.id == order.id }
+            if (current == null || current.version != order.version || !current.standaloneEditable) {
+                showNotice("订单状态已变化，请重新选择", attention = true)
+                return
+            }
+            if (fromChart && skipConfirmation) {
+                val estimate = session.previewOrderChange(current.id, price, lots)
+                if (!estimate.valid) { showNotice(estimate.errors.firstOrNull() ?: "改单价格无效", attention = true); return }
+                perform { session.changeOrder(requestId(), current.id, current.version, price, lots) }
+                return
+            }
+            val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
+            showContract(current.request.symbol)
+            protection = null
+            pendingProtection = null
+            pendingEdit = null
+            showDraft = false
+            standaloneEdit = StandaloneOrderEdit(current, spec.formatPrice(price), spec.formatQuantity(lots))
+        }
+
         fun editPending(order: PendingOrder, price: Long = order.request.entryPrice!!, fromChart: Boolean = false) {
             if (busy) return
             val current = session.state.value.orders.firstOrNull { it.id == order.id }
@@ -418,6 +446,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
             }
+            // A stop or target that cannot move with its position moves on its own.
+            if (current.standaloneEditable) { changeAlone(current, price, current.request.lotsHundredths, fromChart); return }
             if (!current.editable) {
                 showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
                 return
@@ -590,6 +620,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         entryLots = shownInstrument.parseQuantity(if (active) draft.quantity else
                             orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
                         onEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price) } },
+                        estimateStandalone = { order, price -> session.previewOrderChange(order.id, price, order.request.lotsHundredths) },
+                        onStandalone = { order, price -> changeAlone(order, price, order.request.lotsHundredths, fromChart = true) },
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
                         onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
@@ -758,6 +790,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         dismissButton = { TextButton({ pendingEdit = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
+                standaloneEdit?.let { edit ->
+                    val spec = catalog.instruments.firstOrNull { it.symbol == edit.order.request.symbol } ?: return@let
+                    StandaloneOrderDialog(edit, spec, account.orders.firstOrNull { it.id == edit.order.id }, plugin.capabilities,
+                        { price, lots -> session.previewOrderChange(edit.order.id, price, lots) }, busy, skipConfirmation, { standaloneEdit = it },
+                        onConfirm = { price, lots ->
+                            standaloneEdit = null
+                            perform { session.changeOrder(requestId(), edit.order.id, edit.order.version, price, lots) }
+                        },
+                        onDismiss = { if (!busy) standaloneEdit = null })
+                }
                 pendingProtection?.let { edit ->
                     val spec = catalog.instruments.firstOrNull { it.symbol == edit.order.request.symbol } ?: return@let
                     PendingProtectionDialog(edit, spec, account.orders.firstOrNull { it.id == edit.order.id }, plugin.capabilities,
@@ -807,7 +849,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     )
                 }
                 }
-                val dialogsOpen = showIndicators || showOrder || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null
+                val dialogsOpen = showIndicators || showOrder || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null ||
+                    standaloneEdit != null
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
                 // Read as state where a window draws its overlay: that content belongs to another composition than this one.

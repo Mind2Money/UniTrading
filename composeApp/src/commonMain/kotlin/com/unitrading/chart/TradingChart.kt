@@ -191,6 +191,7 @@ fun TradingChart(
             is EditableLine.PendingProtection -> line.order.request.withProtection(line.stop, edit.price)
                 .let { actions.estimatePendingProtection(line.order.id, it.stopLoss, it.takeProfit) }
             is EditableLine.Protection -> null
+            is EditableLine.Standalone -> actions.estimateStandalone(line.order, edit.price)
         }
     }
     val activePreview = if (drag?.line is EditableLine.Draft || drag?.line is EditableLine.DraftProtection) dragEstimate else preview
@@ -463,6 +464,7 @@ fun TradingChart(
                                                 .let { act.onPendingProtection(line.order, it.stopLoss, it.takeProfit) }
                                             is EditableLine.Draft -> act.onDraftEntry(edit.price)
                                             is EditableLine.DraftProtection -> act.onDraftProtection(line.stop, edit.price)
+                                            is EditableLine.Standalone -> act.onStandalone(line.order, edit.price)
                                         }
                                     }
                                     drag = null

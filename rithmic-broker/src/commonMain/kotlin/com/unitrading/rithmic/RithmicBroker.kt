@@ -1154,6 +1154,8 @@ class RithmicBroker(
             val rawPositions = positions.values.filter { it.accountId == aid && it.net != 0L }
             val protectionByOrder = mutableMapOf<String, String>()
             val singledOut = mutableSetOf<String>()
+            /** Legs the position's own protection edit moves; any other leg moves on its own. */
+            val movable = mutableSetOf<String>()
             val mappedPositions = rawPositions.mapNotNull { p ->
                 val spec = specs[p.symbol] ?: return@mapNotNull null
                 val entry = p.avgPrice?.let(spec.scale::units)?.takeIf { it > 0 } ?: return@mapNotNull null
@@ -1165,6 +1167,7 @@ class RithmicBroker(
                 val editable = stops.size <= 1 && targets.size <= 1
                 (stops + targets).forEach { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
                 listOfNotNull(stop, target).mapTo(singledOut) { it.basketId }
+                if (editable) listOfNotNull(stop, target).mapTo(movable) { it.basketId }
                 val id = "$aid:${p.symbol}"
                 val prior = old?.positions?.firstOrNull { it.id == id }
                 // Every PnL update carries a new time; taking it as the opening time would bump the version and invalidate any open edit.
@@ -1206,16 +1209,22 @@ class RithmicBroker(
                     OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> order.basketId in singledOut && working
                     else -> false
                 }
+                // A bracket leg that cannot move with its position still moves on its own, by its basket id. A stop-limit is left
+                // alone: the modify request would turn it into a stop-market.
+                val standalone = role != OrderRole.ENTRY && order.basketId !in movable && working && order.quantity > order.filled &&
+                    order.priceType in setOf(RithmicEnums.PRICE_LIMIT, RithmicEnums.PRICE_STOP_MARKET)
                 val note = when {
                     role == OrderRole.ENTRY && !editable -> if (order.filled > 0) "订单已部分成交，暂不可改价" else "订单状态为“${order.status}”，暂不可改价"
-                    role != OrderRole.ENTRY && order.basketId !in singledOut -> "括号保护单尚未唯一关联到当前净仓，仅显示"
+                    role != OrderRole.ENTRY && order.basketId !in singledOut ->
+                        if (standalone) "括号保护单尚未唯一关联到当前净仓，只能单独修改这张单的价格" else "括号保护单尚未唯一关联到当前净仓，仅显示"
                     role == OrderRole.UNRESOLVED -> "无法识别的括号订单类型"
                     else -> null
                 }
                 val request = OrderRequest(order.symbol, side, kind, checkedMultiply(order.quantity, 100), entryPrice, stopLoss, takeProfit)
                 val prior = old?.orders?.firstOrNull { it.id == order.basketId }
                 val candidate = PendingOrder(order.basketId, request, order.timeMs, 1, role, positionId, editable, note,
-                    checkedMultiply(order.filled, 100), protectionEditable = role == OrderRole.ENTRY && editable && entryPrice != null && kind != OrderKind.MARKET)
+                    checkedMultiply(order.filled, 100), protectionEditable = role == OrderRole.ENTRY && editable && entryPrice != null && kind != OrderKind.MARKET,
+                    standaloneEditable = standalone)
                 candidate.copy(version = if (prior?.copy(version = 1) == candidate) prior.version else (prior?.version ?: 0) + 1)
             }
             val executions = fills.values.filter { it.accountId == aid }.mapNotNull { fill ->
@@ -1288,6 +1297,22 @@ class RithmicBroker(
                 if (order.role != OrderRole.ENTRY || !order.editable || !order.protectionEditable) return OrderPreview(null, errors = listOf("该挂单的括号保护尚未确认或正在处理，暂不可修改"))
                 return estimate(accountId, order.request.copy(stopLoss = stopLoss, takeProfit = takeProfit), modifying = true)
             }
+            override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview {
+                val order = state.value.orders.firstOrNull { it.id == orderId } ?: return OrderPreview(null, errors = listOf("挂单已结束或不属于当前账户"))
+                return changeEstimate(accountId, order, price, lotsHundredths)
+            }
+            override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long) =
+                command(accountId, requestId, "change:$orderId:$expectedVersion:$price:$lotsHundredths") {
+                    val order = state.value.orders.firstOrNull { it.id == orderId } ?: errorArgument("挂单已成交、撤销或不属于当前账户")
+                    require(order.version == expectedVersion) { "挂单版本已变化，请重新选择" }
+                    val estimate = changeEstimate(accountId, order, price, lotsHundredths)
+                    require(estimate.valid) { estimate.errors.joinToString("；") }
+                    val (spec, raw) = lock.withLock { specs[order.request.symbol] to orders[orderId] }
+                    require(spec != null && raw != null && raw.active) { "订单正在处理，暂不可修改" }
+                    sendWrite(accountId, requestId, "modify", orderId, Rt.REQUEST_MODIFY_ORDER, order.request.symbol, price, raw.sequence) {
+                        modifyBody(accountId, orderId, spec, raw.quantity, order.request.kind, price)
+                    }
+                }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
                 request.sourceSymbol?.let { source -> if (lock.withLock { continuousRoutes[source]?.tradeSymbol } != request.symbol) errorArgument("主力合约已换月，请重新确认订单") }
                 val estimate = estimate(accountId, request)
@@ -1418,6 +1443,18 @@ class RithmicBroker(
         if (kind == OrderKind.LIMIT) { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_LIMIT); double(Rf.PRICE, spec.scale.price(price)) }
         else { int32(Rf.PRICE_TYPE, RithmicEnums.PRICE_STOP_MARKET); double(Rf.TRIGGER_PRICE, spec.scale.price(price)) }
         int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
+    }
+
+    /**
+     * [order] changed on its own to [price]: the checks of an entry at that price, said of an order that may close a
+     * position. The quantity stays: a bracket leg changed in size on its own has not been tried against the server.
+     */
+    private fun changeEstimate(accountId: String, order: PendingOrder, price: Long, lotsHundredths: Long): OrderPreview {
+        fun refused(message: String) = OrderPreview(null, errors = listOf(message), marginKnown = false, feesKnown = false)
+        if (!order.standaloneEditable) return refused("这张订单不能单独修改，请刷新后重试")
+        if (lotsHundredths != order.request.lotsHundredths) return refused("Rithmic 这里只能单独改价格，数量请在 R | Trader 修改")
+        val estimate = estimate(accountId, order.request.copy(entryPrice = price, stopLoss = null, takeProfit = null), modifying = true)
+        return estimate.copy(errors = estimate.errors.map { if (it == "Limit/Stop 入场方向或距离无效") CROSSED_ORDER_PRICE else it })
     }
 
     private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false): OrderPreview = try {

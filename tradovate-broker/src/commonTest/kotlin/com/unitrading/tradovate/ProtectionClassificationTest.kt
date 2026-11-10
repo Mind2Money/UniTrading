@@ -246,6 +246,52 @@ class ProtectionBrokerIntegrationTest {
         }
         assertTrue(wire.requests.none { it.path.startsWith("order/") })
     }
+    /** The locked stop and target and the unresolved order each change on their own, by their id, price and size. */
+    @Test fun exitsThatCannotMoveWithTheirPositionChangeOnTheirOwn() = runTest {
+        val wire = MockTradovateWire()
+        val broker = broker(wire)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        inject(wire)
+        val extra = order(703, "Stop")
+        wire.account.entity("order", extra.first); wire.account.entity("orderVersion", extra.second); runCurrent()
+        val session = broker.openSession("100")
+        assertFalse(session.state.value.positions.single().protectionEditable)
+        val orders = session.state.value.orders.associateBy { it.id }
+        assertTrue(listOf("701", "702", "703").all { orders.getValue(it).standaloneEditable }, "${orders.values}")
+        assertTrue(broker.capabilities.modifyOrderQuantity)
+        // The 5500.00 bid: a sell stop at it would trigger at once, a sell limit at it would fill.
+        assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("703", 5_500_000_000, 100).errors)
+        assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("701", 5_500_000_000, 100).errors)
+        assertFalse(session.previewOrderChange("703", 5_480_000_000, 150).valid, "whole contracts only")
+        val larger = session.previewOrderChange("703", 5_480_000_000, 300)
+        assertTrue(larger.valid, "${larger.errors}")
+        assertTrue(larger.warnings.any { "反向持仓" in it }, "${larger.warnings}")
+        val stop = orders.getValue("703")
+        assertFalse(session.changeOrder("stale-703", "703", stop.version + 7, 5_480_000_000, 200).accepted)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+        val result = session.changeOrder("alone-703", "703", stop.version, 5_480_000_000, 200)
+        assertTrue(result.accepted, result.message)
+        val request = wire.requests.single { it.path == "order/modifyorder" }
+        assertEquals(703, request.body?.long("orderId"))
+        assertEquals(2, request.body?.long("orderQty"))
+        assertEquals("Stop", request.body?.str("orderType"))
+        assertEquals(5_480_000_000, request.body?.priceValue("stopPrice"))
+    }
+
+    /** A protected position whose stop and target move together never offers them on their own. */
+    @Test fun pairedProtectionIsNotOfferedOnItsOwn() = runTest {
+        val wire = MockTradovateWire()
+        val broker = broker(wire)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        inject(wire); runCurrent()
+        val session = broker.openSession("100")
+        assertTrue(session.state.value.positions.single().protectionEditable)
+        assertTrue(session.state.value.orders.none { it.standaloneEditable })
+        assertFalse(session.previewOrderChange("702", 5_480_000_000, 100).valid)
+        assertFalse(session.changeOrder("paired", "702", session.state.value.orders.first { it.id == "702" }.version, 5_480_000_000, 100).accepted)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
     @Test fun changedLinksInvalidateProtectionEditsAndDoNotTriggerAutomaticCommands() = runTest {
         val wire = MockTradovateWire()
         val broker = broker(wire)
