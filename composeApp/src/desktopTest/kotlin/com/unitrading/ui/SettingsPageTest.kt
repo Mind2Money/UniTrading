@@ -104,6 +104,33 @@ class SettingsPageTest {
         compose.onNodeWithText("确认模拟下单").assertExists()
     }
 
+    @Test fun keyboardTradingIsOffUntilSwitchedOnAndThenOffersTheTwoPairsOfKeys() {
+        val runtime = render()
+        compose.onNodeWithTag("nav-3").performClick()
+        compose.onNodeWithTag("settings-keyboard-trading").performScrollTo().assertIsOff()
+        compose.onNodeWithTag("settings-trading-keys-ARROWS").assertDoesNotExist()
+        compose.onNodeWithTag("settings-keyboard-trading").performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.keyboardTrading }
+        compose.onNodeWithTag("settings-keyboard-trading").assertIsOn()
+        val summary = compose.onNodeWithTag("settings-keyboard-trading-summary", useUnmergedTree = true)
+        summary.assertTextContains("按 W 市价买入、按 S 市价卖出", substring = true)
+        summary.assertTextContains("按键后先弹确认框", substring = true)
+        compose.onNodeWithTag("settings-trading-keys-LETTERS").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("settings-trading-keys-ARROWS").performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.tradingKeys == TradingKeys.ARROWS }
+        compose.onNodeWithTag("settings-trading-keys-ARROWS").assertIsSelected()
+        summary.assertTextContains("按 ↑ 市价买入、按 ↓ 市价卖出", substring = true)
+        compose.onNodeWithTag("settings-skip-confirmation").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.skipConfirmation }
+        summary.assertTextContains("按键即成交", substring = true)
+        assertEquals(TradingPreferences(skipConfirmation = true, keyboardTrading = true, tradingKeys = TradingKeys.ARROWS), runtime.tradingPreferences.preferences.value)
+        compose.onNodeWithTag("settings-keyboard-trading").performScrollTo()
+        capture("settings-keyboard-trading")
+        compose.onNodeWithTag("settings-keyboard-trading").performClick()
+        compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.keyboardTrading }
+        compose.onNodeWithTag("settings-trading-keys-ARROWS").assertDoesNotExist()
+    }
+
     @Test fun damagedSavedLoginsCanStillBeClearedOnlyAfterConfirmation() {
         var clears = 0
         var forgotten = false

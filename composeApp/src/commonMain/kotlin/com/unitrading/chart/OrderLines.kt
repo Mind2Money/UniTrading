@@ -1,5 +1,7 @@
 package com.unitrading.chart
 
+import androidx.compose.ui.input.key.Key
+import com.unitrading.app.TradingKeys
 import com.unitrading.broker.*
 import com.unitrading.ui.estimatedExitPnl
 import com.unitrading.ui.label
@@ -240,6 +242,10 @@ internal data class OrderLineOptions(
  * The plot's context menu offers limit and stop entries of [entryKinds] at the clicked price. [entryLots] is the quantity
  * they would carry, the order panel's, or null while that does not parse; [onEntryOrder] hands the pick to the screen,
  * which sends it through the order panel's checks and confirmation. No [entryKinds], no orders in the menu.
+ *
+ * [tradingKeys] are the keys that buy and sell at the market while the chart has the keyboard focus, or null while
+ * keyboard trading is off. [onMarketOrder] hands the side to the screen, which builds the order as for the menu;
+ * [instantOrders] tells the legend's hint whether a key sends its order without a confirmation.
  */
 class ChartOrderActions(
     val estimateDraft: (OrderRequest) -> OrderPreview,
@@ -258,4 +264,23 @@ class ChartOrderActions(
     val entryKinds: Set<OrderKind> = emptySet(),
     val entryLots: Long? = null,
     val onEntryOrder: (side: Side, kind: OrderKind, price: Long) -> Unit = { _, _, _ -> },
+    val tradingKeys: TradingKeys? = null,
+    val instantOrders: Boolean = false,
+    val onMarketOrder: (Side) -> Unit = {},
 )
+
+/** The side [key] trades under these trading keys; null for every other key, and for any key held with a modifier. */
+internal fun TradingKeys.side(key: Key, modified: Boolean): Side? = if (modified) null else when (this) {
+    TradingKeys.LETTERS -> when (key) { Key.W -> Side.BUY; Key.S -> Side.SELL; else -> null }
+    TradingKeys.ARROWS -> when (key) { Key.DirectionUp -> Side.BUY; Key.DirectionDown -> Side.SELL; else -> null }
+}
+
+/**
+ * What the legend says about the trading keys. With the chart focused the keys are live, so it names what each does, the
+ * quantity an order would carry ([lots], null while the order panel holds none that parses) and whether it still asks.
+ * Otherwise it says how to make them live.
+ */
+internal fun tradingKeysHint(keys: TradingKeys, live: Boolean, instrument: Instrument, lots: Long?, instant: Boolean): String =
+    if (!live) "键盘下单：点一下图表后 ${keys.buy} / ${keys.sell} 生效"
+    else "${keys.buy} 市价买入 · ${keys.sell} 市价卖出 · " + (lots?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "数量无效") +
+        if (instant) " · 按键即成交" else " · 按键后确认"

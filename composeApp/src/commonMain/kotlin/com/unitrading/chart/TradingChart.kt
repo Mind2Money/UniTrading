@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -106,6 +107,10 @@ fun TradingChart(
     var hoverPoint by remember { mutableStateOf<Offset?>(null) }
     var lineMenu by remember(accountKey, instrument.symbol) { mutableStateOf<LineMenu?>(null) }
     var plotMenu by remember(accountKey, instrument.symbol) { mutableStateOf<PlotMenu?>(null) }
+    /** Whether key presses reach the chart: the trading keys only trade while they do. */
+    var chartFocused by remember { mutableStateOf(false) }
+    /** Trading keys that are down, so the repeats of a held key place nothing. */
+    val heldTradingKeys = remember { mutableSetOf<Key>() }
     var selectedTrade by remember(accountKey, instrument.symbol) { mutableStateOf<ClosedTrade?>(null) }
     var selectedExecution by remember(accountKey, instrument.symbol) { mutableStateOf<Execution?>(null) }
     val textMeasurer = rememberTextMeasurer(cacheSize = 64)
@@ -313,7 +318,8 @@ fun TradingChart(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。"
+                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。" +
+                                (actions.tradingKeys?.let { "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。" } ?: "")
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
@@ -450,8 +456,15 @@ fun TradingChart(
                                 onDragCancel = { drag = null },
                             )
                         }
+                        .onFocusChanged { chartFocused = it.isFocused; if (!it.isFocused) heldTradingKeys.clear() }
                         .onKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                            if (event.type == KeyEventType.KeyUp) heldTradingKeys.remove(event.key)
+                            val side = actions.tradingKeys?.side(event.key, event.isCtrlPressed || event.isAltPressed || event.isMetaPressed || event.isShiftPressed)
+                            if (event.type != KeyEventType.KeyDown) false
+                            // A key held down repeats its press, and an order that goes out at once must go out once: the repeats
+                            // are swallowed until the key comes up. An order that asks first opens a dialog, which takes the keys.
+                            else if (side != null) { if (!actions.instantOrders || heldTradingKeys.add(event.key)) actions.onMarketOrder(side); true }
+                            else when (event.key) {
                                 Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(crosshairSlots.first); crosshairY = null; true }
                                 Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(crosshairSlots.last); crosshairY = null; true }
                                 Key.Escape -> { drag = null; crosshair = null; true }
@@ -639,7 +652,8 @@ fun TradingChart(
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact) toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact)
+                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
+                        keysHint = actions.tradingKeys?.let { tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders) }, keysLive = chartFocused)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }

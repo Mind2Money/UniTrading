@@ -15,6 +15,12 @@
 ✅ 打开已缓存的图表时，最新一根 K 线不再先紧挨着旧的末根画出来，等缺少的 K 线补齐后一起显示
 ✅ 在图表空白处点鼠标右键打开菜单：在该价位画水平线，或在该价位挂限价单、突破单。价位在市价下方时给出买入限价和卖出突破，在上方时给出卖出限价和买入突破；数量取下单面板当前的数量，不带止损止盈。默认弹确认框，开启“跳过交易确认”后点击即下单
 ⚠️ 右键菜单需要鼠标，触屏没有对应入口；菜单下单只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单
+
+⌨️ **键盘下单**
+✅ 「设置 → 交易」新增“键盘下单”开关，默认关闭。开启后在 W / S 和 ↑ / ↓ 两组按键里选一组：点一下图表后，按 W（或 ↑）市价买入，按 S（或 ↓）市价卖出，数量取下单面板，不带止损止盈
+✅ 沿用交易确认设置：默认按键后弹确认框，Enter 确认、Esc 取消；开启“跳过交易确认”后按键即成交，按住不放只下一单
+✅ 图例显示当前按键、数量和是否需要确认；键盘焦点不在图表上时（例如正在输入框里打字）按键不下单，图例提示先点一下图表
+⚠️ 只经过离线测试，没有在 Tradovate、Rithmic 账户上用按键实际下单；中文输入法开启时字母键是否生效尚未验证
 ⚠️ Tradovate 的预读不限速：首次补齐时会超过服务器每小时 180 次图表请求的额度，超出期间打开图表和主力核实的每次请求多等 1～3 秒；手机和桌面各自预读，共用这份额度。Rithmic 的预读只在离线测试中验证过
 
 ## English
@@ -32,6 +38,12 @@
 ✅ A cached chart no longer draws the newest bar right next to its old last bar first; it appears together with the bars in between
 ✅ A right click on empty chart space opens a menu: draw a horizontal line at that price, or place a limit or stop order there. Under the market it offers a buy limit and a sell stop, over it a sell limit and a buy stop; the order takes the order panel's quantity and carries no stop or target. A confirmation appears unless you turned confirmations off
 ⚠️ The menu needs a mouse and has no touch equivalent; orders from it were only checked in offline tests, never placed on a Tradovate or Rithmic account
+
+⌨️ **Keyboard trading**
+✅ Settings → Trading has a new "keyboard trading" switch, off by default. Turn it on and pick one pair of keys, W / S or ↑ / ↓: after a click on the chart, W (or ↑) buys at the market and S (or ↓) sells at the market, with the order panel's quantity and no stop or target
+✅ It follows the confirmation setting: by default a key opens the confirmation, which Enter confirms and Esc dismisses; with confirmations off the order goes out at once, and a held key sends one order only
+✅ The legend shows the keys, the quantity and whether a key still asks; while the keyboard focus is not on the chart, for example while you type in a field, the keys place nothing and the legend says to click the chart first
+⚠️ Only checked in offline tests; no order was placed with a key on a Tradovate or Rithmic account. Whether the letter keys work while a Chinese input method is on has not been checked
 ⚠️ Tradovate read-ahead is not rate-limited: the first fill goes over the server's 180 chart requests per hour, and while it is over, every chart request waits 1–3 seconds more, including opening a chart and leader checks; phone and desktop each read ahead and share that budget. Rithmic read-ahead has only been verified in offline tests
 
 # v1.4.0

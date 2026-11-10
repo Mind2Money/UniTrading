@@ -285,7 +285,9 @@ internal fun ChartNavigation(
  * Legend in the top-left corner of the plot: instrument title, hovered-bar OHLC and change, Bid/Ask trade buttons with
  * the spread, volume, and a collapse toggle. The card itself does not take pointer input, so panning that starts over
  * its text still reaches the chart; only the buttons consume clicks. [compact] (phones) leaves the trade buttons to the
- * order bar below the chart and folds the volume into the OHLC line.
+ * order bar below the chart and folds the volume into the OHLC line. [keysHint] is the line about the trading keys while
+ * keyboard trading is on, highlighted while they are live ([keysLive]); it stays when the legend is folded, because a
+ * key press can trade whether the legend is open or not.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -302,6 +304,8 @@ internal fun ChartLegend(
     readout: String? = null,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    keysHint: String? = null,
+    keysLive: Boolean = false,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -319,6 +323,7 @@ internal fun ChartLegend(
         }
         // A line drag's estimate shows even when the legend is folded: it is the only live feedback until the drag ends.
         if (readout != null) Text(readout, Modifier.testTag("chart-readout"), style = type.labelSmall)
+        if (keysHint != null) Text(keysHint, Modifier.padding(end = 4.dp).testTag("trading-keys-hint"), style = type.labelSmall, color = if (keysLive) colors.Accent else colors.Muted)
         if (!collapsed) {
             if (readout == null && bar != null) {
                 val tone = if (bar.close >= bar.open) colors.UpText else colors.DownText

@@ -14,6 +14,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -457,13 +459,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 /**
-                 * A limit or stop entry picked from the chart's context menu: the order panel's quantity at the clicked price,
-                 * without a stop loss or take profit, through the same checks and confirmation as the panel's own order.
+                 * An order asked for on the chart: a limit or stop entry picked from its context menu at the clicked [price], or
+                 * a market order from the trading keys. It carries the order panel's quantity and no stop loss or take profit,
+                 * and goes through the same checks and confirmation as the panel's own order.
                  */
-                fun orderFromChart(side: Side, kind: OrderKind, price: Long) {
-                    val order = OrderDraft(side, kind, draft.quantity, instrument.formatPrice(price)).request(instrument)
-                    if (order == null) { showNotice("请先在下单面板输入有效数量", attention = true); return }
-                    reviewTrade(Confirmation.Place(order, fromChart = true))
+                fun orderFromChart(side: Side, kind: OrderKind, price: Long?, fromKeys: Boolean = false) {
+                    val order = OrderDraft(side, kind, draft.quantity, price?.let(instrument::formatPrice).orEmpty()).request(instrument)
+                    if (order == null) {
+                        showNotice(if (instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单" else "请先在下单面板输入有效数量", attention = true)
+                        return
+                    }
+                    reviewTrade(Confirmation.Place(order, fromChart = true, fromKeys = fromKeys))
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -492,6 +498,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         entryKinds = plugin.capabilities.orderKinds,
                         entryLots = instrument.parseQuantity(draft.quantity),
                         onEntryOrder = { side, kind, price -> orderFromChart(side, kind, price) },
+                        tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
+                        instantOrders = skipConfirmation,
+                        onMarketOrder = { side -> orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) },
                     )
                     val drawings = runtime.drawings
                     BoxWithConstraints(m) {
@@ -698,6 +707,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
                     val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacityFor(it.request)) }
                     val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
+                    val confirmFocus = remember { FocusRequester() }
                     val confirmColor = when (action) {
                         is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)
                         else -> actionFill(MaterialTheme.colorScheme.error)
@@ -715,6 +725,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
                                     Text("提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。", style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     livePreview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
@@ -723,11 +734,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
                         } },
-                        confirmButton = { Button({
-                            confirmation = null
-                            executeTrade(action)
-                        }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action"),
-                            colors = ButtonDefaults.buttonColors(containerColor = confirmColor, contentColor = contentOn(confirmColor))) { Text(confirmLabel) } },
+                        confirmButton = {
+                            Button({
+                                confirmation = null
+                                executeTrade(action)
+                            }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action").focusRequester(confirmFocus),
+                                colors = ButtonDefaults.buttonColors(containerColor = confirmColor, contentColor = contentOn(confirmColor))) { Text(confirmLabel) }
+                            // An order asked for by a key is confirmed by one: Enter presses the focused button, Esc dismisses the dialog.
+                            if ((action as? Confirmation.Place)?.fromKeys == true) LaunchedEffect(action) { runCatching { confirmFocus.requestFocus() } }
+                        },
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
                 }

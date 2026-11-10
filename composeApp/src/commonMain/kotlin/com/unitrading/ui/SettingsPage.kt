@@ -22,6 +22,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.unitrading.app.AppUpdates
+import com.unitrading.app.TradingKeys
+import com.unitrading.app.TradingPreferences
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 
@@ -103,7 +105,7 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
-                    supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效。") },
+                    supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
                     leadingContent = { Icon(AppIcons.Bolt, contentDescription = null) },
                     trailingContent = { Switch(tradingPreferences.skipConfirmation, onCheckedChange = null, enabled = !savingTradingPreferences) },
                     modifier = Modifier.toggleable(tradingPreferences.skipConfirmation, enabled = !savingTradingPreferences, role = Role.Switch,
@@ -111,6 +113,21 @@ internal fun SettingsPage(
                         .testTag("settings-skip-confirmation"),
                     colors = settingsRowColors(),
                 )
+                ListItem(
+                    headlineContent = { Text("键盘下单") },
+                    supportingContent = { Text(keyboardTradingSummary(tradingPreferences), Modifier.testTag("settings-keyboard-trading-summary")) },
+                    leadingContent = { Icon(AppIcons.Keyboard, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.keyboardTrading, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.keyboardTrading, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setKeyboardTrading(enabled) } })
+                        .testTag("settings-keyboard-trading"),
+                    colors = settingsRowColors(),
+                )
+                // Only one pair of keys trades, so the other pair keeps what it does elsewhere on the chart.
+                if (tradingPreferences.keyboardTrading) SegmentedChoice(TradingKeys.entries, tradingPreferences.tradingKeys,
+                    { "${it.buy} 买入 / ${it.sell} 卖出" }, { "settings-trading-keys-${it.name}" },
+                    { keys -> preferenceScope.launch { runtime.tradingPreferences.setTradingKeys(keys) } },
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), enabled = !savingTradingPreferences)
                 tradingPreferencesError?.let {
                     Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).testTag("trading-preferences-error"),
                         color = colors.Loss, style = MaterialTheme.typography.bodySmall)
@@ -146,6 +163,13 @@ internal fun SettingsPage(
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
+}
+
+/** What the keyboard trading switch does, with the chosen keys and whether a key press still asks before it trades. */
+internal fun keyboardTradingSummary(preferences: TradingPreferences): String {
+    val keys = preferences.tradingKeys
+    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，不带止损止盈。" +
+        if (preferences.skipConfirmation) "已开启“跳过交易确认”，按键即成交。" else "按键后先弹确认框，Enter 确认，Esc 取消。"
 }
 
 @Composable
