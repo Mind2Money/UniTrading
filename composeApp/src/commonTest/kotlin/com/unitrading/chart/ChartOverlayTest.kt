@@ -42,8 +42,16 @@ class ChartOverlayTest {
     @Test fun axisLabelsSwitchFromClockToDateForDailyBars() {
         val midnight = 1_798_588_800_000L // 2026-12-30 00:00 UTC
         assertEquals("00:00", axisTimeLabel(midnight, Timeframe.M5))
-        assertEquals("01:00", axisTimeLabel(midnight + 3_600_000, Timeframe(240)))
-        assertEquals("12-30", axisTimeLabel(midnight, Timeframe(1440)))
-        assertEquals("12-30", axisTimeLabel(midnight + 3_600_000, Timeframe(2 * 1440)))
+        assertEquals("01:00", axisTimeLabel(midnight + 3_600_000, Timeframe.ofMinutes(240)))
+        assertEquals("12-30", axisTimeLabel(midnight, Timeframe.ofMinutes(1440)))
+        assertEquals("12-30", axisTimeLabel(midnight + 3_600_000, Timeframe.ofMinutes(2 * 1440)))
+        assertEquals("12-30", axisTimeLabel(midnight + 3_600_000, Timeframe.ofMinutes(1500)), "any interval of a day or longer shows the date")
+    }
+
+    @Test fun secondIntervalsLabelTheAxisToTheSecond() {
+        val midnight = 1_798_588_800_000L // 2026-12-30 00:00 UTC
+        assertEquals("00:00:05", axisTimeLabel(midnight + 5_000, Timeframe.ofSeconds(5)))
+        assertEquals("01:02:30", axisTimeLabel(midnight + 3_750_000, Timeframe.ofSeconds(30)))
+        assertEquals("01:02", axisTimeLabel(midnight + 3_750_000, Timeframe.M1), "minute intervals keep the short label")
     }
 }

@@ -273,9 +273,24 @@ internal data class BracketLevels(val stopTicks: Long? = null, val stopQuantity:
 
 internal fun parseTicks(data: ProtoMessage, field: Int): Long? = data.long(field) ?: data.str(field)?.trim()?.toLongOrNull()
 
-/** Minute bars arrive with their close time; daily bars carry a YYYYMMDD date. Both become the bar's open time. */
+/** The time bar type an interval is asked for with, and its period in that type's own unit: days, seconds or minutes. */
+internal fun barType(timeframe: Timeframe): Int = when {
+    timeframe.isDaily -> RithmicEnums.BAR_DAILY
+    timeframe.isSeconds -> RithmicEnums.BAR_SECOND
+    else -> RithmicEnums.BAR_MINUTE
+}
+internal fun barPeriod(timeframe: Timeframe): Int = when {
+    timeframe.isDaily -> timeframe.seconds / Timeframe.DAY
+    timeframe.isSeconds -> timeframe.seconds
+    else -> timeframe.seconds / Timeframe.MINUTE
+}
+
+/**
+ * Minute bars arrive with their close time; daily bars carry a YYYYMMDD date. Both become the bar's open time. Second
+ * bars are read like minute bars; that their marker is the close time too has not been seen on a live server.
+ */
 internal fun barOpenTimeMs(marker: Long, timeframe: Timeframe): Long? {
-    val daily = timeframe.minutes % 1440 == 0
+    val daily = timeframe.isDaily
     if (daily) {
         if (marker !in 19_000_101L..21_991_231L) return null
         val year = (marker / 10_000).toInt(); val month = (marker / 100 % 100).toInt(); val day = (marker % 100).toInt()
@@ -283,7 +298,7 @@ internal fun barOpenTimeMs(marker: Long, timeframe: Timeframe): Long? {
         return runCatching { kotlin.time.Instant.parse("${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T00:00:00Z").toEpochMilliseconds() }.getOrNull()
     }
     if (marker <= 0 || marker > 253_402_300_799L) return null
-    return marker * 1_000 - timeframe.minutes * 60_000L
+    return marker * 1_000 - timeframe.millis
 }
 
 internal fun yyyymmdd(timeMs: Long): Int {
@@ -293,6 +308,6 @@ internal fun yyyymmdd(timeMs: Long): Int {
 
 /** Aligns a trade time to the start of its bar. */
 internal fun barStart(timeMs: Long, timeframe: Timeframe): Long {
-    val span = timeframe.minutes * 60_000L
+    val span = timeframe.millis
     return timeMs - ((timeMs % span) + span) % span
 }

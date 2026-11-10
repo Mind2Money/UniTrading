@@ -33,7 +33,7 @@ class RemoteWorkbenchTest {
             executions = listOf(fill, fill.copy(id = "11")), trades = listOf(pair)))
         val plugin = object : BrokerPlugin by source {
             override fun history(symbol: String, timeframe: Timeframe) = (0..100).map {
-                Candle(at - (100 - it) * timeframe.minutes * 60_000L, 5_500_000_000, 5_501_000_000, 5_499_000_000, 5_500_000_000)
+                Candle(at - (100 - it) * timeframe.millis, 5_500_000_000, 5_501_000_000, 5_499_000_000, 5_500_000_000)
             }
             override fun openSession(accountId: String): AccountSession {
                 val delegate = source.openSession(accountId)

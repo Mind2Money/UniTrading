@@ -344,7 +344,7 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
 
     /** What the chart paints this frame; hit tests use the same scenes. */
     internal fun frame(ctx: DrawingContext): DrawingFrame {
-        val bucket = IntervalBucket.of(ctx.timeframe.minutes)
+        val bucket = IntervalBucket.of(ctx.timeframe)
         val list = if (hideDrawings) emptyList() else drawings.filter { !it.hidden && bucket !in it.hiddenIntervals }
         val built = list.map { buildScene(it, ctx, expanded = it.id == hoveredId || it.id == selectedId) }
         scenes = built

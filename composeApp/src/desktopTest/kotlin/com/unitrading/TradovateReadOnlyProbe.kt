@@ -12,6 +12,7 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
     private val delegate = KtorTradovateWire()
     /** Bars seen per chart id since its last end-of-history, as count and oldest/newest timestamp. */
     private val chartPages = ConcurrentHashMap<String, Triple<Int, String, String>>()
+    private val shapedCharts: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private fun logChartPackets(text: String) {
         val frames = runCatching { Json.parseToJsonElement(text.drop(1)).jsonArray }.getOrNull() ?: return
         for (value in frames) {
@@ -25,6 +26,8 @@ internal class ReadOnlyProbeWire(private val allowCapacityChecks: Boolean = fals
             for (item in (data?.get("charts") as? JsonArray).orEmpty()) {
                 val chart = item as? JsonObject ?: continue
                 val id = (chart["id"] as? JsonPrimitive)?.content ?: continue
+                // The first packet of each chart shows what the server sends for that request: bars, ticks, or something else.
+                if (shapedCharts.add(id)) println("CHART_SHAPE id=$id keys=${chart.keys} sample=${chart.toString().take(360)}")
                 val times = (chart["bars"] as? JsonArray).orEmpty().mapNotNull { ((it as? JsonObject)?.get("timestamp") as? JsonPrimitive)?.content }
                 if (times.isNotEmpty()) chartPages.merge(id, Triple(times.size, times.min(), times.max())) { old, new ->
                     Triple(old.first + new.first, minOf(old.second, new.second), maxOf(old.third, new.third))
@@ -231,8 +234,12 @@ private suspend fun savedDemoSession(): TradovateSession {
     }?.firstOrNull { it.environment == TradovateEnvironment.DEMO }) { "No saved Demo login" }
 }
 
+private val DEPTH_SERIES = listOf("@YM" to 240, "@YM" to 60, "@MES" to 15, "@MES" to 1440, "YMZ6" to 60).map { (symbol, minutes) -> symbol to Timeframe.ofMinutes(minutes) }
+/** Second intervals go out as the tick series grouped by seconds, which the public request reference does not list. */
+private val SECOND_SERIES = listOf(30, 5, 1).map { "@MES" to Timeframe.ofSeconds(it) }
+
 /** Prints each history page of a few charts with the saved Demo session: how deep a chart gets, and in how many requests. */
-private suspend fun chartHistoryDepth(): Boolean {
+private suspend fun chartHistoryDepth(series: List<Pair<String, Timeframe>> = DEPTH_SERIES): Boolean {
     val wire = ReadOnlyProbeWire(logChartPages = true)
     var broker: TradovateBroker? = null
     var verified = true
@@ -241,8 +248,7 @@ private suspend fun chartHistoryDepth(): Boolean {
         val connected = TradovateBroker(savedDemoSession(), wire)
         broker = connected
         withTimeout(90_000) { connected.connect { } }
-        for ((symbol, minutes) in listOf("@YM" to 240, "@YM" to 60, "@MES" to 15, "@MES" to 1440, "YMZ6" to 60)) {
-            val timeframe = Timeframe(minutes)
+        for ((symbol, timeframe) in series) {
             val started = System.nanoTime()
             withTimeout(60_000) { connected.searchInstruments(symbol) }
             connected.watch(symbol, timeframe)
@@ -259,7 +265,11 @@ private suspend fun chartHistoryDepth(): Boolean {
             val bars = connected.history(symbol, timeframe)
             verified = verified && bars.isNotEmpty() && wire.refusedWrites == 0
             println("CHART_HISTORY_RESULT " + asciiJson(buildJsonObject {
-                put("symbol", symbol); put("minutes", minutes); put("bars", bars.size)
+                put("symbol", symbol); put("interval", timeframe.id); put("bars", bars.size)
+                put("onGrid", bars.all { it.timeMs % timeframe.millis == 0L })
+                put("gapsInIntervals", JsonArray(bars.zipWithNext { a, b -> (b.timeMs - a.timeMs) / timeframe.millis }.groupingBy { it }.eachCount()
+                    .entries.sortedByDescending { it.value }.take(5).map { JsonPrimitive("${it.key}x${it.value}") }))
+                put("withVolume", bars.count { it.volume != null })
                 put("oldest", bars.firstOrNull()?.let { kotlin.time.Instant.fromEpochMilliseconds(it.timeMs).toString() })
                 put("newest", bars.lastOrNull()?.let { kotlin.time.Instant.fromEpochMilliseconds(it.timeMs).toString() })
                 put("seconds", (System.nanoTime() - started) / 1_000_000_000); put("status", connected.market.value.statusMessage)
@@ -303,7 +313,7 @@ private suspend fun historyPreload(): Boolean {
         connected.watch(chart.first, chart.second)
         withTimeoutOrNull(60_000) { while (connected.history(chart.first, chart.second).size < CHART_BARS) delay(250) }
         println("HISTORY_PRELOAD_CHART bars=${connected.history(chart.first, chart.second).size}")
-        val series = listOf("@ES" to Timeframe(240), "@ES" to Timeframe.M1, "@NQ" to Timeframe.H1, "@GC" to Timeframe(1440))
+        val series = listOf("@ES" to Timeframe.ofMinutes(240), "@ES" to Timeframe.M1, "@NQ" to Timeframe.H1, "@GC" to Timeframe.ofMinutes(1440))
         val started = System.nanoTime()
         connected.preloadHistory(listOf(chart) + series)
         for ((symbol, timeframe) in series) {
@@ -311,7 +321,7 @@ private suspend fun historyPreload(): Boolean {
             val bars = connected.history(symbol, timeframe)
             verified = verified && read && wire.refusedWrites == 0
             println("HISTORY_PRELOAD_RESULT " + asciiJson(buildJsonObject {
-                put("symbol", symbol); put("minutes", timeframe.minutes); put("bars", bars.size)
+                put("symbol", symbol); put("interval", timeframe.id); put("bars", bars.size)
                 put("oldest", stamp(bars.firstOrNull()?.timeMs)); put("newest", stamp(bars.lastOrNull()?.timeMs))
                 put("ordered", bars.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs })
                 put("secondsSinceStart", (System.nanoTime() - started) / 1_000_000_000); put("status", connected.market.value.statusMessage)
@@ -325,10 +335,10 @@ private suspend fun historyPreload(): Boolean {
             put("lastBar", stamp(after?.timeMs)); put("changed", before != after); put("status", connected.market.value.statusMessage)
         }))
         println("HISTORY_PRELOAD_OPEN @ES/240")
-        val shown = connected.history("@ES", Timeframe(240)).size
-        connected.watch("@ES", Timeframe(240))
+        val shown = connected.history("@ES", Timeframe.ofMinutes(240)).size
+        connected.watch("@ES", Timeframe.ofMinutes(240))
         delay(8_000)
-        val opened = connected.history("@ES", Timeframe(240))
+        val opened = connected.history("@ES", Timeframe.ofMinutes(240))
         println("HISTORY_PRELOAD_OPENED " + asciiJson(buildJsonObject {
             put("barsAtOnce", shown); put("bars", opened.size); put("newest", stamp(opened.lastOrNull()?.timeMs))
             put("cachedSeries", store.values.size); put("refusedWriteRequests", wire.refusedWrites); put("sentOrderRequests", 0)
@@ -353,6 +363,10 @@ fun main(args: Array<String>) = runBlocking {
     }
     if (args.contentEquals(arrayOf("--demo-daily-diagnostic-read-only"))) {
         if (!dailyDiagnostic()) kotlin.system.exitProcess(2)
+        return@runBlocking
+    }
+    if (args.contentEquals(arrayOf("--demo-second-bars-read-only"))) {
+        if (!chartHistoryDepth(SECOND_SERIES)) kotlin.system.exitProcess(2)
         return@runBlocking
     }
     if (args.contentEquals(arrayOf("--demo-chart-history-read-only"))) {

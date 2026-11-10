@@ -75,7 +75,7 @@ fun analyzeOrderFlow(
 ): OrderFlowAnalysis {
     require(ticksPerLevel > 0 && tickSize > 0) { "价格分组与最小跳动必须为正数" }
     val levelWidth = checkedMultiply(ticksPerLevel, tickSize)
-    val barWidth = timeframe.minutes * 60_000L
+    val barWidth = timeframe.millis
     val profile = mutableMapOf<Long, FlowVolume>()
     val footprints = mutableMapOf<Long, MutableMap<Long, FlowVolume>>()
     val totals = FlowVolume()

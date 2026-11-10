@@ -603,7 +603,7 @@ class TradovateBroker(
         val overflow = lock.withLock { earlyChartOverflow }
         val body = buildJsonObject {
             put("symbol", symbol)
-            put("chartDescription", chartDescription(Timeframe(1440)))
+            put("chartDescription", chartDescription(Timeframe.D1))
             put("timeRange", dailyVolumeRange(session))
         }
         val response = requestMarketChart(socket, body)

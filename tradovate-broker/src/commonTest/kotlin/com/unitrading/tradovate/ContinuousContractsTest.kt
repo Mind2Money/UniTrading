@@ -224,7 +224,7 @@ class ContinuousContractsTest {
         val broker = ready(wire)
         val volumeRequests = wire.dailyRequests.size
         val chartRequests = wire.delegate.market.sent.count { it == "md/getChart" }
-        broker.watch("@MES", Timeframe(1440))
+        broker.watch("@MES", Timeframe.ofMinutes(1440))
         runCurrent()
         val chart = json(wire.delegate.market.bodies.getValue("md/getChart"))
         assertEquals("@MES", chart.str("symbol"))

@@ -456,12 +456,22 @@ class DemoBrokerTest {
         assertEquals(Candle(start, 10_000, 10_050, 9_950, 10_025), minutes.first { it.timeMs == start })
         assertEquals(10_010L, minutes.last().close)
         val before = broker.exportState()
-        for (timeframe in Timeframe.presets) {
-            val width = timeframe.minutes * 60_000L
+        for (timeframe in Timeframe.presets.filterNot { it.isSeconds }) {
+            val width = timeframe.millis
             val expected = minutes.groupBy { it.timeMs / width * width }.map { (time, group) ->
                 Candle(time, group.first().open, group.maxOf { it.high }, group.minOf { it.low }, group.last().close)
             }
             assertEquals(expected, broker.history(SYMBOL, timeframe), timeframe.label)
+        }
+        // Second intervals group the same ticks more finely: one bar per tick at 15 seconds, two ticks per bar at 30.
+        assertEquals(listOf(10_000L, 10_050L, 9_950L, 10_025L, 10_010L).mapIndexed { index, price -> Candle(start + index * 15_000L, price, price, price, price) },
+            broker.history(SYMBOL, Timeframe.ofSeconds(15)).filter { it.timeMs >= start })
+        assertEquals(listOf(Candle(start, 10_000, 10_050, 10_000, 10_050), Candle(start + 30_000, 9_950, 10_025, 9_950, 10_025), Candle(start + 60_000, 10_010, 10_010, 10_010, 10_010)),
+            broker.history(SYMBOL, Timeframe.ofSeconds(30)).filter { it.timeMs >= start })
+        for (timeframe in Timeframe.presets.filter { it.isSeconds }) {
+            val bars = broker.history(SYMBOL, timeframe)
+            assertTrue(bars.all { it.timeMs % timeframe.millis == 0L } && bars.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs }, timeframe.label)
+            assertEquals(10_010L, bars.last().close, timeframe.label)
         }
         assertEquals(before, broker.exportState())
     }

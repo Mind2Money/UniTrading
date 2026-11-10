@@ -70,13 +70,28 @@ class RithmicMappingTest {
     @Test fun barMarkersBecomeOpenTimes() {
         val close = kotlin.time.Instant.parse("2026-11-05T12:05:00Z").toEpochMilliseconds()
         assertEquals(close - 5 * 60_000, barOpenTimeMs(close / 1_000, Timeframe.M5))
-        assertEquals(kotlin.time.Instant.parse("2026-11-05T00:00:00Z").toEpochMilliseconds(), barOpenTimeMs(20261105, Timeframe(1440)))
-        assertNull(barOpenTimeMs(20261399, Timeframe(1440)))
+        assertEquals(kotlin.time.Instant.parse("2026-11-05T00:00:00Z").toEpochMilliseconds(), barOpenTimeMs(20261105, Timeframe.ofMinutes(1440)))
+        assertNull(barOpenTimeMs(20261399, Timeframe.ofMinutes(1440)))
         assertNull(barOpenTimeMs(0, Timeframe.M1))
         assertEquals(20261105, yyyymmdd(close))
         val trade = kotlin.time.Instant.parse("2026-11-05T12:07:30Z").toEpochMilliseconds()
         assertEquals(close, barStart(trade, Timeframe.M5))
         assertEquals(kotlin.time.Instant.parse("2026-11-05T12:00:00Z").toEpochMilliseconds(), barStart(trade, Timeframe.M15))
+    }
+
+    @Test fun secondIntervalsAskForSecondBarsAndAreTimedLikeMinuteBars() {
+        val s30 = Timeframe.ofSeconds(30)
+        assertEquals(RithmicEnums.BAR_SECOND to 30, barType(s30) to barPeriod(s30))
+        assertEquals(RithmicEnums.BAR_SECOND to 90, barType(Timeframe.ofSeconds(90)) to barPeriod(Timeframe.ofSeconds(90)))
+        assertEquals(RithmicEnums.BAR_MINUTE to 5, barType(Timeframe.M5) to barPeriod(Timeframe.M5))
+        assertEquals(RithmicEnums.BAR_MINUTE to 2, barType(Timeframe.ofSeconds(120)) to barPeriod(Timeframe.ofSeconds(120)), "two minutes however they were entered")
+        assertEquals(RithmicEnums.BAR_MINUTE to 1500, barType(Timeframe.ofMinutes(1500)) to barPeriod(Timeframe.ofMinutes(1500)))
+        assertEquals(RithmicEnums.BAR_DAILY to 3, barType(Timeframe.ofMinutes(3 * 1440)) to barPeriod(Timeframe.ofMinutes(3 * 1440)))
+        val close = kotlin.time.Instant.parse("2026-11-05T12:05:30Z").toEpochMilliseconds()
+        assertEquals(close - 30_000, barOpenTimeMs(close / 1_000, s30))
+        val trade = kotlin.time.Instant.parse("2026-11-05T12:07:44Z").toEpochMilliseconds()
+        assertEquals(kotlin.time.Instant.parse("2026-11-05T12:07:30Z").toEpochMilliseconds(), barStart(trade, s30))
+        assertEquals(kotlin.time.Instant.parse("2026-11-05T12:07:44Z").toEpochMilliseconds(), barStart(trade + 250, Timeframe.ofSeconds(1)))
     }
 
     @Test fun orderStatusesSeparateWorkingFromFinished() {

@@ -22,7 +22,7 @@ internal class OfflineOrderBroker : BrokerPlugin {
     var refusal: String? = null
     override fun history(symbol: String, timeframe: Timeframe) = (0..100).map { i ->
         val close = 550000L + (i % 9 - 4) * 500
-        Candle(time - (100 - i) * timeframe.minutes * 60000L, close, close + 50, close - 50, close)
+        Candle(time - (100 - i) * timeframe.millis, close, close + 50, close - 50, close)
     }
     override fun openSession(accountId: String) = object : AccountSession {
         override val account = accounts.single()

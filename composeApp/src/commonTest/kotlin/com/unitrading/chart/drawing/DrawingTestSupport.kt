@@ -21,7 +21,7 @@ internal fun testCandles(count: Int = 100): List<Candle> = List(count) { i ->
     Candle(START + i * HOUR, open, maxOf(open, close) + 50, minOf(open, close) - 50, close, 1000)
 }
 
-internal fun testContext(candles: List<Candle> = testCandles(), viewport: ChartViewport = ChartViewport(100.0, 0.0), timeframe: Timeframe = Timeframe(60), plot: Rect = Rect(0f, 0f, 1000f, 500f)) =
+internal fun testContext(candles: List<Candle> = testCandles(), viewport: ChartViewport = ChartViewport(100.0, 0.0), timeframe: Timeframe = Timeframe.ofMinutes(60), plot: Rect = Rect(0f, 0f, 1000f, 500f)) =
     DrawingContext(DrawingCoordinates(candles, HOUR, viewport, plot, plot.bottom, PriceScale(38_000.0, 42_000.0, plot.top, plot.bottom)), testInstrument, timeframe, 1f, Color.Black, Color.White, Color.Green, Color.Red,
         { text, size, _, _, _ -> Size(text.length * size * .6f, size * 1.2f) })
 

@@ -128,7 +128,7 @@ class DemoBroker(
 
     override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
         require(symbol in bySymbol) { "未知品种：$symbol" }
-        val width = timeframe.minutes * 60_000L
+        val width = timeframe.millis
         val candles = mutableListOf<Candle>()
         for (tick in committed.value!!.ticks.getValue(symbol)) {
             val bucket = tick.timeMs / width * width

@@ -1,5 +1,6 @@
 package com.unitrading.chart.drawing
 
+import com.unitrading.broker.Timeframe
 import kotlinx.serialization.Serializable
 
 /** Open-ended tools finish on a double click, Enter, or a click back on their first point. */
@@ -164,8 +165,15 @@ enum class DrawingDash(val label: String) { SOLID("实线"), DOTTED("点线"), D
 /** Interval families a drawing can be hidden on. */
 @Serializable
 enum class IntervalBucket(val label: String) {
-    MINUTES("分钟"), HOURS("小时"), DAYS("日线及以上");
-    companion object { fun of(minutes: Int) = when { minutes < 60 -> MINUTES; minutes < 1440 -> HOURS; else -> DAYS } }
+    SECONDS("秒"), MINUTES("分钟"), HOURS("小时"), DAYS("日线及以上");
+    companion object {
+        fun of(timeframe: Timeframe) = when {
+            timeframe.isSeconds -> SECONDS
+            timeframe.seconds < Timeframe.HOUR -> MINUTES
+            timeframe.seconds < Timeframe.DAY -> HOURS
+            else -> DAYS
+        }
+    }
 }
 
 /** Absolute bar time and price in the instrument's integer price units; freehand strokes keep fractions of both. */

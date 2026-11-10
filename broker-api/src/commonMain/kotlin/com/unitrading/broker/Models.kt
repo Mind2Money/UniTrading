@@ -6,28 +6,54 @@ import kotlinx.serialization.Serializable
 enum class Side { BUY, SELL }
 @Serializable
 enum class OrderKind { MARKET, LIMIT, STOP }
-/** Bar interval in minutes; whole days are multiples of 1440. Equality is by minutes, so custom intervals compare with presets. */
+/**
+ * Bar interval in seconds. Whole days are multiples of 86400, and an interval that is not a whole number of minutes is a
+ * second interval. Equality is by length, so custom intervals compare with presets. An interval is built with [ofSeconds],
+ * [ofMinutes] or [of], never from a bare number, so no call can pass minutes where seconds are meant.
+ */
 @Serializable
-data class Timeframe(val minutes: Int) {
-    init { require(minutes in 1..MAX_MINUTES) { "周期必须在 1 分钟到 ${MAX_MINUTES / 1440} 天之间" } }
+@ConsistentCopyVisibility
+data class Timeframe private constructor(val seconds: Int) {
+    init { require(seconds in 1..MAX_SECONDS) { "周期必须在 1 秒到 ${MAX_SECONDS / DAY} 天之间" } }
+    val millis: Long get() = seconds * 1_000L
+    /** Daily and longer bars: they carry a date, not a time of day. */
+    val isDaily: Boolean get() = seconds % DAY == 0
+    /** A second interval: brokers serve it with their second bars, and its times are shown to the second. */
+    val isSeconds: Boolean get() = seconds % MINUTE != 0
+    /**
+     * A stable name for keys and tags: the number of minutes for a whole-minute interval, as before second intervals
+     * existed, and the seconds with an `s` otherwise.
+     */
+    val id: String get() = if (isSeconds) "${seconds}s" else "${seconds / MINUTE}"
     val label: String get() = when {
-        minutes % 1440 == 0 -> "${minutes / 1440}天"
-        minutes % 60 == 0 -> "${minutes / 60}小时"
-        else -> "${minutes}分钟"
+        isDaily -> "${seconds / DAY}天"
+        seconds % HOUR == 0 -> "${seconds / HOUR}小时"
+        isSeconds -> "${seconds}秒"
+        else -> "${seconds / MINUTE}分钟"
     }
     companion object {
-        const val MAX_MINUTES = 1440 * 366
-        val M1 = Timeframe(1)
-        val M5 = Timeframe(5)
-        val M15 = Timeframe(15)
-        val H1 = Timeframe(60)
-        /** Dropdown presets grouped by unit like TradingView: minutes, hours, days. */
-        val presets: List<Timeframe> = listOf(1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440).map(::Timeframe)
+        const val MINUTE = 60
+        const val HOUR = 3_600
+        const val DAY = 86_400
+        const val MAX_SECONDS = DAY * 366
+        fun ofSeconds(seconds: Int) = Timeframe(seconds)
+        fun ofMinutes(minutes: Int): Timeframe {
+            require(minutes in 1..MAX_SECONDS / MINUTE) { "周期必须在 1 秒到 ${MAX_SECONDS / DAY} 天之间" }
+            return Timeframe(minutes * MINUTE)
+        }
+        val M1 = ofMinutes(1)
+        val M5 = ofMinutes(5)
+        val M15 = ofMinutes(15)
+        val H1 = ofMinutes(60)
+        val D1 = ofMinutes(1440)
+        /** Dropdown presets grouped by unit like TradingView: seconds, minutes, hours, days. */
+        val presets: List<Timeframe> = listOf(1, 5, 10, 15, 30).map(::ofSeconds) +
+            listOf(1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440).map(::ofMinutes)
         val defaultFavorites: List<Timeframe> = listOf(M1, M5, M15, H1)
-        /** [count] units of [unitMinutes] (1, 60 or 1440), or null when outside the supported range. */
-        fun of(count: Int, unitMinutes: Int): Timeframe? {
-            if (count <= 0 || unitMinutes <= 0 || count > MAX_MINUTES / unitMinutes) return null
-            return Timeframe(count * unitMinutes)
+        /** [count] units of [unitSeconds] (1, [MINUTE], [HOUR] or [DAY]), or null when outside the supported range. */
+        fun of(count: Int, unitSeconds: Int): Timeframe? {
+            if (count <= 0 || unitSeconds <= 0 || count > MAX_SECONDS / unitSeconds) return null
+            return Timeframe(count * unitSeconds)
         }
     }
 }

@@ -348,12 +348,12 @@ class TradingScreenTest {
         compose.onNodeWithTag("interval-menu").performClick()
         compose.onNodeWithTag("interval-option-60").performClick()
         compose.waitUntil(5_000) {
-            reopened.chartPreferences.preferences.value.let { it.lastSymbols[demo.descriptor.id] == watchedFirst.symbol && it.lastTimeframeMinutes == 60 }
+            reopened.chartPreferences.preferences.value.let { it.lastSymbols[demo.descriptor.id] == watchedFirst.symbol && it.lastTimeframe == Timeframe.H1 }
         }
         // Stored immediately, so even an abrupt exit reopens here.
         val saved = TradingRuntime(store).chartPreferences.preferences.value
         assertEquals(watchedFirst.symbol, saved.lastSymbols[demo.descriptor.id])
-        assertEquals(Timeframe(60), saved.lastTimeframe)
+        assertEquals(Timeframe.ofMinutes(60), saved.lastTimeframe)
     }
 
     @Test fun intervalMenuOffersPresetsFavouritesCustomIntervalsAndSymbols() {
@@ -364,16 +364,40 @@ class TradingScreenTest {
         compose.onNodeWithTag("interval-inline-240").assertExists()
         compose.onNodeWithTag("interval-menu").performClick()
         compose.onNodeWithTag("interval-favorite-240").performClick()
-        compose.waitUntil(5_000) { 240 in runtime.chartPreferences.preferences.value.favoriteMinutes }
+        compose.waitUntil(5_000) { Timeframe.ofMinutes(240) in runtime.chartPreferences.preferences.value.favorites }
         compose.onNodeWithTag("interval-custom-count").performTextReplacement("7")
         compose.onNodeWithTag("interval-custom-add").performClick()
         compose.onNodeWithText("${instrument.name} · 7分钟 · ${instrument.category}").assertExists()
-        compose.waitUntil(5_000) { 7 in runtime.chartPreferences.preferences.value.customMinutes }
+        compose.waitUntil(5_000) { Timeframe.ofMinutes(7) in runtime.chartPreferences.preferences.value.custom }
         val other = plugin.instruments[1]
         compose.onNodeWithTag("chart-symbol").performClick()
         compose.onNodeWithTag("symbol-filter").performTextReplacement(other.symbol.take(3))
         compose.onNodeWithTag("symbol-option-${other.symbol}").performClick()
         compose.onNodeWithText("${other.name} · 7分钟 · ${other.category}").assertExists()
         compose.onNodeWithTag("order-quantity").assertExists()
+    }
+
+    @Test fun secondIntervalsComeFromThePresetsAndFromACustomCountOfSeconds() {
+        render()
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-option-30s").performClick()
+        compose.onNodeWithText("${instrument.name} · 30秒 · ${instrument.category}").assertExists()
+        compose.onNodeWithTag("interval-inline-30s").assertExists("the shown interval joins the starred ones on the toolbar")
+        assertTrue(plugin.history(instrument.symbol, Timeframe.ofSeconds(30)).size > plugin.history(instrument.symbol, Timeframe.M1).size, "more bars than the minute chart of the same ticks")
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-favorite-30s").performClick()
+        compose.waitUntil(5_000) { Timeframe.ofSeconds(30) in runtime.chartPreferences.preferences.value.favorites }
+        compose.onNodeWithTag("interval-custom-unit-1").performClick()
+        compose.onNodeWithTag("interval-custom-count").performTextReplacement("45")
+        compose.onNodeWithTag("interval-custom-add").performClick()
+        compose.onNodeWithText("${instrument.name} · 45秒 · ${instrument.category}").assertExists()
+        compose.waitUntil(5_000) { Timeframe.ofSeconds(45) in runtime.chartPreferences.preferences.value.custom }
+        compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.lastTimeframe == Timeframe.ofSeconds(45) }
+        compose.onNodeWithTag("interval-menu").performClick()
+        compose.onNodeWithTag("interval-option-45s").assertExists("the custom interval is listed with the second intervals")
+        compose.onNodeWithTag("interval-custom-unit-1").performClick()
+        compose.onNodeWithTag("interval-custom-count").performTextReplacement("120")
+        compose.onNodeWithTag("interval-custom-add").performClick()
+        compose.onNodeWithText("${instrument.name} · 2分钟 · ${instrument.category}").assertExists("120 seconds are the two-minute interval")
     }
 }

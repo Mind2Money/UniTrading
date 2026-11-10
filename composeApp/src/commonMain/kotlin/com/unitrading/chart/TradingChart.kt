@@ -160,7 +160,7 @@ fun TradingChart(
     }
     val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)
-    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.minutes * 60_000L, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
+    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
     val currentVisible by rememberUpdatedState(visible)
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
@@ -214,7 +214,7 @@ fun TradingChart(
         drag != null || hoverPoint?.let { it.x in left..right && it.y in top..plotBottom && grabAt(it, orderTags, lines, scale, 22 * density.density) != null } == true -> panelResizeCursor(false)
         else -> PointerIcon.Default
     }
-    val periodMs = timeframe.minutes * 60_000L
+    val periodMs = timeframe.millis
     val step = plotWidth / viewport.count.toFloat()
     val currentViewport by rememberUpdatedState(viewport)
     /**
@@ -297,7 +297,7 @@ fun TradingChart(
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(dateTime(c.timeMs), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                        Text(dateTime(c.timeMs, timeframe.isSeconds), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
                             (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
@@ -722,8 +722,16 @@ class ChartChrome(
     val drawings: ChartDrawings? = null,
 )
 
-fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toString().take(16).replace('T', ' ')
+/** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */
+fun dateTime(timeMs: Long, seconds: Boolean = false): String =
+    Instant.fromEpochMilliseconds(timeMs).toString().take(if (seconds) 19 else 16).replace('T', ' ')
 
-/** Crosshair time tag: date and minute for intraday bars, the date alone for daily and longer bars; UTC like the axis. */
-fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String =
-    if (timeframe.minutes >= 1440) dateTime(timeMs).take(10) else dateTime(timeMs)
+/**
+ * Crosshair time tag: date and minute for intraday bars, with the second for second intervals, and the date alone for
+ * daily and longer bars; UTC like the axis.
+ */
+fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String = when {
+    timeframe.seconds >= Timeframe.DAY -> dateTime(timeMs).take(10)
+    timeframe.isSeconds -> dateTime(timeMs, seconds = true)
+    else -> dateTime(timeMs)
+}

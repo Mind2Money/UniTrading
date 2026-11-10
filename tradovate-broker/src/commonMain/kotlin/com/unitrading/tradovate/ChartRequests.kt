@@ -5,11 +5,16 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** `md/getChart` description: minute bars for intraday intervals, daily bars when the interval is a whole number of days. */
+/**
+ * `md/getChart` description: daily bars when the interval is a whole number of days, minute bars for whole minutes. A
+ * second interval asks for the tick series grouped by seconds, as Tradovate's own web client does; the public request
+ * reference does not list that unit.
+ */
 internal fun chartDescription(timeframe: Timeframe): JsonObject = buildJsonObject {
-    val wholeDays = timeframe.minutes % 1440 == 0
-    put("underlyingType", if (wholeDays) "DailyBar" else "MinuteBar")
-    put("elementSize", if (wholeDays) timeframe.minutes / 1440 else timeframe.minutes)
-    put("elementSizeUnit", "UnderlyingUnits")
+    when {
+        timeframe.isDaily -> { put("underlyingType", "DailyBar"); put("elementSize", timeframe.seconds / Timeframe.DAY); put("elementSizeUnit", "UnderlyingUnits") }
+        timeframe.isSeconds -> { put("underlyingType", "Tick"); put("elementSize", timeframe.seconds); put("elementSizeUnit", "Seconds") }
+        else -> { put("underlyingType", "MinuteBar"); put("elementSize", timeframe.seconds / Timeframe.MINUTE); put("elementSizeUnit", "UnderlyingUnits") }
+    }
     put("withHistogram", false)
 }

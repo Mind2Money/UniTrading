@@ -555,7 +555,7 @@ class RithmicBroker(
                 }
                 val series = barSubscription ?: return@withLock
                 // Daily bars follow the exchange trading date, not the UTC calendar day; only the server closes them.
-                if (executionSymbol(series.first) != symbol || series.second.minutes % 1440 == 0) return@withLock
+                if (executionSymbol(series.first) != symbol || series.second.isDaily) return@withLock
                 applyTrade(series, price, size, time)
             }
             Rt.ORDER_BOOK -> {
@@ -1027,9 +1027,7 @@ class RithmicBroker(
 
     private fun ProtoWriter.timeBar(spec: RithmicSpec, timeframe: Timeframe, request: Int) {
         string(Rf.SYMBOL, spec.instrument.symbol); string(Rf.EXCHANGE, spec.exchange); int32(Rf.REQUEST, request)
-        val daily = timeframe.minutes % 1440 == 0
-        int32(Rf.BAR_TYPE, if (daily) RithmicEnums.BAR_DAILY else RithmicEnums.BAR_MINUTE)
-        int32(Rf.BAR_PERIOD, if (daily) timeframe.minutes / 1440 else timeframe.minutes)
+        int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
     }
 
     /**
@@ -1046,9 +1044,9 @@ class RithmicBroker(
     }
 
     private suspend fun loadBars(plant: RithmicPlant, symbol: String, exchange: String, spec: RithmicSpec, timeframe: Timeframe, cached: List<Candle>): List<Candle> {
-        val daily = timeframe.minutes % 1440 == 0
+        val daily = timeframe.isDaily
         val end = now()
-        val span = timeframe.minutes * 60_000L
+        val span = timeframe.millis
         // Four chart-widths of wall time cover weekends and holidays while staying under Rithmic's 10,000-bar reply cap.
         val start = cached.lastOrNull()?.timeMs?.takeIf { end - it < span * RITHMIC_CHART_BARS * 4 } ?: (end - span * RITHMIC_CHART_BARS * 4)
         val bars = mutableListOf<Candle>()
@@ -1056,8 +1054,7 @@ class RithmicBroker(
         for (page in 0 until 6) {
             val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
                 string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange)
-                int32(Rf.BAR_TYPE, if (daily) RithmicEnums.BAR_DAILY else RithmicEnums.BAR_MINUTE)
-                int32(Rf.BAR_PERIOD, if (daily) timeframe.minutes / 1440 else timeframe.minutes)
+                int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
                 if (daily) { int32(Rf.START_INDEX, yyyymmdd(from)); int32(Rf.FINISH_INDEX, yyyymmdd(end)) }
                 else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, (end / 1_000).toInt()) }
                 int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)

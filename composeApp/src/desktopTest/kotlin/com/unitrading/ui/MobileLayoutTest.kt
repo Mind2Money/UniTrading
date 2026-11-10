@@ -328,7 +328,8 @@ class MobileLayoutTest {
         render()
         val instrument = plugin.instruments.first()
         compose.onNodeWithTag("interval-current").assertTextContains("5分钟").performClick()
-        compose.onNodeWithTag("interval-option-240").performClick()
+        // The second intervals come first, so on a phone the hour intervals start below the fold of the menu.
+        compose.onNodeWithTag("interval-option-240").performScrollTo().performClick()
         compose.onNodeWithText("${instrument.name} · 4小时 · ${instrument.category}").assertExists()
         compose.onNodeWithTag("chart-indicators").performClick()
         compose.onNodeWithTag("indicator-settings").assertExists()

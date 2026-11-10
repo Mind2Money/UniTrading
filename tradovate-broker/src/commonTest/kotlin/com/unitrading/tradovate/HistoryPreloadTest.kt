@@ -80,7 +80,7 @@ class HistoryPreloadTest {
                     val realtimeId = if (sameId) historicalId else nextId++
                     charts += Chart(symbol, minutes, range, historicalId, realtimeId)
                     socket.queue.send("""a[{"i":$requestId,"s":200,"d":{"historicalId":$historicalId,"realtimeId":$realtimeId}}]""")
-                    if (symbol to Timeframe(minutes.toInt()) in stalled) return
+                    if (symbol to Timeframe.ofMinutes(minutes.toInt()) in stalled) return
                     val step = minutes * 60_000
                     val start = range.str("asFarAsTimestamp")?.let { Instant.parse(it).toEpochMilliseconds() } ?: 0
                     val end = range.str("closestTimestamp")?.let { Instant.parse(it).toEpochMilliseconds() } ?: NOW
@@ -97,7 +97,7 @@ class HistoryPreloadTest {
         suspend fun live(id: Int, time: Long, close: String) {
             markets.last().queue.send("""a[{"e":"chart","d":{"charts":[{"id":$id,"s":"","bars":[{"timestamp":"${Instant.fromEpochMilliseconds(time)}","open":5500,"high":5502,"low":5499,"close":$close,"upVolume":3,"downVolume":2}]}]}}]""")
         }
-        fun of(timeframe: Timeframe, symbol: String = "MESZ6") = charts.filter { it.symbol == symbol && it.minutes == timeframe.minutes.toLong() }
+        fun of(timeframe: Timeframe, symbol: String = "MESZ6") = charts.filter { it.symbol == symbol && it.minutes == (timeframe.seconds / Timeframe.MINUTE).toLong() }
         override fun close() = delegate.close()
     }
 
@@ -110,7 +110,7 @@ class HistoryPreloadTest {
     private fun assertWhole(bars: List<Candle>, timeframe: Timeframe) {
         assertEquals(CHART_BARS, bars.size)
         assertEquals(NOW, bars.last().timeMs)
-        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == timeframe.minutes * 60_000L })
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == timeframe.millis })
     }
 
     @Test fun listedSeriesAreReadWholeAndCachedWithoutTouchingTheChart() = runTest {
@@ -119,10 +119,10 @@ class HistoryPreloadTest {
         val broker = ready(wire, store)
         broker.watch("MESZ6", M5); runCurrent()
         val chart = wire.of(M5).single { it.firstPage }
-        broker.preloadHistory(listOf("MESZ6" to M5, "MESZ6" to H1, "@MES" to Timeframe(1440))); runCurrent()
+        broker.preloadHistory(listOf("MESZ6" to M5, "MESZ6" to H1, "@MES" to Timeframe.ofMinutes(1440))); runCurrent()
 
         assertWhole(broker.history("MESZ6", H1), H1)
-        assertWhole(broker.history("@MES", Timeframe(1440)), Timeframe(1440))
+        assertWhole(broker.history("@MES", Timeframe.ofMinutes(1440)), Timeframe.ofMinutes(1440))
         // The requests are a fresh chart's: the latest bars first, then pages back from the oldest bar read.
         val pages = wire.of(H1)
         assertEquals(3, pages.size)
@@ -141,7 +141,7 @@ class HistoryPreloadTest {
 
         advanceTimeBy(1_001); runCurrent()
         assertWhole(CandleCache(store, NAMESPACE).read("MESZ6" to H1, NOW), H1)
-        assertWhole(CandleCache(store, NAMESPACE).read("@MES" to Timeframe(1440), NOW), Timeframe(1440))
+        assertWhole(CandleCache(store, NAMESPACE).read("@MES" to Timeframe.ofMinutes(1440), NOW), Timeframe.ofMinutes(1440))
     }
 
     @Test fun preloadedChartShowsItsBarsAtOnceAndFetchesOnlyTheBarsSince() = runTest {

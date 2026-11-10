@@ -85,7 +85,7 @@ class CandleCacheTest {
         cache.write(series, fiveMinutes)
         assertTrue(cache.read(series.first to Timeframe.M15, CACHE_TIME).isEmpty())
         cache.write(series.first to Timeframe.M15, fifteenMinutes)
-        assertEquals(fiveMinutes, cache.read(series.first to Timeframe(5), CACHE_TIME))
+        assertEquals(fiveMinutes, cache.read(series.first to Timeframe.ofMinutes(5), CACHE_TIME))
         assertEquals(fifteenMinutes, cache.read(series.first to Timeframe.M15, CACHE_TIME))
         assertEquals(2, store.values.size)
     }
@@ -238,7 +238,7 @@ class CandleCacheTest {
 
     @Test fun freshHistoryFloorCoversFourChartWidthsAndStaysPositive() {
         assertEquals(CACHE_TIME - 8_000 * 60_000L, chartHistoryFloor(Timeframe.M1, CACHE_TIME))
-        assertEquals(0, chartHistoryFloor(Timeframe(Timeframe.MAX_MINUTES), 1_000))
+        assertEquals(0, chartHistoryFloor(Timeframe.ofSeconds(Timeframe.MAX_SECONDS), 1_000))
     }
 
     @Test fun freshLoadCompletesAtItsFloorOrWhenThePageAddsNothingOlder() {

@@ -75,7 +75,7 @@ class DrawingGallery {
                             val shown = candles.subList(candles.size - 82, candles.size)
                             val scale = PriceScale(shown.minOf { it.low }.toDouble() - 600, shown.maxOf { it.high }.toDouble() + 600, plot.top, plot.bottom)
                             val coords = DrawingCoordinates(candles, 3_600_000, viewport, plot, plot.bottom, scale)
-                            val ctx = DrawingContext(coords, instrument, Timeframe(60), density, Color(0xFF1A1A1A), Color(0xFFDBDBDB), Color(0xFF089981), Color(0xFFF23645),
+                            val ctx = DrawingContext(coords, instrument, Timeframe.ofMinutes(60), density, Color(0xFF1A1A1A), Color(0xFFDBDBDB), Color(0xFF089981), Color(0xFFF23645),
                                 { text, size, bold, italic, maxWidth -> measurer.layout(text, size, bold, italic, maxWidth).size.let { Size(it.width.toFloat(), it.height.toFloat()) } })
                             drawRect(Color(0xFF131313), plot.topLeft, plot.size)
                             clipRect(plot.left, plot.top, plot.right, plot.bottom) {

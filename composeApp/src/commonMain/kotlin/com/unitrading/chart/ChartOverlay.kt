@@ -84,9 +84,9 @@ fun barCountdown(barOpenMs: Long, periodMs: Long, nowMs: Long): String? {
     return if (hours > 0) "$hours:$minutes:$seconds" else "$minutes:$seconds"
 }
 
-/** Time-axis label: clock time for intraday bars, calendar day for daily and longer bars. */
+/** Time-axis label: clock time for intraday bars, to the second for second intervals, and the calendar day for daily and longer bars. */
 fun axisTimeLabel(timeMs: Long, timeframe: Timeframe): String =
-    if (timeframe.minutes >= 1440) dateTime(timeMs).substring(5, 10) else clockLabel(timeMs)
+    if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else clockLabel(timeMs, seconds = timeframe.isSeconds)
 
 /**
  * Chart controls: symbol, interval, indicators and layers. Wide layouts float them over the plot with the favourite
@@ -207,7 +207,7 @@ private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Un
         if (inline) ToolbarPill(Modifier.height(32.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val shown = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
-                shown.forEach { frame -> PillSegment(frame.label, frame == timeframe, Modifier.testTag("interval-inline-${frame.minutes}")) { onTimeframe(frame) } }
+                shown.forEach { frame -> PillSegment(frame.label, frame == timeframe, Modifier.testTag("interval-inline-${frame.id}")) { onTimeframe(frame) } }
                 Box(Modifier.clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { expanded = true }
                     .semantics { contentDescription = "选择时间周期" }.testTag("interval-menu").padding(horizontal = 4.dp, vertical = 6.dp)) {
                     Icon(AppIcons.ExpandMore, contentDescription = null, Modifier.size(18.dp), tint = colors.Muted)
@@ -216,9 +216,15 @@ private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Un
         } else ToolbarChip(timeframe.label, { expanded = true }, "interval-current", trailing = AppIcons.ExpandMore)
         DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 220.dp)) {
             CustomIntervalRow { frame -> intervals.onAddCustom(frame); onTimeframe(frame); expanded = false }
-            val listed = (Timeframe.presets + intervals.custom + intervals.favorites + timeframe).distinct().sortedBy { it.minutes }
-            listOf("分钟" to (1 until 60), "小时" to (60 until 1440), "天" to (1440..Timeframe.MAX_MINUTES)).forEach { (title, range) ->
-                val members = listed.filter { it.minutes in range }
+            val listed = (Timeframe.presets + intervals.custom + intervals.favorites + timeframe).distinct().sortedBy { it.seconds }
+            // Grouped by unit like TradingView. An interval that is not a whole number of minutes counts as seconds whatever its length.
+            listOf<Pair<String, (Timeframe) -> Boolean>>(
+                "秒" to { it.isSeconds },
+                "分钟" to { !it.isSeconds && it.seconds < Timeframe.HOUR },
+                "小时" to { !it.isSeconds && it.seconds in Timeframe.HOUR until Timeframe.DAY },
+                "天" to { !it.isSeconds && it.seconds >= Timeframe.DAY },
+            ).forEach { (title, belongs) ->
+                val members = listed.filter(belongs)
                 if (members.isEmpty()) return@forEach
                 Text(title, Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp), style = type.labelMedium, color = colors.Muted)
                 members.forEach { frame ->
@@ -229,9 +235,9 @@ private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Un
                         onClick = { expanded = false; onTimeframe(frame) },
                         trailingIcon = {
                             ActionIcon(if (starred) AppIcons.Star else AppIcons.StarBorder, if (starred) "取消收藏 ${frame.label}" else "收藏 ${frame.label}",
-                                "interval-favorite-${frame.minutes}", tint = if (starred) colors.Accent else colors.Muted) { intervals.onToggleFavorite(frame) }
+                                "interval-favorite-${frame.id}", tint = if (starred) colors.Accent else colors.Muted) { intervals.onToggleFavorite(frame) }
                         },
-                        modifier = Modifier.testTag("interval-option-${frame.minutes}"),
+                        modifier = Modifier.testTag("interval-option-${frame.id}"),
                     )
                 }
             }
@@ -243,16 +249,17 @@ private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Un
 private fun CustomIntervalRow(onAdd: (Timeframe) -> Unit) {
     val type = MaterialTheme.typography
     var count by remember { mutableStateOf("") }
-    var unitMinutes by remember { mutableStateOf(1) }
-    val candidate = count.toIntOrNull()?.let { Timeframe.of(it, unitMinutes) }
+    var unit by remember { mutableStateOf(Timeframe.MINUTE) }
+    val candidate = count.toIntOrNull()?.let { Timeframe.of(it, unit) }
     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("添加自定义周期", style = type.labelMedium, color = TradingColors.Muted)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MenuTextField(count, { if (it.length <= 4 && it.all(Char::isDigit)) count = it }, "数量", "interval-custom-count", Modifier.weight(1f))
             TextButton({ candidate?.let(onAdd) }, Modifier.testTag("interval-custom-add"), enabled = candidate != null) { Text("添加") }
         }
-        SegmentedChoice(listOf(1, 60, 1440), unitMinutes, { when (it) { 1 -> "分钟"; 60 -> "小时"; else -> "天" } }, { "interval-custom-unit-$it" },
-            { unitMinutes = it }, Modifier.fillMaxWidth(), height = 32.dp)
+        SegmentedChoice(listOf(1, Timeframe.MINUTE, Timeframe.HOUR, Timeframe.DAY), unit,
+            { when (it) { 1 -> "秒"; Timeframe.MINUTE -> "分钟"; Timeframe.HOUR -> "小时"; else -> "天" } }, { "interval-custom-unit-$it" },
+            { unit = it }, Modifier.fillMaxWidth(), height = 32.dp)
     }
 }
 
@@ -332,7 +339,7 @@ internal fun ChartLegend(
                     listOf("开" to bar.open, "高" to bar.high, "低" to bar.low, "收" to bar.close).forEach { (label, value) -> Figure(label, instrument.formatPrice(value), tone) }
                     Text(change.label(instrument), style = type.labelSmall, color = if (change.diff >= 0) colors.UpText else colors.DownText)
                     Figure("量", formatVolume(bar.volume), colors.Ink)
-                    Text("${dateTime(bar.timeMs)} UTC", style = type.labelSmall, color = colors.Muted)
+                    Text("${dateTime(bar.timeMs, timeframe.isSeconds)} UTC", style = type.labelSmall, color = colors.Muted)
                 }
             }
             if (!compact) Row(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

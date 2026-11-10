@@ -272,7 +272,7 @@ internal fun DrawingValuesTooltip(layer: DrawingLayer) {
     Box(Modifier.offset { IntOffset(min(point.x.roundToInt() + 16, max(0, (c.plot.right - 180 * ctx.density).roundToInt())), max(point.y.roundToInt() - 90, c.plot.top.roundToInt())) }) {
         Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.inverseSurface, contentColor = MaterialTheme.colorScheme.inverseOnSurface) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                listOf(dateTime(bar.timeMs), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
+                listOf(dateTime(bar.timeMs, ctx.timeframe.isSeconds), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
                     barChange(bar, previous).label(instrument), "量 ${formatVolume(bar.volume)}").forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
             }
         }

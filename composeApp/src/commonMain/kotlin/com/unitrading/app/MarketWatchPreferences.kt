@@ -35,7 +35,7 @@ class MarketWatchPreferences(private val store: SnapshotStore) {
  * those, shortest interval first.
  */
 internal fun historyPreloadSeries(watch: List<String>, symbol: String, timeframe: Timeframe, favorites: List<Timeframe>): List<Pair<String, Timeframe>> {
-    val others = favorites.filter { it != timeframe }.sortedBy { it.minutes }
+    val others = favorites.filter { it != timeframe }.sortedBy { it.seconds }
     return (watch.map { it to timeframe } + others.filter { symbol in watch }.map { symbol to it } +
         others.flatMap { frame -> watch.map { it to frame } }).distinct()
 }

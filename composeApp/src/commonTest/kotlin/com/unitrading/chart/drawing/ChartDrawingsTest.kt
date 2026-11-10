@@ -245,7 +245,14 @@ class ChartDrawingsTest {
         drawings.hideDrawings = false
         drawings.update(drawings.drawings.single().copy(hiddenIntervals = setOf(IntervalBucket.HOURS)))
         assertTrue(frame().scenes.isEmpty())
-        assertEquals(1, drawings.frame(testContext(timeframe = Timeframe(5))).scenes.size, "still on the minute charts")
+        assertEquals(1, drawings.frame(testContext(timeframe = Timeframe.ofMinutes(5))).scenes.size, "still on the minute charts")
+        assertEquals(1, drawings.frame(testContext(timeframe = Timeframe.ofSeconds(30))).scenes.size, "and on the second charts")
+        drawings.update(drawings.drawings.single().copy(hiddenIntervals = setOf(IntervalBucket.SECONDS)))
+        assertTrue(drawings.frame(testContext(timeframe = Timeframe.ofSeconds(30))).scenes.isEmpty())
+        assertTrue(drawings.frame(testContext(timeframe = Timeframe.ofSeconds(90))).scenes.isEmpty(), "ninety seconds are a second interval")
+        assertEquals(1, drawings.frame(testContext(timeframe = Timeframe.M1)).scenes.size)
+        assertEquals(listOf(IntervalBucket.MINUTES, IntervalBucket.HOURS, IntervalBucket.HOURS, IntervalBucket.DAYS),
+            listOf(Timeframe.ofMinutes(59), Timeframe.H1, Timeframe.ofMinutes(1439), Timeframe.D1).map(IntervalBucket::of))
     }
 
     @Test fun strongMagnetPlacesAnchorsOnBarValuesAndCtrlFlipsIt() {
