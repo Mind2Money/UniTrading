@@ -40,6 +40,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val indicators: IndicatorController by lazy { IndicatorController(store) }
     /** Chart drawings of every symbol, read when the first chart opens. */
     val drawingLibrary: com.unitrading.chart.drawing.DrawingLibrary by lazy { com.unitrading.chart.drawing.DrawingLibrary(store) }
+    /** How each series was last shown: bars across the plot, where the view stood, a price axis set by hand. */
+    val chartViews: com.unitrading.chart.ChartViewMemory by lazy { com.unitrading.chart.ChartViewMemory(store) }
     /** The drawings of the main window's chart; every other chart window has a controller of its own on the same library. */
     val drawings: com.unitrading.chart.drawing.ChartDrawings by lazy { com.unitrading.chart.drawing.ChartDrawings(drawingLibrary) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */

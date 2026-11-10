@@ -88,8 +88,16 @@ fun TradingChart(
 ) {
     val colors = TradingColors
     val compact = chrome.compact
-    var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(ChartViewport()) }
-    var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<PriceScale?>(null) }
+    val views = chrome.views
+    val viewKey = chartViewKey(instrument.symbol, timeframe)
+    /** This chart's bar count before a change of series: a series it has not shown before opens with it, on the newest bar. */
+    val shownCount = remember { doubleArrayOf(views?.count ?: ChartViewport().count) }
+    // A series shown before opens as it was left. A view of the past finds its right edge among the bars by time, so while
+    // the bars are still on their way it waits for them in [restoring].
+    val savedView = remember(accountKey, instrument.symbol, timeframe) { views?.view(viewKey) }
+    var restoring by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.takeIf { it.edgeTimeMs != null && candles.isEmpty() }) }
+    var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.viewport(candles) ?: ChartViewport(count = shownCount[0])) }
+    var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.priceScale()) }
     var previousCandles by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles) }
     var showHistory by remember { mutableStateOf(true) }
     var showPositions by remember { mutableStateOf(true) }
@@ -249,9 +257,15 @@ fun TradingChart(
     }
     LaunchedEffect(selectedPosition?.id, selectedPosition?.version, positions.map { it.id }, orderVersions) { drag = null }
     LaunchedEffect(candles.size, candles.lastOrNull()?.timeMs) {
-        viewport = viewport.following(previousCandles, candles)
+        val waiting = restoring
+        viewport = if (waiting != null && candles.isNotEmpty()) waiting.viewport(candles).also { restoring = null } else viewport.following(previousCandles, candles)
         previousCandles = candles
     }
+    // Kept as it changes, for when this series is shown again; a view still waiting for its bars is not replaced meanwhile.
+    LaunchedEffect(viewKey, viewport, manualScale?.low, manualScale?.high) {
+        if (views != null && candles.isNotEmpty() && restoring == null) views.keep(viewKey, SavedChartView.of(viewport, candles, manualScale))
+    }
+    SideEffect { shownCount[0] = viewport.count }
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
     var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
@@ -720,6 +734,8 @@ class ChartChrome(
     val toolbarEnd: @Composable () -> Unit = {},
     /** The left toolbar's drawings for this chart; null leaves the chart without them. */
     val drawings: ChartDrawings? = null,
+    /** Where the chart keeps how it showed each series, so it opens again as it was left; null starts every series afresh. */
+    val views: ChartViewMemory? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */
