@@ -898,6 +898,7 @@ class RithmicBroker(
     override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
 
     override fun watch(symbol: String, timeframe: Timeframe) {
+        require(timeframe.seconds == 0) { "Rithmic 秒周期未启用" }
         if (stopped) return
         watching = symbol to timeframe
         watchJob?.cancel()

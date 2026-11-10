@@ -455,9 +455,11 @@ class DemoBrokerTest {
         val minutes = broker.history(SYMBOL, Timeframe.M1)
         assertEquals(Candle(start, 10_000, 10_050, 9_950, 10_025), minutes.first { it.timeMs == start })
         assertEquals(10_010L, minutes.last().close)
+        val secondsBars = broker.history(SYMBOL, Timeframe.seconds(15))
+        assertEquals(Candle(start + 15_000, 10_050, 10_050, 10_050, 10_050), secondsBars.first { it.timeMs == start + 15_000 })
         val before = broker.exportState()
-        for (timeframe in Timeframe.presets) {
-            val width = timeframe.minutes * 60_000L
+        for (timeframe in Timeframe.presets.filter { it.seconds == 0 }) {
+            val width = timeframe.durationMs
             val expected = minutes.groupBy { it.timeMs / width * width }.map { (time, group) ->
                 Candle(time, group.first().open, group.maxOf { it.high }, group.minOf { it.low }, group.last().close)
             }
