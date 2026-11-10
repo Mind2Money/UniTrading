@@ -47,6 +47,19 @@ class SavedTradovateAccountsTest {
     private fun managerWithRithmic(registry: BrokerRegistry, store: Store, connect: suspend (RithmicCredentials) -> BrokerPlugin = ::rithmicPlugin) =
         SavedTradovateAccounts(registry, store, { now }, connect = { s, _, _ -> plugin(s) }, connectRithmic = { c, _ -> connect(c) })
 
+    @Test fun tradovateOnlyPolicyDoesNotRestoreOrAcceptOtherLogins() = runTest {
+        val store = Store()
+        managerWithRithmic(registry(), store).signInRithmic(rithmic(), remember = true) {}
+        var connected = false
+        val reopened = registry()
+        val manager = managerWithRithmic(reopened, store) { connected = true; rithmicPlugin(it) }.also { it.allowRithmic = false }
+        manager.restore()
+        assertFalse(connected)
+        assertFalse(reopened.plugins.any { it.descriptor.id == rithmic().brokerId })
+        assertFailsWith<IllegalStateException> { manager.signInRithmic(rithmic(), true) {} }
+        assertFalse(connected)
+    }
+
     @Test fun rithmicPasswordIsStoredOnlyWhenRememberIsChosenAndRestoresWithoutABrowser() = runTest {
         val store = Store()
         val brokers = registry()

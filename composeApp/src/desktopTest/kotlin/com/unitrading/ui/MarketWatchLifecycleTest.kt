@@ -28,6 +28,7 @@ class MarketWatchLifecycleTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         val saved = demo.instruments.take(2).map { it.symbol }
+        val held = demo.accounts.flatMap { demo.openSession(it.id).state.value.positions }.map { it.symbol }.toSet()
         runtime.marketWatch.update(plugin.descriptor.id, saved)
         val showing = mutableStateOf(true)
         compose.setContent {
@@ -40,18 +41,19 @@ class MarketWatchLifecycleTest {
 
         // Startup opens the chart; restoring the list must not wait for a visit to Market.
         compose.onNodeWithTag("nav-1").assertIsSelected()
-        compose.runOnIdle { assertEquals(listOf(saved.toSet()), subscriptions) }
+        compose.runOnIdle { assertEquals(saved.toSet() + held, subscriptions.last()) }
         compose.onNodeWithTag("nav-0").performClick()
         compose.onNodeWithTag("market-quotes").assertIsDisplayed()
         compose.onNodeWithTag("nav-1").performClick()
-        compose.onNodeWithTag("nav-2").performClick()
+        compose.onNodeWithTag("nav-4").performClick()
+        compose.onNodeWithTag("account-tab-1").performClick()
         compose.onNodeWithTag("nav-0").performClick()
-        compose.runOnIdle { assertEquals(listOf(saved.toSet()), subscriptions) }
+        compose.runOnIdle { assertEquals(saved.toSet() + held, subscriptions.last()) }
 
         compose.onNodeWithTag("market-edit").performClick()
         compose.onNodeWithTag("market-remove-${saved.first()}").performClick()
-        compose.runOnIdle { assertEquals(listOf(saved.toSet(), setOf(saved.last())), subscriptions) }
+        compose.runOnIdle { assertEquals(setOf(saved.last()) + held, subscriptions.last()) }
         compose.runOnIdle { showing.value = false }
-        compose.runOnIdle { assertEquals(listOf(saved.toSet(), setOf(saved.last()), emptySet()), subscriptions) }
+        compose.runOnIdle { assertEquals(emptySet(), subscriptions.last()) }
     }
 }

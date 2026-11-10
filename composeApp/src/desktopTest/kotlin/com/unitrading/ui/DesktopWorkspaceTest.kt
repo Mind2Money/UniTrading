@@ -46,7 +46,7 @@ class DesktopWorkspaceTest {
     /** Every panel names itself at one size and one inset, and says so to screen readers. */
     @Test fun panelTitlesShareOneSizeAndInset() {
         render()
-        mapOf("新建订单" to "desktop-order", "交易商与账户" to "desktop-sidebar", "行情" to "desktop-sidebar", "交易" to "desktop-terminal").forEach { (title, panel) ->
+        mapOf("新建订单" to "desktop-order", "交易子账户" to "desktop-sidebar", "行情" to "desktop-sidebar", "交易" to "desktop-terminal").forEach { (title, panel) ->
             val node = compose.onNode(hasText(title) and hasAnyAncestor(hasTestTag(panel)) and isHeading(), useUnmergedTree = true).fetchSemanticsNode()
             val layout = mutableListOf<TextLayoutResult>().also { node.config[SemanticsActions.GetTextLayoutResult].action!!(it) }.single()
             assertEquals(16.sp, layout.layoutInput.style.fontSize, title)
@@ -100,7 +100,7 @@ class DesktopWorkspaceTest {
         assertEquals(chart.top, order.top)
         assertEquals(terminal.bottom, order.bottom, "The order panel runs the full height")
         assertEquals(order.bottom, sidebar.bottom)
-        compose.onNodeWithTag("broker-picker").assertExists()
+        compose.onNodeWithTag("quick-login-picker").assertExists()
         assertTrue(bounds("desktop-market-minimize").right > sidebar.center.x, "Its fold button is in the panel's top right corner")
         val target = File("../artifacts/desktop-panels-open.png")
         target.parentFile.mkdirs()

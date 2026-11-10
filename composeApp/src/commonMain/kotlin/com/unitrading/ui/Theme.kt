@@ -41,14 +41,14 @@ private class BasePalette(
     val roles: Map<com.unitrading.app.ThemeColor, Long>,
 )
 
-private val NightBase = BasePalette(0xFF282A2F, 0xFF44474E, accentTone = 80f, selectionTone = 16f, brandIsKey = false, mapOf(
-    PAGE to 0xFF0C0D10, SURFACE to 0xFF14161A, CHART to 0xFF111317, GRID to 0xFF282B30,
-    TEXT to 0xFFE3E3E8, MUTED to 0xFFC4C6D0, ACCENT to 0xFF0B57D0, UP to 0xFF3987E5, DOWN to 0xFFD95926,
+private val NightBase = BasePalette(0xFF2C2C2E, 0xFF38383A, accentTone = 80f, selectionTone = 16f, brandIsKey = false, mapOf(
+    PAGE to 0xFF101114, SURFACE to 0xFF1C1C1E, CHART to 0xFF16171A, GRID to 0xFF2C2C2E,
+    TEXT to 0xFFF5F5F7, MUTED to 0xFFAEAEB2, ACCENT to 0xFF007AFF, UP to 0xFF3987E5, DOWN to 0xFFD95926,
     LOSS to 0xFFFF9B86, PROFIT to 0xFF8CD6B2, STOP to 0xFFECA492, TARGET to 0xFF94C9B4,
 ))
-private val DayBase = BasePalette(0xFFE9EEF6, 0xFFC4C7CF, accentTone = 40f, selectionTone = 92f, brandIsKey = false, mapOf(
-    PAGE to 0xFFF0F4F9, SURFACE to 0xFFFFFFFF, CHART to 0xFFFFFFFF, GRID to 0xFFE6EAF0,
-    TEXT to 0xFF1B1C1F, MUTED to 0xFF44474E, ACCENT to 0xFF0B57D0, UP to 0xFF2169BE, DOWN to 0xFFBD4421,
+private val DayBase = BasePalette(0xFFF0F0F2, 0xFFDEDEE3, accentTone = 40f, selectionTone = 95f, brandIsKey = false, mapOf(
+    PAGE to 0xFFF5F5F7, SURFACE to 0xFFFFFFFF, CHART to 0xFFFFFFFF, GRID to 0xFFECECEF,
+    TEXT to 0xFF1D1D1F, MUTED to 0xFF65656B, ACCENT to 0xFF007AFF, UP to 0xFF2169BE, DOWN to 0xFFBD4421,
     LOSS to 0xFFB3261E, PROFIT to 0xFF176B45, STOP to 0xFFB83D31, TARGET to 0xFF207553,
 ))
 /**
@@ -149,7 +149,7 @@ private val TradingTypography = Typography(
 /** Material 3 shape scale. */
 private val TradingShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(28.dp),
+    large = RoundedCornerShape(20.dp), extraLarge = RoundedCornerShape(28.dp),
 )
 
 @Composable

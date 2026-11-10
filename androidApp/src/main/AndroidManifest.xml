@@ -8,9 +8,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Settings can install a newer release of this app; the system asks the user to allow it and to confirm each install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <application android:label="UniTrading" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
+    <application android:name=".TradingApplication" android:label="UniTrading" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".TradovateLoginActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+        <activity android:name=".TradovateDemoLoginActivity" android:process=":tradovate_demo" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".TradovateLiveLoginActivity" android:process=":tradovate_live" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

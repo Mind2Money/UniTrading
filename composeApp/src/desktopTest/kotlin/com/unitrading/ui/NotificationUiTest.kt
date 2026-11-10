@@ -75,7 +75,7 @@ class NotificationUiTest {
     @Test fun desktopToolbarAndFloatingReceiptNeverChangeChartDimensions() {
         val broker = Broker()
         render(broker)
-        assertTrue(compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().size.height <= 48 * .7f + 1)
+        assertTrue(compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().size.height <= 64 * .7f + 1)
         compose.onNodeWithText(broker.market.value.statusMessage).assertDoesNotExist()
         val before = chartBounds()
         compose.onNodeWithTag("review-order").performClick()

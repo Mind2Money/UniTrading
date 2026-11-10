@@ -5,6 +5,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class ChartRequestsTest {
+    @Test fun secondsUseTimeSizedTicksNotMinuteOrDailyBars() {
+        val bar = chartDescription(Timeframe.seconds(15))
+        assertEquals("Tick", bar.str("underlyingType"))
+        assertEquals(15L, bar.long("elementSize"))
+        assertEquals("Seconds", bar.str("elementSizeUnit"))
+        assertEquals(0L, chartHistoryFloor(Timeframe.seconds(1), 0))
+    }
+
     @Test fun intradayIntervalsRequestMinuteBarsAndWholeDaysRequestDailyBars() {
         val m5 = chartDescription(Timeframe.M5)
         assertEquals("MinuteBar", m5.str("underlyingType"))

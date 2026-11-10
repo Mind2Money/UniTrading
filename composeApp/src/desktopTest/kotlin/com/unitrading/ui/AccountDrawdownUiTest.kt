@@ -98,7 +98,8 @@ class AccountDrawdownUiTest {
         val feed = MutableStateFlow(MarketSnapshot())
         val runtime = broker(feed)
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) { Box(Modifier.requiredSize(400.dp, 740.dp)) { TradingScreen(runtime) } } }
-        compose.onNodeWithTag("nav-2").performClick().assertIsSelected()
+        compose.onNodeWithTag("nav-4").performClick().assertIsSelected()
+        compose.onNodeWithTag("account-tab-1").performClick()
         compose.onNodeWithTag("drawdown-room-value").assertTextEquals("375.00")
         compose.onNodeWithTag("drawdown-detail").assertIsDisplayed()
         feed.value = feed.value.copy(connected = false)

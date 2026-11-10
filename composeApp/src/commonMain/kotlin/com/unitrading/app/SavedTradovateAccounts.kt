@@ -53,6 +53,7 @@ class SavedTradovateAccounts(
         catch (error: Exception) { broker.disconnect(); throw error }
     },
 ) {
+    var allowRithmic: Boolean = true
     val available get() = store != null
     val message = MutableStateFlow<String?>(null)
     val restoring = MutableStateFlow(false)
@@ -110,7 +111,7 @@ class SavedTradovateAccounts(
                     RestoreTask(session.brokerId, "Tradovate ${session.environment.wire}",
                         if (session.expiresAtMs?.let { it > now() } != true) "登录已过期，请重新登录" else null) { progress -> establish(session, progress) }
                 }
-                val rithmic = state.rithmic.map { credentials ->
+                val rithmic = state.rithmic.filter { allowRithmic }.map { credentials ->
                     RestoreTask(credentials.brokerId, "Rithmic ${credentials.systemName}", null) { progress -> establishRithmic(credentials, progress) }
                 }
                 (tradovate + rithmic) to state.brokerId
@@ -196,6 +197,7 @@ class SavedTradovateAccounts(
 
     /** Connects first; credentials are written to the encrypted store only after the login worked and only when [remember] is set. */
     suspend fun signInRithmic(credentials: RithmicCredentials, remember: Boolean, progress: (String) -> Unit): String = operations.withLock {
+        check(allowRithmic) { "此版本仅支持 Tradovate 登录" }
         val broker = establishRithmic(credentials, progress)
         registry.register(broker)
         storage.withLock {

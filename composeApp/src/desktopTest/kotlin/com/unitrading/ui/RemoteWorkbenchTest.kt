@@ -105,7 +105,7 @@ class RemoteWorkbenchTest {
         compose.onNodeWithTag("open-settings").performClick()
         compose.onNodeWithText("本机已保存 1 个登录").performScrollTo().assertExists()
         compose.onNodeWithText("连接 Tradovate").assertExists()
-        compose.onNodeWithText("连接 Rithmic").assertExists()
+        compose.onNodeWithText("连接 Rithmic").assertDoesNotExist()
         compose.onNodeWithTag("forget-saved-logins").performScrollTo().performClick()
         compose.onNodeWithText("取消").performClick()
         kotlin.test.assertEquals(1, runtime.savedLogins.savedCount.value)
@@ -138,8 +138,8 @@ class RemoteWorkbenchTest {
     private fun render(plugin: BrokerPlugin) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin), includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("broker-picker").performClick()
-        compose.onNodeWithText("Remote test").performClick()
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${plugin.descriptor.id}").performClick()
     }
     @Test fun remoteEnvironmentAndIntegerContractsAreVisibleBeforeConfirmation() {
         render(remote())
@@ -184,7 +184,7 @@ class RemoteWorkbenchTest {
         render(remote(empty = true))
         compose.onNodeWithText("查询合约").assertExists()
         compose.onNodeWithText("连接 / 重新登录 Tradovate").assertExists()
-        compose.onNodeWithText("连接 / 重新登录 Rithmic").assertExists()
+        compose.onNodeWithText("连接 / 重新登录 Rithmic").assertDoesNotExist()
         compose.onNodeWithText("账户和合约由交易商提供。列表为空时，应用不会用本地数据填充。").assertExists()
         compose.onNodeWithTag("review-order").assertDoesNotExist()
     }

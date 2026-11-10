@@ -24,7 +24,7 @@ internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>): List<
     (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
 
 /** How far a fresh chart reads back: four chart-widths of wall time cover weekends and holidays. */
-internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0, now - timeframe.minutes * 60_000L * CHART_BARS * 4)
+internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0, now - timeframe.durationMs * CHART_BARS * 4)
 
 /** Bounds a fresh chart's requests against the server's hourly chart budget, whatever a custom timeframe asks for. */
 internal const val MAX_FRESH_HISTORY_PAGES = 24

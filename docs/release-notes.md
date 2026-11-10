@@ -1,5 +1,26 @@
 # Unreleased
 
+## 简体中文
+
+- Android WebView 不支持独立配置时，以 Demo/Live 独立进程和数据目录登录；仍要求安全消息与页面启动脚本支持。
+- 手机交易功能并入账户页，增加总览、交易、分析子页；资金、订单与分析跟随当前交易子账户。
+- 增加每日盈亏日历、周汇总及已实现交易分析；缺失净盈亏标注待确认，部分统计明确说明。
+- 支持 1–59 秒周期及横向收藏周期栏，秒线使用独立缓存与设置。
+- 增加以双指中心为锚点的图表缩放和平移，多指操作取消未提交的订单线与画线拖动。
+- 优化短横屏导航、账户栏与交易栏；旋转保留状态，日历统一格高并适配大字体。
+- 登录入口与保存会话恢复仅开放 Tradovate；保留 Rithmic 底层模块。
+
+## English
+
+- Fall back to isolated Demo/Live login processes and WebView data directories when multi-profile support is unavailable, while retaining secure message and document-start requirements.
+- Consolidate mobile trading into an Account hub with Overview, Trading and Analytics tabs scoped to the active trading child.
+- Add daily P&L calendars, weekly totals and realized-trade analytics with explicit unknown/partial P&L handling.
+- Support 1–59 second chart intervals and inline favorite timeframes with independent cache and preference keys.
+- Add centroid-anchored pinch zoom/pan and cancel pending order-line/drawing drags during multi-touch gestures.
+- Compact short-landscape controls, preserve state on Android rotation, and keep calendar cells equal-height with larger fonts.
+- Restrict login UI and saved-session restoration to Tradovate, retaining the Rithmic library modules.
+
+
 # v1.4.0
 
 ## 简体中文

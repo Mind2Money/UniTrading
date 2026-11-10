@@ -27,22 +27,22 @@ class ThemePaletteTest {
         assertEquals("TradingV", ThemePreset.TRADINGV.label)
     }
 
-    @Test fun overridesReplaceSingleRolesAndOtherPresetsKeepTheirColours() {
+    @Test fun overridesReplaceSingleRolesAndStandardPresetsUseUpdatedColours() {
         val custom = themePalette(ThemeSettings(ThemePreset.TRADINGV, mapOf("UP" to "#112233")))
         assertEquals("#112233", colorHex(custom.Up))
         assertEquals("#F23645", colorHex(custom.Down))
         val dark = themePalette(ThemeSettings(ThemePreset.DARK))
-        assertEquals("#0C0D10", colorHex(dark.Shell))
-        assertEquals("#282A2F", colorHex(dark.Raised))
+        assertEquals("#101114", colorHex(dark.Shell))
+        assertEquals("#2C2C2E", colorHex(dark.Raised))
         assertEquals("#3987E5", colorHex(dark.Up))
         assertEquals("#94C9B4", colorHex(dark.Target))
-        assertEquals("#0B57D0", colorHex(dark.Key))
+        assertEquals("#007AFF", colorHex(dark.Key))
         val light = themePalette(ThemeSettings(ThemePreset.LIGHT))
-        assertEquals("#F0F4F9", colorHex(light.Shell))
-        assertEquals("#C4C7CF", colorHex(light.Border))
+        assertEquals("#F5F5F7", colorHex(light.Shell))
+        assertEquals("#DEDEE3", colorHex(light.Border))
         assertEquals("#2169BE", colorHex(light.Up))
         assertEquals("#207553", colorHex(light.Target))
-        assertEquals("#0B57D0", colorHex(light.Key))
+        assertEquals("#007AFF", colorHex(light.Key))
         assertEquals(colorHex(dark.Chart), colorHex(themePalette(ThemeSettings(ThemePreset.SYSTEM), systemDark = true).Chart))
         assertEquals(colorHex(light.Chart), colorHex(themePalette(ThemeSettings(ThemePreset.SYSTEM), systemDark = false).Chart))
     }

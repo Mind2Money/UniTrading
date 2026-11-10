@@ -43,6 +43,7 @@ kotlin {
             implementation(compose.components.resources)
             implementation(libs.navigationevent.compose)
             implementation(libs.serialization.json)
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
         }
         getByName("androidMain").dependencies { implementation(libs.activity.compose) }
         getByName("desktopMain").dependencies {

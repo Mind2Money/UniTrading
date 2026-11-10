@@ -23,7 +23,7 @@ enum class ThemeColor(val label: String) {
 }
 
 @Serializable
-data class ThemeSettings(val preset: ThemePreset = ThemePreset.DARK, val colors: Map<String, String> = emptyMap()) {
+data class ThemeSettings(val preset: ThemePreset = ThemePreset.SYSTEM, val colors: Map<String, String> = emptyMap()) {
     fun validate() {
         require(colors.keys.all { name -> ThemeColor.entries.any { it.name == name } })
         require(colors.values.all { it.matches(Regex("#[0-9a-fA-F]{6}")) })

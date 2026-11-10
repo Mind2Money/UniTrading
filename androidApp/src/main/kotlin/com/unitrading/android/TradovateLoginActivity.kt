@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.Settings
 import android.view.View
 import android.view.autofill.AutofillManager
@@ -20,7 +21,7 @@ import androidx.webkit.WebViewFeature
 import com.unitrading.tradovate.*
 import kotlinx.coroutines.*
 
-/** Only an in-process deferred carries credentials; Intents and saved state never do. */
+/** Main-process session receiver; launch Intents and saved state never carry credentials. */
 private object LoginTransfer {
     var pending: CompletableDeferred<TradovateSession>? = null
     var progress: ((String) -> Unit)? = null
@@ -33,10 +34,20 @@ class AndroidTradovateLogin(private val activity: Activity) : TradovateLogin {
         LoginTransfer.pending = result
         LoginTransfer.progress = onProgress
         onProgress("请在官方网页中登录，成功后将自动返回")
+        var isolated: IsolatedLoginBridge? = null
         try {
-            activity.startActivity(Intent(activity, TradovateLoginActivity::class.java).putExtra("environment", environment.wire))
+            val multiProfile = runCatching {
+                WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+            }.getOrDefault(false)
+            if (!multiProfile && Build.VERSION.SDK_INT >= 28) {
+                isolated = IsolatedLoginBridge(environment, result)
+                isolated.launch(activity)
+            } else {
+                activity.startActivity(Intent(activity, TradovateLoginActivity::class.java).putExtra("environment", environment.wire))
+            }
             result.await()
         } finally {
+            isolated?.close()
             if (LoginTransfer.pending === result) {
                 LoginTransfer.pending = null
                 LoginTransfer.progress = null
@@ -46,7 +57,9 @@ class AndroidTradovateLogin(private val activity: Activity) : TradovateLogin {
     }
 }
 
-class TradovateLoginActivity : ComponentActivity() {
+open class TradovateLoginActivity : ComponentActivity() {
+    protected open val isolatedEnvironment: TradovateEnvironment? = null
+    private var isolatedClient: IsolatedLoginClient? = null
     private var browser: WebView? = null
     private val loginScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var autoReturn: Job? = null
@@ -56,8 +69,28 @@ class TradovateLoginActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
         val environment = TradovateEnvironment.entries.firstOrNull { it.wire == intent.getStringExtra("environment") }
-        if (environment == null || LoginTransfer.pending == null) { finish(); return }
-        LoginTransfer.window = this
+        if (environment == null) { finish(); return }
+        if (isolatedEnvironment != null) {
+            if (environment != isolatedEnvironment) { finish(); return }
+            val waiting = TextView(this).apply {
+                text = "正在启动兼容登录窗口…"; setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(15, 27, 45)); setPadding(24, 80, 24, 24)
+            }
+            setContentView(waiting)
+            isolatedClient = IsolatedLoginClient(this) { createLogin(environment) }
+            if (isolatedClient?.connect() != true) finish()
+        } else {
+            if (LoginTransfer.pending == null) { finish(); return }
+            LoginTransfer.window = this
+            createLogin(environment)
+        }
+    }
+
+    private fun progress(message: String) {
+        if (isolatedEnvironment == null) LoginTransfer.progress?.invoke(message)
+    }
+
+    private fun createLogin(environment: TradovateEnvironment) {
         val accumulator = LoginAccumulator(environment)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(15, 27, 45)) }
         val gap = (12 * resources.displayMetrics.density).toInt()
@@ -77,13 +110,48 @@ class TradovateLoginActivity : ComponentActivity() {
         layout.addView(hint)
         if (autofill?.isEnabled != true) layout.addView(Button(this).apply { text = "系统自动填充设置"; setOnClickListener { startActivity(Intent(Settings.ACTION_SETTINGS)) } })
         setContentView(layout)
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) || !WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
-            status.text = "请先更新 Android System WebView。当前版本缺少登录所需的安全消息、页面启动脚本或独立浏览器配置支持。"
+        val isolated = isolatedEnvironment != null
+        if (isolated && (application as? TradingApplication)?.loginDirectoryReady != true) {
+            status.text = "兼容登录的数据目录初始化失败，已停止打开网页。请截图反馈。"
+            return
+        }
+        val featureStatus = listOf(
+            WebViewFeature.DOCUMENT_START_SCRIPT,
+            WebViewFeature.WEB_MESSAGE_LISTENER,
+            WebViewFeature.MULTI_PROFILE
+        ).associateWith { feature ->
+            runCatching { WebViewFeature.isFeatureSupported(feature) }.getOrNull()
+        }
+        if (featureStatus.any { (feature, supported) ->
+                supported != true && !(isolated && feature == WebViewFeature.MULTI_PROFILE)
+            }) {
+            val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(this) }.getOrNull()
+            status.text = buildString {
+                appendLine("UniTrading · 兼容登录检查")
+                appendLine("尚未打开登录网页，请将以下信息截图反馈。")
+                appendLine()
+                appendLine("Android API：${android.os.Build.VERSION.SDK_INT}")
+                appendLine("WebView 包：${provider?.packageName ?: "无法识别"}")
+                appendLine("WebView 版本：${provider?.versionName ?: "无法识别"}")
+                appendLine()
+                featureStatus.forEach { (feature, supported) ->
+                    val result = when (supported) {
+                        true -> "支持"
+                        false -> "不支持"
+                        null -> "检测失败"
+                    }
+                    appendLine("$feature：$result")
+                }
+                appendLine()
+                append("缺少必要的安全登录能力，已停止打开网页。")
+            }
+            status.setTextIsSelectable(true)
             return
         }
         val web = WebView(this)
         browser = web
-        WebViewCompat.setProfile(web, "unitrading-tradovate-${environment.wire}")
+        if (!isolated) WebViewCompat.setProfile(web, "unitrading-tradovate-${environment.wire}")
+        else status.text = "Tradovate ${environment.wire} · 兼容登录\nhttps://trader.tradovate.com"
         web.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
@@ -112,9 +180,12 @@ class TradovateLoginActivity : ComponentActivity() {
             if (delivered || isFinishing) return
             try {
                 val session = accumulator.result()
-                WebViewCompat.getProfile(web).cookieManager.flush()
-                delivered = LoginTransfer.pending?.complete(session) == true
-                finish()
+                if (isolated) CookieManager.getInstance().flush()
+                else WebViewCompat.getProfile(web).cookieManager.flush()
+                delivered = if (isolated) isolatedClient?.deliver(session) == true
+                    else LoginTransfer.pending?.complete(session) == true
+                if (delivered) finish()
+                else status.text = "会话返回失败，请取消后重新登录"
             } catch (refused: TradovateRemoteException) { status.text = refused.message }
             catch (_: Exception) { status.text = "登录会话不完整或已过期，请重新登录" }
         }
@@ -126,7 +197,7 @@ class TradovateLoginActivity : ComponentActivity() {
                 sessionCaptured = true
                 if (autoReturn?.isActive != true && !delivered) {
                     status.text = "网页登录已成功，正在自动返回交易终端…"
-                    LoginTransfer.progress?.invoke(status.text.toString())
+                    progress(status.text.toString())
                     runCatching { autofill?.commit() }
                     autoReturn = loginScope.launch {
                         val started = android.os.SystemClock.elapsedRealtime()
@@ -134,10 +205,10 @@ class TradovateLoginActivity : ComponentActivity() {
                         while (!hasWindowFocus() && android.os.SystemClock.elapsedRealtime() - started < 60_000) {
                             val seconds = ((60_000 - (android.os.SystemClock.elapsedRealtime() - started)) / 1000).coerceAtLeast(0)
                             status.text = "登录成功，等待系统提示保存密码，最多再等 ${seconds} 秒"
-                            LoginTransfer.progress?.invoke(status.text.toString())
+                            progress(status.text.toString())
                             delay(250)
                         }
-                        LoginTransfer.progress?.invoke("已收到登录信息，正在自动返回…")
+                        progress("已收到登录信息，正在自动返回…")
                         completeLogin()
                     }
                 }
@@ -153,7 +224,9 @@ class TradovateLoginActivity : ComponentActivity() {
         if (LoginTransfer.window === this) LoginTransfer.window = null
         browser?.let { it.stopLoading(); it.destroy() }
         browser = null
-        if (!isChangingConfigurations) LoginTransfer.pending?.let { if (!it.isCompleted) it.completeExceptionally(IllegalStateException("已取消登录")) }
+        isolatedClient?.close(cancelled = !delivered && !isChangingConfigurations)
+        isolatedClient = null
+        if (isolatedEnvironment == null && !isChangingConfigurations) LoginTransfer.pending?.let { if (!it.isCompleted) it.completeExceptionally(IllegalStateException("已取消登录")) }
         super.onDestroy()
     }
 }

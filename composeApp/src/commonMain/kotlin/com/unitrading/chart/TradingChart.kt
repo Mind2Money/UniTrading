@@ -154,7 +154,7 @@ fun TradingChart(
     }
     val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
     val currentScale by rememberUpdatedState(scale)
-    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.minutes * 60_000L, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
+    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.durationMs, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
     val currentVisible by rememberUpdatedState(visible)
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
@@ -206,7 +206,7 @@ fun TradingChart(
         drag != null || hoverPoint?.let { it.x in left..right && it.y in top..plotBottom && grabAt(it, orderTags, lines, scale, 22 * density.density) != null } == true -> panelResizeCursor(false)
         else -> PointerIcon.Default
     }
-    val periodMs = timeframe.minutes * 60_000L
+    val periodMs = timeframe.durationMs
     val step = plotWidth / viewport.count.toFloat()
     val currentViewport by rememberUpdatedState(viewport)
     fun visibleIndex(x: Float, view: ChartViewport = currentViewport): Int {
@@ -280,7 +280,7 @@ fun TradingChart(
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(dateTime(c.timeMs), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                        Text(crosshairTimeLabel(c.timeMs, timeframe), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
                             (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
@@ -299,9 +299,45 @@ fun TradingChart(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size) {
+                            // Initial pass wins over drawing/order-line gestures. Once two fingers take
+                            // ownership, consume through the LAST finger up: never commit a leftover drag.
+                            awaitPointerEventScope {
+                                var pinchOwned = false
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val fingers = event.changes.filter { it.pressed && it.type == PointerType.Touch }
+                                    if (!pinchOwned && fingers.size >= 2 && fingers.all {
+                                        it.position.x in left..right && it.position.y in top..currentPlotBottom
+                                    }) {
+                                        pinchOwned = true
+                                        drag = null; crosshair = null; crosshairY = null; hoverPoint = null; lineMenu = null
+                                        drawingLayer?.controller?.cancelPointerGesture()
+                                    }
+                                    if (!pinchOwned) continue
+                                    val stable = fingers.filter { it.previousPressed }.take(2)
+                                    if (stable.size == 2) {
+                                        val a = stable[0]; val b = stable[1]
+                                        val before = (a.previousPosition + b.previousPosition) / 2f
+                                        val after = (a.position + b.position) / 2f
+                                        val oldDistance = (a.previousPosition - b.previousPosition).getDistance()
+                                        val distance = (a.position - b.position).getDistance()
+                                        if (oldDistance > 8 * density.density && distance > 8 * density.density) {
+                                            val factor = (distance / oldDistance).toDouble().coerceIn(.2, 5.0)
+                                            viewport = viewport.pinch(factor, (before.x - left) / plotWidth, (after.x - left) / plotWidth, currentTotal)
+                                            val s = manualScale?.copy(top = top, bottom = currentPlotBottom) ?: currentScale
+                                            manualScale = s.pinch(factor, (before.y - top) / (currentPlotBottom - top),
+                                                (after.y - top) / (currentPlotBottom - top), instrument.tickSize * 4.0)
+                                        }
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                    if (event.changes.none { it.pressed }) pinchOwned = false
+                                }
+                            }
+                        }
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。"
+                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。"
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
@@ -686,4 +722,4 @@ fun dateTime(timeMs: Long): String = Instant.fromEpochMilliseconds(timeMs).toStr
 
 /** Crosshair time tag: date and minute for intraday bars, the date alone for daily and longer bars; UTC like the axis. */
 fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String =
-    if (timeframe.minutes >= 1440) dateTime(timeMs).take(10) else dateTime(timeMs)
+    if (timeframe.seconds > 0) Instant.fromEpochMilliseconds(timeMs).toString().take(19).replace('T', ' ') else if (timeframe.minutes >= 1440) dateTime(timeMs).take(10) else dateTime(timeMs)

@@ -12,6 +12,15 @@ private const val CACHE_TIME = 1_798_589_000_000L
 private const val CACHE_STEP = 5 * 60_000L
 
 class CandleCacheTest {
+    @Test fun secondsNeverShareCacheEntriesWithOtherSecondsOrMinutes() = runTest {
+        val store = MemoryStore()
+        val cache = CandleCache(store, "demo")
+        val frames = listOf(Timeframe.seconds(5), Timeframe.seconds(15), Timeframe.M5)
+        frames.forEachIndexed { index, frame -> cache.write("MES" to frame, listOf(candle(close = 100L + index))) }
+        frames.forEachIndexed { index, frame -> assertEquals(100L + index, cache.read("MES" to frame, CACHE_TIME).single().close) }
+        assertEquals(3, store.values.size)
+    }
+
     @Test fun liveSubscriptionSnapshotDoesNotCountAsHistoricalBackfill() {
         val seed = Candle(1, 100, 110, 90, 100)
         val load = ChartLoad(listOf(seed))

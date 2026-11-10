@@ -5,6 +5,21 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun secondsFavoritesCustomAndLastIntervalSurviveRestartWithoutLosingLegacyMinutes() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15],"lastTimeframeMinutes":5}""") }
+        val controller = ChartPreferencesController(store)
+        assertTrue(controller.toggleFavorite(Timeframe.seconds(15)))
+        assertTrue(controller.addCustom(Timeframe.seconds(7)))
+        assertTrue(controller.setLastChart("tradovate", "MES", Timeframe.seconds(7)))
+        val saved = ChartPreferencesController(store).preferences.value
+        assertEquals(listOf(5, 15), saved.favoriteMinutes)
+        assertEquals(listOf(15), saved.favoriteSeconds)
+        assertEquals(Timeframe.seconds(7), saved.lastTimeframe)
+        assertTrue(Timeframe.seconds(7) in saved.custom)
+        assertTrue(controller.setLastChart("tradovate", null, Timeframe.M5))
+        assertNull(ChartPreferencesController(store).preferences.value.lastTimeframeSeconds)
+    }
+
     @Test fun indicatorPaneSizesPersistAndLegacyPreferencesUseDefaultSizes() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
         val controller = ChartPreferencesController(store)

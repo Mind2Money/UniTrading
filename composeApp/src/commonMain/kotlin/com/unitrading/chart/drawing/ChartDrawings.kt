@@ -504,6 +504,17 @@ class ChartDrawings(private val store: SnapshotStore, saveDispatcher: CoroutineD
         return true
     }
 
+    /** A multi-touch chart gesture takes over; roll back any uncommitted drawing drag. */
+    internal fun cancelPointerGesture() {
+        dragBefore?.let { drawings = it }
+        dragOriginal = null; dragBefore = null; dragHandle = null; dragMoved = false; dragCloned = false
+        touchCandidate = null
+        cancelPlacement()
+        zooming = false
+        hideTooltip()
+        closeMenu()
+    }
+
     /** Button released. Returns whether this ended something the layer had taken. */
     internal fun pointerUp(info: PointerInfo, ctx: DrawingContext, indicatorValues: List<Double>, onZoom: (Double, Double) -> Unit): Boolean {
         val point = info.position

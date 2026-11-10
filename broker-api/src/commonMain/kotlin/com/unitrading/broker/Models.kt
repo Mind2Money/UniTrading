@@ -6,23 +6,34 @@ import kotlinx.serialization.Serializable
 enum class Side { BUY, SELL }
 @Serializable
 enum class OrderKind { MARKET, LIMIT, STOP }
-/** Bar interval in minutes; whole days are multiples of 1440. Equality is by minutes, so custom intervals compare with presets. */
+/** Canonical interval: whole minutes, or 1–59 seconds with minutes=0. Old minute JSON stays compatible. */
 @Serializable
-data class Timeframe(val minutes: Int) {
-    init { require(minutes in 1..MAX_MINUTES) { "周期必须在 1 分钟到 ${MAX_MINUTES / 1440} 天之间" } }
+data class Timeframe(val minutes: Int, val seconds: Int = 0) {
+    init { require((minutes in 1..MAX_MINUTES && seconds == 0) || (minutes == 0 && seconds in 1..59)) { "周期必须为 1–59 秒或 1–527040 分钟" } }
+    val durationMs: Long get() = minutes * 60_000L + seconds * 1_000L
+    val key: String get() = if (seconds > 0) "${seconds}s" else minutes.toString()
+    val shortLabel: String get() = when {
+        seconds > 0 -> "${seconds}s"
+        minutes == 1440 -> "D"
+        minutes % 1440 == 0 -> "${minutes / 1440}D"
+        minutes % 60 == 0 -> "${minutes / 60}h"
+        else -> "${minutes}m"
+    }
     val label: String get() = when {
+        seconds > 0 -> "${seconds}秒"
         minutes % 1440 == 0 -> "${minutes / 1440}天"
         minutes % 60 == 0 -> "${minutes / 60}小时"
         else -> "${minutes}分钟"
     }
     companion object {
         const val MAX_MINUTES = 1440 * 366
+        fun seconds(count: Int): Timeframe = if (count >= 60 && count % 60 == 0) Timeframe(count / 60) else Timeframe(0, count)
         val M1 = Timeframe(1)
         val M5 = Timeframe(5)
         val M15 = Timeframe(15)
         val H1 = Timeframe(60)
         /** Dropdown presets grouped by unit like TradingView: minutes, hours, days. */
-        val presets: List<Timeframe> = listOf(1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440).map(::Timeframe)
+        val presets: List<Timeframe> = listOf(1, 5, 10, 15, 30).map { Timeframe(0, it) } + listOf(1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240, 360, 480, 720, 1440).map(::Timeframe)
         val defaultFavorites: List<Timeframe> = listOf(M1, M5, M15, H1)
         /** [count] units of [unitMinutes] (1, 60 or 1440), or null when outside the supported range. */
         fun of(count: Int, unitMinutes: Int): Timeframe? {
