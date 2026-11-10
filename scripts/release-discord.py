@@ -28,11 +28,16 @@ USER_AGENT = f'UniTrading-release (https://github.com/{REPOSITORY})'
 TAG = re.compile(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)')
 MESSAGE_ID = re.compile(r'\d{5,25}')
 WEBHOOK = re.compile(r'https://discord\.com/api(/v10)?/webhooks/\d{5,25}/[A-Za-z0-9_-]+')
-# Discord's limits for one embed description and for all embeds of a message. The preview leaves
-# room for its notice. Counted in UTF-16 units, the larger count for an emoji.
+# Discord's limits for one embed description and for all embeds of a message, counted in UTF-16 units (an emoji
+# counts two). The preview leaves room for its notice.
 DESCRIPTION_LIMIT = 4096
 MESSAGE_LIMIT = 6000
 PREVIEW_LIMIT = 5700
+# Discord also caps the whole message in UTF-8 bytes and publishes no number: it refused v1.5.0 with HTTP 413,
+# "Message size exceeds maximum allowed. Oversized fields: message.embeds=10602, message.content=97", after
+# v1.4.0's 7,382 bytes had gone through. A message stays within the size known to work.
+MESSAGE_BYTES = 7000
+NOTICE = '\n\n📎 完整更新日志见附件。'
 
 spec = importlib.util.spec_from_file_location('release_notes', Path(__file__).with_name('release-notes.py'))
 release_notes = importlib.util.module_from_spec(spec)
@@ -64,6 +69,20 @@ def prefix(text, length):
     return text.encode('utf-16-le')[:length * 2].decode('utf-16-le', 'ignore')
 
 
+def fit(text, max_units, max_bytes):
+    """The start of `text` within `max_units` UTF-16 units and `max_bytes` UTF-8 bytes. A cut text ends before the
+    last blank line in its second half, so no section loses its end or keeps only its title, or else before the
+    last line break there; a character that does not fit is dropped whole."""
+    part = prefix(text, max_units)
+    part = part.encode('utf-8')[:max_bytes].decode('utf-8', 'ignore')
+    if len(part) < len(text):
+        for separator in ('\n\n', '\n'):
+            cut = part.rfind(separator)
+            if cut > len(part) / 2:
+                return part[:cut]
+    return part
+
+
 def chinese_block(section):
     """The `## 简体中文` block of a section that release_notes.announcement() returned."""
     lines = section.split('\n')
@@ -78,11 +97,14 @@ def build_announcement(tag, notes):
         raise ValueError('Expected a release tag vX.Y.Z')
     if not notes:
         raise ValueError(f'The Chinese announcement of {tag} is empty')
+    link = f'https://github.com/{REPOSITORY}/releases/tag/{tag}'
+    content = f'🎉 UniTrading {tag}\n📥 下载：{link}'
+    room = MESSAGE_BYTES - len(content.encode('utf-8'))
     attachment = None
     remaining = notes
-    if units(notes) > MESSAGE_LIMIT:
+    if units(notes) > MESSAGE_LIMIT or len(notes.encode('utf-8')) > room:
         attachment = {'name': f'UniTrading-{tag}-release-notes.md', 'text': notes + '\n'}
-        remaining = prefix(notes, PREVIEW_LIMIT) + '\n\n📎 完整更新日志见附件。'
+        remaining = fit(notes, PREVIEW_LIMIT, room - len(NOTICE.encode('utf-8'))) + NOTICE
     embeds = []
     while remaining:
         part = prefix(remaining, DESCRIPTION_LIMIT)
@@ -91,17 +113,13 @@ def build_announcement(tag, notes):
             part = part[:newline + 1]
         embeds.append({'description': part})
         remaining = remaining[len(part):]
-    link = f'https://github.com/{REPOSITORY}/releases/tag/{tag}'
-    payload = {'content': f'🎉 UniTrading {tag}\n📥 下载：{link}', 'embeds': embeds, 'allowed_mentions': {'parse': []}}
+    payload = {'content': content, 'embeds': embeds, 'allowed_mentions': {'parse': []}}
     return payload, attachment
 
 
 def request_body(payload, attachment):
-    """JSON, or multipart/form-data when the complete notes go along as a file.
-
-    The JSON is UTF-8 rather than \\u escapes, which take six bytes per Chinese character: the escaped v1.5.0
-    announcement came to 20 KB and Discord refused it with HTTP 413, while 14 KB had gone through for v1.4.0.
-    """
+    """JSON, or multipart/form-data when the complete notes go along as a file. UTF-8 rather than \\u escapes,
+    which take six bytes for each Chinese character."""
     text = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if attachment is None:
         return text.encode('utf-8'), 'application/json'

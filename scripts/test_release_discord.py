@@ -35,18 +35,22 @@ class BuildAnnouncementTest(unittest.TestCase):
         self.assertIsNone(attachment)
 
     def test_stays_within_discord_limits_and_keeps_emoji_whole(self):
-        for notes in ('a' * 4095 + '🎉' + 'b' * 1903, '中\n' * 1200, 'a' * 5699 + '🎉' + 'end' * 500):
+        # The last one is Chinese like a real announcement: within 6000 units but over the bytes Discord takes.
+        for notes in ('a' * 4095 + '🎉' + 'b' * 1903, '中\n' * 1200, 'a' * 5699 + '🎉' + 'end' * 500, '账户页与交易分析\n' * 500):
             payload, attachment = release_discord.build_announcement(TAG, notes)
             parts = [embed['description'] for embed in payload['embeds']]
             joined = ''.join(parts)
             self.assertTrue(all(release_discord.units(part) <= 4096 for part in parts))
             self.assertLessEqual(release_discord.units(joined), 6000)
             joined.encode('utf-8')  # A split surrogate pair cannot be encoded.
-            if release_discord.units(notes) <= 6000:
+            content = len(payload['content'].encode('utf-8'))
+            self.assertLessEqual(content + len(joined.encode('utf-8')), release_discord.MESSAGE_BYTES)
+            if release_discord.units(notes) <= 6000 and content + len(notes.encode('utf-8')) <= release_discord.MESSAGE_BYTES:
                 self.assertEqual(joined, notes)
                 self.assertIsNone(attachment)
             else:
                 self.assertTrue(joined.endswith('📎 完整更新日志见附件。'))
+                self.assertTrue(notes.startswith(joined[:-len(release_discord.NOTICE)]), 'the preview is the start of the notes')
                 self.assertEqual(attachment, {'name': f'UniTrading-{TAG}-release-notes.md', 'text': notes + '\n'})
 
     def test_rejects_a_bad_tag_or_empty_notes(self):
