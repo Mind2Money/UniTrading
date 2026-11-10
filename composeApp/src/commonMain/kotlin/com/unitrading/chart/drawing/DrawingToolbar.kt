@@ -33,6 +33,8 @@ import kotlin.math.roundToInt
 internal val DrawingToolbarWidth = 46.dp
 private val ButtonHeight = 38.dp
 private val MenuItemHeight = 34.dp
+/** Material's height of a tab that holds only text. */
+private val TextTabHeight = 48.dp
 
 /** One button of the toolbar; [menu] adds the arrow that opens its flyout. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -123,7 +125,9 @@ private fun IconPicker(drawings: ChartDrawings, close: () -> Unit) {
     var tab by remember { mutableStateOf(0) }
     val labels = listOf("表情", "贴纸", "符号")
     Column(Modifier.width(320.dp).padding(horizontal = 8.dp)) {
-        TabRow(tab, containerColor = Color.Transparent) {
+        // A dropdown menu sizes itself by asking its content for intrinsic sizes at an unbounded width, which a tab row
+        // cannot answer; the fixed height answers for it.
+        PrimaryTabRow(tab, Modifier.height(TextTabHeight), containerColor = Color.Transparent) {
             labels.forEachIndexed { index, label -> Tab(tab == index, { tab = index }, text = { Text(label) }, modifier = Modifier.testTag("icon-tab-$index")) }
         }
         val glyphs = when (tab) { 0 -> EMOJI; 1 -> STICKERS; else -> SYMBOLS }

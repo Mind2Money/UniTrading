@@ -8,6 +8,9 @@
 ✅ 标准版不再因为 WebView 不支持独立配置而拒绝登录，这种情况下 Demo 和 Live 共用网站登录状态；确实缺少必需能力时，提示写明缺哪一项和 WebView 版本
 ⚠️ 这两项改动尚未在鸿蒙真机上验证，内置浏览器版也未用真实账号登录过
 
+📈 **图表**
+✅ 修复打开画图工具栏“图标”的表情面板时报错、面板打不开的问题；表情、贴纸、符号三个标签页现在都能打开并选用
+
 ## English
 
 📱 **Android packages**
@@ -15,6 +18,9 @@
 ✅ Both packages share one package name and signature, so either installs over the other and keeps your data; in-app updates stay on the same kind of package
 ✅ The standard package no longer refuses to log in when the WebView lacks separate profiles; Demo and Live then share the website's login state. When a required capability really is missing, the message names it and the WebView version
 ⚠️ Neither change has been run on a real HarmonyOS phone yet, and the built-in browser package has not logged in with a real account
+
+📈 **Charts**
+✅ Fixed an error that kept the icon picker of the drawing toolbar from opening; its emoji, sticker and symbol tabs now open and can be picked from
 
 # v1.4.0
 

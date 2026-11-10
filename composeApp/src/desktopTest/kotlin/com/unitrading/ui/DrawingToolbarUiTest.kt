@@ -130,6 +130,22 @@ class DrawingToolbarUiTest {
         assertTrue(drawings.hideTrading)
     }
 
+    /** A dropdown menu sizes itself from its content's intrinsic measurements, which the picker has to answer. */
+    @Test fun iconPickerOpensSwitchesTabsAndArmsTheChosenGlyph() {
+        show()
+        compose.onNodeWithTag("drawing-group-ICON-menu").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("icon-0-0").assertExists("the picker opens on the emoji tab")
+        compose.onNodeWithTag("icon-tab-2").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("icon-2-0").performClick()
+        compose.waitForIdle()
+        assertEquals(DrawingTool.ICON, drawings.tool)
+        compose.onNodeWithTag("icon-2-0").assertDoesNotExist()
+        clickChart(.5f, .5f)
+        assertEquals("★", drawings.drawings.single().glyph)
+    }
+
     @Test fun takesAScreenshotOfTheToolbarAndAFlyout() {
         show()
         compose.onNodeWithTag("drawing-group-FIB-menu").performClick()

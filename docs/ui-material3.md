@@ -126,6 +126,7 @@ B3 和 C8 改变了之前按 MT5 录像做的设计：5 项类型栏拆成类型
 - `selectTab` 用 lambda，不用本地函数引用。本地函数引用捕获了切换账户前的 `showActivity`，切换账户后底部导航回不到设置页。
 - 下单按钮固定在表单下方，不在滚动区内，测试不要对 `review-order` 调 `performScrollTo`。
 - `TradingChart` 的参数数量仍受 `ChartChrome` 注释所述的 ART 限制，新增图表选项继续放进 `ChartChrome`。
+- `DropdownMenu` 用内容的固有尺寸定宽，并按无限宽度询问每个子项的高度。`TabRow`、`LazyColumn`、`BoxWithConstraints` 这类基于 SubcomposeLayout 的组件放进菜单，打开时抛 “Asking for intrinsic measurements of SubcomposeLayout layouts is not supported”。`PrimaryTabRow` 不基于 SubcomposeLayout，但在无限宽度下同样算不出尺寸，要给固定高度，写法见 `DrawingToolbar.kt` 的 `IconPicker`。
 
 ## 视觉回归
 

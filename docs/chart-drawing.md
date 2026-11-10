@@ -61,7 +61,7 @@
 ## 验证
 
 - 单元测试：`DrawingGeometryTest`、`ChartDrawingsTest`，覆盖全部工具的分步放置、坐标换算、层级计算、撤销重做、保存恢复。
-- 界面测试：`DrawingToolbarUiTest` 在真实 `TradingScreen` 上放置、选中、编辑、删除。
+- 界面测试：`DrawingToolbarUiTest` 在真实 `TradingScreen` 上放置、选中、编辑、删除，并打开图标面板、切换标签页、选用符号后放到图表上。
 - `DrawingGallery`、`DrawingScreenshots` 把全部工具和工具栏画到本机 `artifacts/drawing-gallery/` 供目视检查：
 
 ```bash
