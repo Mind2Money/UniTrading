@@ -106,6 +106,11 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
+                if (account != null && !account.readOnly) {
+                    AccountBracketSettings(runtime.accountRisk, plugin, account, busy)
+                    AccountRiskSettings(runtime.accountRisk, plugin, account, busy)
+                    AccountOrderLimitSettings(runtime.accountRisk, plugin, account, busy)
+                }
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
                     supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
@@ -171,7 +176,7 @@ internal fun SettingsPage(
 /** What the keyboard trading switch does, with the chosen keys and whether a key press still asks before it trades. */
 internal fun keyboardTradingSummary(preferences: TradingPreferences): String {
     val keys = preferences.tradingKeys
-    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，不带止损止盈。" +
+    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，并应用子账户的金额止损止盈设置。" +
         if (preferences.skipConfirmation) "已开启“跳过交易确认”，按键即成交。" else "按键后先弹确认框，Enter 确认，Esc 取消。"
 }
 

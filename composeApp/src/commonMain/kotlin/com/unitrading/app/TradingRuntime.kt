@@ -46,6 +46,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val drawings: com.unitrading.chart.drawing.ChartDrawings by lazy { com.unitrading.chart.drawing.ChartDrawings(drawingLibrary) }
     /** Names the user gave logins and accounts on this device. */
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
+    internal val accountRisk by lazy { AccountRiskController(store) }
+    internal val analyticsCache by lazy { AnalyticsTradeCache(store) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */
     val livePnl: LivePnlController by lazy { LivePnlController(store, names = accountAliases.aliases) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->

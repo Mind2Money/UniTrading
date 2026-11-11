@@ -2,6 +2,7 @@ package com.unitrading.android
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -15,6 +16,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ProductionLicenseKeys
 import com.unitrading.app.TradingRuntime
+import com.unitrading.app.ThemePreset
+import com.unitrading.app.ThemeSettings
+import com.unitrading.broker.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlin.time.Clock
 import com.unitrading.ui.TradingScreen
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -150,6 +156,65 @@ class AppearanceUiTest {
             SystemClock.sleep(16)
         }
         idle()
+    }
+
+    @Test fun accountRiskScreensOnAndroid() {
+        check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        val source = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
+        val raw = source.openSession(source.accounts.first().id)
+        val info = raw.account.copy(name = "25K 风控示例")
+        val tradingDay = java.time.LocalDate.now(java.time.ZoneId.of("America/Chicago")).toString()
+        val snapshot = MutableStateFlow(AccountSnapshot(info.id, balanceMicros = 24_990_500_000,
+            equityMicros = 24_990_500_000, marginMicros = 0,
+            dailyPnl = DailyPnl(-97_520_000, tradingDay = tradingDay, updatedAtMs = Clock.System.now().toEpochMilliseconds()),
+            drawdown = AccountDrawdown(DrawdownRule(levelMicros = 24_288_650_000, amountMicros = 1_000_000_000,
+                peakMicros = 25_288_650_000, mode = DrawdownMode.END_OF_DAY, reported = true),
+                roomMicros = 701_850_000, danger = .30, source = DrawdownValueSource.CASH)))
+        val fixture = object : BrokerPlugin by source {
+            override val descriptor = source.descriptor.copy(name = "离线模拟", environment = BrokerEnvironment.REMOTE_DEMO)
+            override val accounts = listOf(info)
+            override val catalog = MutableStateFlow(BrokerCatalog(source.instruments, accounts))
+            override fun openSession(accountId: String) = object : AccountSession by raw {
+                override val account = info
+                override val state = snapshot
+            }
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(fixture)).apply { paused.value = true }
+        runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.LIGHT)) }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+                    navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
+                activity.setContent { TradingScreen(runtime) }
+            }
+            tap("账户", last = true)
+            awaitText("回撤与风险")
+            screenshot("01-account-overview")
+            tap("交易")
+            awaitText("持仓与订单")
+            assertNull(node("回撤与风险"))
+            screenshot("02-trading")
+            tap("设置", last = true)
+            scrollTicketTo("子账户交易锁定")
+            screenshot("03-risk-settings")
+            tap("子账户交易锁定")
+            awaitText("子账户锁定规则")
+            val amount = firstEditableNode()
+            check(amount.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "200")
+            }))
+            idle()
+            screenshot("04-risk-rules")
+            tap("锁定亏损 / 盈利设置")
+            awaitText("确认锁定盈亏设置？")
+            tap("确认启用")
+            awaitText("子账户交易锁定")
+            snapshot.value = snapshot.value.copy(dailyPnl = DailyPnl(-205_000_000, tradingDay = tradingDay,
+                updatedAtMs = Clock.System.now().toEpochMilliseconds()))
+            tap("账户", last = true)
+            awaitText("$tradingDay 交易日已锁定 · 达到亏损额度")
+            screenshot("05-risk-triggered")
+        }
     }
 
     @Test fun loginThemeAndMaterialNavigationWithChartGestures() {

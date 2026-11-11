@@ -214,7 +214,8 @@ internal fun orderLines(
     if (draft != null && draftEntry != null && draftEntry > 0) {
         val pending = draft.kind != OrderKind.MARKET && draft.entryPrice != null
         add(OrderLine(draftEntry, listOf(LineCell(CellKind.TITLE, draft.side.label())) +
-            addButtons(EditableLine.DraftProtection(draft, false, draftEntry).takeIf { draft.takeProfit == null }, EditableLine.DraftProtection(draft, true, draftEntry).takeIf { draft.stopLoss == null }) +
+            addButtons(EditableLine.DraftProtection(draft, false, draftEntry).takeIf { draft.takeProfit == null && !options.draftTargetManaged },
+                EditableLine.DraftProtection(draft, true, draftEntry).takeIf { draft.stopLoss == null && !options.draftStopManaged }) +
             LineCell(CellKind.VALUE, instrument.formatQuantity(draft.lotsHundredths)) + LineCell(CellKind.VALUE, draft.kind.label()) +
             LineCell(CellKind.CLOSE, action = LineAction.CloseDraft, hint = "关闭下单预览"),
             sideTone(draft.side), edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft, preview = true))
@@ -224,8 +225,11 @@ internal fun orderLines(
             // The broker's estimate when it has one; otherwise the same arithmetic, so an invalid draft still shows its result.
             val pnl = (if (stop) draftPreview?.stopLossPnlMicros else draftPreview?.takeProfitPnlMicros)
                 ?: estimatedExitPnl(instrument, draft.side, draft.lotsHundredths, draftEntry, price)
-            add(OrderLine(price, protectionCells(instrument, stop, pnl, !instrument.estimatesIncludeFees, draft.lotsHundredths, LineAction.RemoveDraftProtection(stop), "取消${protectionName(stop)}"),
-                protectionTone(stop), alpha = .65f, edit = EditableLine.DraftProtection(draft, stop, price), pnl = pnl, gross = !instrument.estimatesIncludeFees, moving = dragged, preview = true))
+            val managed = if (stop) options.draftStopManaged else options.draftTargetManaged
+            add(OrderLine(price, protectionCells(instrument, stop, pnl, !instrument.estimatesIncludeFees, draft.lotsHundredths,
+                LineAction.RemoveDraftProtection(stop).takeUnless { managed }, "取消${protectionName(stop)}"),
+                protectionTone(stop), alpha = .65f, edit = EditableLine.DraftProtection(draft, stop, price).takeUnless { managed },
+                pnl = pnl, gross = !instrument.estimatesIncludeFees, moving = dragged, preview = true))
         }
     }
 }
@@ -238,6 +242,8 @@ internal data class OrderLineOptions(
     val editPendingProtection: Boolean,
     val addProtection: Boolean = false,
     val removeProtection: Boolean = false,
+    val draftStopManaged: Boolean = false,
+    val draftTargetManaged: Boolean = false,
 )
 
 /**
@@ -276,6 +282,8 @@ class ChartOrderActions(
     /** The broker's check of an order changed on its own to a price, its quantity kept; see [PendingOrder.standaloneEditable]. */
     val estimateStandalone: (PendingOrder, Long) -> OrderPreview = { _, _ -> OrderPreview(null) },
     val onStandalone: (PendingOrder, Long) -> Unit = { _, _ -> },
+    val draftStopManaged: Boolean = false,
+    val draftTargetManaged: Boolean = false,
 )
 
 /** The side [key] trades under these trading keys; null for every other key, and for any key held with a modifier. */

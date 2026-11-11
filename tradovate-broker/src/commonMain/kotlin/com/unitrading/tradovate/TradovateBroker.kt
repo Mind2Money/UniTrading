@@ -60,6 +60,7 @@ class TradovateBroker(
     private var lastRequestMs: Long? = null
     private data class FinancialSnapshot(val values: JsonObject, val dailyPnl: DailyPnl?)
     private val financials = mutableMapOf<Long, FinancialSnapshot>()
+    private val balanceSlots = Semaphore(4)
     private var financialRevision = 0L
     private val fillFees = mutableMapOf<Long, Long?>()
     private var historyDetailsJob: Job? = null
@@ -722,22 +723,30 @@ class TradovateBroker(
         lock.withLock { rebuild() }
     }
 
-    private suspend fun refreshBalances() {
-        val slots = Semaphore(4)
-        coroutineScope { accounts.map { account -> launch { slots.withPermit {
-            val id = account.id.toLongOrNull() ?: return@withPermit
-            try {
-                val revision = lock.withLock { financialRevision }
-                val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", id) }).jsonObject
-                lock.withLock {
-                    if (revision == financialRevision) {
-                        financials[id] = FinancialSnapshot(snapshot, mapDailyPnl(snapshot, latestUsdCashBalance(id), now()))
-                        rebuild()
-                    }
+    private suspend fun refreshBalance(accountId: Long) = balanceSlots.withPermit {
+        try {
+            val revision = lock.withLock {
+                if (stopped || accountId !in authorizedAccounts) return@withPermit
+                financialRevision
+            }
+            val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", accountId) }).jsonObject
+            lock.withLock {
+                if (!stopped && revision == financialRevision && accountId in authorizedAccounts) {
+                    financials[accountId] = FinancialSnapshot(snapshot, mapDailyPnl(snapshot, latestUsdCashBalance(accountId), now()))
+                    rebuild()
                 }
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
-        } } }.joinAll() }
+            }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
+    }
+
+    private suspend fun refreshBalances() = coroutineScope {
+        accounts.mapNotNull { account -> account.id.toLongOrNull()?.let { id -> launch { refreshBalance(id) } } }.joinAll()
+    }
+
+    override suspend fun refreshDailyPnl(accountId: String) {
+        if (!market.value.connected || !market.value.tradingReady) return
+        accountId.toLongOrNull()?.let { refreshBalance(it) }
     }
 
     /** Caller holds lock; one worker coalesces entity updates and preserves known fees for unchanged fills. */

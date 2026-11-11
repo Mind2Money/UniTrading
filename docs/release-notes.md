@@ -1,5 +1,20 @@
 # Unreleased
 
+- 统一交易设置中三个子账户风控入口的列表样式。
+- Use the same list style for the three subaccount risk settings.
+
+- 收藏周期按时长排序，新增子账户金额止损止盈，交易分析在本机缓存最近 30 天的平仓记录。
+- Sort favorite intervals by duration, add per-account cash-based brackets, and cache 30 days of closed trades for analytics.
+
+- 手机下单栏停靠在图表下方（竖屏）或右侧（横屏），收起时保留草稿。
+- The phone order editor docks below the chart in portrait and beside it in landscape. Minimizing preserves the draft.
+
+- 子账户可限制累计手数、禁用品种，并可二次确认撤单及平仓当前或全部子账户。
+- Add per-account exposure caps, blocked symbols and confirmed single/all-account liquidation.
+
+- 子账户本机盈亏锁定与规则冻结；资金与回撤移入总览。
+- Local per-account daily P&L locks and settings freeze; funds and drawdown move to the overview.
+
 # v1.5.0
 
 ## 简体中文
