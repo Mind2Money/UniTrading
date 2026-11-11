@@ -38,7 +38,7 @@ private fun ratio(value: Double?, percent: Boolean = false): String = when {
 
 /** Realized results of the trading child's loaded closed trades: totals, a P&L curve and a daily calendar. */
 @Composable
-internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name) {
+internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name, cached: Boolean = false) {
     var symbol by remember { mutableStateOf<String?>(null) }
     var zoneId by remember { mutableStateOf("America/Chicago") }
     val zone = remember(zoneId) { TimeZone.of(zoneId) }
@@ -64,7 +64,7 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("交易分析", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-            Text("$name · 已加载平仓记录 · $currency", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+            Text("$name · ${if (cached) "近 30 天缓存及已同步平仓记录" else "已加载平仓记录"} · $currency", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

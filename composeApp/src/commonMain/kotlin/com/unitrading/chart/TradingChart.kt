@@ -177,16 +177,18 @@ fun TradingChart(
     val currentDrawingLayer by rememberUpdatedState(drawingLayer)
     val currentTotal by rememberUpdatedState(candles.size)
     val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths, it.request, it.protectionEditable) }
-    val activeDraft = drag?.let { edit ->
+    val movedDraft = drag?.let { edit ->
         when (val line = edit.line) {
             is EditableLine.Draft -> line.request.copy(entryPrice = edit.price)
             is EditableLine.DraftProtection -> line.request.withProtection(line.stop, edit.price)
             else -> null
         }
-    } ?: draft
+    }
+    val draftDrag = movedDraft?.let(actions.estimateDraft)
+    val activeDraft = draftDrag?.first ?: draft
     val dragEstimate = drag?.let { edit ->
         when (val line = edit.line) {
-            is EditableLine.Draft, is EditableLine.DraftProtection -> actions.estimateDraft(activeDraft!!)
+            is EditableLine.Draft, is EditableLine.DraftProtection -> draftDrag?.second
             is EditableLine.Pending -> actions.estimatePending(line.order.id, edit.price)
             is EditableLine.PendingProtection -> line.order.request.withProtection(line.stop, edit.price)
                 .let { actions.estimatePendingProtection(line.order.id, it.stopLoss, it.takeProfit) }
@@ -198,14 +200,18 @@ fun TradingChart(
     // A market draft enters at the side of the quote it trades against, so its lines show even while the estimate is invalid.
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
-        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection), quote)
+        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection,
+            actions.draftStopManaged, actions.draftTargetManaged), quote)
     val currentLines by rememberUpdatedState(lines)
     drawingLayer?.bindChart(
         orderLineAt = { point -> currentLines.any { it.edit != null && abs(currentScale.y(it.price) - point.y) <= 8 * density.density } },
         onZoomRange = { from, to -> viewport = zoomedViewport(from, to, currentTotal); manualScale = null },
         indicatorValuesAt = { index -> overlays.flatMap { item -> item.series.mapNotNull { series -> series.values.getOrNull(index)?.takeUnless { it.isNaN() } } } },
     )
-    val readout = drag?.let { dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving }) }
+    val readout = drag?.let {
+        dragReadout(instrument, it, dragEstimate, lines.firstOrNull { line -> line.moving },
+            sizedLots = draftDrag?.first?.lotsHundredths.takeIf { actions.stopRequiredForSizing })
+    }
     // While a phone order panel is open the legend leaves the order lines' labels free, returning only for a drag's estimate.
     val legendShown = !chrome.ordering || readout != null
     val labelStyle = TextStyle(color = colors.Muted, fontSize = 11.sp, fontFeatureSettings = "tnum")
@@ -370,7 +376,10 @@ fun TradingChart(
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
                             contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。" +
-                                (actions.tradingKeys?.let { "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。" } ?: "")
+                                (actions.tradingKeys?.let {
+                                    if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
+                                    else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
+                                } ?: "")
                             stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
@@ -515,7 +524,7 @@ fun TradingChart(
                             if (event.type != KeyEventType.KeyDown) false
                             // A key held down repeats its press, and an order that goes out at once must go out once: the repeats
                             // are swallowed until the key comes up. An order that asks first opens a dialog, which takes the keys.
-                            else if (side != null) { if (!actions.instantOrders || heldTradingKeys.add(event.key)) actions.onMarketOrder(side); true }
+                            else if (side != null) { if ((!actions.instantOrders && !actions.stopRequiredForSizing) || heldTradingKeys.add(event.key)) actions.onMarketOrder(side); true }
                             else when (event.key) {
                                 Key.DirectionLeft -> { crosshair = ((crosshair ?: visible.lastIndex) - 1).coerceAtLeast(crosshairSlots.first); crosshairY = null; true }
                                 Key.DirectionRight -> { crosshair = ((crosshair ?: 0) + 1).coerceAtMost(crosshairSlots.last); crosshairY = null; true }
@@ -697,7 +706,8 @@ fun TradingChart(
                 plotMenu?.let { menu ->
                     PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
-                        onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price) })
+                        onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price) },
+                        stopRequiredForSizing = actions.stopRequiredForSizing)
                 }
                 val bar = visible.getOrNull(readoutIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + readoutIndex - 1)
@@ -705,7 +715,10 @@ fun TradingChart(
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
-                        keysHint = actions.tradingKeys?.let { tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders) }, keysLive = chartFocused)
+                        keysHint = actions.tradingKeys?.let {
+                            if (actions.stopRequiredForSizing && chartFocused) "${it.buy} 市价买入 · ${it.sell} 市价卖出 · 打开下单栏填写 SL"
+                            else tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders)
+                        }, keysLive = chartFocused)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }

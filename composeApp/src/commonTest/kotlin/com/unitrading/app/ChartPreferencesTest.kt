@@ -5,6 +5,12 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun insertingCustomFavoriteSortsSecondsMinutesAndHours() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteSeconds":[3600,1,300,60]}""") }
+        assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.ofMinutes(3)))
+        assertEquals(listOf(1, 60, 180, 300, 3600), ChartPreferencesController(store).preferences.value.favorites.map { it.seconds })
+    }
+
     @Test fun indicatorPaneSizesPersistAndLegacyPreferencesUseDefaultSizes() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
         val controller = ChartPreferencesController(store)
@@ -85,7 +91,7 @@ class ChartPreferencesTest {
         assertTrue(first.addCustom(Timeframe.ofSeconds(30)), "a preset is not added as a custom interval")
         assertTrue(first.setLastChart("atlas-demo", "EURUSD", Timeframe.ofSeconds(5)))
         val reopened = ChartPreferencesController(store).preferences.value
-        assertEquals(listOf(Timeframe.M5, Timeframe.ofMinutes(240), Timeframe.ofSeconds(30)), reopened.favorites)
+        assertEquals(listOf(Timeframe.ofSeconds(30), Timeframe.M5, Timeframe.ofMinutes(240)), reopened.favorites)
         assertEquals(listOf(Timeframe.ofMinutes(7), Timeframe.ofSeconds(45)), reopened.custom)
         assertEquals(Timeframe.ofSeconds(5), reopened.lastTimeframe)
         assertTrue(first.toggleFavorite(Timeframe.ofSeconds(30)))

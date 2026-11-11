@@ -55,8 +55,8 @@ internal data class OrderDraft(
         )
     }
 
-    fun request(instrument: Instrument): OrderRequest? {
-        val lots = instrument.parseQuantity(quantity) ?: return null
+    fun request(instrument: Instrument, quantityOverride: Long? = null): OrderRequest? {
+        val lots = quantityOverride ?: instrument.parseQuantity(quantity) ?: return null
         val price = if (kind == OrderKind.MARKET) null else instrument.parsePrice(entry) ?: return null
         val sl = if (!stopLossEnabled) null else instrument.parsePrice(stopLoss) ?: return null
         val tp = if (!takeProfitEnabled) null else instrument.parsePrice(takeProfit) ?: return null

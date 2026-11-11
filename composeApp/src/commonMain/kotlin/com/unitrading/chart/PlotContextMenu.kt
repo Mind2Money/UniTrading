@@ -58,7 +58,7 @@ internal fun plotOrderLabel(instrument: Instrument, order: PlotOrder, lotsHundre
  * entry orders of [menu]. [lotsHundredths] is the quantity an order would carry, shown in its label.
  */
 @Composable
-internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit) {
+internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit, stopRequiredForSizing: Boolean = false) {
     val colors = TradingColors
     Box(Modifier.offset { IntOffset(menu.at.x.roundToInt(), menu.at.y.roundToInt()) }) {
         DropdownMenu(true, onDismiss, Modifier.widthIn(min = 200.dp)) {
@@ -70,7 +70,10 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
             if (onLine != null && menu.orders.isNotEmpty()) DividerLine(Modifier.padding(vertical = 4.dp))
             menu.orders.forEach { order ->
                 DropdownMenuItem(
-                    text = { Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price), color = if (order.side == Side.BUY) colors.UpText else colors.DownText) },
+                    text = {
+                        val label = plotOrderLabel(instrument, order, lotsHundredths.takeUnless { stopRequiredForSizing }, menu.price)
+                        Text(if (stopRequiredForSizing) "$label · 填写 SL" else label, color = if (order.side == Side.BUY) colors.UpText else colors.DownText)
+                    },
                     onClick = { onDismiss(); onOrder(order) },
                     modifier = Modifier.testTag("plot-menu-${order.side.name}-${order.kind.name}"),
                 )

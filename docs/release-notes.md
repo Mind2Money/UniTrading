@@ -12,6 +12,33 @@
 ✅ Settings → Trading has a new "fill sounds" switch, on by default, and it says the sounds are a joke feature: a funny clip plays on an entry, take-profit or stop-loss fill
 ✅ Switched off, fills are silent and a clip that is playing stops at once; a fill that happened while it was off is not played after it is switched back on
 
+- 修复收起下单栏后更改止损止盈，确认下单可能使用旧草稿的问题。
+- Fix compact order submission using stale stop-loss and take-profit values.
+
+- 手机和紧凑窗口可在交易设置中选择停靠下单栏或独立弹窗。
+- Choose a docked or popup order ticket on phones and compact windows.
+
+- 自动手数模式支持拖动图表 SL，并实时预览手数。
+- Drag SL on the chart to preview the automatically calculated order size.
+
+- 子账户订单风控可选择按风险金额和止损价计算手数。
+- Add an account risk mode that sizes orders from the cash risk and stop price.
+
+- 统一交易设置中三个子账户风控入口的列表样式。
+- Use the same list style for the three subaccount risk settings.
+
+- 收藏周期按时长排序，新增子账户金额止损止盈，交易分析在本机缓存最近 30 天的平仓记录。
+- Sort favorite intervals by duration, add per-account cash-based brackets, and cache 30 days of closed trades for analytics.
+
+- 手机下单栏停靠在图表下方（竖屏）或右侧（横屏），收起时保留草稿。
+- The phone order editor docks below the chart in portrait and beside it in landscape. Minimizing preserves the draft.
+
+- 子账户可限制累计手数、禁用品种，并可二次确认撤单及平仓当前或全部子账户。
+- Add per-account exposure caps, blocked symbols and confirmed single/all-account liquidation.
+
+- 子账户本机盈亏锁定与规则冻结；资金与回撤移入总览。
+- Local per-account daily P&L locks and settings freeze; funds and drawdown move to the overview.
+
 # v1.5.0
 
 ## 简体中文

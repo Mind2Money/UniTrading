@@ -12,7 +12,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.AccountAliasesController
-import com.unitrading.app.overviewTotals
 import com.unitrading.broker.*
 
 /**
@@ -104,7 +103,6 @@ internal fun AccountOverviewPage(
     plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, market: MarketSnapshot,
     onOpenTrading: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
 ) {
-    val totals = remember(snapshot) { overviewTotals(snapshot) }
     val names = LocalAccountAliases.current
     val accountName = names.account(plugin.descriptor.id, account)
     val colors = TradingColors
@@ -125,20 +123,7 @@ internal fun AccountOverviewPage(
                 }
             }
             item(key = "summary") {
-                Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
-                    Column(Modifier.padding(if (wide) 24.dp else 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("所选子账户 · ${account.currency}", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
-                        Text(totals.equityMicros?.let { money(it) } ?: "—", style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("overview-equity-${account.currency}"))
-                        Text(if (snapshot.equityEstimated) "账户总净值 · 含估算" else "账户总净值", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
-                        DividerLine()
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            OverviewMetric("账户浮动盈亏", totals.floatingMicros, Modifier.weight(1f))
-                            OverviewMetric("已加载历史净盈亏", totals.realizedMicros, Modifier.weight(1f))
-                        }
-                        if (totals.unknownClosed > 0) Text("${totals.unknownClosed} 笔历史净盈亏待确认，未计为零。", style = MaterialTheme.typography.bodySmall, color = colors.Caution)
-                    }
-                }
+                AccountSummary(snapshot, connected = market.connected, currency = account.currency)
             }
             item(key = "child") {
                 Surface(shape = MaterialTheme.shapes.medium, color = colors.Surface) {
@@ -153,14 +138,5 @@ internal fun AccountOverviewPage(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun OverviewMetric(label: String, value: Long?, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, color = TradingColors.Muted, style = MaterialTheme.typography.bodySmall)
-        Text(value?.let { money(it, true) } ?: "—", color = TradingColors.pnl(value), style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold)
     }
 }
