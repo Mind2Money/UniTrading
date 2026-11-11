@@ -273,6 +273,24 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trade-bar").assertExists()
     }
 
+    @Test fun compactShortMarketConfirmationRetainsBothProtectionPrices() = phoneTest {
+        render()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-side-SELL").performClick()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-sl").performClick().assertIsOn()
+        compose.onNodeWithTag("compact-tp").performClick().assertIsOn()
+        compose.onNodeWithTag("compact-submit-order").performClick()
+        compose.onNodeWithText("止损价").assertExists()
+        compose.onNodeWithText("止盈价").assertExists()
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.positions.isNotEmpty() }
+        val position = session.state.value.positions.last()
+        assertEquals(Side.SELL, position.side)
+        assertNotNull(position.stopLoss)
+        assertNotNull(position.takeProfit)
+    }
+
     @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() = phoneTest {
         render()
         val instrument = plugin.instruments.first()

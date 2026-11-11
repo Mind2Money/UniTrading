@@ -644,8 +644,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
                     else confirmation = action
                 }
+                val latestMobileRequest by rememberUpdatedState(request)
+                val latestMobilePreview by rememberUpdatedState(preview)
                 fun reviewMobileOrder() {
-                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
+                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && latestMobilePreview?.valid == true) {
+                        latestMobileRequest?.let { reviewTrade(Confirmation.Place(it)) }
+                    }
                 }
                 /** A button on an order line: the same paths as the trade list, so confirmations and version checks apply. */
                 fun runLineAction(action: LineAction) {
@@ -869,8 +873,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, style = MaterialTheme.typography.bodySmall) }
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", style = MaterialTheme.typography.titleSmall)
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
-                                    liveOrder?.stopLoss?.let { EstimateRow("止损价", instrument.formatPrice(it)) }
-                                    liveOrder?.takeProfit?.let { EstimateRow("止盈价", instrument.formatPrice(it)) }
+                                    EstimateRow("止损价", r.stopLoss?.let(instrument::formatPrice) ?: "未设置")
+                                    EstimateRow("止盈价", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
                                     Text(when {
                                         sizeByRisk && r.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"

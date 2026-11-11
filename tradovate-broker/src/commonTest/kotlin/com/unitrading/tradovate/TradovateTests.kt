@@ -344,6 +344,24 @@ class TradovateTests {
         assertEquals(1, wire.requests.count { it.path.startsWith("order/") })
         assertTrue(account.state.value.positions.isEmpty())
     }
+    @Test fun shortMarketOrderSubmitsBothBuyProtectionLegs() = runTest {
+        val (broker, wire) = ready()
+        val account = broker.openSession("100")
+        val request = OrderRequest("MESZ6", Side.SELL, OrderKind.MARKET, 100,
+            stopLoss = 5_510_000_000, takeProfit = 5_490_000_000)
+        val result = account.placeOrder("short-market", request)
+        assertTrue(result.accepted, result.message)
+        val sent = wire.requests.single { it.path == "order/placeoso" }.body!!
+        assertEquals("Sell", sent.str("action"))
+        val stop = sent["bracket1"]!!.jsonObject
+        val target = sent["bracket2"]!!.jsonObject
+        assertEquals("Buy", stop.str("action"))
+        assertEquals("Stop", stop.str("orderType"))
+        assertEquals("5510.000000", stop.str("stopPrice"))
+        assertEquals("Buy", target.str("action"))
+        assertEquals("Limit", target.str("orderType"))
+        assertEquals("5490.000000", target.str("price"))
+    }
     @Test fun timeoutBlocksDuplicateWritesInsteadOfPretendingFailure() = runTest {
         val wire = MockTradovateWire().apply { failWrite = true }
         val (broker, _) = ready(wire)

@@ -1,5 +1,8 @@
 # Unreleased
 
+- 修复收起下单栏后更改止损止盈，确认下单可能使用旧草稿的问题。
+- Fix compact order submission using stale stop-loss and take-profit values.
+
 - 手机和紧凑窗口可在交易设置中选择停靠下单栏或独立弹窗。
 - Choose a docked or popup order ticket on phones and compact windows.
 
