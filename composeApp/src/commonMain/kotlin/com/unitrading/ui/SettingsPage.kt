@@ -131,6 +131,17 @@ internal fun SettingsPage(
                     { "${it.buy} 买入 / ${it.sell} 卖出" }, { "settings-trading-keys-${it.name}" },
                     { keys -> preferenceScope.launch { runtime.tradingPreferences.setTradingKeys(keys) } },
                     Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), enabled = !savingTradingPreferences)
+                ListItem(
+                    headlineContent = { Text("成交音效") },
+                    // The clips are a joke feature, and the row says so.
+                    supportingContent = { Text("搞笑功能：入场、止盈、止损成交时各播放一段搞笑音效，不想听可以关闭。") },
+                    leadingContent = { Icon(AppIcons.VolumeUp, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.tradeSounds, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.tradeSounds, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setTradeSounds(enabled) } })
+                        .testTag("settings-trade-sounds"),
+                    colors = settingsRowColors(),
+                )
                 tradingPreferencesError?.let {
                     Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).testTag("trading-preferences-error"),
                         color = colors.Loss, style = MaterialTheme.typography.bodySmall)

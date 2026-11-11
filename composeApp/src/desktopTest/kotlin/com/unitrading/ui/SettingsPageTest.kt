@@ -12,6 +12,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
+import com.unitrading.broker.OrderKind
+import com.unitrading.broker.OrderRequest
+import com.unitrading.broker.Side
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -23,12 +26,12 @@ import kotlin.test.assertEquals
 class SettingsPageTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun render(width: Int = 400, height: Int = 840, light: Boolean = false, fontScale: Float = 1f): TradingRuntime {
+    private fun render(width: Int = 400, height: Int = 840, light: Boolean = false, fontScale: Float = 1f, soundPlayer: TradeSoundPlayer? = null): TradingRuntime {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         runtime.paused.value = true
         if (light) runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.LIGHT)) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
-            Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
+            Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime, soundPlayer = soundPlayer) }
         } }
         return runtime
     }
@@ -129,6 +132,33 @@ class SettingsPageTest {
         compose.onNodeWithTag("settings-keyboard-trading").performClick()
         compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.keyboardTrading }
         compose.onNodeWithTag("settings-trading-keys-ARROWS").assertDoesNotExist()
+    }
+
+    @Test fun tradeSoundsSwitchStartsOnSaysItIsAJokeAndSilencesFillsWhileOff() {
+        val played = mutableListOf<String>()
+        val runtime = render(soundPlayer = object : TradeSoundPlayer { override suspend fun play(resourcePath: String) { played.add(resourcePath) } })
+        val plugin = runtime.registry.plugins.first()
+        val session = plugin.openSession(plugin.accounts.first().id)
+        val spec = plugin.instruments.first()
+        fun buy(id: String) = runBlocking { assertTrue(session.placeOrder(id, OrderRequest(spec.symbol, Side.BUY, OrderKind.MARKET, spec.minLotsHundredths, null)).accepted) }
+        compose.onNodeWithTag("nav-3").performClick()
+        compose.onNodeWithTag("settings-trade-sounds").performScrollTo().assertIsOn().assertTextContains("搞笑功能", substring = true)
+        buy("sounds-on")
+        compose.waitUntil(5_000) { played.size == 1 }
+        compose.onNodeWithTag("settings-trade-sounds").performClick()
+        compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.tradeSounds }
+        compose.onNodeWithTag("settings-trade-sounds").assertIsOff()
+        capture("settings-trade-sounds")
+        buy("sounds-off")
+        compose.waitForIdle()
+        assertEquals(1, played.size, "a fill is silent while the sounds are off")
+        compose.onNodeWithTag("settings-trade-sounds").performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.tradeSounds }
+        compose.onNodeWithTag("settings-trade-sounds").assertIsOn()
+        buy("sounds-back-on")
+        compose.waitUntil(5_000) { played.size >= 2 }
+        compose.waitForIdle()
+        assertEquals(listOf(TradeSounds.entry, TradeSounds.entry), played, "the fill missed while off is not played once they are back on")
     }
 
     @Test fun damagedSavedLoginsCanStillBeClearedOnlyAfterConfirmation() {

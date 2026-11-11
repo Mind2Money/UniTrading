@@ -41,6 +41,8 @@ import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -56,7 +58,10 @@ fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
 @Composable
 fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundPlayer: TradeSoundPlayer? = null, updates: AppUpdates? = null) {
     val player = remember(soundPlayer) { soundPlayer ?: platformTradeSoundPlayer() }
-    LaunchedEffect(runtime, player) { TradeSoundController(player).run(runtime.registry) }
+    LaunchedEffect(runtime, player) {
+        val enabled = runtime.tradingPreferences.preferences.map { it.tradeSounds }.stateIn(this)
+        TradeSoundController(player, enabled = enabled).run(runtime.registry)
+    }
     val theme by runtime.theme.settings.collectAsState()
     val aliases by runtime.accountAliases.aliases.collectAsState()
     CompositionLocalProvider(LocalAccountAliases provides aliases) {

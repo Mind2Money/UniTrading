@@ -16,13 +16,15 @@ enum class TradingKeys(val buy: String, val sell: String) { LETTERS("W", "S"), A
 
 /**
  * [keyboardTrading] lets the chart's [tradingKeys] place market orders. It starts off, and only the chosen pair of
- * keys trades.
+ * keys trades. [tradeSounds] is the joke clip played on an entry, take-profit or stop-loss fill; it starts on, as it
+ * was before it had a switch.
  */
 @Serializable
 data class TradingPreferences(
     val skipConfirmation: Boolean = false,
     val keyboardTrading: Boolean = false,
     val tradingKeys: TradingKeys = TradingKeys.LETTERS,
+    val tradeSounds: Boolean = true,
 )
 
 /** Device-wide trading interaction preferences, independent of account snapshots. */
@@ -34,7 +36,7 @@ class TradingPreferencesController(private val store: SnapshotStore) {
     private val current = MutableStateFlow(try {
         store.read(KEY)?.let { json.decodeFromString<TradingPreferences>(it) } ?: TradingPreferences()
     } catch (_: Exception) {
-        error.value = "交易设置无法读取，已恢复交易确认并关闭键盘下单。"
+        error.value = "交易设置无法读取，已恢复交易确认、关闭键盘下单并打开成交音效。"
         TradingPreferences()
     })
     val preferences = current.asStateFlow()
@@ -42,6 +44,7 @@ class TradingPreferencesController(private val store: SnapshotStore) {
     suspend fun setSkipConfirmation(enabled: Boolean): Boolean = update { it.copy(skipConfirmation = enabled) }
     suspend fun setKeyboardTrading(enabled: Boolean): Boolean = update { it.copy(keyboardTrading = enabled) }
     suspend fun setTradingKeys(keys: TradingKeys): Boolean = update { it.copy(tradingKeys = keys) }
+    suspend fun setTradeSounds(enabled: Boolean): Boolean = update { it.copy(tradeSounds = enabled) }
 
     /** Saves the changed preferences first; a failed save leaves them as they were. */
     private suspend fun update(change: (TradingPreferences) -> TradingPreferences): Boolean = mutex.withLock {

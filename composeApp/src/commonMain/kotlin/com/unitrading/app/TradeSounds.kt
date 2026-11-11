@@ -3,7 +3,10 @@ package com.unitrading.app
 import com.unitrading.broker.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.random.Random
 
 internal object TradeSounds {
@@ -25,19 +28,33 @@ interface TradeSoundPlayer {
 
 internal expect fun platformTradeSoundPlayer(): TradeSoundPlayer
 
-/** One listener per plugin, independent of the displayed account, chart and recompositions. */
-internal class TradeSoundController(private val player: TradeSoundPlayer, private val random: Random = Random.Default) {
+/**
+ * One listener per plugin, independent of the displayed account, chart and recompositions. While [enabled] is off
+ * nothing plays, and a fill that arrives then is not played after it is switched back on.
+ */
+internal class TradeSoundController(
+    private val player: TradeSoundPlayer,
+    private val random: Random = Random.Default,
+    private val enabled: StateFlow<Boolean> = MutableStateFlow(true),
+) {
     suspend fun run(registry: BrokerRegistry): Unit = coroutineScope {
         data class Queued(val plugin: BrokerPlugin, val fill: TradeFill)
         val queue = Channel<Queued>(Channel.UNLIMITED)
         val collectors = mutableMapOf<BrokerPlugin, Job>()
         val seen = mutableMapOf<BrokerPlugin, MutableSet<Pair<String, String>>>()
         val playback = launch {
-            for ((plugin, fill) in queue) {
-                if (registry.plugins.none { it === plugin }) continue
-                try { withTimeoutOrNull(10_000) { player.play(TradeSounds.select(fill.role, random)) } }
-                catch (cancel: CancellationException) { throw cancel }
-                catch (_: Exception) { /* A missing device or resource must not interrupt trading. */ }
+            // Switching the sounds off cancels this block, which stops the clip that is playing; the ones waiting are dropped.
+            enabled.collectLatest { on ->
+                if (!on) {
+                    while (queue.tryReceive().isSuccess) { /* Dropped unplayed. */ }
+                    return@collectLatest
+                }
+                for ((plugin, fill) in queue) {
+                    if (registry.plugins.none { it === plugin }) continue
+                    try { withTimeoutOrNull(10_000) { player.play(TradeSounds.select(fill.role, random)) } }
+                    catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { /* A missing device or resource must not interrupt trading. */ }
+                }
             }
         }
         try {
@@ -50,7 +67,8 @@ internal class TradeSoundController(private val player: TradeSoundPlayer, privat
                     val notified = seen.getOrPut(plugin) { mutableSetOf() }
                     collectors[plugin] = launch(start = CoroutineStart.UNDISPATCHED) {
                         plugin.tradeFills.collect { fill ->
-                            if (notified.add(fill.accountId to fill.orderId)) queue.send(Queued(plugin, fill))
+                            // An order counts as notified even while the sounds are off, so its later fills stay silent too.
+                            if (notified.add(fill.accountId to fill.orderId) && enabled.value) queue.send(Queued(plugin, fill))
                         }
                     }
                 }

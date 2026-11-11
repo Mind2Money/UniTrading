@@ -1,5 +1,17 @@
 # Unreleased
 
+## 简体中文
+
+🔊 **成交音效**
+✅ 「设置 → 交易」新增“成交音效”开关，默认开启，并写明这是搞笑功能：入场、止盈、止损成交时各播放一段搞笑音效
+✅ 关闭后成交不再出声，正在播放的片段立即停止；关闭期间的成交不会在重新打开后补播
+
+## English
+
+🔊 **Fill sounds**
+✅ Settings → Trading has a new "fill sounds" switch, on by default, and it says the sounds are a joke feature: a funny clip plays on an entry, take-profit or stop-loss fill
+✅ Switched off, fills are silent and a clip that is playing stops at once; a fill that happened while it was off is not played after it is switched back on
+
 # v1.5.0
 
 ## 简体中文

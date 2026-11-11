@@ -125,6 +125,44 @@ class TradeSoundsTest {
         assertEquals(2, released)
     }
 
+    @Test fun fillsAreSilentWhileTheSoundsAreOffAndAreNotPlayedOnceTheyAreBackOn() = runTest {
+        val broker = SoundBroker()
+        val enabled = MutableStateFlow(false)
+        val played = mutableListOf<String>()
+        val player = object : TradeSoundPlayer { override suspend fun play(resourcePath: String) { played.add(resourcePath) } }
+        backgroundScope.launch { TradeSoundController(player, Random(1), enabled).run(BrokerRegistry(listOf(broker))) }
+        runCurrent()
+        broker.tradeFills.emit(fill("off", role = OrderRole.ENTRY)); runCurrent()
+        assertEquals(emptyList(), played)
+        enabled.value = true; runCurrent()
+        assertEquals(emptyList(), played, "a fill that arrived while off is not played afterwards")
+        broker.tradeFills.emit(fill("off", role = OrderRole.ENTRY, execution = "partial-2"))
+        broker.tradeFills.emit(fill("on")); runCurrent()
+        assertEquals(listOf(TradeSounds.takeProfit), played, "the order that filled while off stays silent, later orders sound")
+    }
+
+    @Test fun switchingTheSoundsOffStopsTheClipThatIsPlayingAndDropsTheOnesWaiting() = runTest {
+        val broker = SoundBroker()
+        val enabled = MutableStateFlow(true)
+        val started = mutableListOf<String>()
+        var released = 0
+        val player = object : TradeSoundPlayer {
+            override suspend fun play(resourcePath: String) { started.add(resourcePath); try { delay(1_000) } finally { released++ } }
+        }
+        backgroundScope.launch { TradeSoundController(player, Random(1), enabled).run(BrokerRegistry(listOf(broker))) }
+        runCurrent()
+        broker.tradeFills.emit(fill("playing", role = OrderRole.ENTRY)); broker.tradeFills.emit(fill("waiting"))
+        runCurrent(); advanceTimeBy(100); runCurrent()
+        assertEquals(listOf(TradeSounds.entry), started)
+        enabled.value = false; runCurrent()
+        assertEquals(1, released, "the native player is released as soon as the switch goes off")
+        advanceTimeBy(5_000); runCurrent()
+        enabled.value = true; runCurrent()
+        assertEquals(listOf(TradeSounds.entry), started, "the clip that was waiting is dropped, not played later")
+        broker.tradeFills.emit(fill("after")); runCurrent()
+        assertEquals(listOf(TradeSounds.entry, TradeSounds.takeProfit), started)
+    }
+
     @Test fun eventsBeforeSubscriptionAreNotReplayed() = runTest {
         val broker = SoundBroker()
         broker.tradeFills.emit(fill())
