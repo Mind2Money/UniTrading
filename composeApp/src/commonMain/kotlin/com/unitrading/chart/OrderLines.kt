@@ -67,7 +67,7 @@ internal fun OrderRequest.withProtection(stop: Boolean, price: Long) = if (stop)
 internal fun resultLabel(pnl: Long?, gross: Boolean) = "${if (gross) "毛 " else ""}${pnl?.let { money(it, true) } ?: "—"} USD"
 
 /** The legend's live line during a drag: an entry shows the whole estimate, a stop loss or take profit its own result. */
-internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: OrderPreview?, line: OrderLine?): String {
+internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: OrderPreview?, line: OrderLine?, sizedLots: Long? = null): String {
     val price = instrument.formatPrice(drag.price)
     val errors = estimate?.errors.orEmpty().joinToString("；")
     if (drag.line is EditableLine.Standalone) return "单独改价预览 $price   ${line?.pnl?.let { resultLabel(it, line.gross) } ?: ""}   $errors".replace(Regex(" {4,}"), "   ").trimEnd()
@@ -77,7 +77,12 @@ internal fun dragReadout(instrument: Instrument, drag: LineDrag, estimate: Order
         is EditableLine.DraftProtection -> edit.stop
         is EditableLine.Pending, is EditableLine.Draft, is EditableLine.Standalone -> null
     }
-    if (stop != null) return "${if (stop) "止损" else "止盈"}预览 $price   ${resultLabel(line?.pnl, line?.gross == true)}   $errors".trimEnd()
+    if (stop != null) {
+        val quantity = sizedLots?.let {
+            "   自动手数 ${if (it > 0) "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" else "—"}"
+        }.orEmpty()
+        return "${if (stop) "止损" else "止盈"}预览 $price$quantity   ${resultLabel(line?.pnl, line?.gross == true)}   $errors".trimEnd()
+    }
     val e = estimate ?: return "入场预览 $price"
     return "入场预览 $price   SL ${e.stopLossPnlMicros?.let { money(it, true) } ?: "—"}   TP ${e.takeProfitPnlMicros?.let { money(it, true) } ?: "—"}   " +
         "保证金 ${if (e.marginKnown) money(e.marginMicros) + " USD" else "未知"}   $errors"
@@ -97,7 +102,7 @@ private fun addButtons(target: EditableLine?, stop: EditableLine?) = listOfNotNu
 private fun protectionCells(instrument: Instrument, stop: Boolean, pnl: Long?, gross: Boolean, quantity: Long, removal: LineAction?, hint: String) = listOfNotNull(
     protectionTitle(stop),
     LineCell(CellKind.RESULT, resultLabel(pnl, gross)),
-    LineCell(CellKind.VALUE, instrument.formatQuantity(quantity)),
+    LineCell(CellKind.VALUE, if (quantity > 0) instrument.formatQuantity(quantity) else "—"),
     removal?.let { LineCell(CellKind.CLOSE, action = it, hint = hint) },
 )
 
@@ -216,7 +221,7 @@ internal fun orderLines(
         add(OrderLine(draftEntry, listOf(LineCell(CellKind.TITLE, draft.side.label())) +
             addButtons(EditableLine.DraftProtection(draft, false, draftEntry).takeIf { draft.takeProfit == null && !options.draftTargetManaged },
                 EditableLine.DraftProtection(draft, true, draftEntry).takeIf { draft.stopLoss == null && !options.draftStopManaged }) +
-            LineCell(CellKind.VALUE, instrument.formatQuantity(draft.lotsHundredths)) + LineCell(CellKind.VALUE, draft.kind.label()) +
+            LineCell(CellKind.VALUE, if (draft.lotsHundredths > 0) instrument.formatQuantity(draft.lotsHundredths) else "—") + LineCell(CellKind.VALUE, draft.kind.label()) +
             LineCell(CellKind.CLOSE, action = LineAction.CloseDraft, hint = "关闭下单预览"),
             sideTone(draft.side), edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft, preview = true))
         listOf(true to draft.stopLoss, false to draft.takeProfit).forEach { (stop, price) ->
@@ -260,7 +265,7 @@ internal data class OrderLineOptions(
  * [instantOrders] tells the legend's hint whether a key sends its order without a confirmation.
  */
 class ChartOrderActions(
-    val estimateDraft: (OrderRequest) -> OrderPreview,
+    val estimateDraft: (OrderRequest) -> Pair<OrderRequest, OrderPreview>,
     val onDraftEntry: (Long) -> Unit,
     val onDraftProtection: (stop: Boolean, price: Long) -> Unit,
     val editPending: Boolean,
@@ -284,6 +289,7 @@ class ChartOrderActions(
     val onStandalone: (PendingOrder, Long) -> Unit = { _, _ -> },
     val draftStopManaged: Boolean = false,
     val draftTargetManaged: Boolean = false,
+    val stopRequiredForSizing: Boolean = false,
 )
 
 /** The side [key] trades under these trading keys; null for every other key, and for any key held with a modifier. */

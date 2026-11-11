@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.ChartPreferencesController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.OrderPanelLayout
+import com.unitrading.app.TradingPreferencesController
 import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.geometry.Offset
 import com.unitrading.broker.OrderKind
@@ -54,6 +56,43 @@ class MobileLayoutTest {
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
+
+    @Test fun choosePopupAndReturnToTheChartWithoutChangingItsHeight() = phoneTest {
+        render()
+        val chartHeight = height("trading-chart")
+        compose.onNodeWithTag("nav-3").performClick()
+        compose.onNodeWithTag("settings-order-layout").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-order-layout-DOCKED").assertIsSelected()
+        compose.onNodeWithTag("settings-order-layout-POPUP").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { runtime.tradingPreferences.preferences.value.orderPanelLayout == OrderPanelLayout.POPUP }
+        assertEquals(OrderPanelLayout.POPUP, TradingPreferencesController(store).preferences.value.orderPanelLayout)
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-popup").assertIsDisplayed()
+        compose.onNodeWithTag("order-sheet").assertDoesNotExist()
+        assertEquals(chartHeight, height("trading-chart"))
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.25")
+        compose.onNodeWithTag("popup-adjust-on-chart").performClick()
+        compose.onNodeWithTag("order-popup").assertDoesNotExist()
+        assertEquals(chartHeight, height("trading-chart"))
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.25")
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("order-popup").assertDoesNotExist()
+        compose.onNodeWithTag("confirm-action").assertIsDisplayed()
+        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.25")
+        compose.onNodeWithTag("close-order-dialog").performClick()
+        compose.onNodeWithTag("nav-3").performClick()
+        compose.onNodeWithTag("settings-order-layout").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-order-layout-POPUP").assertIsSelected()
+        compose.onNodeWithTag("settings-order-layout-DOCKED").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { runtime.tradingPreferences.preferences.value.orderPanelLayout == OrderPanelLayout.DOCKED }
+        compose.onNodeWithTag("nav-1").performClick()
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-sheet").assertIsDisplayed()
+        assertTrue(height("trading-chart") < chartHeight)
+    }
 
     @Test fun portraitChartFillsTheScreenAndTradingWaitsInTheCollapsedPanel() = phoneTest {
         render()

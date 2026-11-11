@@ -1,5 +1,14 @@
 # Unreleased
 
+- 手机和紧凑窗口可在交易设置中选择停靠下单栏或独立弹窗。
+- Choose a docked or popup order ticket on phones and compact windows.
+
+- 自动手数模式支持拖动图表 SL，并实时预览手数。
+- Drag SL on the chart to preview the automatically calculated order size.
+
+- 子账户订单风控可选择按风险金额和止损价计算手数。
+- Add an account risk mode that sizes orders from the cash risk and stop price.
+
 - 统一交易设置中三个子账户风控入口的列表样式。
 - Use the same list style for the three subaccount risk settings.
 

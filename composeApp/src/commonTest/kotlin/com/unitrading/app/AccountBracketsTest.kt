@@ -31,4 +31,26 @@ class AccountBracketsTest {
         assertFailsWith<IllegalArgumentException> { amounts.prices(input, contract, "USD", null) }
         assertNotNull(amounts.refusal(input, contract, "USD", quote.ask))
     }
+
+    @Test fun sizingRoundsDownToTheQuantityGridAndPreservesProtectionPrices() {
+        val futures = contract.copy(minLotsHundredths = 100, lotStepHundredths = 100)
+        val risk = AccountBrackets(sizingRisk = 99_000_000)
+        val input = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 999, stopLoss = 549_525, takeProfit = 552_000)
+        val sized = risk.prices(input, futures, "USD", quote)
+        assertEquals(input.copy(lotsHundredths = 300), sized)
+        assertNull(risk.refusal(sized, futures, "USD", quote.ask))
+        assertNotNull(risk.refusal(sized.copy(lotsHundredths = 400), futures, "USD", quote.ask))
+        val sell = input.copy(side = Side.SELL, kind = OrderKind.LIMIT, entryPrice = 550_000, stopLoss = 550_500)
+        assertEquals(300L, risk.prices(sell, futures, "USD", null).lotsHundredths)
+    }
+
+    @Test fun sizingRejectsInvalidStopsOrAnInsufficientBudget() {
+        val futures = contract.copy(minLotsHundredths = 100, lotStepHundredths = 100)
+        val risk = AccountBrackets(sizingRisk = 1_000_000)
+        val input = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 100)
+        assertFalse(risk.copy(loss = 1_000_000).valid())
+        for (stop in listOf(null, 549_501L, 550_050L, 549_525L)) {
+            assertFailsWith<IllegalArgumentException> { risk.prices(input.copy(stopLoss = stop), futures, "USD", quote) }
+        }
+    }
 }

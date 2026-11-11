@@ -14,6 +14,9 @@ import kotlinx.serialization.json.Json
 @Serializable
 enum class TradingKeys(val buy: String, val sell: String) { LETTERS("W", "S"), ARROWS("↑", "↓") }
 
+@Serializable
+enum class OrderPanelLayout(val label: String) { DOCKED("停靠下单栏"), POPUP("独立弹窗") }
+
 /**
  * [keyboardTrading] lets the chart's [tradingKeys] place market orders. It starts off, and only the chosen pair of
  * keys trades.
@@ -23,6 +26,7 @@ data class TradingPreferences(
     val skipConfirmation: Boolean = false,
     val keyboardTrading: Boolean = false,
     val tradingKeys: TradingKeys = TradingKeys.LETTERS,
+    val orderPanelLayout: OrderPanelLayout = OrderPanelLayout.DOCKED,
 )
 
 /** Device-wide trading interaction preferences, independent of account snapshots. */
@@ -41,6 +45,7 @@ class TradingPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setSkipConfirmation(enabled: Boolean): Boolean = update { it.copy(skipConfirmation = enabled) }
     suspend fun setKeyboardTrading(enabled: Boolean): Boolean = update { it.copy(keyboardTrading = enabled) }
+    suspend fun setOrderPanelLayout(layout: OrderPanelLayout): Boolean = update { it.copy(orderPanelLayout = layout) }
     suspend fun setTradingKeys(keys: TradingKeys): Boolean = update { it.copy(tradingKeys = keys) }
 
     /** Saves the changed preferences first; a failed save leaves them as they were. */

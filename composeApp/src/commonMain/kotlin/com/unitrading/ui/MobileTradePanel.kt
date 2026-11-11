@@ -122,6 +122,7 @@ internal fun MobileOrderDock(
     onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean, busy: Boolean,
     skipConfirmation: Boolean, keyboardOpen: Boolean,
     brackets: AccountBrackets = AccountBrackets(),
+    calculatedLots: Long? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
@@ -149,13 +150,16 @@ internal fun MobileOrderDock(
                     else Modifier), verticalArrangement = Arrangement.Center) {
                     Text(if (instrument.isContinuous) instrument.executionLabel else instrument.symbol,
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (collapsed) "${draft.quantity} ${instrument.quantityUnit} · ${draft.side.label()}" else accountName,
+                    val quantity = if (brackets.sizingRisk == null) draft.quantity else calculatedLots?.let(instrument::formatQuantity) ?: "—"
+                    Text(if (collapsed) "$quantity ${instrument.quantityUnit} · ${draft.side.label()}" else accountName,
                         style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (collapsed) {
                     listOf(true, false).forEach { stop ->
-                        val managed = brackets.controls(stop)
-                        val checked = managed || if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
+                        val requiredStop = stop && brackets.sizingRisk != null
+                        val managed = brackets.controls(stop) || requiredStop
+                        val checked = if (requiredStop) draft.stopLoss.isNotBlank()
+                            else managed || if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
                         val protectionColor = if (stop) colors.Stop else colors.Target
                         IconToggleButton(checked = checked,
                             onCheckedChange = { onDraft(draft.withProtectionEnabled(instrument, quote, stop, it)) },

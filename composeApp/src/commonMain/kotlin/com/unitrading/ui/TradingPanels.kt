@@ -92,14 +92,19 @@ internal fun OrderTicket(
     closeTag: String = "close-order-dialog",
     brackets: AccountBrackets = AccountBrackets(),
     bracketOrder: OrderRequest? = null,
+    onChartAdjust: (() -> Unit)? = null,
+    orderNotice: @Composable () -> Unit = {},
 ) {
     Column(modifier) {
         PanelHeader("新建订单", subtitle = "${instrument.symbol} · ${instrument.currency} 结算") {
             EnvironmentBadge(environment)
             if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
+        if (onChartAdjust != null) TextButton(onChartAdjust, Modifier.padding(horizontal = 8.dp).testTag("popup-adjust-on-chart"), enabled = !busy) {
+            Text("到图表调整")
+        }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
-            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder)
+            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice)
     }
 }
 

@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.unitrading.app.AppUpdates
+import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingKeys
 import com.unitrading.app.TradingPreferences
 import com.unitrading.app.TradingRuntime
@@ -68,6 +69,7 @@ internal fun SettingsPage(
     val accountName = account?.let { names.account(plugin.descriptor.id, it) }
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
+    var chooseOrderLayout by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -106,6 +108,8 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
+                SettingsRow("下单界面", tradingPreferences.orderPanelLayout.label, AppIcons.ViewQuilt, "settings-order-layout",
+                    { chooseOrderLayout = true }, enabled = !busy, navigates = true)
                 if (account != null && !account.readOnly) {
                     AccountBracketSettings(runtime.accountRisk, plugin, account, busy)
                     AccountRiskSettings(runtime.accountRisk, plugin, account, busy)
@@ -171,6 +175,23 @@ internal fun SettingsPage(
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
+    if (chooseOrderLayout) AlertDialog(
+        onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
+        title = { Text("下单界面") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("适用于手机和紧凑窗口。停靠时，K 线随可用空间重新绘制。")
+                SegmentedChoice(OrderPanelLayout.entries, tradingPreferences.orderPanelLayout, { it.label },
+                    { "settings-order-layout-${it.name}" }, { layout ->
+                        preferenceScope.launch {
+                            if (runtime.tradingPreferences.setOrderPanelLayout(layout)) chooseOrderLayout = false
+                        }
+                    }, Modifier.fillMaxWidth(), enabled = !savingTradingPreferences)
+                tradingPreferencesError?.let { Text(it, color = colors.Loss) }
+            }
+        },
+        confirmButton = { TextButton({ chooseOrderLayout = false }, enabled = !savingTradingPreferences) { Text("关闭") } },
+    )
 }
 
 /** What the keyboard trading switch does, with the chosen keys and whether a key press still asks before it trades. */

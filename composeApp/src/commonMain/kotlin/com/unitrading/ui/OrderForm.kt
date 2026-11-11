@@ -58,6 +58,7 @@ internal fun OrderForm(
     var details by remember(instrument.symbol) { mutableStateOf(detailsOpen) }
     val error = if (instrument.isContinuous && instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单"
         else if (preview == null) "请输入有效数量与价格" else preview.errors.firstOrNull()
+    val sizingRisk = brackets.sizingRisk
     val docked = onDockAdvanced != null
     Column(modifier) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("order-fields")
@@ -72,7 +73,7 @@ internal fun OrderForm(
                         modifier = Modifier.weight(1f).testTag("order-side-${side.name}"), dense = docked) { onDraft(draft.withSide(side, instrument, quote)) }
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (sizingRisk == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val less = draft.steppedQuantity(instrument, false)
                 // Only a limit the server has given stops the plus button: the broker still checks every order.
                 val more = draft.steppedQuantity(instrument, true, capacity.maximum?.takeIf { it > 0 } ?: instrument.maxLotsHundredths)
@@ -81,10 +82,16 @@ internal fun OrderForm(
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)
                 QuantityStep(true, !busy && more != null) { more?.let { onDraft(draft.copy(quantity = it)) } }
             }
-            if (!docked) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
+            if (!docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
             if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价",
                 draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry", enabled = !busy)
-            if (brackets.enabled) {
+            if (sizingRisk != null) {
+                PriceInput("止损价 SL（可在图表拖动）", draft.stopLoss, { onDraft(draft.withProtectionPrice(true, it)) },
+                    "order-risk-sizing-sl", enabled = !busy)
+                val lots = bracketOrder?.lotsHundredths?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "—"
+                Text("自动手数 $lots · 风险 ${money(sizingRisk)} ${instrument.currency}",
+                    Modifier.testTag("order-risk-sized-quantity"), color = colors.Accent, style = type.bodySmall)
+            } else if (brackets.enabled) {
                 val prices = listOfNotNull(
                     "SL ${bracketOrder?.stopLoss?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(true) },
                     "TP ${bracketOrder?.takeProfit?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(false) },
@@ -99,10 +106,10 @@ internal fun OrderForm(
                 }
             }
             if (!docked || dockAdvanced) {
-                if (docked) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
+                if (docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (stop in listOf(true, false)) {
-                        if (!brackets.controls(stop)) OrderProtectionControl(stop, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
+                        if (!brackets.controls(stop) && (!stop || sizingRisk == null)) OrderProtectionControl(stop, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
                     }
                 }
                 if (!brackets.enabled) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -143,7 +150,7 @@ internal fun OrderForm(
         Column(Modifier.fillMaxWidth().testTag("order-actions").padding(horizontal = 16.dp, vertical = if (docked) 2.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (error != null) Text(error, color = colors.Loss, style = type.bodySmall, modifier = Modifier.testTag("order-error"))
             else if (!docked) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("${draft.side.label()} · ${draft.kind.label()} · ${draft.quantity} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
+                Text("${draft.side.label()} · ${draft.kind.label()} · ${if (sizingRisk == null) draft.quantity else bracketOrder?.lotsHundredths?.let(instrument::formatQuantity) ?: "—"} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
             }
             val sideColor = actionFill(if (draft.side == Side.BUY) colors.Up else colors.Down)
