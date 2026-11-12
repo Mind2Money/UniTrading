@@ -15,12 +15,20 @@ class AccountOverviewTest {
     }
 
     @Test fun unknownValuesAndOverflowStayUnknownInsteadOfZero() {
-        val unknown = overviewTotals(AccountSnapshot("a", 50, equityKnown = false, trades = listOf(trade, trade.copy(id = "fees-missing", netPnlMicros = null))))
+        val unknown = overviewTotals(AccountSnapshot("a", 50, equityKnown = false, trades = listOf(trade.copy(netPnlMicros = null), trade.copy(id = "fees-missing", netPnlMicros = null))))
         assertNull(unknown.equityMicros)
         assertNull(unknown.floatingMicros)
-        assertNull(unknown.realizedMicros)
-        assertEquals(1, unknown.unknownClosed)
+        assertNull(unknown.realizedMicros, "with no result known there is no total, not a zero")
+        assertEquals(2, unknown.unknownClosed)
         assertNull(overviewTotals(AccountSnapshot("a", 0, balanceKnown = false)).floatingMicros)
         assertNull(overviewTotals(AccountSnapshot("a", 0, trades = listOf(trade.copy(netPnlMicros = Long.MAX_VALUE), trade))).realizedMicros)
+    }
+
+    /** Like the analytics page: a trade without a known result is left out of the total and counted apart, instead of blanking it. */
+    @Test fun theTotalAddsUpTheKnownResultsAndCountsTheOthersApart() {
+        val totals = overviewTotals(AccountSnapshot("a", 50, trades = listOf(trade, trade.copy(id = "loss", netPnlMicros = -1_000_000),
+            trade.copy(id = "fees-missing", netPnlMicros = null))))
+        assertEquals(2_000_000L, totals.realizedMicros)
+        assertEquals(1, totals.unknownClosed)
     }
 }

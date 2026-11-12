@@ -37,7 +37,8 @@
 👤 **账户页与交易分析**
 ✅ 资金（余额、净值、今日盈亏、保证金）和回撤与风险移到账户页“总览”，“交易”页签放持仓、挂单、历史和两个平仓按钮
 ✅ 交易分析把这台设备同步到的平仓记录在本机保留 30 天，券商不再返回的较早记录也计入统计，总览的“已加载历史净盈亏”同样计入；页眉写明本机记录从哪一天开始
-✅ 清除已保存登录时删除这些记录；断开某个登录时保留，重新连接后照常计入
+✅ 部分平仓记录的净盈亏待确认时，总览和分析页一样合计净盈亏已知的记录，并写明另有几笔未计入，不再整项显示“—”
+✅ 清除已保存登录时删除这些记录；断开已保存的登录时保留，重新连接后照常计入；断开没有保存的登录（例如没勾选记住密码的 Rithmic 登录）时一并删除
 ⚠️ 只记录应用运行并选中该子账户时同步到的记录，不会向券商补取更早的历史；记录以明文 JSON 存在应用数据目录，没有像已保存的登录那样加密
 
 📈 **图表**
@@ -84,7 +85,8 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 👤 **Account page and analytics**
 ✅ Funds (balance, equity, day P&L, margin) and drawdown and risk move to the Overview tab of the account page; the Trading tab has positions, orders, history and the two flatten buttons
 ✅ Analytics keeps the closed trades this device synchronized for 30 days, so older trades the broker no longer returns still count, in the overview's net result of the loaded history too; the header says from which day the device has them
-✅ Forgetting the saved logins deletes them; disconnecting a login keeps them, and they count again once it reconnects
+✅ When some closed trades have no net result yet, the overview adds up the known ones as the analytics page does and says how many it left out, instead of showing "—" for the whole figure
+✅ Forgetting the saved logins deletes them; disconnecting a saved login keeps them, and they count again once it reconnects, while disconnecting a login that is not saved (such as a Rithmic login without "remember") deletes them too
 ⚠️ Only trades synchronized while the app ran with that account selected are kept, and no older history is fetched from the broker; they are stored as plain JSON in the app's data folder, not encrypted like the saved logins
 
 📈 **Charts**

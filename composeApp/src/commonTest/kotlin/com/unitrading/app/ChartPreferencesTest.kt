@@ -151,9 +151,11 @@ class ChartPreferencesTest {
             override fun read(key: String): String? { reads += key; return null }
             override fun write(key: String, value: String) {}
         })
-        assertEquals(listOf("theme-v1"), reads)
+        // Besides the theme, only the analytics cache is read at start, in the background, to trim it.
+        runtime.analyticsTrim.join()
+        assertEquals(listOf("theme-v1", "analytics-trades-v1"), reads)
         val controller = runtime.chartPreferences
-        assertEquals(listOf("theme-v1", "chart-v1"), reads)
+        assertEquals(listOf("theme-v1", "analytics-trades-v1", "chart-v1"), reads)
         for (minutes in listOf(2, 3, 10, 30, 45, 120, 180, 240)) assertTrue(controller.toggleFavorite(Timeframe.ofMinutes(minutes)))
         assertEquals(ChartPreferences.MAX_FAVORITES, controller.preferences.value.favorites.size)
         assertFalse(controller.toggleFavorite(Timeframe.ofMinutes(360)))

@@ -1,10 +1,14 @@
 package com.unitrading.app
 
 import com.unitrading.broker.ClosedTrade
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -16,8 +20,10 @@ import kotlin.time.Duration.Companion.days
  * Closed trades this device has synchronized, per login and account, for the analytics page: what the broker returned
  * while the app ran with that account selected, kept for 30 days after the trade closed. It never asks the broker for
  * older history. The trades are stored as plain JSON (`analytics-trades-v1`) in the app's private data folder, not
- * encrypted like the saved logins; forgetting the saved logins clears them all. Disconnecting a login keeps its part:
- * the login stays saved and comes back, and the broker would not return its older trades again.
+ * encrypted like the saved logins; forgetting the saved logins clears them all. Disconnecting a saved login keeps its
+ * part, as the login comes back at the next start and the broker would not return its older trades again; disconnecting
+ * a login that is not saved (Rithmic without "remember") deletes its part. A login that is not saved and is still
+ * connected when the app quits leaves its part until the 30-day trim.
  */
 internal class AnalyticsTradeCache(private val store: SnapshotStore, private val clock: Clock = Clock.System) {
     private val mutex = Mutex()
@@ -46,6 +52,12 @@ internal class AnalyticsTradeCache(private val store: SnapshotStore, private val
      * it even in a run where no login updates the cache.
      */
     suspend fun prune() = mutex.withLock { persist(load()) }
+
+    /**
+     * Starts [prune] off the caller's thread, for a start that may never reach the trading screen (the license screen,
+     * or the real data folder under `--local-demo`). The job ends when the trim has been written, or its write failed.
+     */
+    fun pruneInBackground(): Job = CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { prune() }
 
     /** Reconciles the account's cached trades with the broker's snapshot [fresh], as [mergeAnalyticsTrades] does, and stores the result. */
     suspend fun update(broker: String, account: String, fresh: List<ClosedTrade>) = mutex.withLock {

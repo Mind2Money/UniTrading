@@ -138,8 +138,8 @@ internal fun AccountOverviewPage(
                         Text("已加载历史净盈亏", style = MaterialTheme.typography.titleMedium)
                         Text(totals.realizedMicros?.let { money(it, true) } ?: "—", Modifier.testTag("overview-realized"),
                             style = MaterialTheme.typography.titleSmall, color = colors.pnl(totals.realizedMicros), maxLines = 1)
-                        // The total stays "—" while a trade's net result is unknown; the note says why.
-                        if (totals.unknownClosed > 0) Text("${totals.unknownClosed} 笔历史净盈亏待确认，未计为零。", Modifier.testTag("overview-unknown-closed"),
+                        // As on the analytics page, the total adds up the known results and the note names the trades left out.
+                        if (totals.unknownClosed > 0) Text("另有 ${totals.unknownClosed} 笔净盈亏待确认，未计入。", Modifier.testTag("overview-unknown-closed"),
                             style = MaterialTheme.typography.bodySmall, color = colors.Caution)
                     }
                 }

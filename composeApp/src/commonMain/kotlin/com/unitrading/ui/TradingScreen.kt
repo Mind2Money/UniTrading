@@ -119,9 +119,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
             return@TradingTheme
         }
-        // The login stays saved and comes back, so the closed trades cached for it stay too: the broker would not return the older ones again.
+        // A saved login comes back at the next start and the broker would not return its older trades again, so they stay
+        // cached; a login that is not saved (Rithmic without "remember") does not come back by itself, so they are deleted.
         fun disconnectCurrent() {
-            registry.unregister(plugin.descriptor.id)
+            val id = plugin.descriptor.id
+            val saved = runtime.savedLogins.saved(id)
+            registry.unregister(id)
+            // Unregistered first, so the screen's collector writes nothing more for it after the deletion.
+            if (!saved) loginScope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runtime.analyticsCache.clear(id) } }
             selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "")
         }
         val catalog by key(plugin) { plugin.catalog.collectAsState() }

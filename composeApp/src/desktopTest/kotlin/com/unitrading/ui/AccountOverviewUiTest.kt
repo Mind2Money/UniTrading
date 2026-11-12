@@ -40,7 +40,10 @@ class AccountOverviewUiTest {
         compose.onNodeWithTag("trading-chart").assertExists()
     }
 
-    /** The net result of the loaded history stands with the funds and the drawdown, and a trade without a known result is never counted as zero. */
+    /**
+     * The net result of the loaded history stands with the funds and the drawdown. A trade without a known result is never
+     * counted as zero: the total adds up the known ones and a note says how many were left out.
+     */
     @Test fun overviewShowsTheLoadedHistoryTotalWithFundsAndDrawdownAndSaysWhenResultsAreUnknown() {
         val account = plugin.accounts.first()
         val win = ClosedTrade("win", "p", "MES", Side.BUY, 100, 1, 2, 10, 20, 3_000_000, "fixture")
@@ -55,8 +58,8 @@ class AccountOverviewUiTest {
         compose.onNodeWithTag("overview-unknown-closed").assertDoesNotExist()
         compose.runOnIdle { snapshot = snapshot.copy(trades = snapshot.trades + win.copy(id = "fees-missing", netPnlMicros = null)) }
         list.performScrollToNode(hasTestTag("overview-unknown-closed"))
-        compose.onNodeWithTag("overview-realized").assertTextEquals("—")
-        compose.onNodeWithTag("overview-unknown-closed").assertTextEquals("1 笔历史净盈亏待确认，未计为零。")
+        compose.onNodeWithTag("overview-realized").assertTextEquals("+2.00")
+        compose.onNodeWithTag("overview-unknown-closed").assertTextEquals("另有 1 笔净盈亏待确认，未计入。")
         val target = File("../artifacts/account-overview-history.png"); target.parentFile.mkdirs()
         ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", target)
     }

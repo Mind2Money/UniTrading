@@ -34,14 +34,16 @@ class ThemeSettingsTest {
         assertEquals(ThemeSettings(), controller.settings.value)
         assertNotNull(controller.error.value)
     }
-    @Test fun corruptThemeDoesNotBlockStartupOrReadOldDemoSnapshots() {
+    @Test fun corruptThemeDoesNotBlockStartupOrReadOldDemoSnapshots() = runTest {
         val reads = mutableListOf<String>()
         val store = object : SnapshotStore {
             override fun read(key: String): String { reads += key; return "broken" }
             override fun write(key: String, value: String) = error("Must not overwrite")
         }
         val runtime = TradingRuntime(store)
-        assertEquals(listOf("theme-v1"), reads)
+        // The analytics cache is read in the background to trim it; a broken one is left as it is.
+        runtime.analyticsTrim.join()
+        assertEquals(listOf("theme-v1", "analytics-trades-v1"), reads)
         assertNull(runtime.startupError.value)
         assertNotNull(runtime.theme.error.value)
     }

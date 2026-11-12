@@ -13,7 +13,7 @@
 | 主题、RGB/HEX 配色 | 已实现并测试 | `ThemeController`、`TradingTheme`、`ThemeSettingsDialog`；深/浅/系统/TradingV 主题，页面、面板、图表、K 线、盈亏等分别配置 |
 | Android Material 3 导航与手机布局 | 已实现；上滑面板此前做过模拟器测试，停靠下单栏和独立弹窗只有桌面测试，2026-11-12 的改动在 Android 上只做了编译检查 | `MobileNavigation`：账户、行情、图表、设置；图表页单行工具条，下单条 `MobileTradeBar`；下单界面由 `OrderPanelLayout` 选择：上滑面板 `MobileOrderSheet`（默认，Material 3 `BottomSheetScaffold`）、停靠下单栏 `MobileOrderDockLayout` / `MobileOrderDock`、独立弹窗 `OrderTicket`，见[手机下单界面](mobile-order-sheet.md)；资金和回撤在账户页“总览”，“交易”页签按持仓、挂单、历史竖排，活动在设置子页，见[手机布局](mobile-layout.md)；设备 UI 测试注入合成账户，真机未验证 |
 | 子账户风控 | 已实现，离线测试；未在真实账户运行，Android 只做了编译检查 | `AccountRiskController`（`AccountRisk.kt`）包住每个交易会话：交易锁定、手数与品种限制、订单风控（`AccountBrackets`）、交易锁定的监控与自动平仓、平仓此子账户 / 全部子账户；持仓总量和减仓判断在 `OrderExposure.kt`；规则存本机 `account-risk-v1`。交易锁定需要 `BrokerCapabilities.tradingDayPnl`，目前只有 Tradovate；Tradovate 上每个设了交易锁定的子账户约每 20 秒取一次资金快照。见[子账户风控](account-risk-lock.md) |
-| 交易分析平仓缓存 | 已实现，离线测试 | `AnalyticsTradeCache`：按登录和子账户保存本机运行时选中的子账户的平仓记录，保留 30 天（启动时也裁剪），明文 `analytics-trades-v1`；合并时按合约以券商快照为准；清除已保存登录全部删除，断开登录保留；见[账户分析](account-analytics.md#本机平仓缓存) |
+| 交易分析平仓缓存 | 已实现，离线测试 | `AnalyticsTradeCache`：按登录和子账户保存本机运行时选中的子账户的平仓记录，保留 30 天（创建运行时就在后台裁剪，停在授权页也算；`--local-demo` 另裁剪正式数据目录里的文件），明文 `analytics-trades-v1`；合并时按合约以券商快照为准；清除已保存登录全部删除，断开已保存的登录保留、断开没有保存的登录删除；见[账户分析](account-analytics.md#本机平仓缓存) |
 | 图表缩放和平移 | 已实现并测试 | `TradingChart`、`ChartViewport`、`PriceScale`；两轴分别缩放、图内双向平移、复位 |
 | 服务器行情与 K 线 | 已实现，Windows Demo 曾只读实测 | `TradovateBroker.watch/marketEvent/chartEvent`；每品种/周期请求并保留最近 2000 根（`CHART_BARS`），没有更早历史分页加载；服务器对 2000 根请求的实际返回量未实测 |
 | 净额持仓、挂单、原始成交 | 已实现并用协议测试覆盖 | `TradovateBroker.rebuild` 从服务器实体映射，不生成远程替代数据 |

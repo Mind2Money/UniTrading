@@ -70,6 +70,14 @@ class SavedTradovateAccounts(
 
     fun selectedAccount(brokerId: String): String? = state.accounts[brokerId]
 
+    /**
+     * Whether [brokerId] is a login kept in the credential store, which the next start restores (an expired Tradovate
+     * session asks for a new login under the same id). A Rithmic login made without "remember" is not, and neither is any
+     * login while there is no credential store.
+     */
+    fun saved(brokerId: String): Boolean =
+        store != null && (state.sessions.any { it.brokerId == brokerId } || state.rithmic.any { it.brokerId == brokerId })
+
     private suspend fun persist() {
         savedCount.value = state.sessions.size + state.rithmic.size
         try {

@@ -120,7 +120,9 @@ class DesktopLayoutTest {
             override fun read(key: String): String? { reads += key; return delegate.read(key) }
             override fun write(key: String, value: String) = delegate.write(key, value)
         })
-        assertEquals(listOf("theme-v1"), reads)
+        // Besides the theme, only the analytics cache is read at start, in the background, to trim it.
+        runtime.analyticsTrim.join()
+        assertEquals(listOf("theme-v1", "analytics-trades-v1"), reads)
         val layout = runtime.desktopLayout
         layout.update(DesktopLayoutPreferences(sidebarWidth = 280f))
         val first = launch { layout.save() }
