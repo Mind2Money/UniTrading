@@ -16,12 +16,18 @@ import com.unitrading.broker.*
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
+
+/** What the screen says once the automatic flatten of the fixture's first child has failed. */
+private const val FAILED_100 = "离线测试账户 自动平仓未完成，请检查券商持仓和挂单。"
 
 @OptIn(ExperimentalTestApi::class)
 class AccountRiskUiTest {
@@ -200,7 +206,79 @@ class AccountRiskUiTest {
     private fun ComposeUiTest.awaitFailedFlattenNotice(runtime: TradingRuntime, broker: RiskFixture) {
         waitUntil(timeoutMillis = 10_000) { runtime.accountRisk.rule(broker, "100").trigger?.flattenStatus == FlattenStatus.FAILED }
         waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("trade-notice").fetchSemanticsNodes().isNotEmpty() }
-        onNodeWithTag("trade-notice").assertTextEquals("离线测试账户 自动平仓未完成，请检查券商持仓和挂单。").assertIsDisplayed()
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
+    }
+
+    @Test fun aFailedFlattenComesBackAfterTheNoticesThatTookItsPlaceAndOutlastsAnAccountSwitch() =
+        runDesktopComposeUiTest(width = 1400, height = 900) {
+            val (broker, runtime) = failingFlatten()
+            show(runtime, 1400, 900)
+            broker.pnl("100", -250_000_000)
+            awaitFailedFlattenNotice(runtime, broker)
+            // A refusal takes the notice's place. Once it is closed, the failure is back.
+            onNodeWithTag("review-order").performClick()
+            onNodeWithTag("trade-notice").assertTextEquals("2026-11-11 交易日已锁定 · 达到亏损额度；仍可平仓、撤单、收紧止损或挂减仓单。")
+            onNodeWithTag("dismiss-trade-notice").performClick()
+            onNodeWithTag("trade-notice").assertTextEquals(FAILED_100)
+            // So it is once an order's receipt has closed by itself.
+            onNodeWithTag("order-side-SELL").performClick()
+            onNodeWithTag("review-order").performClick()
+            onNodeWithTag("confirm-action").performClick()
+            waitUntil(timeoutMillis = 5_000) { broker.events == listOf("close:held", "place:100") }
+            onNodeWithTag("trade-notice").assertTextEquals("离线测试账户：accepted")
+            mainClock.advanceTimeBy(9_000)
+            onNodeWithTag("trade-notice").assertTextEquals(FAILED_100)
+            // Switching accounts clears the notice of the moment; the failure stays until it is dismissed, and then it is gone.
+            onNodeWithTag("quick-account-picker").performClick()
+            onNodeWithTag("quick-account-200").performClick()
+            onNodeWithTag("trade-notice").assertTextEquals(FAILED_100)
+            onNodeWithTag("dismiss-trade-notice").performClick()
+            onNodeWithTag("trade-notice").assertDoesNotExist()
+            onNodeWithTag("quick-account-picker").performClick()
+            onNodeWithTag("quick-account-100").performClick()
+            onNodeWithTag("trade-notice").assertDoesNotExist()
+        }
+
+    @Test fun failedFlattensWaitForEachOtherAndEachStaysUntilDismissed() = runDesktopComposeUiTest(width = 450, height = 850) {
+        val (broker, runtime) = failingFlatten()
+        broker.hold("200", listOf(riskPosition(Side.BUY, 100, "other")))
+        runBlocking { assertNull(runtime.accountRisk.configure(broker, "200", RiskLimits(200_000_000, action = RiskAction.FLATTEN))) }
+        show(runtime)
+        broker.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, broker)
+        // The other child fails while the first failure is still unread: it waits behind it.
+        broker.pnl("200", -250_000_000)
+        waitUntil(timeoutMillis = 10_000) { runtime.accountRisk.rule(broker, "200").trigger?.flattenStatus == FlattenStatus.FAILED }
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100)
+        onNodeWithTag("dismiss-trade-notice").performClick()
+        onNodeWithTag("trade-notice").assertTextEquals("Other child 自动平仓未完成，请检查券商持仓和挂单。")
+        onNodeWithTag("dismiss-trade-notice").performClick()
+        onNodeWithTag("trade-notice").assertDoesNotExist()
+    }
+
+    @Test fun aFailedFlattenIsShownOnThePagesBeforeTheTradingScreenToo() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // The login shown lists no contracts yet, so its page has no chart and no notices of its own. The other login's
+        // automatic flatten fails meanwhile.
+        val empty = RiskFixture(login = "empty-login").apply { catalog.value = BrokerCatalog(emptyList(), accounts) }
+        val broker = RiskFixture(TestClock(Clock.System.now()))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100)))
+        broker.onClose = { TradeResult(false, "交易商拒绝平仓") }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(empty, broker)).apply { paused.value = true }
+        runBlocking { assertNull(runtime.accountRisk.configure(broker, "100", RiskLimits(200_000_000, action = RiskAction.FLATTEN))) }
+        show(runtime)
+        onNodeWithText("查询合约").assertExists()
+        broker.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, broker)
+        // The contracts arrive and the trading screen takes over: the failure is still unread.
+        runOnIdle { empty.catalog.value = BrokerCatalog(empty.source.instruments, empty.accounts) }
+        onNodeWithTag("trade-bar").assertIsDisplayed()
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
+        // It outlasts the logins too: the welcome page shows it until it is dismissed.
+        runOnIdle { listOf(empty, broker).forEach { runtime.registry.unregister(it.descriptor.id) } }
+        onNodeWithTag("welcome-login").assertExists()
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
+        onNodeWithTag("dismiss-trade-notice").performClick()
+        onNodeWithTag("trade-notice").assertDoesNotExist()
     }
 
     @Test fun thePnlLockIsNotOfferedWithoutABrokerTradingDay() = runDesktopComposeUiTest(width = 450, height = 850) {
@@ -301,6 +379,49 @@ class AccountRiskUiTest {
         onNodeWithText("止损等减仓单由应用保留到平仓确认后再撤。Tradovate 的平仓请求本身也会撤掉该合约的挂单，平仓失败后请到券商核对止损。",
             substring = true).assertExists()
     }
+
+    @Test fun aFreezeThatWaitsForTheBrokersTradingDaySaysSoAndCanBeClosedWithoutSaving() =
+        runDesktopComposeUiTest(width = 450, height = 850) {
+            val fixture = RiskFixture()
+            // No rule yet, so nothing has fetched this account's P&L lately: its last snapshot is three minutes old.
+            fixture.pnl("100", 0, "2026-11-13")
+            fixture.clock.time += 3.minutes
+            var answer = CompletableDeferred<Unit>()
+            var abandoned = 0
+            // The broker answers the request for the trading day only when the test says so.
+            val broker = object : BrokerPlugin by fixture {
+                override suspend fun refreshDailyPnl(accountId: String) {
+                    try { answer.await() } catch (cancel: CancellationException) { abandoned++; throw cancel }
+                    fixture.pnl(accountId, 0, "2026-11-13")
+                }
+            }
+            val risk = AccountRiskController(MemorySnapshotStore(), fixture.clock)
+            setContent { TradingTheme { AccountRiskSettings(risk, broker, fixture.accounts.first(), busy = false) } }
+            fun freeze() {
+                onNodeWithTag("edit-account-risk").performClick()
+                onNodeWithTag("risk-loss").performTextInput("200")
+                onNodeWithTag("freeze-risk-settings").performScrollTo().performClick()
+                onNodeWithTag("confirm-risk-freeze").performClick()
+            }
+            freeze()
+            onNodeWithTag("risk-fetching-day").performScrollTo().assertTextEquals("正在向券商获取交易日…").assertIsDisplayed()
+            onNodeWithTag("save-risk-settings").assertIsNotEnabled()
+            // Closing the form gives up the wait, and the broker's late answer saves nothing.
+            onNodeWithTag("cancel-risk-settings").assertIsEnabled().performClick()
+            onNodeWithTag("risk-editor").assertDoesNotExist()
+            waitUntil(timeoutMillis = 5_000) { abandoned == 1 }
+            answer.complete(Unit)
+            waitForIdle()
+            assertEquals(AccountRiskRule(), risk.rule(broker, "100"))
+            // Waited out, the same freeze is saved and the form closes.
+            answer = CompletableDeferred()
+            freeze()
+            onNodeWithTag("risk-fetching-day").assertExists()
+            answer.complete(Unit)
+            waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("risk-editor").fetchSemanticsNodes().isEmpty() }
+            assertEquals("2026-11-16", risk.rule(broker, "100").frozenUntil.toString())
+            assertEquals(1, abandoned)
+        }
 
     @Test fun theCapIsTypedInWholeContractsWhereEveryInstrumentTradesThem() = runDesktopComposeUiTest(width = 450, height = 850) {
         // The fixture's contracts trade in whole 张, as on Tradovate and Rithmic.

@@ -1125,6 +1125,39 @@ class AccountRiskTest {
         assertEquals(listOf("close:held", "modify:stop:549000", "change:stop:549000:100", "place:100"), broker.events)
     }
 
+    @Test fun anAutomaticFlattenThatEndsUnconfirmedIsToldOnceAsItEnds() = runTest {
+        val broker = RiskFixture()
+        val store = MemorySnapshotStore()
+        val risk = controller(store, broker.clock)
+        val told = mutableListOf<FlattenFailure>()
+        backgroundScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { risk.flattenFailures.collect { told += it } }
+        // Both children reach their loss limit. The broker will not close the first one's long, and closes the other's.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100)))
+        broker.hold("200", listOf(riskPosition(Side.BUY, 100, "other")))
+        broker.onClose = { id -> if (id == "held") TradeResult(false, "market closed") else TradeResult(true, "closed").also { broker.hold("200") } }
+        for (id in listOf("100", "200")) {
+            broker.pnl(id, -250_000_000)
+            assertNull(risk.configure(broker, id, RiskLimits(200_000_000, action = RiskAction.FLATTEN)))
+        }
+        val registry = BrokerRegistry(listOf(broker))
+        val monitor = backgroundScope.launch { risk.monitor(registry) }
+        withTimeout(5_000) { risk.rules.first { trigger(risk, broker, "100")?.flattenStatus == FlattenStatus.FAILED &&
+            trigger(risk, broker, "200")?.flattenStatus == FlattenStatus.FLAT } }
+        // Many more rounds of the monitor: the failure is told once, and a flatten the broker confirmed not at all.
+        advanceTimeBy(30_000)
+        monitor.cancelAndJoin()
+        assertEquals(listOf(FlattenFailure(broker.descriptor.id, broker.accounts.first())), told)
+        // A failure an earlier run saved is not told again after a restart.
+        val restarted = controller(store, broker.clock)
+        backgroundScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { restarted.flattenFailures.collect { told += it } }
+        val again = backgroundScope.launch { restarted.monitor(registry) }
+        advanceTimeBy(30_000)
+        again.cancelAndJoin()
+        assertEquals(FlattenStatus.FAILED, trigger(restarted, broker, "100")?.flattenStatus)
+        assertEquals(1, told.size)
+        assertEquals(listOf("close:held", "close:other"), broker.events.sorted(), "nothing is sent again")
+    }
+
     @Test fun aTriggerThatCannotBeSavedLocksThisRunAndSendsNothingByItself() = runTest {
         val broker = RiskFixture()
         var full = false

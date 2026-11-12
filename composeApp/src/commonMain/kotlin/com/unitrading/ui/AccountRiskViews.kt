@@ -66,6 +66,9 @@ private fun AccountRiskDialog(
     var confirm by remember { mutableStateOf(false) }
     var freezeOnSave by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    // A freeze may first wait up to 12 s for the broker's trading day. The form says so and can still be closed: the save
+    // goes with the form, so closing gives up the wait before anything is written.
+    var fetchingDay by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val parsedLoss = riskAmount(loss)
     val parsedProfit = riskAmount(profit)
@@ -75,10 +78,12 @@ private fun AccountRiskDialog(
     val editable = supported && !frozen && !saving
     fun save(value: RiskLimits?, period: RiskFreeze?) {
         saving = true
+        fetchingDay = period != null
         error = null
         scope.launch {
             val message = onSave(value, period)
             saving = false
+            fetchingDay = false
             if (message == null) onDismiss() else error = message
         }
     }
@@ -90,7 +95,7 @@ private fun AccountRiskDialog(
         } else save(value, null)
     }
     FormDialog("交易锁定", "保存", editable && limits != null, { requestSave(false) }, onDismiss,
-        "risk-editor", "cancel-risk-settings", "save-risk-settings", dismissEnabled = !saving) {
+        "risk-editor", "cancel-risk-settings", "save-risk-settings", dismissEnabled = !saving || fetchingDay) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("$accountName · ${account.id}", style = type.titleSmall)
@@ -117,6 +122,10 @@ private fun AccountRiskDialog(
             if (frozen) Text("已冻结：券商交易日到 ${rule.frozenUntil} 之前无法修改或停用。", style = type.bodySmall, color = muted)
             else OutlinedButton({ requestSave(true) }, Modifier.fillMaxWidth().testTag("freeze-risk-settings"), enabled = editable && limits?.loss != null) {
                 Text(if (freeze == RiskFreeze.DAY) "冻结到下一交易日" else "冻结到下周一")
+            }
+            if (fetchingDay) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在向券商获取交易日…", Modifier.testTag("risk-fetching-day"), style = type.bodySmall)
             }
             Text("按券商交易日计算。冻结前必须设置亏损上限，并且已收到券商的交易日数据。", style = type.bodySmall, color = muted)
             Text("仅在应用运行且连接有效时监控。其他客户端仍可下单。", style = type.bodySmall, color = muted)

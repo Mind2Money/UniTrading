@@ -2,7 +2,10 @@ package com.unitrading.app
 
 import com.unitrading.broker.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -158,6 +161,9 @@ internal data class FlattenTarget(val broker: BrokerPlugin, val account: Account
 /** [note] says why an account was not worked on at all; without one the outcome is the flatten's own, confirmed or not. */
 internal data class FlattenOutcome(val target: FlattenTarget, val confirmed: Boolean, val note: String? = null)
 
+/** An automatic flatten of [account], on the login whose broker id is [login], that ended without the broker confirming it flat. */
+internal data class FlattenFailure(val login: String, val account: AccountInfo)
+
 /** Why a flatten of every sub-account leaves one out. Nothing can be sent for it, so it is not a failure either. */
 internal enum class FlattenSkip { DISCONNECTED, READ_ONLY }
 
@@ -200,6 +206,12 @@ internal class AccountRiskController(
      * cannot be read might have forbidden it.
      */
     val storageUnreadable = unreadable.asStateFlow()
+    private val failures = MutableSharedFlow<FlattenFailure>(extraBufferCapacity = 64)
+    /**
+     * Each automatic flatten that ends unconfirmed, once, as it ends. Nothing is replayed: a collector hears of the ones
+     * that end while it collects, and the earlier ones, a previous run's included, show only in [RiskTrigger.flattenStatus].
+     */
+    val flattenFailures: SharedFlow<FlattenFailure> = failures.asSharedFlow()
 
     fun rule(broker: BrokerPlugin, accountId: String) =
         rules.value[broker.descriptor.id]?.get(accountId) ?: AccountRiskRule()
@@ -623,6 +635,8 @@ internal class AccountRiskController(
             if (current.trigger?.day == trigger.day) {
                 val status = if (confirmed) FlattenStatus.FLAT else FlattenStatus.FAILED
                 persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = status)))
+                // Told also when the state could not be saved: the position may be open either way.
+                if (!confirmed) failures.tryEmit(FlattenFailure(broker.descriptor.id, raw.account))
             }
         }
     }

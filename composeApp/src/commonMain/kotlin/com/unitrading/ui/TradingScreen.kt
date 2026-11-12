@@ -46,7 +46,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.datetime.LocalDate
 
 /** Orders, edits, cancels and history work on Paper Trading; closing a position is unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
@@ -63,6 +62,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
     LaunchedEffect(runtime, player) {
         val enabled = runtime.tradingPreferences.preferences.map { it.tradeSounds }.stateIn(this)
         TradeSoundController(player, enabled = enabled).run(runtime.registry)
+    }
+    // Automatic flattens that ended unconfirmed, each kept until it is dismissed, whichever page shows meanwhile. Collected
+    // from before the monitor starts, because a failure is not sent again to a late collector.
+    val unreadFailures = remember(runtime) { mutableStateListOf<TradingNotice>() }
+    LaunchedEffect(runtime) {
+        var count = 0L
+        runtime.accountRisk.flattenFailures.collect { failure ->
+            val name = runtime.accountAliases.aliases.value.account(failure.login, failure.account)
+            // Below zero, so that no other notice has the same id.
+            unreadFailures += TradingNotice(-(++count), "$name 自动平仓未完成，请检查券商持仓和挂单。", NoticeTone.ATTENTION, persistent = true)
+        }
     }
     LaunchedEffect(runtime) { runtime.accountRisk.monitor(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
@@ -95,8 +105,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         if (showRithmicConnection) RithmicConnectionDialog(runtime, ::selectBroker, { showRithmicConnection = false })
         val connectRithmic: (() -> Unit)? = if (RITHMIC_LOGIN_ENABLED) ({ showRithmicConnection = true }) else null
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+        // The pages in front of the trading screen have no notices of their own: an unread failure shows over them.
+        val failureOverlay: @Composable BoxScope.() -> Unit = {
+            unreadFailures.firstOrNull()?.let { current ->
+                FloatingNoticeCard(current, "trade-notice", { unreadFailures.remove(current) }, Modifier.align(Alignment.TopCenter)
+                    .safeDrawingPadding().padding(start = 12.dp, end = 12.dp, top = 56.dp).widthIn(max = 420.dp), title = "操作提示")
+            }
+        }
         if (plugin == null) {
-            LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = connectRithmic)
+            Box(Modifier.fillMaxSize()) {
+                LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = connectRithmic)
+                failureOverlay()
+            }
             return@TradingTheme
         }
         // The login stays saved and comes back, so the closed trades cached for it stay too: the broker would not return the older ones again.
@@ -133,6 +153,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                 }
+                Box(Modifier.fillMaxSize(), content = failureOverlay)
             }
             return@TradingTheme
         }
@@ -247,22 +268,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         fun showNotice(message: String, attention: Boolean = false) {
             notice = TradingNotice(++nextNoticeId, message, if (attention) NoticeTone.ATTENTION else NoticeTone.INFO, persistent = attention)
         }
-        // An automatic flatten that ends unconfirmed is said on whatever page is open, naming the account: the account page's
-        // own notice shows only there, which on the desktop is inside 账户总览. A trigger fails once, on its trading day, so
-        // that day tells one failure from the next; what had failed before the screen opened is not announced again.
-        LaunchedEffect(runtime) {
-            var announced: Set<Triple<String, String, LocalDate>>? = null
-            runtime.accountRisk.rules.collect { rules ->
-                val failed = rules.flatMap { (login, accounts) ->
-                    accounts.mapNotNull { (id, rule) -> rule.trigger?.takeIf { it.flattenStatus == FlattenStatus.FAILED }?.let { Triple(login, id, it.day) } }
-                }.toSet()
-                val names = announced?.let { failed - it }.orEmpty().map { (login, id) ->
-                    registry.plugins.firstOrNull { it.descriptor.id == login }?.catalog?.value?.accounts?.firstOrNull { it.id == id }
-                        ?.let { runtime.accountAliases.aliases.value.account(login, it) } ?: id
-                }
-                if (names.isNotEmpty()) showNotice("${names.joinToString("、")} 自动平仓未完成，请检查券商持仓和挂单。", attention = true)
-                announced = failed
-            }
+        // The first unread failed flatten takes the notice's place whenever there is no other notice. A later notice only puts
+        // it off, and an account switch, which clears the notice of the moment, leaves it: it goes when it is dismissed.
+        fun shownNotice() = notice ?: unreadFailures.firstOrNull()
+        fun dismissNotice(current: TradingNotice) {
+            if (notice?.id == current.id) notice = null else unreadFailures.remove(current)
         }
         fun syncAccount() {
             if (busy || !market.connected) return
@@ -634,10 +644,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val panelOpen = popupVisible || chartFirst && orderOnChart && orderOpen
                 // The receipt inside the dock's and the popup's form; the sheet shows it above its form, as it always did.
                 val orderNotice: @Composable () -> Unit = {
-                    notice?.let { current ->
+                    shownNotice()?.let { current ->
                         Box(Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
                             .padding(horizontal = 12.dp, vertical = 2.dp)) {
-                            FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                            FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                         }
                     }
                 }
@@ -894,8 +904,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
                             title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
                     }
-                    notice?.takeUnless { panelOpen }?.let { current ->
-                        FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                    shownNotice()?.takeUnless { panelOpen }?.let { current ->
+                        FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                     }
                     loginMessage?.let { message -> key(message) {
                         var dismissed by remember { mutableStateOf(false) }
@@ -1290,10 +1300,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         brackets = brackets, calculatedLots = request?.lotsHundredths, accountName = accountName,
                                         reduction = reduction,
                                         content = {
-                                            notice?.let { current ->
+                                            shownNotice()?.let { current ->
                                                 Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
                                                     .padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                                    FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                                                    FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                                                 }
                                             }
                                             OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
