@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import com.unitrading.app.AccountBrackets
 import com.unitrading.app.AppUpdates
 import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingKeys
@@ -130,9 +131,12 @@ internal fun SettingsPage(
                         .testTag("settings-skip-confirmation"),
                     colors = settingsRowColors(),
                 )
+                // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
+                val riskRules by runtime.accountRisk.rules.collectAsState()
+                val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
                 ListItem(
                     headlineContent = { Text("键盘下单") },
-                    supportingContent = { Text(keyboardTradingSummary(tradingPreferences), Modifier.testTag("settings-keyboard-trading-summary")) },
+                    supportingContent = { Text(keyboardTradingSummary(tradingPreferences, brackets), Modifier.testTag("settings-keyboard-trading-summary")) },
                     leadingContent = { Icon(AppIcons.Keyboard, contentDescription = null) },
                     trailingContent = { Switch(tradingPreferences.keyboardTrading, onCheckedChange = null, enabled = !savingTradingPreferences) },
                     modifier = Modifier.toggleable(tradingPreferences.keyboardTrading, enabled = !savingTradingPreferences, role = Role.Switch,
@@ -221,10 +225,17 @@ internal fun SettingsPage(
     )
 }
 
-/** What the keyboard trading switch does, with the chosen keys and whether a key press still asks before it trades. */
-internal fun keyboardTradingSummary(preferences: TradingPreferences): String {
+/**
+ * What the keyboard trading switch does on the selected sub-account, with the chosen keys and whether a key press
+ * still asks before it trades. Under [brackets] that size orders from a stop a key trades nothing: it opens the order
+ * panel on its side, where the stop is filled in. Cash amounts add their protection to what a key sends.
+ */
+internal fun keyboardTradingSummary(preferences: TradingPreferences, brackets: AccountBrackets = AccountBrackets()): String {
     val keys = preferences.tradingKeys
-    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，并应用子账户的金额止损止盈设置。" +
+    if (brackets.sizingRisk != null) return "点一下图表后，按 ${keys.buy} 或 ${keys.sell} 打开下单栏并选好买入或卖出，不会直接下单：" +
+        "当前子账户按风险计算手数，要先填写止损价。在输入框里打字不会触发。"
+    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，" +
+        (if (brackets.enabled) "开仓单按当前子账户的金额设置自动附加止损止盈。" else "不带止损止盈。") +
         if (preferences.skipConfirmation) "已开启“跳过交易确认”，按键即成交。" else "按键后先弹确认框，Enter 确认，Esc 取消。"
 }
 

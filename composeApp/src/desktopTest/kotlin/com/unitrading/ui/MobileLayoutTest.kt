@@ -18,6 +18,7 @@ import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.geometry.Offset
 import com.unitrading.broker.OrderKind
+import com.unitrading.broker.OrderRequest
 import com.unitrading.broker.Side
 import com.unitrading.broker.Timeframe
 import com.unitrading.chart.IndicatorConfig
@@ -238,22 +239,31 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trade-bar").assertExists()
     }
 
-    @Test fun compactShortMarketConfirmationRetainsBothProtectionPrices() = phoneTest {
-        render()
+    /**
+     * The compact bar's arrow sends the draft as it is when pressed. Its click used to keep the order of the moment the
+     * bar was first shown, so protection switched on while minimized was left out of the order that went out.
+     */
+    @Test fun compactArrowSubmitsTheProtectionSwitchedOnWhileMinimized() = phoneTest {
+        // An empty account that records what it is sent: only the order placed here can carry the prices asserted below.
+        val broker = OfflineOrderBroker()
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker))
+        runBlocking { assertTrue(offline.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
         compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("order-side-SELL").performClick()
         compose.onNodeWithTag("minimize-order").performClick()
         compose.onNodeWithTag("compact-sl").performClick().assertIsOn()
         compose.onNodeWithTag("compact-tp").performClick().assertIsOn()
         compose.onNodeWithTag("compact-submit-order").performClick()
-        compose.onNodeWithText("止损价").assertExists()
-        compose.onNodeWithText("止盈价").assertExists()
+        // The reference protection of a short at an ask of 5500.25: 80 ticks above it and 160 below.
+        compose.onNodeWithText("5520.25").assertExists()
+        compose.onNodeWithText("5460.25").assertExists()
+        assertTrue(broker.placed.isEmpty())
         compose.onNodeWithTag("confirm-action").performClick()
-        compose.waitUntil(timeoutMillis = 5_000) { session.state.value.positions.isNotEmpty() }
-        val position = session.state.value.positions.last()
-        assertEquals(Side.SELL, position.side)
-        assertNotNull(position.stopLoss)
-        assertNotNull(position.takeProfit)
+        compose.waitUntil(timeoutMillis = 5_000) { broker.placed.isNotEmpty() }
+        assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.MARKET, 100, stopLoss = 552_025, takeProfit = 546_025), broker.placed.single())
     }
 
     @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() = phoneTest {

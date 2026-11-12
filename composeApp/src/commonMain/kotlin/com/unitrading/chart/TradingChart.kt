@@ -707,7 +707,7 @@ fun TradingChart(
                     PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
                         onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price) },
-                        stopRequiredForSizing = actions.stopRequiredForSizing)
+                        stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection)
                 }
                 val bar = visible.getOrNull(readoutIndex)
                 val previous = if (bar == null) null else candles.getOrNull(range.first + readoutIndex - 1)
@@ -716,8 +716,7 @@ fun TradingChart(
                     if (!compact) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
                         keysHint = actions.tradingKeys?.let {
-                            if (actions.stopRequiredForSizing && chartFocused) "${it.buy} 市价买入 · ${it.sell} 市价卖出 · 打开下单栏填写 SL"
-                            else tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders)
+                            tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
                         }, keysLive = chartFocused)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }

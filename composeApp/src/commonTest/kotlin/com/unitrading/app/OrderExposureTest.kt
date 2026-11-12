@@ -90,6 +90,28 @@ class OrderExposureTest {
         assertNotNull(AccountOrderLimits(maxLots = 999_999_999L).refusal(request(Side.BUY, Long.MAX_VALUE), huge))
     }
 
+    @Test fun theRoomUnderACapIsTheLargestOrderTheCapLetsThrough() {
+        fun room(snapshot: AccountSnapshot, hedging: Boolean, side: Side, cap: Long, symbol: String = "MESZ6"): Long {
+            val lots = lotsUnderCap(snapshot, hedging, request(side, 1, symbol), cap)
+            fun refusal(size: Long) = request(side, size, symbol).let { AccountOrderLimits(cap).refusal(it, newOrderExposure(snapshot, hedging, it)) }
+            if (lots > 0) assertNull(refusal(lots), "$lots $side under $cap")
+            assertNotNull(refusal(lots + 1), "${lots + 1} $side under $cap")
+            return lots
+        }
+        assertEquals(500, room(account(), false, Side.BUY, 500))
+        // Long 3 with 1 more to fill, and short 1 elsewhere: 5 at worst.
+        val long = account(listOf(position(Side.BUY, 300), position(Side.SELL, 100, "ESZ6")), listOf(order("add", Side.BUY, 100)))
+        assertEquals(200, room(long, false, Side.BUY, 700))
+        assertEquals(200, room(long, false, Side.BUY, 700, "NQZ6"), "another symbol adds to the same total")
+        assertEquals(900, room(long, false, Side.SELL, 700), "three to close the long, and six make a short as large as the cap leaves")
+        // Over a lowered cap nothing may add, and the other side may go as far as leaves the total where it is.
+        assertEquals(0, room(long, false, Side.BUY, 200))
+        assertEquals(700, room(long, false, Side.SELL, 200))
+        // A hedging account adds everything up: 4 held and 1 working.
+        assertEquals(200, room(long, true, Side.SELL, 700))
+        assertEquals(0, room(long, true, Side.BUY, 400))
+    }
+
     @Test fun aStopLoosensWhenItMovesAwayFromTheMarketOrGoes() {
         assertFalse(stopLoosened(Side.BUY, 548_000, 548_000))
         assertFalse(stopLoosened(Side.BUY, 548_000, 549_000))

@@ -28,9 +28,15 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
         brackets.loss?.let { "止损 ${money(it)} ${account.currency}" },
         brackets.profit?.let { "止盈 ${money(it)} ${account.currency}" },
     )
+    // Futures trade in whole contracts; only a broker with fractional lots takes decimals for the largest order.
+    val contract = broker.instruments.firstOrNull()
+    val whole = contract == null || contract.quantityDecimals == 0
+    val unit = contract?.quantityUnit ?: "张"
+    fun lots(value: Long) = if (whole) (value / 100).toString() else formatFixed(value, 2)
     val summary = when {
         unreadable -> "本机风控记录无法读取"
-        brackets.sizingRisk != null -> "自动计算手数 · 风险 ${money(brackets.sizingRisk)} ${account.currency}"
+        brackets.sizingRisk != null -> "自动计算手数 · 风险 ${money(brackets.sizingRisk)} ${account.currency} · " +
+            (brackets.sizingMaxLots?.let { "单笔最多 ${lots(it)} $unit" } ?: "未填单笔最大数量，暂不能开仓")
         brackets.enabled -> amounts.joinToString(" · ")
         else -> "未启用"
     }
@@ -43,13 +49,19 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
     var profit by remember { mutableStateOf(brackets.profit?.let { money(it) }.orEmpty()) }
     var sizing by remember { mutableStateOf(brackets.sizingRisk != null) }
     var sizingAmount by remember { mutableStateOf(brackets.sizingRisk?.let { money(it) }.orEmpty()) }
+    var sizingLots by remember { mutableStateOf(brackets.sizingMaxLots?.let(::lots).orEmpty()) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val lossValue = riskAmount(loss)
     val profitValue = riskAmount(profit)
     val sizingValue = riskAmount(sizingAmount)
-    val valid = if (sizing) sizingAmount.isBlank() || sizingValue != null
+    val sizingLotsValue = parseFixed(sizingLots, if (whole) 0 else 2)?.let { if (whole) it.coerceAtMost(10_000_000) * 100 else it }
+        ?.takeIf { it in 1..999_999_999L }
+    // A blank amount switches the sizing off; with one, the largest order has to be given too.
+    val valid = if (sizing) sizingAmount.isBlank() || (sizingValue != null && sizingLotsValue != null)
         else (loss.isBlank() || lossValue != null) && (profit.isBlank() || profitValue != null)
+    // On a hedging account every order opens a position of its own, so there is no reducing order to speak of.
+    fun reductions(text: String) = if (broker.capabilities.hedging) "" else text
     AlertDialog(
         onDismissRequest = { if (!saving) editing = false },
         title = { Text(title) },
@@ -63,8 +75,13 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
                         label = { Text("单笔风险金额 · ${account.currency}") }, singleLine = true, enabled = !saving,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         isError = sizingAmount.isNotBlank() && sizingValue == null)
-                    Text("下单时填写止损价 SL，手数按合约步长向下取整。留空可关闭此设置。", style = MaterialTheme.typography.bodySmall)
-                    Text("风险按毛亏损估算，未计手续费与成交滑点。", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(sizingLots, { sizingLots = it }, Modifier.fillMaxWidth().testTag("account-sizing-max-lots"),
+                        label = { Text("单笔最大数量 · $unit") }, singleLine = true, enabled = !saving,
+                        keyboardOptions = KeyboardOptions(keyboardType = if (whole) KeyboardType.Number else KeyboardType.Decimal),
+                        supportingText = { Text("必填。止损离入场价越近，算出的手数越大；自动手数不会超过这个数量，也不会超过子账户最大手数和服务器的可下单上限。") },
+                        isError = sizingAmount.isNotBlank() && sizingLotsValue == null)
+                    Text("下单时填写止损价 SL，手数按合约步长向下取整。风险金额留空可关闭此设置。", style = MaterialTheme.typography.bodySmall)
+                    Text(reductions("减仓单按输入的数量下单，不按风险计算。") + "风险按毛亏损估算，未计手续费与成交滑点。", style = MaterialTheme.typography.bodySmall)
                 } else {
                     Text("按整笔订单的金额和手数计算止损止盈。止损向较小亏损取整，止盈向较大利润取整。")
                     OutlinedTextField(loss, { loss = it }, Modifier.fillMaxWidth().testTag("account-bracket-loss"),
@@ -75,7 +92,7 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
                         label = { Text("利润金额 · ${account.currency}") }, singleLine = true, enabled = !saving,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         isError = profit.isNotBlank() && profitValue == null)
-                    Text("留空可关闭对应设置。金额按毛盈亏估算，未计手续费与成交滑点。", style = MaterialTheme.typography.bodySmall)
+                    Text("留空可关闭对应设置。" + reductions("减仓单不附加止损止盈。") + "金额按毛盈亏估算，未计手续费与成交滑点。", style = MaterialTheme.typography.bodySmall)
                 }
                 error?.let { Text(it, color = TradingColors.Loss) }
             }
@@ -85,7 +102,8 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
                 saving = true
                 scope.launch {
                     error = controller.configureBrackets(broker, account.id,
-                        if (sizing) AccountBrackets(sizingRisk = sizingValue) else AccountBrackets(lossValue, profitValue))
+                        if (sizing) AccountBrackets(sizingRisk = sizingValue, sizingMaxLots = sizingLotsValue.takeIf { sizingValue != null })
+                        else AccountBrackets(lossValue, profitValue))
                     saving = false
                     if (error == null) editing = false
                 }

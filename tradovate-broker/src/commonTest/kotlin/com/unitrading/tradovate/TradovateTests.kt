@@ -344,7 +344,8 @@ class TradovateTests {
         assertEquals(1, wire.requests.count { it.path.startsWith("order/") })
         assertTrue(account.state.value.positions.isEmpty())
     }
-    @Test fun shortMarketOrderSubmitsBothBuyProtectionLegs() = runTest {
+    /** Pins the wire format of a short's brackets as it has always been sent: both legs buy, each at its own absolute price. */
+    @Test fun aShortMarketBracketIsOneOsoWithABuyStopAndABuyLimitLeg() = runTest {
         val (broker, wire) = ready()
         val account = broker.openSession("100")
         val request = OrderRequest("MESZ6", Side.SELL, OrderKind.MARKET, 100,

@@ -55,6 +55,29 @@ internal data class AccountRiskRule(
      * uses and never the device clock: without a fresh broker day (null) the rule stays frozen.
      */
     fun frozen(tradingDay: LocalDate?): Boolean = frozenUntil != null && (tradingDay == null || tradingDay < frozenUntil)
+
+    /**
+     * Whether the cash brackets or the sizing apply to a new [order]. One that only reduces the position held needs
+     * neither: it gets no stop loss or take profit of its own and keeps the quantity it was given. The order form and
+     * the guard both ask here, so they cannot disagree on what an exit is.
+     */
+    fun bracketsApply(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Boolean =
+        brackets.enabled && !newOrderExposure(snapshot, hedging, order).neutral
+
+    /** The lots the lot cap still leaves a new order like [order], for a quantity sized from a loss amount; null without a cap. */
+    fun lotRoom(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Long? =
+        orderLimits.maxLots?.let { lotsUnderCap(snapshot, hedging, order, it) }
+
+    /**
+     * [order] as the brackets make it at [quote], when they apply: with their stop loss and take profit, or with the
+     * quantity the loss amount buys under its own ceiling, the lot cap and [capacity], the server's order limit when
+     * the caller knows it. Throws [IllegalArgumentException] with the reason when that cannot be worked out.
+     */
+    fun bracketed(
+        order: OrderRequest, spec: Instrument, currency: String, quote: Quote?, snapshot: AccountSnapshot, hedging: Boolean,
+        capacity: Long? = null,
+    ): OrderRequest = if (!bracketsApply(snapshot, hedging, order)) order
+        else brackets.prices(order, spec, currency, quote, lotRoom(snapshot, hedging, order), capacity)
 }
 
 /** The first trading day after a freeze taken on [tradingDay]: the next day, or the Monday after it for a week. */
@@ -80,10 +103,13 @@ internal sealed interface RiskCheck {
     data class Place(val request: OrderRequest) : RiskCheck
     /** A working order moved to [price], with [lotsHundredths] in total when its quantity changes as well. */
     data class Change(val orderId: String, val price: Long, val lotsHundredths: Long? = null) : RiskCheck
-    /** The stop loss of a position set to [stopLoss]. Its take profit may change freely. */
-    data class PositionStop(val positionId: String, val stopLoss: Long?) : RiskCheck
-    /** The stop loss a pending entry carries set to [stopLoss]. Its take profit may change freely. */
-    data class OrderStop(val orderId: String, val stopLoss: Long?) : RiskCheck
+    /**
+     * The protection of a position set to [stopLoss] and [takeProfit]. Only the stop matters to a lock; the cash
+     * amounts of the account hold both.
+     */
+    data class PositionStop(val positionId: String, val stopLoss: Long?, val takeProfit: Long?) : RiskCheck
+    /** The protection a pending entry carries set to [stopLoss] and [takeProfit], judged as for [PositionStop]. */
+    data class OrderStop(val orderId: String, val stopLoss: Long?, val takeProfit: Long?) : RiskCheck
 }
 
 internal data class FlattenTarget(val broker: BrokerPlugin, val account: AccountInfo) {
@@ -187,7 +213,7 @@ internal class AccountRiskController(
             storageMutex.withLock {
                 when {
                     unreadable.value -> "无法读取风控设置，请检查本机存储。"
-                    !brackets.valid() -> "请输入有效的风险或利润金额。"
+                    !brackets.valid() -> "请输入有效的金额；按风险计算手数还需要单笔最大数量。"
                     !persist(broker, id, rule(broker, id).copy(brackets = brackets)) -> "金额止损止盈保存失败，请重试。"
                     else -> null
                 }
@@ -262,8 +288,9 @@ internal class AccountRiskController(
 
     /**
      * Why [action] would be refused on this account, or null: the P&L lock, the pause while broker P&L is missing, an
-     * unreadable rule file, the lot cap and the blocked symbols, all read from the account as it is now. The screen
-     * asks before it opens a confirmation; [guard] decides again when the command is sent.
+     * unreadable rule file, the lot cap, the blocked symbols and, for an edit, the cash amounts of the brackets, all
+     * read from the account as it is now. The screen asks before it opens a confirmation; [guard] decides again when
+     * the command is sent, where it also prices or checks a new order against the brackets.
      */
     fun refusal(broker: BrokerPlugin, session: AccountSession, action: RiskCheck): String? =
         refusal(broker, session, action, restriction(broker, session))
@@ -272,8 +299,15 @@ internal class AccountRiskController(
     private fun refusal(broker: BrokerPlugin, session: AccountSession, action: RiskCheck, pause: String?): String? {
         val snapshot = session.state.value
         val hedging = broker.capabilities.hedging
-        val limits = rule(broker, session.account.id).orderLimits
+        val rule = rule(broker, session.account.id)
+        val limits = rule.orderLimits
         fun paused(harmless: Boolean) = pause?.takeUnless { harmless }?.let { it.trimEnd('。') + stillAllowed(hedging) }
+        /** The cash amounts, for a pending entry or a position that an edit turns from [before] into [after]. */
+        fun amounts(before: OrderRequest, after: OrderRequest): String? {
+            if (!rule.brackets.enabled) return null
+            val spec = broker.instruments.firstOrNull { it.symbol == before.symbol } ?: return "合约规格尚未加载"
+            return rule.brackets.editRefusal(before, after, spec, session.account.currency)
+        }
         return when (action) {
             is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
                 paused(effect.neutral) ?: limits.refusal(action.request, effect)
@@ -284,12 +318,20 @@ internal class AccountRiskController(
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
                 // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
                 paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect)
+                    // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the amounts.
+                    ?: order.takeIf { it.role == OrderRole.ENTRY }?.let { amounts(it.request, changed.copy(entryPrice = action.price)) }
             }
             is RiskCheck.PositionStop -> snapshot.positions.firstOrNull { it.id == action.positionId }.let { position ->
-                paused(position != null && !stopLoosened(position.side, position.stopLoss, action.stopLoss))
+                paused(position != null && !stopLoosened(position.side, position.stopLoss, action.stopLoss)) ?: position?.let {
+                    val held = OrderRequest(it.symbol, it.side, OrderKind.MARKET, it.lotsHundredths, it.entryPrice, it.stopLoss, it.takeProfit)
+                    amounts(held, held.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit))
+                }
             }
             is RiskCheck.OrderStop -> snapshot.orders.firstOrNull { it.id == action.orderId }.let { order ->
                 paused(order != null && !stopLoosened(order.request.side, order.request.stopLoss, action.stopLoss))
+                    ?: order?.takeIf { it.role == OrderRole.ENTRY }?.let {
+                        amounts(it.request, it.request.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit))
+                    }
             }
         }
     }
@@ -341,17 +383,29 @@ internal class AccountRiskController(
         }
 
         override suspend fun placeOrder(requestId: String, request: OrderRequest) = submit(RiskCheck.Place(request)) {
-            val brackets = rule(broker, account.id).brackets
-            val refused = if (!brackets.enabled) null else {
-                val spec = broker.instruments.firstOrNull { it.symbol == request.symbol }
-                if (spec == null) "合约规格尚未加载"
-                else {
-                    val checked = raw.preview(request)
-                    if (!checked.valid) checked.errors.firstOrNull() ?: "订单参数无效"
-                    else brackets.refusal(request, spec, account.currency, checked.entryPrice)
-                }
+            val rule = rule(broker, account.id)
+            val snapshot = raw.state.value
+            val hedging = broker.capabilities.hedging
+            if (!rule.bracketsApply(snapshot, hedging, request)) return@submit raw.placeOrder(requestId, request)
+            val spec = broker.instruments.firstOrNull { it.symbol == request.symbol }
+                ?: return@submit TradeResult(false, "合约规格尚未加载")
+            // A market order is priced again from the quote of this moment. The quote it was reviewed at is older by the
+            // time the command gets here, and one tick against the order would put its stop past the loss amount. A new
+            // quote may make a sized order smaller, never larger than the one that was reviewed.
+            val order = if (request.kind != OrderKind.MARKET) request else try {
+                val priced = rule.bracketed(request, spec, account.currency, broker.market.value.quotes[request.symbol], snapshot, hedging)
+                priced.copy(lotsHundredths = minOf(request.lotsHundredths, priced.lotsHundredths))
+            } catch (error: IllegalArgumentException) {
+                return@submit TradeResult(false, error.message ?: "无法计算金额止损止盈")
             }
-            if (refused != null) TradeResult(false, refused) else raw.placeOrder(requestId, request)
+            val checked = raw.preview(order)
+            val refused = when {
+                !checked.valid -> checked.errors.firstOrNull() ?: "订单参数无效"
+                order.kind == OrderKind.MARKET -> null
+                // A resting entry keeps the price it was reviewed at, so its stop and target must meet the amounts as they stand.
+                else -> rule.brackets.refusal(order, spec, account.currency, checked.entryPrice)
+            }
+            if (refused != null) TradeResult(false, refused) else raw.placeOrder(requestId, order)
         }
 
         override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) =
@@ -363,10 +417,10 @@ internal class AccountRiskController(
             }
 
         override suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
-            submit(RiskCheck.OrderStop(orderId, stopLoss)) { raw.modifyOrderProtection(requestId, orderId, expectedVersion, stopLoss, takeProfit) }
+            submit(RiskCheck.OrderStop(orderId, stopLoss, takeProfit)) { raw.modifyOrderProtection(requestId, orderId, expectedVersion, stopLoss, takeProfit) }
 
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
-            submit(RiskCheck.PositionStop(positionId, stopLoss)) { raw.modifyProtection(requestId, positionId, expectedVersion, stopLoss, takeProfit) }
+            submit(RiskCheck.PositionStop(positionId, stopLoss, takeProfit)) { raw.modifyProtection(requestId, positionId, expectedVersion, stopLoss, takeProfit) }
 
         override suspend fun closePosition(requestId: String, positionId: String) =
             submit(null) { raw.closePosition(requestId, positionId) }

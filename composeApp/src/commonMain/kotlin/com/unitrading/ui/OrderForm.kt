@@ -75,23 +75,29 @@ internal fun OrderForm(
                         modifier = Modifier.weight(1f).testTag("order-side-${side.name}"), dense = docked) { onDraft(draft.withSide(side, instrument, quote)) }
                 }
             }
-            if (sizingRisk == null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // An account that sizes its orders types a quantity only for one against its position: a reduction, of no more than that position.
+            val reducible = capacity.reducible
+            if (sizingRisk == null || reducible != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val less = draft.steppedQuantity(instrument, false)
                 // Only a limit the server has given stops the plus button: the broker still checks every order.
-                val more = draft.steppedQuantity(instrument, true, capacity.maximum?.takeIf { it > 0 } ?: instrument.maxLotsHundredths)
+                val more = draft.steppedQuantity(instrument, true,
+                    listOfNotNull(capacity.maximum?.takeIf { it > 0 }, reducible).minOrNull() ?: instrument.maxLotsHundredths)
                 QuantityStep(false, !busy && less != null) { less?.let { onDraft(draft.copy(quantity = it)) } }
-                PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
+                PriceInput("${if (reducible != null) "减仓数量" else "数量"}（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)
                 QuantityStep(true, !busy && more != null) { more?.let { onDraft(draft.copy(quantity = it)) } }
             }
             if (!docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
             if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价",
                 draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry", enabled = !busy)
-            if (sizingRisk != null) {
+            if (reducible != null) {
+                Text("减仓单 · 最多 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}，按输入数量下单，不附加止损",
+                    Modifier.testTag("order-reduction"), color = colors.Accent, style = type.bodySmall)
+            } else if (sizingRisk != null) {
                 PriceInput("止损价 SL（可在图表拖动）", draft.stopLoss, { onDraft(draft.withProtectionPrice(true, it)) },
                     "order-risk-sizing-sl", enabled = !busy)
                 val lots = bracketOrder?.lotsHundredths?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "—"
-                Text("自动手数 $lots · 风险 ${money(sizingRisk)} ${instrument.currency}",
+                Text("自动手数 $lots · 风险 ${money(sizingRisk)} ${instrument.currency}" + (capacity.sizedUnder?.let { " · 受${it}限制" } ?: ""),
                     Modifier.testTag("order-risk-sized-quantity"), color = colors.Accent, style = type.bodySmall)
             } else if (brackets.enabled) {
                 val prices = listOfNotNull(

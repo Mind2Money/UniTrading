@@ -266,24 +266,52 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         LaunchedEffect(plugin, preload) { plugin.preloadHistory(preload) }
         DisposableEffect(plugin) { onDispose { plugin.preloadHistory(emptyList()) } }
+        val hedging = plugin.capabilities.hedging
+        val orderRule = riskRule ?: AccountRiskRule()
+        /**
+         * [order] as the account's cash brackets or its sizing make it at the quote [at], under the server's order limit
+         * [limit] when that is known. An order that only reduces the position held goes as it is: the guard uses the same rule.
+         */
+        fun bracketed(order: OrderRequest, at: Quote?, limit: Long?): OrderRequest =
+            orderRule.bracketed(order, instrument, session.account.currency, at, account, hedging, limit)
+        // Sizing gives way to a quantity typed by hand while the draft works against the position held: these are the lots it may take off.
+        val reducible = if (!sizeByRisk || hedging || executionSymbol == null) 0L else symbolExposure(account, executionSymbol).closable(draft.side)
+        val (serverCapacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
+            market.tradingReady, localDemo)
         val orderInput = draft.copy(stopLossEnabled = draft.stopLossEnabled && !brackets.controls(true),
             takeProfitEnabled = draft.takeProfitEnabled && !brackets.controls(false))
         val builtOrder = runCatching {
-            val input = if (sizeByRisk) {
-                require(instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true) { "请输入有效止损价 SL" }
-                orderInput.copy(stopLossEnabled = true).request(instrument, quantityOverride = instrument.minLotsHundredths)
-            } else orderInput.request(instrument)
-            input?.let { brackets.prices(it, instrument, session.account.currency, quote) }
+            val input = when {
+                !sizeByRisk -> orderInput.request(instrument)
+                // A reduction has no use for the stop that sizes an entry, and takes off no more than the position.
+                reducible > 0 -> orderInput.copy(stopLossEnabled = false).request(instrument)?.also { order ->
+                    require(!orderRule.bracketsApply(account, hedging, order)) {
+                        when {
+                            order.lotsHundredths <= 0 -> "请输入有效的减仓数量"
+                            order.lotsHundredths > reducible -> "减仓数量不能超过持仓的 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}；反手请先平仓"
+                            else -> "加上已挂的减仓单会超过持仓，请先撤销多余的挂单"
+                        }
+                    }
+                }
+                else -> {
+                    require(instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true) { "请输入有效止损价 SL" }
+                    orderInput.copy(stopLossEnabled = true).request(instrument, quantityOverride = instrument.minLotsHundredths)
+                }
+            }
+            input?.let { bracketed(it, quote, serverCapacity.maximum) }
         }
         val request = builtOrder.getOrNull()
         // Keep an editable chart draft even before SL sets a valid quantity. Only request can be submitted.
-        val chartDraft = request ?: if (sizeByRisk) orderInput.copy(
+        val chartDraft = request ?: if (sizeByRisk && reducible == 0L) orderInput.copy(
             stopLossEnabled = instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true,
             takeProfitEnabled = orderInput.takeProfitEnabled && instrument.parsePrice(orderInput.takeProfit)?.let { it > 0 } == true,
         ).request(instrument, quantityOverride = 0L) else null
         val bracketError = builtOrder.exceptionOrNull()?.message
-        val (capacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
-            market.tradingReady, localDemo)
+        // The order forms read every bound on the quantity from here: the server's limit, the position a reduction works
+        // against, and the ceiling that cut a sized quantity short.
+        val capacity = serverCapacity.copy(reducible = reducible.takeIf { it > 0 }, sizedUnder = request?.takeIf { sizeByRisk && reducible == 0L }?.let {
+            brackets.sizingLimit(it, instrument, quote, orderRule.lotRoom(account, hedging, it), serverCapacity.maximum)
+        })
         val preview = remember(session, instrument, request, market.revision, account, capacity, bracketError) {
             request?.let(session::preview)?.withCapacity(request, capacity)
                 ?: bracketError?.let { OrderPreview(null, errors = listOf(it)) }
@@ -601,7 +629,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun currentPlaceOrder(order: OrderRequest): OrderRequest {
                     if (!brackets.enabled || order.kind != OrderKind.MARKET) return order
-                    val refreshed = brackets.prices(order, instrument, session.account.currency, plugin.market.value.quotes[order.symbol])
+                    val refreshed = bracketed(order, plugin.market.value.quotes[order.symbol], capacityFor(order).maximum)
                     // A live quote can reduce a reviewed size; it cannot authorize a larger order.
                     return if (sizeByRisk) refreshed.copy(lotsHundredths = minOf(order.lotsHundredths, refreshed.lotsHundredths)) else refreshed
                 }
@@ -617,7 +645,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun placePreview(order: OrderRequest): OrderPreview {
                     val checked = session.preview(order).withCapacity(order, capacityFor(order))
-                    if (!checked.valid) return checked
+                    // A market order was priced from the quote a moment ago, and the guard prices it once more as it goes out. Only a
+                    // resting entry has to meet the amounts as it stands; an order that just reduces the position has none to meet.
+                    if (!checked.valid || order.kind == OrderKind.MARKET || !orderRule.bracketsApply(account, hedging, order)) return checked
                     val error = brackets.refusal(order, instrument, session.account.currency, checked.entryPrice)
                     return if (error == null) checked else checked.copy(errors = listOf(error))
                 }
@@ -705,7 +735,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         showNotice(if (instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单" else "请先在下单面板输入有效数量", attention = true)
                         return
                     }
-                    val protectedOrder = try { brackets.prices(order, instrument, session.account.currency, quote) }
+                    val protectedOrder = try { bracketed(order, quote, capacityFor(order).maximum) }
                     catch (error: IllegalArgumentException) {
                         showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
                         return
@@ -745,14 +775,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val actions = ChartOrderActions(
                         estimateDraft = { order ->
                             try {
-                                val estimated = brackets.prices(order, instrument, session.account.currency, quote)
+                                val estimated = bracketed(order, quote, capacityFor(order).maximum)
                                 estimated to session.preview(estimated).withCapacity(estimated, capacityFor(estimated))
                             } catch (error: IllegalArgumentException) {
                                 (if (sizeByRisk) order.copy(lotsHundredths = 0L) else order) to
                                     OrderPreview(null, errors = listOf(error.message ?: "无法计算订单预览"))
                             }
                         },
-                        draftStopManaged = brackets.controls(true),
+                        // A reduction on a sized account carries no stop, so its draft offers none to add either.
+                        draftStopManaged = brackets.controls(true) || reducible > 0,
                         draftTargetManaged = brackets.controls(false),
                         onDraftEntry = { price -> onActive { changeDraft(draft.copy(entry = instrument.formatPrice(price))) } },
                         onDraftProtection = { stop, price ->
@@ -779,6 +810,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
                         stopRequiredForSizing = sizeByRisk,
+                        attachedProtection = listOfNotNull("SL".takeIf { brackets.controls(true) }, "TP".takeIf { brackets.controls(false) })
+                            .joinToString("/").ifEmpty { null },
                         onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
                     )
                     // Every chart has its own tools and selection; the drawings themselves are shared through the library.
@@ -896,16 +929,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, style = MaterialTheme.typography.bodySmall) }
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", style = MaterialTheme.typography.titleSmall)
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
-                                    EstimateRow("止损价", r.stopLoss?.let(instrument::formatPrice) ?: "未设置")
-                                    EstimateRow("止盈价", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
+                                    // Until a market order fills, its stop and target are estimates: the account's brackets are priced again
+                                    // from the quote as it is sent, and a broker that places them by distance moves them with the fill.
+                                    val estimated = if (r.kind == OrderKind.MARKET) "（预估）" else ""
+                                    EstimateRow("止损价$estimated", r.stopLoss?.let(instrument::formatPrice) ?: "未设置")
+                                    EstimateRow("止盈价$estimated", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
+                                    val bracketsApply = orderRule.bracketsApply(account, hedging, r)
                                     Text(when {
-                                        sizeByRisk && r.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"
-                                        brackets.enabled && r.kind == OrderKind.MARKET -> "提交时按最新报价重算自动止损止盈，实际成交价可能与预估不同。"
+                                        sizeByRisk && bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"
+                                        bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价重算自动止损止盈，实际成交价可能与预估不同。"
+                                        brackets.enabled && !bracketsApply -> (if (sizeByRisk) "减仓单按输入的数量提交，不按风险计算手数。" else "减仓单不附加子账户止损止盈。") +
+                                            "提交时会按最新报价和账户状态重新校验。"
                                         else -> "提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。"
                                     },
                                         style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    livePreview?.warnings?.forEach { Text(it, color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
                                     livePreview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")

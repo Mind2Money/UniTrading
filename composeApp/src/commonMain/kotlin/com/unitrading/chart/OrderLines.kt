@@ -289,7 +289,10 @@ class ChartOrderActions(
     val onStandalone: (PendingOrder, Long) -> Unit = { _, _ -> },
     val draftStopManaged: Boolean = false,
     val draftTargetManaged: Boolean = false,
+    /** The account sizes its orders from a stop: the menu and the keys open the order panel on their side and send nothing. */
     val stopRequiredForSizing: Boolean = false,
+    /** What the account's cash amounts add to an order that opens or adds, as the menu and the legend name it: "SL/TP", "SL" or "TP". */
+    val attachedProtection: String? = null,
 )
 
 /** The side [key] trades under these trading keys; null for every other key, and for any key held with a modifier. */
@@ -301,9 +304,13 @@ internal fun TradingKeys.side(key: Key, modified: Boolean): Side? = if (modified
 /**
  * What the legend says about the trading keys. With the chart focused the keys are live, so it names what each does, the
  * quantity an order would carry ([lots], null while the order panel holds none that parses) and whether it still asks.
- * Otherwise it says how to make them live.
+ * Otherwise it says how to make them live. On an account that sizes its orders from a stop ([sizing]) a key trades
+ * nothing: it opens the order panel on its side. [attached] is the protection the account's cash amounts add, if any.
  */
-internal fun tradingKeysHint(keys: TradingKeys, live: Boolean, instrument: Instrument, lots: Long?, instant: Boolean): String =
-    if (!live) "键盘下单：点一下图表后 ${keys.buy} / ${keys.sell} 生效"
-    else "${keys.buy} 市价买入 · ${keys.sell} 市价卖出 · " + (lots?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "数量无效") +
-        if (instant) " · 按键即成交" else " · 按键后确认"
+internal fun tradingKeysHint(keys: TradingKeys, live: Boolean, instrument: Instrument, lots: Long?, instant: Boolean,
+    sizing: Boolean = false, attached: String? = null): String = when {
+    !live -> "键盘下单：点一下图表后 ${keys.buy} / ${keys.sell} 生效"
+    sizing -> "${keys.buy} 买入 · ${keys.sell} 卖出 · 打开下单栏填写 SL，不直接下单"
+    else -> "${keys.buy} 市价买入 · ${keys.sell} 市价卖出 · " + (lots?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "数量无效") +
+        (attached?.let { " · 开仓自动附加 $it" } ?: "") + if (instant) " · 按键即成交" else " · 按键后确认"
+}

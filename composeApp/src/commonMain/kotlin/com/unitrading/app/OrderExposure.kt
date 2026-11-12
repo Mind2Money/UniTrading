@@ -91,6 +91,17 @@ private fun exposureEffect(
 }
 
 /**
+ * The most lots a new order like [request] may have before [AccountOrderLimits.refusal] turns it down for a cap of
+ * [cap], in hundredths; its own quantity does not matter. A quantity sized from a loss amount stays within it.
+ */
+internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: OrderRequest, cap: Long): Long {
+    // Lots that only offset working orders on the other side leave the total where it was; every lot past them adds
+    // one to it. An order far larger than any real one therefore shows where the total would start from.
+    val probe = newOrderExposure(snapshot, hedging, request.copy(lotsHundredths = LOT_BOUND))
+    return maxOf(probe.before, cap) - (probe.after - LOT_BOUND)
+}
+
+/**
  * Whether the stop loss of a holding on [side] (BUY for a long) gets looser or disappears when it moves from [old] to
  * [new]: the stop of a long may only rise and that of a short only fall. Adding a stop where there was none is fine.
  */

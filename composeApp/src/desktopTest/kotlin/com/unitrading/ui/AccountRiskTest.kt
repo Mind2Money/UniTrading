@@ -26,8 +26,9 @@ internal class TestClock(var time: Instant = Instant.parse("2026-11-11T16:00:00Z
 
 /**
  * A broker whose accounts a test sets directly: by default a net account, as Tradovate and Rithmic are, that reports its
- * trading day with the day P&L. Every command that reaches it is recorded in [events]; a cancel or a close takes effect
- * on the snapshot at once unless the test says otherwise.
+ * trading day with the day P&L. Every command that reaches it is recorded in [events], and every order in [placed] as
+ * it was sent; a cancel or a close takes effect on the snapshot at once unless the test says otherwise. A market order
+ * is previewed at the quote of the moment, which a test moves with [quote].
  */
 internal class RiskFixture(
     val clock: TestClock = TestClock(),
@@ -44,6 +45,13 @@ internal class RiskFixture(
     override val catalog = MutableStateFlow(BrokerCatalog(source.instruments, accounts))
     val request = OrderRequest(source.spec.symbol, Side.BUY, OrderKind.MARKET, 100)
     val events = mutableListOf<String>()
+    val placed = mutableListOf<OrderRequest>()
+    /** A note the broker adds to every preview, as Rithmic does for a market order whose brackets it places by distance. */
+    var previewWarning: String? = null
+    /** The quote the broker previews a market order at while it is ahead of [market]: Tradovate takes a quote in before it publishes it. */
+    var previewQuote: Quote? = null
+    /** The server's order limit in hundredths of a lot; null while the broker gives none. */
+    var capacity: Long? = null
     var rejectCancel = false
     /** Runs instead of taking a closed position off the snapshot, for a close that fails or leaves another position behind. */
     var onClose: ((String) -> TradeResult)? = null
@@ -57,7 +65,14 @@ internal class RiskFixture(
             override val account = child
             override val state = snapshots.getValue(child.id)
             private fun sent(event: String): TradeResult { events += event; return TradeResult(true, "accepted") }
-            override suspend fun placeOrder(requestId: String, request: OrderRequest) = sent("place:${child.id}")
+            override fun preview(request: OrderRequest) = first.preview(request).copy(
+                entryPrice = request.entryPrice ?: (previewQuote ?: market.value.quotes[request.symbol])?.let { if (request.side == Side.BUY) it.ask else it.bid },
+                warnings = listOfNotNull(previewWarning))
+            override suspend fun orderCapacity(request: OrderRequest, lastKnown: Long?) = OrderCapacity(capacity)
+            override suspend fun placeOrder(requestId: String, request: OrderRequest): TradeResult {
+                placed += request
+                return sent("place:${child.id}")
+            }
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) =
                 sent("modify:$orderId:$entryPrice")
             override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long) =
@@ -91,16 +106,19 @@ internal class RiskFixture(
         state.value = state.value.copy(positions = positions, orders = orders)
     }
     fun orderIds(id: String) = snapshots.getValue(id).value.orders.map { it.id }
+    fun quote(bid: Long, ask: Long, symbol: String = source.spec.symbol) {
+        source.market.value = source.market.value.let { it.copy(quotes = it.quotes + (symbol to Quote(bid, ask, source.time)), revision = it.revision + 1) }
+    }
 }
 
-internal fun riskPosition(side: Side, lots: Long, id: String = "held", symbol: String = "TESTZ6", stop: Long? = null) =
-    Position(id, symbol, side, lots, 550_000, 0, stopLoss = stop, marginMicros = 0)
+internal fun riskPosition(side: Side, lots: Long, id: String = "held", symbol: String = "TESTZ6", stop: Long? = null, target: Long? = null) =
+    Position(id, symbol, side, lots, 550_000, 0, stopLoss = stop, takeProfit = target, marginMicros = 0)
 
 /** A working order; with the default role it is whatever the user placed, which no broker pairs with a position. */
 internal fun riskOrder(
     id: String, side: Side, kind: OrderKind, lots: Long, price: Long, role: OrderRole = OrderRole.ENTRY, filled: Long = 0,
-    stop: Long? = null, symbol: String = "TESTZ6",
-) = PendingOrder(id, OrderRequest(symbol, side, kind, lots, price, stopLoss = stop), 0, role = role, filledLotsHundredths = filled)
+    stop: Long? = null, symbol: String = "TESTZ6", target: Long? = null,
+) = PendingOrder(id, OrderRequest(symbol, side, kind, lots, price, stopLoss = stop, takeProfit = target), 0, role = role, filledLotsHundredths = filled)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountRiskTest {
@@ -328,6 +346,164 @@ class AccountRiskTest {
         assertTrue(session.changeOrder("locked-whole", "leg", 1, 548_000, 200).accepted)
         assertEquals(listOf("change:leg:548000:600", "change:leg:547000:100", "change:leg:548000:200", "change:leg:549000:100",
             "change:leg:548000:200"), broker.events)
+    }
+
+    @Test fun anOrderThatOnlyReducesThePositionGoesWithoutBracketsAndAnEntryGetsThem() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200)))
+        // Long two. A partial close, a target and a stop for it need no stop or target of their own, and Tradovate and
+        // Rithmic take none on an order in a contract that has a position.
+        for (exit in listOf(sell, exitTarget, exitStop)) assertTrue(session.placeOrder("exit", exit).accepted, "$exit")
+        assertEquals(listOf(sell, exitTarget, exitStop), broker.placed)
+        // What opens or adds still carries them. A resting entry is checked as it stands.
+        val add = broker.request.copy(kind = OrderKind.LIMIT, entryPrice = 549_000)
+        assertEquals(TradeResult(false, "该子账户的订单必须带止损"), session.placeOrder("bare", add))
+        val bracketed = add.copy(stopLoss = 547_000, takeProfit = 553_000)
+        assertTrue(session.placeOrder("entry", bracketed).accepted)
+        assertEquals("当前预估亏损超出子账户风险设置，请重新检查订单", session.placeOrder("loose", bracketed.copy(stopLoss = 546_975)).message)
+        // Three against a long of two would leave the account short one: no exit, so at the market it is priced like any entry.
+        assertTrue(session.placeOrder("reverse", sell.copy(lotsHundredths = 300)).accepted)
+        assertEquals(listOf(bracketed, sell.copy(lotsHundredths = 300, stopLoss = 550_650, takeProfit = 548_650)), broker.placed.drop(3))
+        assertFalse(session.placeOrder("elsewhere", sell.copy(symbol = "OTHRZ6", kind = OrderKind.LIMIT, entryPrice = 552_000)).accepted, "nothing is held there")
+        // A broker that takes no bracket beside a position, as Tradovate and Rithmic, still refuses an order that adds, in
+        // its own words; the exits never ask it.
+        val netPosition = "该合约已有净仓，不能再叠加括号保护"
+        broker.source.refusal = netPosition
+        assertEquals(TradeResult(false, netPosition), session.placeOrder("add", broker.request))
+        assertTrue(session.placeOrder("exit-again", sell).accepted)
+        // On a hedging account an order against the long opens a short of its own, which the amounts protect.
+        val hedged = RiskFixture(hedging = true).apply { hold("100", listOf(riskPosition(Side.BUY, 200))) }
+        assertTrue(risk.guard(hedged, hedged.openSession("100")).placeOrder("against", sell).accepted)
+        assertEquals(listOf(sell.copy(stopLoss = 552_000, takeProfit = 546_000)), hedged.placed)
+    }
+
+    @Test fun aMarketOrderIsPricedAgainFromTheQuoteItIsSentAt() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        // Reviewed at an ask of 5500.25: the stop 80 ticks under it loses the amount to the cent.
+        val reviewed = broker.request.copy(stopLoss = 548_025, takeProfit = 554_025)
+        // The ask is one tick higher when the command arrives. Against the stop it was reviewed with, the order would
+        // lose 101.25; it goes out with the stop and target of the new quote.
+        broker.quote(550_025, 550_050)
+        assertEquals(TradeResult(true, "accepted"), session.placeOrder("moved", reviewed))
+        assertEquals(reviewed.copy(stopLoss = 548_050, takeProfit = 554_050), broker.placed.single())
+        // The broker may also hold a quote it has not published yet. Its own check then enters a tick away from the
+        // price the stop was worked out at, which is no reason to refuse the order either.
+        broker.previewQuote = Quote(550_050, 550_075, 0)
+        assertEquals(TradeResult(true, "accepted"), session.placeOrder("ahead", reviewed))
+        assertEquals(reviewed.copy(stopLoss = 548_050, takeProfit = 554_050), broker.placed.last())
+        broker.previewQuote = null
+        // An order that reaches the guard without any gets them the same way, and a leg the amounts do not manage is kept.
+        assertTrue(session.placeOrder("bare", sell).accepted)
+        assertEquals(sell.copy(stopLoss = 552_025, takeProfit = 546_025), broker.placed.last())
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000)))
+        assertTrue(session.placeOrder("own-target", reviewed).accepted)
+        assertEquals(reviewed.copy(stopLoss = 548_050), broker.placed.last())
+        // A resting entry keeps the price it was reviewed at, so it is still checked as it stands.
+        val resting = reviewed.copy(kind = OrderKind.LIMIT, entryPrice = 549_000, stopLoss = 546_975)
+        assertFalse(session.placeOrder("resting", resting).accepted)
+        // Without a quote nothing can be priced.
+        broker.source.market.value = broker.source.market.value.copy(quotes = emptyMap())
+        assertEquals(TradeResult(false, "需要有效入场价或报价"), session.placeOrder("blind", reviewed))
+
+        // Sized from a loss of 100: 40 ticks of stop cost 50 a contract, so two contracts were reviewed.
+        val other = risk.guard(broker, broker.openSession("200"))
+        assertNull(risk.configureBrackets(broker, "200", AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 1_000)))
+        val sized = broker.request.copy(lotsHundredths = 200, stopLoss = 549_025)
+        broker.quote(550_500, 550_525)
+        assertTrue(other.placeOrder("further", sized).accepted)
+        assertEquals(sized.copy(lotsHundredths = 100), broker.placed.last(), "60 ticks now cost 75 a contract")
+        // A quote that moved towards the stop would buy four, and never sends more than was reviewed.
+        broker.quote(549_500, 549_525)
+        assertTrue(other.placeOrder("closer", sized).accepted)
+        assertEquals(sized, broker.placed.last())
+        broker.quote(549_000, 549_025)
+        assertEquals("买入止损价须低于入场价", other.placeOrder("through", sized).message)
+        assertEquals("请输入有效止损价 SL", other.placeOrder("bare", broker.request).message)
+        assertEquals(6, broker.placed.size)
+    }
+
+    @Test fun aSizedOrderStaysUnderItsCeilingAndARuleWithoutOneRefusesEntries() = runTest {
+        val broker = RiskFixture()
+        val store = MemorySnapshotStore()
+        val risk = controller(store)
+        val session = risk.guard(broker, broker.openSession("100"))
+        assertEquals("请输入有效的金额；按风险计算手数还需要单笔最大数量。",
+            risk.configureBrackets(broker, "100", AccountBrackets(sizingRisk = 300_000_000)))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(sizingRisk = 300_000_000, sizingMaxLots = 500)))
+        // Ten ticks of stop cost 12.50 a contract: 300 would buy 24 contracts. The ceiling stops at 5, whatever was reviewed.
+        val tight = broker.request.copy(lotsHundredths = 2_400, stopLoss = 549_775)
+        assertTrue(session.placeOrder("market", tight).accepted)
+        assertEquals(tight.copy(lotsHundredths = 500), broker.placed.single())
+        val resting = tight.copy(kind = OrderKind.LIMIT, entryPrice = 549_000, stopLoss = 548_750)
+        assertEquals("当前预估风险超过子账户设置，请重新检查订单", session.placeOrder("resting", resting.copy(lotsHundredths = 600)).message)
+        assertTrue(session.placeOrder("resting-at-ceiling", resting.copy(lotsHundredths = 500)).accepted)
+
+        // A rule saved before the ceiling existed sizes nothing, and still lets a position be reduced.
+        val older = AccountRiskRule(brackets = AccountBrackets(sizingRisk = 300_000_000))
+        store.write("account-risk-v1", Json.encodeToString(mapOf(broker.descriptor.id to mapOf("100" to older))))
+        val restored = controller(store).guard(broker, broker.openSession("100"))
+        val missing = TradeResult(false, "请先在设置中填写以损定量的单笔最大数量")
+        assertEquals(missing, restored.placeOrder("market", tight))
+        assertEquals(missing, restored.placeOrder("resting", resting))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200)))
+        assertTrue(restored.placeOrder("scale-out", sell).accepted)
+        assertEquals(3, broker.placed.size)
+    }
+
+    @Test fun anEditMayTightenButNotLoosenPastTheCashAmounts() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        // Long one from 5500 with the stop 80 ticks under it and the target 160 above; one more contract waits at 5490
+        // with the same distances. Each loses 100 at its stop and makes 200 at its target.
+        val entry = riskOrder("entry", Side.BUY, OrderKind.LIMIT, 100, 549_000, stop = 547_000, target = 553_000)
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)), listOf(entry))
+        assertTrue(session.modifyProtection("free", "held", 1, 540_000, null).accepted, "without a rule nothing is checked")
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        val loss = "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量"
+        val profit = "修改后的预估利润低于子账户设置；止盈只能设得更远"
+        fun refused(reason: String, result: TradeResult) = assertEquals(TradeResult(false, reason), result)
+
+        refused(loss, session.modifyProtection("loosen", "held", 1, 547_975, 554_000))
+        refused("该子账户设有风险金额，止损不能移除", session.modifyProtection("remove", "held", 1, null, 554_000))
+        refused(profit, session.modifyProtection("nearer", "held", 1, 548_000, 553_975))
+        refused("该子账户设有利润金额，止盈不能移除", session.modifyProtection("no-target", "held", 1, 548_000, null))
+        assertTrue(session.modifyProtection("tighten", "held", 1, 549_000, 555_000).accepted)
+        // The entry dragged away from its stop, its stop dragged away from it, and a second contract on the same stop.
+        refused(loss, session.modifyOrder("up", "entry", 1, 549_025))
+        refused(loss, session.modifyOrderProtection("loosen", "entry", 1, 546_975, 553_000))
+        refused(loss, session.changeOrder("more", "entry", 1, 549_000, 200))
+        refused("该子账户设有风险金额，止损不能移除", session.modifyOrderProtection("remove", "entry", 1, null, 553_000))
+        refused(profit, session.modifyOrderProtection("nearer", "entry", 1, 547_000, 552_975))
+        assertTrue(session.modifyOrder("down", "entry", 1, 548_500).accepted, "nearer its stop and further from its target")
+        assertTrue(session.modifyOrderProtection("tighten", "entry", 1, 548_000, 554_000).accepted)
+        assertTrue(session.changeOrder("same", "entry", 1, 549_000, 100).accepted)
+
+        // Two contracts on a stop that already loses 200, and no target: older than the rule. They may come closer and go
+        // no further than they are. A first target has to make the profit amount, which two contracts do 80 ticks up.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200, stop = 548_000)),
+            // An order placed by hand as the stop of that position carries none itself: the amounts do not reach it.
+            listOf(riskOrder("own-stop", Side.SELL, OrderKind.STOP, 200, 547_000)))
+        refused(loss, session.modifyProtection("older-loosen", "held", 1, 547_975, null))
+        refused(profit, session.modifyProtection("older-near-target", "held", 1, 548_500, 551_975))
+        assertTrue(session.modifyProtection("older-tighten", "held", 1, 548_500, 552_000).accepted)
+        assertTrue(session.modifyOrder("own-stop", "own-stop", 1, 546_000).accepted)
+
+        // Under sizing the loss amount is the risk, and no target is asked for.
+        val other = risk.guard(broker, broker.openSession("200"))
+        assertNull(risk.configureBrackets(broker, "200", AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 1_000)))
+        broker.hold("200", orders = listOf(riskOrder("sized", Side.BUY, OrderKind.LIMIT, 200, 549_000, stop = 548_000)))
+        refused(loss, other.changeOrder("more", "sized", 1, 549_000, 300))
+        refused(loss, other.modifyOrder("up", "sized", 1, 549_025))
+        assertTrue(other.modifyOrderProtection("target", "sized", 1, 548_000, 549_025).accepted)
+        assertEquals(listOf("protect:held:540000:null", "protect:held:549000:555000", "modify:entry:548500", "protect-order:entry:548000:554000",
+            "change:entry:549000:100", "protect:held:548500:552000", "modify:own-stop:546000", "protect-order:sized:548000:549025"), broker.events)
     }
 
     @Test fun thePnlLockNeedsABrokerThatReportsItsTradingDay() = runTest {
