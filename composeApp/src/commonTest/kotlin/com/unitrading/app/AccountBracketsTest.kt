@@ -90,7 +90,7 @@ class AccountBracketsTest {
         assertFalse(AccountBrackets(loss = 100_000_000, sizingMaxLots = 500).valid(), "the ceiling belongs to the sizing")
         assertTrue(AccountBrackets(loss = 100_000_000).valid())
         val order = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 100, stopLoss = 549_025)
-        val missing = "请先在设置中填写以损定量的单笔最大数量"
+        val missing = "请先在设置中填写风险计算手数的单笔最大数量"
         assertEquals(missing, failure { bare.prices(order, futures, "USD", quote) })
         assertEquals(missing, bare.refusal(order, futures, "USD", quote.ask))
         assertNull(bare.sizingLimit(order, futures, quote))

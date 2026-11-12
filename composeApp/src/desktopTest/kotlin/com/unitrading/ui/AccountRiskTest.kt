@@ -448,7 +448,7 @@ class AccountRiskTest {
         val older = AccountRiskRule(brackets = AccountBrackets(sizingRisk = 300_000_000))
         store.write("account-risk-v1", Json.encodeToString(mapOf(broker.descriptor.id to mapOf("100" to older))))
         val restored = controller(store).guard(broker, broker.openSession("100"))
-        val missing = TradeResult(false, "请先在设置中填写以损定量的单笔最大数量")
+        val missing = TradeResult(false, "请先在设置中填写风险计算手数的单笔最大数量")
         assertEquals(missing, restored.placeOrder("market", tight))
         assertEquals(missing, restored.placeOrder("resting", resting))
         broker.hold("100", listOf(riskPosition(Side.BUY, 200)))

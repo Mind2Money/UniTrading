@@ -1241,7 +1241,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             // A draft the popup left on the chart opens again as it is.
                                             if (!orderActive) draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                                             openOrderEditor()
-                                        }, onPositions = { accountTab = 1; mobileTab = 4 }, dense = denseLandscape)
+                                        }, onPositions = { accountTab = 1; mobileTab = 4 }, dense = denseLandscape,
+                                            onDailyPnl = { accountTab = 0; mobileTab = 4 })
                                     }
                                     if (!rail) MobileNavigation(mobileTab, selectTab)
                                 }

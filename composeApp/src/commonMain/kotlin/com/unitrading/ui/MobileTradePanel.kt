@@ -41,24 +41,27 @@ internal class MobileOrderSession(instrument: Instrument) {
     val panelState = mutableStateOf(MobileOrderPanelState.CLOSED)
 }
 
-/** A single entry point leaves the chart usable until an order is started. */
+/**
+ * A single entry point leaves the chart usable until an order is started. The positions figure opens the account's
+ * positions and orders, the daily P&L the overview with the funds card it comes from ([onDailyPnl]).
+ */
 @Composable
 internal fun MobileTradeBar(
     account: AccountSnapshot,
     onOpen: () -> Unit,
     onPositions: () -> Unit,
-    modifier: Modifier = Modifier, dense: Boolean = false,
+    modifier: Modifier = Modifier, dense: Boolean = false, onDailyPnl: () -> Unit = onPositions,
 ) {
     val colors = TradingColors
     val known = account.equityKnown && account.balanceKnown
     Surface(modifier.fillMaxWidth().testTag("trade-bar"), color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = if (dense) 0.dp else 10.dp, bottom = if (dense) 0.dp else 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            val metric = Modifier.weight(1f).heightIn(min = 48.dp).clip(MaterialTheme.shapes.small).clickable(role = Role.Button, onClick = onPositions)
+            val metric = Modifier.weight(1f).heightIn(min = 48.dp).clip(MaterialTheme.shapes.small)
             Metric("持仓 ${account.positions.size} · 浮动", if (known) money(account.floatingPnlMicros, true) else "—",
-                metric.testTag("panel-positions").padding(horizontal = 8.dp, vertical = if (dense) 0.dp else 6.dp), if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink)
+                metric.clickable(role = Role.Button, onClick = onPositions).testTag("panel-positions").padding(horizontal = 8.dp, vertical = if (dense) 0.dp else 6.dp), if (known) colors.pnl(account.floatingPnlMicros) else colors.Ink)
             Metric("今日盈亏 · 券商", account.dailyPnl?.let { money(it.totalMicros, true) } ?: "—",
-                metric.testTag("panel-daily-pnl").padding(horizontal = 8.dp, vertical = if (dense) 0.dp else 6.dp), colors.pnl(account.dailyPnl?.totalMicros))
+                metric.clickable(role = Role.Button, onClick = onDailyPnl).testTag("panel-daily-pnl").padding(horizontal = 8.dp, vertical = if (dense) 0.dp else 6.dp), colors.pnl(account.dailyPnl?.totalMicros))
             Button(onOpen, Modifier.heightIn(min = 48.dp).testTag("open-order"), colors = brandButtonColors(), contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
                 Icon(AppIcons.Add, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.width(ButtonDefaults.IconSpacing))

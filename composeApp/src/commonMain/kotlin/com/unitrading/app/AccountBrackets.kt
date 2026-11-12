@@ -74,7 +74,7 @@ internal data class AccountBrackets(
     private fun sizedQuantity(
         order: OrderRequest, spec: Instrument, entry: Long, risk: Long, lotRoom: Long? = null, capacity: Long? = null,
     ): Pair<Long, String?> {
-        val ceiling = requireNotNull(sizingMaxLots) { "请先在设置中填写以损定量的单笔最大数量" }
+        val ceiling = requireNotNull(sizingMaxLots) { "请先在设置中填写风险计算手数的单笔最大数量" }
         val stop = order.stopLoss
         require(stop != null && stop > 0) { "请输入有效止损价 SL" }
         val tick = spec.tickSize
