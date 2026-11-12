@@ -20,7 +20,13 @@ internal data class AccountOrderLimits(
     fun valid() = (maxLots == null || maxLots in 1..999_999_999L) &&
         blockedSymbols.size <= 200 && blockedSymbols.all(symbolCode::matches)
 
-    fun refusal(snapshot: AccountSnapshot, request: OrderRequest, replacing: PendingOrder? = null): String? {
+    /**
+     * Why [request], a new order or a working one as an edit leaves it, is not allowed; null when it is. [effect] is
+     * what the action does to the account's exposure. Both limits only stop what adds exposure: an exit passes in a
+     * blocked symbol, and the cap refuses nothing that leaves the total where it was or lower, so a stop, a target or
+     * a partial close also goes through on an account that is already over a lowered cap.
+     */
+    fun refusal(request: OrderRequest, effect: ExposureEffect): String? {
         val codes = listOfNotNull(request.symbol, request.sourceSymbol).map { it.uppercase() }
         val blocked = blockedSymbols.firstOrNull { code ->
             val root = code.removePrefix("@")
@@ -29,23 +35,11 @@ internal data class AccountOrderLimits(
                     futuresContract.matchEntire(candidate)?.groupValues?.get(1) == root
             }
         }
-        if (blocked != null) return "该子账户禁止交易品种 $blocked。"
+        if (blocked != null && !effect.neutral) return "该子账户禁止交易品种 $blocked。"
         val limit = maxLots ?: return null
         if (request.lotsHundredths <= 0) return "手数必须大于零。"
-        val error = "超过子账户最大手数 ${formatFixed(limit, 2)}（含持仓和未成交开仓挂单）。"
-        val proposed = (request.lotsHundredths - (replacing?.filledLotsHundredths ?: 0)).coerceAtLeast(0)
-        if (proposed > limit) return error
-        var remaining = limit - proposed
-        for (position in snapshot.positions) {
-            if (position.lotsHundredths > remaining) return error
-            remaining -= position.lotsHundredths
-        }
-        for (order in snapshot.orders) {
-            if (order.isProtection || order.id == replacing?.id) continue
-            val openLots = (order.request.lotsHundredths - order.filledLotsHundredths).coerceAtLeast(0)
-            if (openLots > remaining) return error
-            remaining -= openLots
-        }
-        return null
+        return if (effect.after > limit && effect.after > effect.before) {
+            "超过子账户最大手数 ${formatFixed(limit, 2)}（含持仓和未成交开仓挂单）。"
+        } else null
     }
 }

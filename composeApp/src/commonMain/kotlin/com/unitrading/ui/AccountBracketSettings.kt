@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun AccountBracketSettings(controller: AccountRiskController, broker: BrokerPlugin, account: AccountInfo, busy: Boolean) {
     val rules by controller.rules.collectAsState()
+    val unreadable by controller.storageUnreadable.collectAsState()
     val brackets = rules[broker.descriptor.id]?.get(account.id)?.brackets ?: AccountBrackets()
     val accountName = LocalAccountAliases.current.account(broker.descriptor.id, account)
     var editing by remember(broker, account.id) { mutableStateOf(false) }
@@ -28,13 +29,13 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
         brackets.profit?.let { "止盈 ${money(it)} ${account.currency}" },
     )
     val summary = when {
-        controller.storageUnreadable -> "本机风控记录无法读取"
+        unreadable -> "本机风控记录无法读取"
         brackets.sizingRisk != null -> "自动计算手数 · 风险 ${money(brackets.sizingRisk)} ${account.currency}"
         brackets.enabled -> amounts.joinToString(" · ")
         else -> "未启用"
     }
     SettingsRow(title, summary, AppIcons.Candlestick, "edit-account-brackets", { editing = true },
-        enabled = !busy, navigates = true)
+        enabled = !busy && !unreadable, navigates = true)
     if (!editing) return
 
     val scope = rememberCoroutineScope()

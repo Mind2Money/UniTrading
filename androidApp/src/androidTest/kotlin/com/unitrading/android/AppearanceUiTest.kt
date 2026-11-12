@@ -172,6 +172,8 @@ class AppearanceUiTest {
                 roomMicros = 701_850_000, danger = .30, source = DrawdownValueSource.CASH)))
         val fixture = object : BrokerPlugin by source {
             override val descriptor = source.descriptor.copy(name = "离线模拟", environment = BrokerEnvironment.REMOTE_DEMO)
+            // The P&L lock is only offered where the broker reports its trading day, as this fixture's snapshots do.
+            override val capabilities = source.capabilities.copy(tradingDayPnl = true)
             override val accounts = listOf(info)
             override val catalog = MutableStateFlow(BrokerCatalog(source.instruments, accounts))
             override fun openSession(accountId: String) = object : AccountSession by raw {

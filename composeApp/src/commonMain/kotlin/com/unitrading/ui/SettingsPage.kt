@@ -110,6 +110,8 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 SettingsRow("下单界面", tradingPreferences.orderPanelLayout.label, AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy, navigates = true)
+                // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
+                AccountRiskRecovery(runtime.accountRisk, busy)
                 if (account != null && !account.readOnly) {
                     AccountBracketSettings(runtime.accountRisk, plugin, account, busy)
                     AccountRiskSettings(runtime.accountRisk, plugin, account, busy)

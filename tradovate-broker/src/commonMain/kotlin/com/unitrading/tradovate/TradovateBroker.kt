@@ -31,7 +31,7 @@ class TradovateBroker(
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, tradingDayPnl = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments

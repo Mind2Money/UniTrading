@@ -9,19 +9,25 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Clock
-import kotlin.time.Instant
 
 @Serializable
 internal enum class RiskAction { LOCK, FLATTEN }
 
 @Serializable
 internal enum class RiskFreeze { DAY, WEEK }
+
+/** Where the automatic flatten of a triggered rule stands. Saved by name; the views hold the text shown for it. */
+@Serializable
+internal enum class FlattenStatus {
+    WAITING, IN_PROGRESS, FAILED, FLAT,
+    /** The trigger could not be saved: the account stays locked in this process, and nothing is sent automatically. */
+    UNSAVED,
+}
 
 @Serializable
 internal data class RiskLimits(
@@ -33,79 +39,133 @@ internal data class RiskLimits(
 }
 
 @Serializable
-internal data class RiskTrigger(
-    val day: LocalDate,
-    val pnl: Long,
-    val action: RiskAction,
-    val flattenStatus: String? = null,
-)
+internal data class RiskTrigger(val day: LocalDate, val pnl: Long, val flattenStatus: FlattenStatus? = null)
 
 @Serializable
 internal data class AccountRiskRule(
     val limits: RiskLimits? = null,
+    /** The first broker trading day on which frozen [limits] may change again; null when they are not frozen. */
     val frozenUntil: LocalDate? = null,
     val trigger: RiskTrigger? = null,
     val orderLimits: AccountOrderLimits = AccountOrderLimits(),
     val brackets: AccountBrackets = AccountBrackets(),
 ) {
-    fun frozen(today: LocalDate): Boolean = frozenUntil?.let { today < it } == true
+    /**
+     * Whether the P&L limits are frozen on the broker's [tradingDay]. A freeze follows the trading day the lock itself
+     * uses and never the device clock: without a fresh broker day (null) the rule stays frozen.
+     */
+    fun frozen(tradingDay: LocalDate?): Boolean = frozenUntil != null && (tradingDay == null || tradingDay < frozenUntil)
 }
 
-internal fun riskDate(now: Instant): LocalDate = now.toLocalDateTime(TimeZone.of("America/Chicago")).date
+/** The first trading day after a freeze taken on [tradingDay]: the next day, or the Monday after it for a week. */
+internal fun riskFreezeEnd(tradingDay: LocalDate, period: RiskFreeze): LocalDate =
+    tradingDay.plus(if (period == RiskFreeze.DAY) 1 else 7 - tradingDay.dayOfWeek.ordinal, DateTimeUnit.DAY)
 
-internal fun riskFreezeEnd(today: LocalDate, period: RiskFreeze): LocalDate =
-    today.plus(if (period == RiskFreeze.DAY) 1 else 7 - today.dayOfWeek.ordinal, DateTimeUnit.DAY)
-
-internal fun riskAmount(text: String): Long? {
-    val parts = text.trim().split('.')
-    if (parts.size !in 1..2 || parts[0].isEmpty() || parts[0].length > 9 ||
-        parts.any { part -> part.any { it !in '0'..'9' } } || (parts.getOrNull(1)?.length ?: 0) > 2) return null
-    val cents = parts.getOrNull(1).orEmpty().padEnd(2, '0').toLong()
-    return (parts[0].toLong() * 1_000_000L + cents * 10_000L).takeIf { it > 0 }
-}
+/** A positive amount typed with at most two decimals, in micros; null for anything else. */
+internal fun riskAmount(text: String): Long? = parseFixed(text, 2)?.takeIf { it in 1..99_999_999_999L }?.times(10_000)
 
 private const val STORE_KEY = "account-risk-v1"
-private const val WAITING = "等待执行撤单和平仓"
-private const val IN_PROGRESS = "平仓结果待核对，请检查券商持仓和挂单"
-private const val FAILED = "未确认全部撤单和平仓，请检查券商持仓和挂单"
-private const val FLAT = "券商已确认无持仓、无挂单"
+
+/** What a paused account can still do. A hedging account has no order that reduces a position: each one opens its own. */
+private fun stillAllowed(hedging: Boolean) = if (hedging) "；仍可平仓、撤单或收紧止损。" else "；仍可平仓、撤单、收紧止损或挂减仓单。"
+
+/** Shown wherever the P&L lock is offered on a broker without [BrokerCapabilities.tradingDayPnl]. */
+internal const val PNL_LOCK_UNSUPPORTED = "当前交易商不提供当日盈亏和交易日，无法使用盈亏锁定"
+
+/**
+ * A trade command as the risk rules see it. Closing a position and cancelling an order are not among them: they can
+ * only reduce exposure, so no rule stops them.
+ */
+internal sealed interface RiskCheck {
+    data class Place(val request: OrderRequest) : RiskCheck
+    /** A working order moved to [price], with [lotsHundredths] in total when its quantity changes as well. */
+    data class Change(val orderId: String, val price: Long, val lotsHundredths: Long? = null) : RiskCheck
+    /** The stop loss of a position set to [stopLoss]. Its take profit may change freely. */
+    data class PositionStop(val positionId: String, val stopLoss: Long?) : RiskCheck
+    /** The stop loss a pending entry carries set to [stopLoss]. Its take profit may change freely. */
+    data class OrderStop(val orderId: String, val stopLoss: Long?) : RiskCheck
+}
 
 internal data class FlattenTarget(val broker: BrokerPlugin, val account: AccountInfo) {
     val key get() = broker.descriptor.id to account.id
 }
 
-internal data class FlattenOutcome(val target: FlattenTarget, val confirmed: Boolean, val message: String)
+/** [note] says why an account was not worked on at all; without one the outcome is the flatten's own, confirmed or not. */
+internal data class FlattenOutcome(val target: FlattenTarget, val confirmed: Boolean, val note: String? = null)
+
+/** Why a flatten of every sub-account leaves one out. Nothing can be sent for it, so it is not a failure either. */
+internal enum class FlattenSkip { DISCONNECTED, READ_ONLY }
+
+/** The accounts of every login a bulk flatten can act on, and the ones it cannot with the reason. */
+internal fun bulkFlattenTargets(plugins: List<BrokerPlugin>): Pair<List<FlattenTarget>, List<Pair<FlattenTarget, FlattenSkip>>> {
+    val targets = mutableListOf<FlattenTarget>()
+    val skipped = mutableListOf<Pair<FlattenTarget, FlattenSkip>>()
+    for (broker in plugins) {
+        val ready = broker.market.value.let { it.connected && it.tradingReady }
+        for (account in broker.catalog.value.accounts) {
+            val target = FlattenTarget(broker, account)
+            when {
+                !ready -> skipped += target to FlattenSkip.DISCONNECTED
+                account.readOnly -> skipped += target to FlattenSkip.READ_ONLY
+                else -> targets += target
+            }
+        }
+    }
+    return targets to skipped
+}
 
 internal class AccountRiskController(
     private val store: SnapshotStore,
     private val clock: Clock = Clock.System,
+    /** Where the store is written. Tests pass their own dispatcher, so that saving runs in virtual time. */
+    private val io: CoroutineContext = Dispatchers.Default,
 ) {
     private val storageMutex = Mutex()
-    private val bulkTargets = MutableStateFlow(emptySet<Pair<String, String>>())
+    /** Accounts a bulk flatten has reserved. Read and changed under [storageMutex]. */
+    private val bulkTargets = mutableSetOf<Pair<String, String>>()
     private val commandMutexes = mutableMapOf<Pair<String, String>, Mutex>()
     private val initial = runCatching {
         store.read(STORE_KEY)?.let { Json.decodeFromString<Map<String, Map<String, AccountRiskRule>>>(it) }.orEmpty()
     }
     private val mutableRules = MutableStateFlow(initial.getOrDefault(emptyMap()))
     val rules = mutableRules.asStateFlow()
-    val storageUnreadable: Boolean get() = initial.isFailure
+    private val unreadable = MutableStateFlow(initial.isFailure)
+    /**
+     * The saved rules could not be read. Until [resetUnreadable] no account may add exposure, because a rule that
+     * cannot be read might have forbidden it.
+     */
+    val storageUnreadable = unreadable.asStateFlow()
 
     fun rule(broker: BrokerPlugin, accountId: String) =
         rules.value[broker.descriptor.id]?.get(accountId) ?: AccountRiskRule()
 
-    fun today() = riskDate(clock.now())
+    /**
+     * The rule whose P&L part counts. That part needs the broker's day P&L and trading day: on a broker without them
+     * it could never trigger or end, so a rule saved there anyway is inert and never pauses trading.
+     */
+    private fun pnlRule(broker: BrokerPlugin, accountId: String): AccountRiskRule? =
+        rule(broker, accountId).takeIf { broker.capabilities.tradingDayPnl && (it.limits != null || it.trigger != null) }
+
+    /** Whether the P&L limits of this account are frozen right now; see [AccountRiskRule.frozen]. */
+    fun frozen(broker: BrokerPlugin, accountId: String): Boolean = broker.capabilities.tradingDayPnl &&
+        rule(broker, accountId).let { it.frozenUntil != null && it.frozen(freshDay(broker, accountId)) }
 
     suspend fun configure(broker: BrokerPlugin, id: String, limits: RiskLimits?, freeze: RiskFreeze? = null): String? =
         storageMutex.withLock {
             val previous = rule(broker, id)
-            val date = today()
+            val supported = broker.capabilities.tradingDayPnl
+            val day = if (supported) freshDay(broker, id) else null
+            val next = if (supported) previous.copy(limits = limits, frozenUntil = freeze?.let { period -> day?.let { riskFreezeEnd(it, period) } })
+                // Nothing ever enforced a rule here, so all that can happen is clearing it: limits, freeze and any trigger.
+                else previous.copy(limits = null, frozenUntil = null, trigger = null)
             when {
-                storageUnreadable -> "无法读取风控设置，请检查本机存储。"
-                previous.frozen(date) -> "风控设置已冻结，暂不能修改。"
+                unreadable.value -> "无法读取风控设置，请检查本机存储。"
+                !supported && limits != null -> "$PNL_LOCK_UNSUPPORTED。"
+                supported && previous.frozen(day) -> "风控设置已冻结，暂不能修改。"
                 limits?.valid() == false -> "请至少输入一项有效的盈亏额度。"
                 freeze != null && limits?.loss == null -> "冻结设置前请先输入有效的亏损额度。"
-                !persist(broker, id, previous.copy(limits = limits, frozenUntil = freeze?.let { riskFreezeEnd(date, it) })) ->
-                    "风控设置保存失败，请重试。"
+                freeze != null && day == null -> "等待券商交易日数据，暂不能冻结设置。"
+                !persist(broker, id, next) -> "风控设置保存失败，请重试。"
                 else -> null
             }
         }
@@ -114,7 +174,7 @@ internal class AccountRiskController(
         commands(broker, id).withLock {
             storageMutex.withLock {
                 when {
-                    storageUnreadable -> "无法读取风控设置，请检查本机存储。"
+                    unreadable.value -> "无法读取风控设置，请检查本机存储。"
                     !limits.valid() -> "手数或品种代码不合法。"
                     !persist(broker, id, rule(broker, id).copy(orderLimits = limits)) -> "交易限制保存失败，请重试。"
                     else -> null
@@ -126,7 +186,7 @@ internal class AccountRiskController(
         commands(broker, id).withLock {
             storageMutex.withLock {
                 when {
-                    storageUnreadable -> "无法读取风控设置，请检查本机存储。"
+                    unreadable.value -> "无法读取风控设置，请检查本机存储。"
                     !brackets.valid() -> "请输入有效的风险或利润金额。"
                     !persist(broker, id, rule(broker, id).copy(brackets = brackets)) -> "金额止损止盈保存失败，请重试。"
                     else -> null
@@ -134,12 +194,33 @@ internal class AccountRiskController(
             }
         }
 
+    /**
+     * The way out of an unreadable rule file: keeps its text under `account-risk-v1-unreadable` when that still works,
+     * then starts over with no rules. Every lock, limit and bracket rule on this device is gone afterwards.
+     */
+    suspend fun resetUnreadable(): Boolean = storageMutex.withLock {
+        if (!unreadable.value) return@withLock true
+        withContext(NonCancellable) {
+            try {
+                withContext(io) {
+                    runCatching { store.read(STORE_KEY)?.let { store.write("$STORE_KEY-unreadable", it) } }
+                    store.write(STORE_KEY, Json.encodeToString(emptyMap<String, Map<String, AccountRiskRule>>()))
+                }
+                mutableRules.value = emptyMap()
+                unreadable.value = false
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
     private suspend fun persist(broker: BrokerPlugin, id: String, value: AccountRiskRule): Boolean {
         val brokerId = broker.descriptor.id
         val updated = rules.value + (brokerId to (rules.value[brokerId].orEmpty() + (id to value)))
         return withContext(NonCancellable) {
             try {
-                withContext(Dispatchers.Default) { store.write(STORE_KEY, Json.encodeToString(updated)) }
+                withContext(io) { store.write(STORE_KEY, Json.encodeToString(updated)) }
                 mutableRules.value = updated
                 true
             } catch (_: Exception) {
@@ -158,23 +239,70 @@ internal class AccountRiskController(
         return day to pnl.totalMicros
     }
 
-    fun restriction(broker: BrokerPlugin, session: AccountSession): String? {
-        if (storageUnreadable) return "本机风控记录无法读取，已暂停开仓和改单。"
-        val rule = rule(broker, session.account.id)
-        val pnl = if (rule.trigger != null || rule.limits != null) freshPnl(broker, session) else null
-        val trigger = rule.trigger
-        if (trigger != null && (pnl == null || pnl.first <= trigger.day)) {
-            return "${trigger.day} 交易日已锁定 · ${if (trigger.pnl < 0) "达到亏损额度" else "达到盈利额度"}"
-        }
-        return if (rule.limits != null && pnl == null) "等待券商当日盈亏数据，已暂停开仓和改单。" else null
+    /** The broker's current trading day for an account, when its P&L snapshot is fresh. */
+    private fun freshDay(broker: BrokerPlugin, accountId: String): LocalDate? =
+        runCatching { broker.openSession(accountId) }.getOrNull()?.let { freshPnl(broker, it)?.first }
+
+    /** The trigger that locks the account now: it holds until the broker reports a later trading day. */
+    fun lockingTrigger(broker: BrokerPlugin, session: AccountSession): RiskTrigger? {
+        val trigger = pnlRule(broker, session.account.id)?.trigger ?: return null
+        val pnl = freshPnl(broker, session)
+        return trigger.takeIf { pnl == null || pnl.first <= it.day }
     }
 
+    /** Why this account may not add exposure right now, or null. What only reduces it stays possible: see [refusal]. */
+    fun restriction(broker: BrokerPlugin, session: AccountSession): String? {
+        if (unreadable.value) return "本机风控记录无法读取，已暂停开仓和改单。"
+        lockingTrigger(broker, session)?.let {
+            return "${it.day} 交易日已锁定 · ${if (it.pnl < 0) "达到亏损额度" else "达到盈利额度"}"
+        }
+        val waiting = pnlRule(broker, session.account.id)?.limits != null && freshPnl(broker, session) == null
+        return if (waiting) "等待券商当日盈亏数据，已暂停开仓和改单。" else null
+    }
+
+    /**
+     * Why [action] would be refused on this account, or null: the P&L lock, the pause while broker P&L is missing, an
+     * unreadable rule file, the lot cap and the blocked symbols, all read from the account as it is now. The screen
+     * asks before it opens a confirmation; [guard] decides again when the command is sent.
+     */
+    fun refusal(broker: BrokerPlugin, session: AccountSession, action: RiskCheck): String? =
+        refusal(broker, session, action, restriction(broker, session))
+
+    /** [pause] is the reason exposure may not grow right now. It only stops what could add exposure or loosen a stop. */
+    private fun refusal(broker: BrokerPlugin, session: AccountSession, action: RiskCheck, pause: String?): String? {
+        val snapshot = session.state.value
+        val hedging = broker.capabilities.hedging
+        val limits = rule(broker, session.account.id).orderLimits
+        fun paused(harmless: Boolean) = pause?.takeUnless { harmless }?.let { it.trimEnd('。') + stillAllowed(hedging) }
+        return when (action) {
+            is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
+                paused(effect.neutral) ?: limits.refusal(action.request, effect)
+            }
+            is RiskCheck.Change -> {
+                val order = snapshot.orders.firstOrNull { it.id == action.orderId } ?: return "挂单已更新，请重新选择。"
+                val changed = order.request.copy(lotsHundredths = action.lotsHundredths ?: order.request.lotsHundredths)
+                val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
+                // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
+                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect)
+            }
+            is RiskCheck.PositionStop -> snapshot.positions.firstOrNull { it.id == action.positionId }.let { position ->
+                paused(position != null && !stopLoosened(position.side, position.stopLoss, action.stopLoss))
+            }
+            is RiskCheck.OrderStop -> snapshot.orders.firstOrNull { it.id == action.orderId }.let { order ->
+                paused(order != null && !stopLoosened(order.request.side, order.request.stopLoss, action.stopLoss))
+            }
+        }
+    }
+
+    /**
+     * Latches a limit the broker's day P&L has reached, and lets go of an old latch on a later trading day. Returns
+     * why exposure may not grow right now, or null.
+     */
     private suspend fun evaluate(broker: BrokerPlugin, session: AccountSession): String? = storageMutex.withLock {
         val id = session.account.id
         restriction(broker, session)?.let { return@withLock it }
-        val previous = rule(broker, id)
+        val previous = pnlRule(broker, id) ?: return@withLock null
         val limits = previous.limits
-        if (limits == null && previous.trigger == null) return@withLock null
         val (day, pnl) = freshPnl(broker, session) ?: return@withLock "等待券商当日盈亏数据。"
         val lossReached = limits?.loss?.let { pnl <= -it } == true
         val profitReached = limits?.profit?.let { pnl >= it } == true
@@ -184,10 +312,10 @@ internal class AccountRiskController(
             }
             return@withLock null
         }
-        val trigger = RiskTrigger(day, pnl, limits.action, if (limits.action == RiskAction.FLATTEN) WAITING else null)
+        val trigger = RiskTrigger(day, pnl, FlattenStatus.WAITING.takeIf { limits.action == RiskAction.FLATTEN })
         if (!persist(broker, id, previous.copy(trigger = trigger))) {
             // Keep this process locked even if storage cannot accept the write. No auto-orders before durable state.
-            val locked = previous.copy(trigger = trigger.copy(flattenStatus = "锁定未能保存，请检查存储并手动核对持仓"))
+            val locked = previous.copy(trigger = trigger.copy(flattenStatus = FlattenStatus.UNSAVED))
             val brokerId = broker.descriptor.id
             mutableRules.value = rules.value + (brokerId to (rules.value[brokerId].orEmpty() + (id to locked)))
         }
@@ -197,66 +325,54 @@ internal class AccountRiskController(
     private suspend fun commands(broker: BrokerPlugin, id: String): Mutex =
         storageMutex.withLock { commandMutexes.getOrPut(broker.descriptor.id to id) { Mutex() } }
 
+    private suspend fun reserved(key: Pair<String, String>) = storageMutex.withLock { key in bulkTargets }
+
     fun guard(broker: BrokerPlugin, raw: AccountSession): AccountSession = object : AccountSession by raw {
-        private suspend fun submit(
-            riskIncreasing: Boolean = true,
-            checkLimits: () -> String? = { null },
-            action: suspend () -> TradeResult,
-        ): TradeResult {
+        /** [check] is null for a close or a cancel, which no rule stops. */
+        private suspend fun submit(check: RiskCheck?, action: suspend () -> TradeResult): TradeResult {
             val key = broker.descriptor.id to account.id
             val bulkRefusal = TradeResult(false, "该子账户正在批量撤单和平仓。")
-            if (key in bulkTargets.value) return bulkRefusal
+            if (reserved(key)) return bulkRefusal
             return commands(broker, account.id).withLock {
-                if (key in bulkTargets.value) return@withLock bulkRefusal
-                if (riskIncreasing) evaluate(broker, raw)?.let { return@withLock TradeResult(false, it) }
-                checkLimits()?.let { return@withLock TradeResult(false, it) }
+                if (reserved(key)) return@withLock bulkRefusal
+                if (check != null) refusal(broker, raw, check, evaluate(broker, raw))?.let { return@withLock TradeResult(false, it) }
                 action()
             }
         }
 
-        private fun checkEdit(orderId: String, newLots: Long? = null): String? {
-            val snapshot = raw.state.value
-            val order = snapshot.orders.firstOrNull { it.id == orderId } ?: return "挂单已更新，请重新选择。"
-            if (order.isProtection) return null
-            return rule(broker, account.id).orderLimits.refusal(snapshot,
-                order.request.copy(lotsHundredths = newLots ?: order.request.lotsHundredths), order)
+        override suspend fun placeOrder(requestId: String, request: OrderRequest) = submit(RiskCheck.Place(request)) {
+            val brackets = rule(broker, account.id).brackets
+            val refused = if (!brackets.enabled) null else {
+                val spec = broker.instruments.firstOrNull { it.symbol == request.symbol }
+                if (spec == null) "合约规格尚未加载"
+                else {
+                    val checked = raw.preview(request)
+                    if (!checked.valid) checked.errors.firstOrNull() ?: "订单参数无效"
+                    else brackets.refusal(request, spec, account.currency, checked.entryPrice)
+                }
+            }
+            if (refused != null) TradeResult(false, refused) else raw.placeOrder(requestId, request)
         }
 
-        override suspend fun placeOrder(requestId: String, request: OrderRequest) =
-            submit(checkLimits = {
-                val rule = rule(broker, account.id)
-                rule.orderLimits.refusal(raw.state.value, request) ?: if (rule.brackets.enabled) {
-                    val spec = broker.instruments.firstOrNull { it.symbol == request.symbol }
-                    if (spec == null) "合约规格尚未加载"
-                    else {
-                        val checked = raw.preview(request)
-                        if (!checked.valid) checked.errors.firstOrNull() ?: "订单参数无效"
-                        else rule.brackets.refusal(request, spec, account.currency, checked.entryPrice)
-                    }
-                } else null
-            }) {
-                raw.placeOrder(requestId, request)
-            }
-
         override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) =
-            submit(checkLimits = { checkEdit(orderId) }) { raw.modifyOrder(requestId, orderId, expectedVersion, entryPrice) }
+            submit(RiskCheck.Change(orderId, entryPrice)) { raw.modifyOrder(requestId, orderId, expectedVersion, entryPrice) }
 
         override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long) =
-            submit(checkLimits = { checkEdit(orderId, lotsHundredths) }) {
+            submit(RiskCheck.Change(orderId, price, lotsHundredths)) {
                 raw.changeOrder(requestId, orderId, expectedVersion, price, lotsHundredths)
             }
 
         override suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
-            submit { raw.modifyOrderProtection(requestId, orderId, expectedVersion, stopLoss, takeProfit) }
+            submit(RiskCheck.OrderStop(orderId, stopLoss)) { raw.modifyOrderProtection(requestId, orderId, expectedVersion, stopLoss, takeProfit) }
 
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
-            submit { raw.modifyProtection(requestId, positionId, expectedVersion, stopLoss, takeProfit) }
+            submit(RiskCheck.PositionStop(positionId, stopLoss)) { raw.modifyProtection(requestId, positionId, expectedVersion, stopLoss, takeProfit) }
 
         override suspend fun closePosition(requestId: String, positionId: String) =
-            submit(riskIncreasing = false) { raw.closePosition(requestId, positionId) }
+            submit(null) { raw.closePosition(requestId, positionId) }
 
         override suspend fun cancelOrder(requestId: String, orderId: String) =
-            submit(riskIncreasing = false) { raw.cancelOrder(requestId, orderId) }
+            submit(null) { raw.cancelOrder(requestId, orderId) }
     }
 
     /** Run only against the account identities reviewed in the confirmation dialog. */
@@ -264,10 +380,10 @@ internal class AccountRiskController(
         val targets = reviewed.distinctBy { it.key }
         val reserved = targets.mapTo(mutableSetOf()) { it.key }
         storageMutex.withLock {
-            if (reserved.any { it in bulkTargets.value }) {
+            if (reserved.any { it in bulkTargets }) {
                 return targets.map { FlattenOutcome(it, false, "已有批量平仓正在处理，请核对账户。") }
             }
-            bulkTargets.value = bulkTargets.value + reserved
+            bulkTargets += reserved
         }
         return try {
             targets.map { target ->
@@ -287,11 +403,11 @@ internal class AccountRiskController(
                 } catch (_: Exception) {
                     false
                 }
-                FlattenOutcome(target, confirmed, if (confirmed) FLAT else FAILED)
+                FlattenOutcome(target, confirmed)
             }
         } finally {
             withContext(NonCancellable) {
-                storageMutex.withLock { bulkTargets.value = bulkTargets.value - reserved }
+                storageMutex.withLock { bulkTargets -= reserved }
             }
         }
     }
@@ -303,10 +419,8 @@ internal class AccountRiskController(
         while (isActive) {
             active.entries.removeAll { it.value.isCompleted }
             for (broker in registry.plugins) {
-                val configured = rules.value[broker.descriptor.id].orEmpty()
                 for (child in broker.catalog.value.accounts) {
-                    val rule = configured[child.id] ?: continue
-                    if (rule.limits == null && rule.trigger == null) continue
+                    if (pnlRule(broker, child.id) == null) continue
                     val key = broker.descriptor.id to child.id
                     if (child.readOnly || key in active) continue
                     active[key] = launch {
@@ -318,13 +432,12 @@ internal class AccountRiskController(
                                 flattenIfPending(broker, raw)
                             }
                             checkAccount()
-                            val current = rule(broker, child.id)
                             val time = clock.now().toEpochMilliseconds()
                             val last = lastRefresh[key]
                             val snapshotTime = raw.state.value.dailyPnl?.updatedAtMs
                             val due = (last == null || time - last !in 0..<20_000) &&
                                 (snapshotTime == null || time - snapshotTime !in 0..<20_000)
-                            if (due && (current.limits != null || current.trigger != null)
+                            if (due && pnlRule(broker, child.id) != null
                                 && broker.market.value.let { it.connected && it.tradingReady }) {
                                 lastRefresh[key] = time
                                 withTimeoutOrNull(12_000) { broker.refreshDailyPnl(child.id) }
@@ -345,11 +458,12 @@ internal class AccountRiskController(
     private suspend fun flattenIfPending(broker: BrokerPlugin, raw: AccountSession) {
         val id = raw.account.id
         val trigger = storageMutex.withLock {
-            if ((broker.descriptor.id to id) in bulkTargets.value) return
+            if ((broker.descriptor.id to id) in bulkTargets) return
             val current = rule(broker, id)
             val trigger = current.trigger ?: return
-            if (trigger.flattenStatus != WAITING || freshPnl(broker, raw)?.first != trigger.day) return
-            if (!persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = IN_PROGRESS)))) return
+            if (trigger.flattenStatus != FlattenStatus.WAITING || freshPnl(broker, raw)?.first != trigger.day) return
+            // Saved before anything is sent: after a restart the flatten is not sent a second time.
+            if (!persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = FlattenStatus.IN_PROGRESS)))) return
             trigger
         }
         val confirmed = try {
@@ -362,14 +476,21 @@ internal class AccountRiskController(
         storageMutex.withLock {
             val current = rule(broker, id)
             if (current.trigger?.day == trigger.day) {
-                persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = if (confirmed) FLAT else FAILED)))
+                val status = if (confirmed) FlattenStatus.FLAT else FlattenStatus.FAILED
+                persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = status)))
             }
         }
     }
 
+    /**
+     * Cancels what could open or add, closes every position, and only then cancels the orders that were reducing
+     * them. A stop the user placed after the entry therefore keeps working until its position is confirmed closed,
+     * and it is still there when a close fails. Nothing with an unknown outcome is sent again.
+     */
     private suspend fun flatten(
         broker: BrokerPlugin, raw: AccountSession, authorized: () -> Boolean = { true },
     ): Boolean {
+        val hedging = broker.capabilities.hedging
         suspend fun ready(): Boolean {
             if (!authorized()) return false
             val state = withTimeoutOrNull(12_000) { broker.market.first { !it.connected || it.tradingReady } }
@@ -378,26 +499,38 @@ internal class AccountRiskController(
         suspend fun cancel(orderId: String): Boolean {
             if (!ready()) return false
             if (raw.state.value.orders.none { it.id == orderId }) return true
-            val result = raw.cancelOrder(requestId(), orderId)
-            return result.accepted && result.outcome == CommandOutcome.ACCEPTED &&
-                withTimeoutOrNull(12_000) { raw.state.first { s -> s.orders.none { it.id == orderId } } } != null
+            if (raw.cancelOrder(requestId(), orderId).outcome == CommandOutcome.UNKNOWN) return false
+            // A refused cancel is no failure once the order has gone: it filled, or the broker cancelled it with its position.
+            return withTimeoutOrNull(12_000) { raw.state.first { s -> s.orders.none { it.id == orderId } } } != null
+        }
+        /** Orders that reduce no position now: entries, and whatever a closed position left behind. Entries go before the legs tied to them. */
+        suspend fun cancelOpening(): Boolean {
+            while (true) {
+                val state = raw.state.value
+                val opening = state.orders.filterNot { reducesPosition(state, hedging, it) }
+                val order = opening.firstOrNull { !it.isProtection } ?: opening.firstOrNull() ?: return true
+                if (!cancel(order.id)) return false
+            }
         }
         if (!ready()) return false
-        // Keep confirmed protection while there is exposure, then remove any orphaned orders.
-        for (order in raw.state.value.orders.filterNot { it.isProtection }) {
-            if (!cancel(order.id)) return false
+        // A second and third pass close a position that came back: an exit that filled while its position was closing.
+        repeat(3) {
+            for (position in raw.state.value.positions) {
+                if (!cancelOpening() || !ready()) return false
+                if (raw.state.value.positions.none { it.id == position.id }) continue
+                val result = raw.closePosition(requestId(), position.id)
+                if (!result.accepted || result.outcome != CommandOutcome.ACCEPTED) return false
+                // A net account keeps one id for a contract: a position that reversed under it is closed too, and the next pass takes the new one.
+                val closed = withTimeoutOrNull(12_000) { raw.state.first { s -> s.positions.none { it.id == position.id && it.side == position.side } } }
+                if (closed == null) return false
+            }
+            if (!cancelOpening()) return false
+            if (raw.state.value.positions.isEmpty()) {
+                // Nothing is left to protect: the protection of hedged positions goes too.
+                for (order in raw.state.value.orders) if (!cancel(order.id)) return false
+                if (raw.state.value.let { it.positions.isEmpty() && it.orders.isEmpty() }) return ready()
+            }
         }
-        for (position in raw.state.value.positions) {
-            if (!ready() || raw.state.value.orders.any { !it.isProtection }) return false
-            if (raw.state.value.positions.none { it.id == position.id }) continue
-            val result = raw.closePosition(requestId(), position.id)
-            if (!result.accepted || result.outcome != CommandOutcome.ACCEPTED) return false
-            if (withTimeoutOrNull(12_000) { raw.state.first { s -> s.positions.none { it.id == position.id } } } == null) return false
-        }
-        if (raw.state.value.positions.isNotEmpty()) return false
-        for (order in raw.state.value.orders) {
-            if (raw.state.value.positions.isNotEmpty() || !cancel(order.id)) return false
-        }
-        return ready() && raw.state.value.let { it.positions.isEmpty() && it.orders.isEmpty() }
+        return false
     }
 }

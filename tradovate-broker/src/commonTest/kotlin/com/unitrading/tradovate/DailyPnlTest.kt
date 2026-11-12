@@ -47,6 +47,7 @@ class DailyPnlTest {
         assertEquals(123_450_000, first.state.value.dailyPnl!!.totalMicros)
         assertEquals(-67_890_000, second.state.value.dailyPnl!!.totalMicros)
         assertEquals("2026-11-02", first.state.value.dailyPnl!!.tradingDay)
+        assertTrue(broker.capabilities.tradingDayPnl, "the P&L lock is only offered on a broker that says it reports its trading day")
         now += 60_000
         wire.balanceSnapshots[100] = obj("""{"totalCashValue":25000,"netLiq":25000,"totalPnL":0}""")
         wire.account.entity("cashBalance", cash)

@@ -156,8 +156,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val riskRule = riskRules[plugin.descriptor.id]?.get(accountId)
         val brackets = riskRule?.brackets ?: AccountBrackets()
         val sizeByRisk = brackets.sizingRisk != null
-        val riskMessage = runtime.accountRisk.restriction(plugin, session)
-        val riskTrigger = riskRule?.trigger?.takeIf { riskMessage?.startsWith(it.day.toString()) == true }
+        // Resetting an unreadable rule file leaves the rules as empty as they were, so the notice follows the file's own state too.
+        val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
+        val riskMessage = key(riskUnreadable) { runtime.accountRisk.restriction(plugin, session) }
+        val riskTrigger = runtime.accountRisk.lockingTrigger(plugin, session)
         val paused by runtime.paused.collectAsState()
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
@@ -640,7 +642,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 fun reviewTrade(action: Confirmation) {
                     if (busy) return
                     if (action is Confirmation.Place) {
-                        runtime.accountRisk.restriction(plugin, session)?.let {
+                        // The guard's own classification, asked before a confirmation opens: an exit passes a lock and the limits.
+                        runtime.accountRisk.refusal(plugin, session, RiskCheck.Place(action.request))?.let {
                             showNotice(it, attention = true)
                             return
                         }
@@ -1070,10 +1073,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     ) { Text("一键平仓") }
                                     OutlinedButton(
                                         onClick = {
-                                            val targets = registry.plugins.flatMap { broker ->
-                                                broker.catalog.value.accounts.map { FlattenTarget(broker, it) }
-                                            }
-                                            if (targets.isNotEmpty()) flattenReview = FlattenReview(true, targets)
+                                            // View-only accounts and logins that cannot trade now are listed as skipped, not as targets.
+                                            val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                            if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         },
                                         modifier = Modifier.weight(1f).testTag("flatten-all-accounts"),
                                         enabled = !busy, colors = closeColors, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),

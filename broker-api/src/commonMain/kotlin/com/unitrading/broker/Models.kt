@@ -133,6 +133,11 @@ data class BrokerCapabilities(
     val modifyPendingProtection: Boolean = true,
     /** A [PendingOrder.standaloneEditable] order can change its quantity as well as its price. */
     val modifyOrderQuantity: Boolean = false,
+    /**
+     * The broker reports an account's day P&L together with its own trading day ([DailyPnl.tradingDay]). The P&L lock
+     * needs both: without the trading day it could neither trigger nor tell when the locked day has ended.
+     */
+    val tradingDayPnl: Boolean = false,
 )
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)

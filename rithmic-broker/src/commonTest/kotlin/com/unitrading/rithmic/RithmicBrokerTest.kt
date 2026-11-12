@@ -61,6 +61,9 @@ class RithmicBrokerTest {
         assertEquals(25_000_000_000, account.balanceMicros)
         assertTrue(account.balanceKnown)
         assertEquals(12_500_000, account.dailyPnl?.totalMicros)
+        // Day P&L comes without the trading day it belongs to, so the P&L lock is not offered here.
+        assertNull(account.dailyPnl?.tradingDay)
+        assertFalse(broker.capabilities.tradingDayPnl)
         assertEquals("H1", account.executions.single().id)
         assertEquals(Side.BUY, account.executions.single().side)
     }
