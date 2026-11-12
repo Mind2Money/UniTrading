@@ -88,8 +88,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val loginMessage by runtime.savedLogins.message.collectAsState()
         var manuallySelected by remember { mutableStateOf(false) }
         LaunchedEffect(runtime) { runtime.savedLogins.restore() }
-        // Trades cached past 30 days leave the file at start, also when no login updates the cache in this run.
-        LaunchedEffect(runtime) { runtime.analyticsCache.prune() }
         LaunchedEffect(restoredBrokerId) { if (!manuallySelected) restoredBrokerId?.let { brokerId = it } }
         fun selectBroker(id: String) {
             manuallySelected = true
@@ -320,12 +318,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 !sizeByRisk -> orderInput.request(instrument)
                 // A reduction has no use for the stop that sizes an entry, and takes off no more than the position.
                 reducible > 0 -> orderInput.copy(stopLossEnabled = false).request(instrument)?.also { order ->
+                    // Only a quantity outside 1..reducible makes it an opening order, which needs the stop this branch leaves out.
                     require(!orderRule.bracketsApply(account, hedging, order)) {
-                        when {
-                            order.lotsHundredths <= 0 -> "请输入有效的减仓数量"
-                            order.lotsHundredths > reducible -> "减仓数量不能超过持仓的 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}；反手请先平仓"
-                            else -> "加上已挂的减仓单会超过持仓，请先撤销多余的挂单"
-                        }
+                        if (order.lotsHundredths <= 0) "请输入有效的减仓数量"
+                        else "减仓数量不能超过持仓的 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}；反手请先平仓"
                     }
                 }
                 else -> {

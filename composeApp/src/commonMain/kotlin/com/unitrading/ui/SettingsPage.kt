@@ -67,6 +67,9 @@ internal fun SettingsPage(
     val notificationsAvailable by runtime.livePnl.available.collectAsState()
     val paused by runtime.paused.collectAsState()
     val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
+    val savedLogins by runtime.savedLogins.savedCount.collectAsState()
+    // A login this device does not keep loses its cached trades when it disconnects; a saved one comes back with them.
+    val loginSaved = remember(savedLogins, plugin) { runtime.savedLogins.saved(plugin.descriptor.id) }
     val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
     val account = plugin.accounts.firstOrNull { it.id == accountId }
     val names = LocalAccountAliases.current
@@ -109,7 +112,7 @@ internal fun SettingsPage(
                     onSync, enabled = plugin.capabilities.resynchronize && market.connected && !busy)
                 SettingsRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", AppIcons.Add, "settings-connect", onConnect)
                 if (onConnectRithmic != null) SettingsRow("连接 Rithmic", "登录 Test / Paper / Live 系统", AppIcons.Add, "settings-connect-rithmic", onConnectRithmic)
-                if (!localDemo) SettingsRow("断开 $loginName", "断开当前连接，保留本机登录", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
+                if (!localDemo) SettingsRow("断开 $loginName", if (loginSaved) "断开当前连接，保留本机登录" else "断开当前连接；这个登录未保存，本机分析缓存一并清除", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 
             SettingsSection("交易") {
