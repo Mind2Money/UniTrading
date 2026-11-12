@@ -10,7 +10,9 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingRuntime
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import kotlin.test.*
 
@@ -18,6 +20,7 @@ import kotlin.test.*
 class MobileOrderDockResizeTest {
     @Test fun rotationKeepsTheChartViewportAndOrderDraft() = runDesktopComposeUiTest(width = 820, height = 820) {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        runBlocking { assertTrue(runtime.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) }
         var landscape by mutableStateOf(false)
         setContent {
             CompositionLocalProvider(LocalDensity provides Density(1f)) {
@@ -27,7 +30,7 @@ class MobileOrderDockResizeTest {
             }
         }
         val plot = onNodeWithTag("trading-chart")
-        val dock = onNodeWithTag("order-sheet")
+        val dock = onNodeWithTag("order-dock")
         fun viewport() = plot.fetchSemanticsNode().config[SemanticsProperties.StateDescription].substringBefore(";low:")
         val initial = viewport()
         onNodeWithTag("open-order").performClick()

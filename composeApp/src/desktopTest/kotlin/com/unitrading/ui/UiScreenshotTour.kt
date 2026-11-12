@@ -79,9 +79,8 @@ class UiScreenshotTour {
         tap("open-order")
         shot("phone-02-order-market")
         tap("order-kind-LIMIT")
-        compose.onNodeWithTag("order-more").performScrollTo().performClick(); settle()
-        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick(); settle()
-        compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick(); settle()
+        tap("order-sl-enabled")
+        tap("order-tp-enabled")
         shot("phone-03-order-limit-protected")
         compose.onNodeWithTag("order-estimates-toggle").performScrollTo().performClick(); settle()
         shot("phone-04-order-estimates")
@@ -90,6 +89,35 @@ class UiScreenshotTour {
         compose.onNodeWithText("取消").performClick(); settle()
         tap("minimize-order")
         shot("phone-06-order-minimized")
+    })
+
+    /** The two order pages the settings offer beside the sheet: the dock next to the chart, and the popup. */
+    @Test fun phoneDockedAndPopupOrder() = phone({ runtime ->
+        fun choose(layout: OrderPanelLayout) {
+            tap("nav-3")
+            scrollTap("settings-order-layout")
+            if (layout == OrderPanelLayout.DOCKED) shot("phone-07-order-page-choices")
+            compose.onNodeWithTag("settings-order-layout-${layout.name}").performClick()
+            compose.waitUntil(timeoutMillis = 5_000) { runtime.tradingPreferences.preferences.value.orderPanelLayout == layout }
+            settle()
+            tap("nav-1")
+        }
+        choose(OrderPanelLayout.DOCKED)
+        tap("open-order")
+        shot("phone-07a-dock-order-market")
+        tap("order-kind-LIMIT")
+        scrollTap("order-sl-enabled")
+        scrollTap("order-tp-enabled")
+        shot("phone-07b-dock-order-limit-protected")
+        scrollTap("order-more")
+        shot("phone-07c-dock-order-more-settings")
+        scrollTap("order-more")
+        tap("minimize-order")
+        shot("phone-07d-dock-order-minimized")
+        tap("close-order")
+        choose(OrderPanelLayout.POPUP)
+        tap("open-order")
+        shotAll("phone-08-popup-order")
     })
 
     @Test fun phoneMarket() = phone({ _ ->

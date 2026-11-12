@@ -59,9 +59,12 @@ class NotificationUiTest {
         }
     }
 
-    private fun render(broker: Broker, phone: Boolean = false, skipConfirmation: Boolean = false) {
+    private fun render(broker: Broker, phone: Boolean = false, skipConfirmation: Boolean = false, layout: OrderPanelLayout = OrderPanelLayout.SHEET) {
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker))
-        runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.TRADINGV)); runtime.tradingPreferences.setSkipConfirmation(skipConfirmation) }
+        runBlocking {
+            runtime.theme.apply(ThemeSettings(ThemePreset.TRADINGV)); runtime.tradingPreferences.setSkipConfirmation(skipConfirmation)
+            runtime.tradingPreferences.setOrderPanelLayout(layout)
+        }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.7f)) {
             Box(Modifier.requiredSize(if (phone) 400.dp else 1400.dp, if (phone) 800.dp else 900.dp)) { TradingScreen(runtime) }
         } }
@@ -139,6 +142,28 @@ class NotificationUiTest {
         compose.onNodeWithTag("trade-notice").assertDoesNotExist()
         compose.onNodeWithTag("order-quantity").assertTextContains("2")
     }
+
+    /** The dock and the popup show the receipt inside themselves as the sheet does: the floating card would lie behind or beside them. */
+    private fun rejectionIsVisibleInsideThePage(layout: OrderPanelLayout, page: String) {
+        val broker = Broker().apply { result = TradeResult(false, "服务器拒绝下单") }
+        render(broker, phone = true, layout = layout)
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag(page).assertIsDisplayed()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("2")
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.onNodeWithTag("trade-notice").assertTextContains("服务器拒绝下单", substring = true)
+            .assert(hasAnyAncestor(hasTestTag(page))).assertIsDisplayed()
+        compose.onNodeWithTag("review-order").assertIsDisplayed()
+        assertEquals(1, broker.orderCalls)
+        compose.onNodeWithTag("dismiss-trade-notice").performClick()
+        compose.onNodeWithTag("trade-notice").assertDoesNotExist()
+        compose.onNodeWithTag("order-quantity").assertTextContains("2")
+    }
+
+    @Test fun phoneOrderRejectionIsVisibleInsideTheDockAndKeepsTheDraft() = rejectionIsVisibleInsideThePage(OrderPanelLayout.DOCKED, "order-dock")
+
+    @Test fun phoneOrderRejectionIsVisibleInsideThePopupAndKeepsTheDraft() = rejectionIsVisibleInsideThePage(OrderPanelLayout.POPUP, "order-popup")
 
     @Test fun directCompactSubmitBlocksDuplicatesAndKeepsRejectedDraft() {
         val gate = CompletableDeferred<Unit>()

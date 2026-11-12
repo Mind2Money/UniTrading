@@ -26,8 +26,10 @@ import com.unitrading.app.AccountBrackets
 import com.unitrading.broker.*
 
 /**
- * The order form of every layout: its fields scroll and the review button stays below them. The phone dock shows the
- * order kind in its own header, so only the desktop ticket asks for [showKinds].
+ * The order form of every layout: its fields scroll and the review button stays below them. The phone sheet and dock
+ * show the order kind in their own header, so only the desktop ticket and the popup ask for [showKinds]. The dock
+ * passes [onDockAdvanced]: its form is denser, and the quantity slider, the reference SL / TP, the estimates and the
+ * entry summary wait behind "更多设置" until [dockAdvanced].
  */
 @Composable
 internal fun OrderForm(
@@ -99,19 +101,17 @@ internal fun OrderForm(
                 Text("子账户自动保护 · ${prices.joinToString(" · ")}",
                     Modifier.testTag("order-account-brackets"), color = colors.Accent, style = type.bodySmall)
             }
-            if (onDockAdvanced != null) {
-                val protections = listOfNotNull("止损".takeIf { draft.stopLossEnabled }, "止盈".takeIf { draft.takeProfitEnabled })
-                TextButton({ onDockAdvanced(!dockAdvanced) }, modifier = Modifier.fillMaxWidth().testTag("order-more")) {
-                    Text(if (dockAdvanced) "收起更多设置" else "更多设置" + protections.joinToString(" / ", prefix = if (protections.isEmpty()) "" else " · "))
+            // Stop loss and take profit belong to every order: the docked form shows them without unfolding anything.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (stop in listOf(true, false)) {
+                    if (!brackets.controls(stop) && (!stop || sizingRisk == null)) OrderProtectionControl(stop, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
                 }
+            }
+            if (onDockAdvanced != null) TextButton({ onDockAdvanced(!dockAdvanced) }, modifier = Modifier.fillMaxWidth().testTag("order-more")) {
+                Text(if (dockAdvanced) "收起更多设置" else "更多设置")
             }
             if (!docked || dockAdvanced) {
                 if (docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (stop in listOf(true, false)) {
-                        if (!brackets.controls(stop) && (!stop || sizingRisk == null)) OrderProtectionControl(stop, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
-                    }
-                }
                 if (!brackets.enabled) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     TextButton({ quote?.let { onDraft(draft.withReferenceProtection(instrument, it)) } },
                         enabled = quote != null && !busy, modifier = Modifier.testTag("reference-protection")) { Text("设置参考 SL / TP") }
@@ -149,7 +149,7 @@ internal fun OrderForm(
         DividerLine()
         Column(Modifier.fillMaxWidth().testTag("order-actions").padding(horizontal = 16.dp, vertical = if (docked) 2.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (error != null) Text(error, color = colors.Loss, style = type.bodySmall, modifier = Modifier.testTag("order-error"))
-            else if (!docked) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            else if (!docked || dockAdvanced) Row(Modifier.fillMaxWidth().testTag("order-summary"), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("${draft.side.label()} · ${draft.kind.label()} · ${if (sizingRisk == null) draft.quantity else bracketOrder?.lotsHundredths?.let(instrument::formatQuantity) ?: "—"} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
             }

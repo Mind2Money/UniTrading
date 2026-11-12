@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -12,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -108,7 +111,7 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
-                SettingsRow("下单界面", tradingPreferences.orderPanelLayout.label, AppIcons.ViewQuilt, "settings-order-layout",
+                SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy, navigates = true)
                 // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
                 AccountRiskRecovery(runtime.accountRisk, busy)
@@ -192,18 +195,29 @@ internal fun SettingsPage(
         onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
         title = { Text("下单界面") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("适用于手机和紧凑窗口。停靠时，K 线随可用空间重新绘制。")
-                SegmentedChoice(OrderPanelLayout.entries, tradingPreferences.orderPanelLayout, { it.label },
-                    { "settings-order-layout-${it.name}" }, { layout ->
-                        preferenceScope.launch {
-                            if (runtime.tradingPreferences.setOrderPanelLayout(layout)) chooseOrderLayout = false
+            Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("适用于手机和紧凑窗口。", Modifier.padding(bottom = 8.dp))
+                // Three choices that each need a line of explanation: a list, where segmented buttons would cut the text.
+                OrderPanelLayout.entries.forEach { layout ->
+                    val selected = layout == tradingPreferences.orderPanelLayout
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.small)
+                        .selectable(selected, enabled = !savingTradingPreferences, role = Role.RadioButton) {
+                            preferenceScope.launch {
+                                if (runtime.tradingPreferences.setOrderPanelLayout(layout)) chooseOrderLayout = false
+                            }
+                        }.testTag("settings-order-layout-${layout.name}").padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RadioButton(selected, onClick = null, enabled = !savingTradingPreferences)
+                        Column(Modifier.weight(1f)) {
+                            Text(layout.label, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface)
+                            Text(layout.summary, style = MaterialTheme.typography.bodySmall)
                         }
-                    }, Modifier.fillMaxWidth(), enabled = !savingTradingPreferences)
+                    }
+                }
                 tradingPreferencesError?.let { Text(it, color = colors.Loss) }
             }
         },
-        confirmButton = { TextButton({ chooseOrderLayout = false }, enabled = !savingTradingPreferences) { Text("关闭") } },
+        confirmButton = { TextButton({ chooseOrderLayout = false }, Modifier.testTag("settings-order-layout-close"), enabled = !savingTradingPreferences) { Text("关闭") } },
     )
 }
 

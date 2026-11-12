@@ -37,6 +37,41 @@ class TradingPreferencesTest {
         assertTrue(TradingPreferencesController(store).preferences.value.tradeSounds)
     }
 
+    @Test fun orderPageStartsAsTheSheetAndTheChosenPageSurvivesRestart() = runTest {
+        val store = MemorySnapshotStore().apply { write(TradingPreferencesController.KEY, """{"skipConfirmation":true,"tradeSounds":false}""") }
+        val controller = TradingPreferencesController(store)
+        assertEquals(OrderPanelLayout.SHEET, TradingPreferences().orderPanelLayout)
+        assertEquals(OrderPanelLayout.SHEET, controller.preferences.value.orderPanelLayout, "settings saved before there was a choice open the sheet")
+        assertNull(controller.error.value)
+        assertEquals(listOf("上滑面板", "停靠下单栏", "独立弹窗"), OrderPanelLayout.entries.map { it.label })
+        for (layout in listOf(OrderPanelLayout.DOCKED, OrderPanelLayout.POPUP, OrderPanelLayout.SHEET, OrderPanelLayout.POPUP)) {
+            assertTrue(controller.setOrderPanelLayout(layout))
+            val expected = TradingPreferences(skipConfirmation = true, tradeSounds = false, orderPanelLayout = layout)
+            assertEquals(expected, controller.preferences.value, "the other settings stay as they were")
+            assertEquals(expected, TradingPreferencesController(store).preferences.value)
+        }
+    }
+
+    @Test fun aDockChosenBeforeTheSheetCameBackIsKept() {
+        val store = MemorySnapshotStore().apply { write(TradingPreferencesController.KEY, """{"orderPanelLayout":"DOCKED"}""") }
+        val controller = TradingPreferencesController(store)
+        assertEquals(TradingPreferences(orderPanelLayout = OrderPanelLayout.DOCKED), controller.preferences.value)
+        assertNull(controller.error.value)
+    }
+
+    @Test fun moreSettingsOfTheDockStartFoldedAndTheirStateSurvivesRestart() = runTest {
+        val store = MemorySnapshotStore()
+        val controller = TradingPreferencesController(store)
+        assertFalse(controller.preferences.value.orderMoreSettings)
+        assertTrue(controller.setOrderPanelLayout(OrderPanelLayout.DOCKED))
+        assertTrue(controller.setOrderMoreSettings(true))
+        val expected = TradingPreferences(orderPanelLayout = OrderPanelLayout.DOCKED, orderMoreSettings = true)
+        assertEquals(expected, controller.preferences.value)
+        assertEquals(expected, TradingPreferencesController(store).preferences.value)
+        assertTrue(controller.setOrderMoreSettings(false))
+        assertEquals(expected.copy(orderMoreSettings = false), TradingPreferencesController(store).preferences.value)
+    }
+
     @Test fun keyboardTradingStartsOffWithTheLetterKeysAndEachSettingKeepsTheOthers() = runTest {
         val store = MemorySnapshotStore()
         val controller = TradingPreferencesController(store)
@@ -70,6 +105,8 @@ class TradingPreferencesTest {
         assertFalse(controller.setKeyboardTrading(true))
         assertFalse(controller.setTradingKeys(TradingKeys.ARROWS))
         assertFalse(controller.setTradeSounds(false))
+        assertFalse(controller.setOrderPanelLayout(OrderPanelLayout.DOCKED))
+        assertFalse(controller.setOrderMoreSettings(true))
         assertEquals(TradingPreferences(), controller.preferences.value, "keyboard trading never turns on without being saved")
     }
 }

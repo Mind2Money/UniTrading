@@ -71,7 +71,11 @@ internal fun BrokerAccountChooser(
     }
 }
 
-/** Desktop order column, and its dialog on windows too narrow to keep the column open. */
+/**
+ * Desktop order column, and its dialog on windows too narrow to keep the column open. The phone's popup order page is
+ * the same dialog: there the close button only hides it, [onChartAdjust] says so in words, [onDiscard] is the one
+ * control that drops the draft, and the header names the account ([accountName]) that the dialog dims behind it.
+ */
 @Composable
 internal fun OrderTicket(
     instrument: Instrument,
@@ -94,14 +98,19 @@ internal fun OrderTicket(
     bracketOrder: OrderRequest? = null,
     onChartAdjust: (() -> Unit)? = null,
     orderNotice: @Composable () -> Unit = {},
+    onDiscard: (() -> Unit)? = null,
+    accountName: String? = null,
 ) {
     Column(modifier) {
-        PanelHeader("新建订单", subtitle = "${instrument.symbol} · ${instrument.currency} 结算") {
+        PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
             EnvironmentBadge(environment)
             if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
-        if (onChartAdjust != null) TextButton(onChartAdjust, Modifier.padding(horizontal = 8.dp).testTag("popup-adjust-on-chart"), enabled = !busy) {
-            Text("到图表调整")
+        if (onChartAdjust != null || onDiscard != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            if (onChartAdjust != null) TextButton(onChartAdjust, Modifier.testTag("popup-adjust-on-chart"), enabled = !busy) { Text("到图表调整") }
+            Spacer(Modifier.weight(1f))
+            if (onDiscard != null) TextButton(onDiscard, Modifier.testTag("popup-discard-order"), enabled = !busy,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("取消订单") }
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice)

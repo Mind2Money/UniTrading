@@ -89,6 +89,8 @@ class AccountBracketsUiTest {
                     Box(Modifier.requiredSize(450.dp, 850.dp)) { TradingScreen(runtime) }
                 }
             }
+            // The docked page keeps the chart beside the open form; the default sheet would lie over the line being dragged.
+            kotlinx.coroutines.runBlocking { assertTrue(runtime.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) }
             onNodeWithTag("open-order").performClick()
             onNodeWithTag("review-order").assertIsNotEnabled()
             val chart = onNodeWithTag("trading-chart")
