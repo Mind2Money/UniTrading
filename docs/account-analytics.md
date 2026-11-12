@@ -37,8 +37,8 @@
 - 合并时以券商快照为准：从快照里最早一笔平仓的时间起，快照里没有的缓存记录（被券商撤回，或换了编号重新配对）删掉，不和替代它的记录重复计数；更早的缓存记录保留；同一编号以券商记录为准，券商这次没给出净盈亏、其余内容相同时，沿用缓存里已知的净盈亏。快照为空时不改动缓存。
 - 分析页的页眉写明范围：有缓存时为“券商已同步记录 + 本机缓存（自 <日期> 起，仅含本机运行并选中该子账户时同步到的记录）”，日期按页面所选时区；没有缓存时为“已加载平仓记录”。
 - 总览的“已加载历史净盈亏”只用券商快照，不含缓存；缓存里有更早的记录时，两处的数字会不同。
-- 保存在应用数据目录的 `analytics-trades-v1`（Windows 为 `%LOCALAPPDATA%\UniTrading\demo-v1\analytics-trades-v1.json`），是明文 JSON，不像已保存的登录那样加密。
-- 删除：「设置 → 已保存的登录 → 清除已保存登录」（登录页和空合约页的同名按钮相同）确认后删除全部缓存；断开某个登录（设置里的“断开 <登录>”，或空合约页的“断开连接”）删除这个登录的缓存；卸载应用或清除应用数据也会删除。
+- 保存在应用数据目录的 `analytics-trades-v1`（Windows 为 `%LOCALAPPDATA%\UniTrading\demo-v1\analytics-trades-v1.json`，macOS 在 `~/Library/Application Support/UniTrading/demo-v1/`，Android 在应用私有目录），是明文 JSON，不像已保存的登录那样加密。
+- 删除：「设置 → 已保存的登录 → 清除已保存登录」（登录页和空合约页的同名按钮相同）确认后删除全部缓存；断开某个登录（设置里的“断开 <登录>”，或空合约页的“断开连接”）删除这个登录的缓存；Android 上卸载应用或清除应用数据也会删除，Windows、macOS 上删除应用不会删除这个文件。
 - 入口：[AnalyticsTradeCache.kt](../composeApp/src/commonMain/kotlin/com/unitrading/app/AnalyticsTradeCache.kt)、[AccountAnalyticsPage.kt](../composeApp/src/commonMain/kotlin/com/unitrading/ui/AccountAnalyticsPage.kt)。
 
 ## 验证边界

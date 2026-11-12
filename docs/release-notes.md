@@ -11,7 +11,7 @@
 3. 手机下单界面：在「设置 → 交易 → 下单界面」里选上滑面板、停靠下单栏或独立弹窗
 
 🛡️ **子账户风控**
-✅ 「设置 → 子账户风控」新增三项按子账户保存的规则：交易锁定、手数与品种限制、订单风控。平仓、撤单、收紧止损和挂减仓单（与持仓方向相反、不超过持仓数量的单）始终不受限制
+✅ 「设置 → 子账户风控」新增三项按子账户保存的规则：交易锁定、手数与品种限制、订单风控。平仓、撤单、收紧止损和挂减仓单不受这些规则限制（两个平仓按钮执行期间除外）；减仓单指与持仓方向相反、不超过持仓数量，并且不会让该品种挂单全部成交后可能出现的最大持仓变大的单
 ✅ 交易锁定：券商当日总盈亏达到亏损上限或盈利目标后，这个子账户暂停开仓、加仓和放宽止损，直到券商报告下一个交易日；盈亏回落、切换账户、重启或停用规则都不会提前解锁。选“平仓并锁定”时，触发后自动撤销开仓挂单并平掉全部持仓，止损止盈单留到平仓确认后再撤
 ✅ 交易锁定规则可以冻结到下一交易日或下周一，冻结期间不能修改或停用；冻结按券商交易日计算，改本机时间不会解冻
 ✅ 手数与品种限制：最大持仓把每个品种挂单全部成交后可能出现的最大持仓相加，期货按整数张，止损、止盈等减仓单不占额度；禁止交易的品种可以写根代码（MES 包括 @MES 和各月份合约）或具体月份
@@ -20,13 +20,13 @@
 ✅ 本机风控记录读不出时，所有子账户暂停开仓，设置里出现“重置风控设置”，确认后清除这台设备上的全部风控规则
 ⚠️ 交易锁定需要券商报告交易日，目前只有 Tradovate 能用，Rithmic 和本地模拟上不可用。Tradovate 上每个设了交易锁定的子账户约每 20 秒多一次资金快照请求，和下单指令排在同一个请求队列里
 ⚠️ 规则只在这台设备上的 UniTrading 里生效，券商网站、其他终端和其他设备不受限制；应用退出、被系统挂起或断线时不检查盈亏，也不会自动平仓
-⚠️ 开启金额止损止盈后，Tradovate 和 Rithmic 上已有持仓的合约不能再加仓：券商不接受在已有净仓上叠加括号单
+⚠️ 开启金额止损止盈后，Tradovate 和 Rithmic 上已有持仓的合约不能再加仓：应用不在已有净仓上叠加括号单
 ⚠️ 以上功能只经过离线测试，没有在真实 Tradovate 或 Rithmic 账户上运行；Android 只做了编译检查
 
 📱 **手机下单界面**
 ✅ 「设置 → 交易 → 下单界面」可选上滑面板（默认，就是原来的下单面板）、停靠下单栏或独立弹窗
 ✅ 停靠下单栏竖屏在图表下方、横屏在图表右侧，不遮挡 K 线；止损止盈开关和价格始终可见，数量滑动条、参考 SL / TP 和预估放在“更多设置”里，展开与否会记住，下一单和重启后照旧
-✅ 独立弹窗在对话框里下单：点 ×、按返回或点对话框外面只是收起，草稿留在图表上，再点“下单”接着编辑；点“取消订单”才丢弃草稿
+✅ 独立弹窗在对话框里下单：点 ×、按返回或点对话框外面只是收起，草稿留在图表上，再点“下单”接着编辑；点“取消订单”或图上草稿线的“×”丢弃草稿
 ⚠️ 停靠下单栏和独立弹窗只在桌面测试中验证过，手势、键盘和系统返回没有在 Android 设备上试过
 
 🧾 **下单确认**
@@ -56,7 +56,7 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 3. Phone order page: choose the slide-up sheet, the docked bar or the popup under Settings → Trading → Order page
 
 🛡️ **Sub-account risk controls**
-✅ Settings → Sub-account risk has three rules, kept per trading account: trading lock, lot and symbol limits, and order risk. Closing, cancelling, tightening a stop and placing an order that only reduces a position (the opposite side, no more than the position) are never blocked
+✅ Settings → Sub-account risk has three rules, kept per trading account: trading lock, lot and symbol limits, and order risk. Closing, cancelling, tightening a stop and placing an order that only reduces a position are not blocked, except while a flatten button is running; such an order is on the opposite side, no larger than the position, and does not raise the largest position the symbol's orders could leave if they all filled
 ✅ Trading lock: once the broker's day P&L reaches the loss limit or the profit target, the account cannot open, add or loosen a stop until the broker reports the next trading day; a P&L that comes back, switching accounts, restarting or turning the rule off does not end it early. With "flatten and lock" a trigger also cancels the opening orders and closes every position, keeping stops and targets until the close is confirmed
 ✅ The trading lock rule can be frozen until the next trading day or the next Monday, and cannot be changed or turned off meanwhile; the freeze follows the broker's trading day, so changing the device clock does not end it
 ✅ Lot and symbol limits: the cap adds up, per symbol, the largest position the working orders could leave if they all filled, in whole contracts for futures, so stops, targets and other reducing orders take none of it; a blocked symbol is a root (MES covers @MES and every MES month) or a single month
@@ -65,13 +65,13 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 ✅ When the risk rules saved on the device cannot be read, every account stops opening positions and Settings offers "reset risk settings", which clears all risk rules on this device once you confirm
 ⚠️ The trading lock needs the broker's trading day, which only Tradovate reports, so it is not available on Rithmic or the local demo. On Tradovate each account with a trading lock adds a cash snapshot request about every 20 seconds, in the same request queue as orders
 ⚠️ The rules apply to UniTrading on this device only: the broker's website, other platforms and other devices are not limited by them, and nothing is checked or flattened while the app is closed, suspended by the system or disconnected
-⚠️ With cash brackets on, Tradovate and Rithmic accounts cannot add to a contract they already hold: the broker does not take a new bracket on an existing net position
+⚠️ With cash brackets on, Tradovate and Rithmic accounts cannot add to a contract they already hold: the app does not put a new bracket on an existing net position
 ⚠️ All of this was only checked in offline tests, never on a real Tradovate or Rithmic account; on Android it was only compiled
 
 📱 **Phone order page**
 ✅ Settings → Trading → Order page offers the slide-up sheet (the default, and the order panel you had), a docked order bar and a popup
 ✅ The docked bar sits below the chart in portrait and beside it in landscape, so it covers no bars; the stop and target switches and prices are always shown, while the quantity slider, the reference SL / TP and the estimates wait behind "more settings", which stays open or closed as you left it, also after a restart
-✅ The popup is a dialog: ×, back or a tap beside it only puts it away and leaves the draft on the chart, and "Order" opens it again; only "cancel order" drops the draft
+✅ The popup is a dialog: ×, back or a tap beside it only puts it away and leaves the draft on the chart, and "Order" opens it again; "cancel order", or the × on the draft line on the chart, drops the draft
 ⚠️ The docked bar and the popup were only checked in desktop tests; gestures, the keyboard and system back have not been tried on an Android device
 
 🧾 **Order confirmation**
