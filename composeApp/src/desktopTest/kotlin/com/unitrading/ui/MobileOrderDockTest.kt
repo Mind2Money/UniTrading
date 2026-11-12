@@ -8,9 +8,12 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -19,6 +22,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.OrderPanelLayout
+import com.unitrading.app.SnapshotStore
 import com.unitrading.app.TradingPreferencesController
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
@@ -178,6 +182,75 @@ class MobileOrderDockTest {
         compose.onNodeWithTag("open-order").performClick()
         compose.onNodeWithTag("order-more").performScrollTo().assertTextEquals("更多设置")
         compose.onNodeWithTag("order-quantity-slider").assertDoesNotExist()
+    }
+
+    @Test fun moreSettingsFoldBackWhenTheChoiceCannotBeSaved() = phoneTest {
+        var full = false
+        val disk = MemorySnapshotStore()
+        val failing = object : SnapshotStore by disk {
+            override fun write(key: String, value: String) { if (full && key == TradingPreferencesController.KEY) error("disk full") else disk.write(key, value) }
+        }
+        val local = TradingRuntime(failing, includeDemoBrokers = true).apply { paused.value = true }
+        render(first = local)
+        full = true
+        compose.onNodeWithTag("open-order").performClick()
+        val folded = height("order-dock")
+        compose.onNodeWithTag("order-more").performScrollTo().assertTextEquals("更多设置").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { local.tradingPreferences.error.value != null }
+        // The preferences say nothing changed, and the dock agrees.
+        assertFalse(local.tradingPreferences.preferences.value.orderMoreSettings)
+        compose.waitUntil(timeoutMillis = 5_000) { compose.onAllNodes(hasTestTag("order-more") and hasText("更多设置")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("order-quantity-slider").assertDoesNotExist()
+        assertEquals(folded, height("order-dock"))
+        // Once the choice can be saved again it opens, and stays open.
+        full = false
+        compose.onNodeWithTag("order-more").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { local.tradingPreferences.preferences.value.orderMoreSettings }
+        compose.onNodeWithTag("order-more").performScrollTo().assertTextEquals("收起更多设置")
+        compose.onNodeWithTag("order-quantity-slider").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * Minimized, the dock keeps its form as the sheet does, so it comes back with "更多设置", the estimates and the scroll
+     * position as they were left. Meanwhile nothing of the form can be read out, pressed or reached with the keyboard.
+     */
+    @Test fun minimizingKeepsTheFormAsItWasAndNothingOfItCanBeReachedMeanwhile() = phoneTest {
+        lateinit var focus: FocusManager
+        runBlocking { assertTrue(runtime.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+            focus = LocalFocusManager.current
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(runtime) }
+        } }
+        compose.onNodeWithTag("open-order").performClick()
+        compose.onNodeWithTag("order-more").performScrollTo().performClick()
+        compose.onNodeWithTag("order-estimates-toggle").performScrollTo().performClick()
+        compose.onNodeWithText("双边手续费").performScrollTo().assertIsDisplayed()
+        fun scrolled() = compose.onNodeWithTag("order-fields").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+        val offset = scrolled()
+        assertTrue(offset > 0f, "the form was scrolled")
+
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("minimized-order").assertIsDisplayed()
+        for (tag in listOf("order-panel", "order-fields", "order-quantity", "order-estimates", "review-order")) compose.onNodeWithTag(tag).assertDoesNotExist()
+        // Still there, only not placed: nothing of it is drawn or takes a press.
+        val quantity = compose.onNodeWithTag("order-quantity", useUnmergedTree = true).assertExists().assertIsNotDisplayed()
+        assertFalse(quantity.fetchSemanticsNode().layoutInfo.isPlaced)
+        // The keyboard goes round the screen past the minimized bar without entering the form.
+        val form = hasAnyAncestor(hasTestTag("order-fields") or hasTestTag("order-actions"))
+        var passedTheBar = false
+        repeat(120) {
+            compose.runOnIdle { focus.moveFocus(FocusDirection.Next) }
+            compose.onAllNodes(isFocused() and form, useUnmergedTree = true).assertCountEquals(0)
+            if (compose.onAllNodes(isFocused() and hasAnyAncestor(hasTestTag("order-type-strip")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) passedTheBar = true
+        }
+        assertTrue(passedTheBar, "the focus reached the minimized bar's last row")
+        compose.runOnIdle { focus.clearFocus() }
+
+        compose.onNodeWithTag("restore-order").performClick()
+        compose.onNodeWithTag("order-more").assertTextEquals("收起更多设置")
+        compose.onNodeWithTag("order-estimates").assertExists()
+        assertEquals(offset, scrolled(), "the form is scrolled where it was")
+        compose.onNodeWithText("双边手续费").assertIsDisplayed()
     }
 
     @Test fun dockTitleNamesTheContinuousCodeWithTheContractThatTradesOrWhyThereIsNone() = phoneTest {

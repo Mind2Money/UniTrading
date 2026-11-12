@@ -115,9 +115,12 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
+                // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
+                val riskRules by runtime.accountRisk.rules.collectAsState()
+                val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
-                    supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
+                    supportingContent = { Text(skipConfirmationSummary(brackets)) },
                     leadingContent = { Icon(AppIcons.Bolt, contentDescription = null) },
                     trailingContent = { Switch(tradingPreferences.skipConfirmation, onCheckedChange = null, enabled = !savingTradingPreferences) },
                     modifier = Modifier.toggleable(tradingPreferences.skipConfirmation, enabled = !savingTradingPreferences, role = Role.Switch,
@@ -125,9 +128,6 @@ internal fun SettingsPage(
                         .testTag("settings-skip-confirmation"),
                     colors = settingsRowColors(),
                 )
-                // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
-                val riskRules by runtime.accountRisk.rules.collectAsState()
-                val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
                 ListItem(
                     headlineContent = { Text("键盘下单") },
                     supportingContent = { Text(keyboardTradingSummary(tradingPreferences, brackets), Modifier.testTag("settings-keyboard-trading-summary")) },
@@ -230,6 +230,14 @@ internal fun SettingsPage(
         confirmButton = { TextButton({ chooseOrderLayout = false }, Modifier.testTag("settings-order-layout-close"), enabled = !savingTradingPreferences) { Text("关闭") } },
     )
 }
+
+/**
+ * What skipping the confirmations does. It applies to every account, but a trading key only trades where the selected
+ * sub-account does not size its orders from a stop: under such [brackets] a key opens the order panel, confirmations or not.
+ */
+internal fun skipConfirmationSummary(brackets: AccountBrackets = AccountBrackets()): String =
+    "所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；" +
+        if (brackets.sizingRisk != null) "当前子账户按风险计算手数，开启键盘下单时按键只打开下单栏，不会直接下单。" else "开启键盘下单时按键即成交。"
 
 /**
  * What the keyboard trading switch does on the selected sub-account, with the chosen keys and whether a key press

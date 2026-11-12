@@ -154,8 +154,53 @@ class AccountRiskUiTest {
         runOnIdle { snapshot.value = snapshot.value.copy(dailyPnl = DailyPnl(-205_000_000,
             tradingDay = "2026-11-11", updatedAtMs = Clock.System.now().toEpochMilliseconds())) }
         waitUntil(timeoutMillis = 5_000) { runtime.accountRisk.rule(broker, child.id).trigger != null }
+        // The monitor changes the rule off the UI thread; the notice comes with the recomposition after it.
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("account-risk-notice").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("account-risk-notice").assertIsDisplayed()
         shot("04-risk-triggered")
+    }
+
+    @Test fun aFailedAutomaticFlattenIsAnnouncedOnTheDesktopChartOncePerFailure() = runDesktopComposeUiTest(width = 1400, height = 900) {
+        val (broker, runtime) = failingFlatten()
+        show(runtime, 1400, 900)
+        broker.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, broker)
+        onNodeWithTag("dismiss-trade-notice").performClick()
+        // Another change to the rules is no second failure.
+        runBlocking { assertNull(runtime.accountRisk.configureOrders(broker, "100", AccountOrderLimits(500))) }
+        waitForIdle()
+        onNodeWithTag("trade-notice").assertDoesNotExist()
+        // The next trading day latches again, and that flatten fails as well: a failure of its own, said again.
+        runOnIdle { broker.pnl("100", -250_000_000, day = "2026-11-12") }
+        waitUntil(timeoutMillis = 10_000) { runtime.accountRisk.rule(broker, "100").trigger?.day.toString() == "2026-11-12" }
+        awaitFailedFlattenNotice(runtime, broker)
+        assertEquals(listOf("close:held", "close:held"), broker.events)
+    }
+
+    @Test fun aFailedAutomaticFlattenIsAnnouncedOnThePhoneChart() = runDesktopComposeUiTest(width = 450, height = 850) {
+        val (broker, runtime) = failingFlatten()
+        show(runtime)
+        onNodeWithTag("trade-bar").assertIsDisplayed()
+        broker.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, broker)
+        onNodeWithTag("trade-bar").assertIsDisplayed()
+    }
+
+    /** A long the broker will not close, on an account whose loss limit flattens it. */
+    private fun failingFlatten(): Pair<RiskFixture, TradingRuntime> {
+        // The runtime's controller reads the system clock, so the P&L snapshots are stamped with it.
+        val broker = RiskFixture(TestClock(Clock.System.now()))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100)))
+        broker.onClose = { TradeResult(false, "交易商拒绝平仓") }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        runBlocking { assertNull(runtime.accountRisk.configure(broker, "100", RiskLimits(200_000_000, action = RiskAction.FLATTEN))) }
+        return broker to runtime
+    }
+
+    private fun ComposeUiTest.awaitFailedFlattenNotice(runtime: TradingRuntime, broker: RiskFixture) {
+        waitUntil(timeoutMillis = 10_000) { runtime.accountRisk.rule(broker, "100").trigger?.flattenStatus == FlattenStatus.FAILED }
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("trade-notice").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("trade-notice").assertTextEquals("离线测试账户 自动平仓未完成，请检查券商持仓和挂单。").assertIsDisplayed()
     }
 
     @Test fun thePnlLockIsNotOfferedWithoutABrokerTradingDay() = runDesktopComposeUiTest(width = 450, height = 850) {

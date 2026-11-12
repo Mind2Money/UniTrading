@@ -18,6 +18,7 @@
 ✅ 订单风控：新开仓单按设置的金额自动带上止损止盈；或者按单笔风险金额和止损价计算数量，另设单笔最大数量，在图表上拖动草稿止损线时实时显示算出的数量。图表右键和键盘下单同样适用，减仓单不受影响。改挂单和止损止盈时（包括单独修改的止损止盈腿）亏损和利润也不能越过设置的金额，Rithmic 挂单的止损止盈随入场价一起移动
 ✅ 账户页“交易”页签新增“平仓此子账户”和“平仓全部子账户”：先撤会开仓、加仓或反手的挂单，平仓确认后再撤止损止盈。“全部”包括本应用所有登录下的子账户，Live 也在内；只读和未连接的子账户列出但跳过。开启“跳过交易确认”时也要确认
 ✅ 本机风控记录读不出时，所有子账户暂停开仓，设置里出现“重置风控设置”，确认后清除这台设备上的全部风控规则
+✅ 自动平仓没有确认完成时，不论当前在哪个页面都会弹出提示，写明是哪个子账户，请到券商核对持仓和挂单
 ⚠️ 交易锁定需要券商报告交易日，目前只有 Tradovate 能用，Rithmic 和本地模拟上不可用。Tradovate 上每个设了交易锁定的子账户约每 20 秒多一次资金快照请求，和下单指令排在同一个请求队列里
 ⚠️ 规则只在这台设备上的 UniTrading 里生效，券商网站、其他终端和其他设备不受限制；应用退出、被系统挂起或断线时不检查盈亏，也不会自动平仓
 ⚠️ 开启金额止损止盈后，Tradovate 和 Rithmic 上已有持仓的合约不能再加仓：应用不在已有净仓上叠加括号单
@@ -26,12 +27,12 @@
 
 📱 **手机下单界面**
 ✅ 「设置 → 交易 → 下单界面」可选上滑面板（默认，就是原来的下单面板）、停靠下单栏或独立弹窗
-✅ 停靠下单栏竖屏在图表下方、横屏在图表右侧，不遮挡 K 线；止损止盈开关和价格始终可见，数量滑动条、参考 SL / TP 和预估放在“更多设置”里，展开与否会记住，下一单和重启后照旧
-✅ 独立弹窗在对话框里下单：点 ×、按返回或点对话框外面只是收起，草稿留在图表上，再点“下单”接着编辑；点“取消订单”或图上草稿线的“×”丢弃草稿
+✅ 停靠下单栏竖屏在图表下方、横屏在图表右侧，不遮挡 K 线；止损止盈开关和价格始终可见，数量滑动条、参考 SL / TP 和预估放在“更多设置”里，展开与否会记住，下一单和重启后照旧；最小化再展开，表单的滚动位置和预估的展开状态不变
+✅ 独立弹窗在对话框里下单：点 ×、按返回或点对话框外面只是收起，草稿留在图表上，底部按钮变成“继续下单”，点它接着编辑；这时再按返回，或点“取消订单”、图上草稿线的“×”，丢弃草稿
 ⚠️ 停靠下单栏和独立弹窗只在桌面测试中验证过，手势、键盘和系统返回没有在 Android 设备上试过
 
 🧾 **下单确认**
-✅ 确认框显示止损价和止盈价，没有设置时写“未设置”；市价单的这两项标为预估，券商的提示也显示在确认框里，例如 Rithmic 市价单的括号按实际成交价生成
+✅ 确认框显示止损价和止盈价，没有设置时写“未设置”；市价单的这两项标为预估，券商的提示也显示在确认框里，例如 Rithmic 市价单的括号按实际成交价生成。横屏手机上放不下时内容可以滚动，确认按钮不可用的原因排在券商提示前面
 
 👤 **账户页与交易分析**
 ✅ 资金（余额、净值、今日盈亏、保证金）和回撤与风险移到账户页“总览”，“交易”页签放持仓、挂单、历史和两个平仓按钮
@@ -64,6 +65,7 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 ✅ Order risk: new opening orders get a stop and target from cash amounts; or the quantity comes from a risk amount and the stop price, with a maximum per order, and dragging the draft stop on the chart shows the quantity as you go. Orders from the chart's context menu and the trading keys follow the same rule; orders that reduce a position are left as they are. Changing an order or its stop and target, a stop or target leg changed on its own included, cannot go past the amounts either, and on Rithmic a pending entry's stop and target move with its price
 ✅ The Trading tab of the account page has "flatten this account" and "flatten all accounts": orders that could open, add or reverse are cancelled first, stops and targets once the close is confirmed. "All" covers the accounts of every login in the app, Live included; view-only accounts and those of logins that are not connected are listed and skipped. Both ask for confirmation even with confirmations turned off
 ✅ When the risk rules saved on the device cannot be read, every account stops opening positions and Settings offers "reset risk settings", which clears all risk rules on this device once you confirm
+✅ When an automatic flatten ends without being confirmed, a notice naming the account shows on whatever page is open, asking you to check the positions and orders at the broker
 ⚠️ The trading lock needs the broker's trading day, which only Tradovate reports, so it is not available on Rithmic or the local demo. On Tradovate each account with a trading lock adds a cash snapshot request about every 20 seconds, in the same request queue as orders
 ⚠️ The rules apply to UniTrading on this device only: the broker's website, other platforms and other devices are not limited by them, and nothing is checked or flattened while the app is closed, suspended by the system or disconnected
 ⚠️ With cash brackets on, Tradovate and Rithmic accounts cannot add to a contract they already hold: the app does not put a new bracket on an existing net position
@@ -72,12 +74,12 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 
 📱 **Phone order page**
 ✅ Settings → Trading → Order page offers the slide-up sheet (the default, and the order panel you had), a docked order bar and a popup
-✅ The docked bar sits below the chart in portrait and beside it in landscape, so it covers no bars; the stop and target switches and prices are always shown, while the quantity slider, the reference SL / TP and the estimates wait behind "more settings", which stays open or closed as you left it, also after a restart
-✅ The popup is a dialog: ×, back or a tap beside it only puts it away and leaves the draft on the chart, and "Order" opens it again; "cancel order", or the × on the draft line on the chart, drops the draft
+✅ The docked bar sits below the chart in portrait and beside it in landscape, so it covers no bars; the stop and target switches and prices are always shown, while the quantity slider, the reference SL / TP and the estimates wait behind "more settings", which stays open or closed as you left it, also after a restart; minimizing and restoring it keeps the form scrolled and folded as it was
+✅ The popup is a dialog: ×, back or a tap beside it only puts it away and leaves the draft on the chart, where the bottom button turns into "resume order" and opens it again; back at that point, "cancel order", or the × on the draft line on the chart drops the draft
 ⚠️ The docked bar and the popup were only checked in desktop tests; gestures, the keyboard and system back have not been tried on an Android device
 
 🧾 **Order confirmation**
-✅ The confirmation shows the stop and target prices, or "not set"; for a market order they are marked as estimates, and the broker's notes show there too, such as Rithmic building a market order's bracket from the fill price
+✅ The confirmation shows the stop and target prices, or "not set"; for a market order they are marked as estimates, and the broker's notes show there too, such as Rithmic building a market order's bracket from the fill price. On a phone held sideways its content scrolls, and the reason the confirm button is off comes before the broker's notes
 
 👤 **Account page and analytics**
 ✅ Funds (balance, equity, day P&L, margin) and drawdown and risk move to the Overview tab of the account page; the Trading tab has positions, orders, history and the two flatten buttons

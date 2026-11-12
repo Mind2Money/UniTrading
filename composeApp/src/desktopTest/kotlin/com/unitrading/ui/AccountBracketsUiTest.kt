@@ -336,6 +336,30 @@ class AccountBracketsUiTest {
         onNodeWithText("5530.00").assertExists()
     }
 
+    @Test fun onAPhoneHeldSidewaysTheConfirmationScrollsToTheErrorBeforeTheNoteWithConfirmInView() = runDesktopComposeUiTest(width = 800, height = 360) {
+        val warning = "市价单的括号保护按实际成交价加减相同 tick 数生成，实际 SL/TP 价位可能与输入不同"
+        val broker = RiskFixture().apply { previewWarning = warning }
+        val runtime = runtimeWith(broker, cash)
+        setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                Box(Modifier.requiredSize(800.dp, 360.dp)) { TradingScreen(runtime) }
+            }
+        }
+        onNodeWithTag("open-order").performClick()
+        onNodeWithTag("review-order").performClick()
+        onNodeWithTag("confirm-action").assertIsDisplayed().assertIsEnabled()
+        // The broker turns the order down while the dialog is open, as a margin check or a server limit can.
+        runOnIdle { broker.source.refusal = "保证金不足"; broker.quote(550_000, 550_025) }
+        val error = onNodeWithTag("confirm-error").assertTextEquals("保证金不足")
+        val note = onNodeWithTag("confirm-warning").assertTextEquals(warning)
+        // Under the market order's estimates and the cash amounts' rows, the end of the dialog is out of view at first.
+        note.assertIsNotDisplayed()
+        note.performScrollTo().assertIsDisplayed()
+        error.performScrollTo().assertIsDisplayed()
+        onNodeWithTag("confirm-action").assertIsDisplayed().assertIsNotEnabled()
+        assertTrue(error.fetchSemanticsNode().positionInRoot.y < note.fetchSemanticsNode().positionInRoot.y, "the reason 确认 is off comes first")
+    }
+
     @Test fun aMarketOrderIsNotHeldToAQuoteTheBrokerHasNotPublishedYet() = runDesktopComposeUiTest(width = 1400, height = 900) {
         val broker = RiskFixture()
         desktop(runtimeWith(broker, cash))
@@ -365,6 +389,7 @@ class AccountBracketsUiTest {
         onNodeWithTag("open-settings").performClick()
         onNodeWithTag("settings-keyboard-trading-summary", useUnmergedTree = true)
             .assertTextContains("开仓单按当前子账户的金额设置自动附加止损止盈。已开启“跳过交易确认”，按键即成交。", substring = true)
+        onNodeWithTag("settings-skip-confirmation").assertTextContains("开启键盘下单时按键即成交。", substring = true)
     }
 
     @Test fun onASizedAccountTheKeysAndTheChartMenuOnlyOpenTheOrderPanelAndSaySo() = runDesktopComposeUiTest(width = 1400, height = 900) {
@@ -390,5 +415,9 @@ class AccountBracketsUiTest {
         val summary = onNodeWithTag("settings-keyboard-trading-summary", useUnmergedTree = true)
         summary.assertTextContains("按 W 或 S 打开下单栏并选好买入或卖出，不会直接下单", substring = true)
         assertFalse("按键即成交" in summary.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString { it.text })
+        // The row that skips the confirmations says the same for this sub-account instead of promising a fill.
+        val skip = onNodeWithTag("settings-skip-confirmation")
+        skip.assertTextContains("当前子账户按风险计算手数，开启键盘下单时按键只打开下单栏，不会直接下单。", substring = true)
+        assertFalse("按键即成交" in skip.fetchSemanticsNode().config[SemanticsProperties.Text].joinToString { it.text })
     }
 }

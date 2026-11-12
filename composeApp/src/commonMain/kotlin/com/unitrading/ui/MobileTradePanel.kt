@@ -43,14 +43,15 @@ internal class MobileOrderSession(instrument: Instrument) {
 
 /**
  * A single entry point leaves the chart usable until an order is started. The positions figure opens the account's
- * positions and orders, the daily P&L the overview with the funds card it comes from ([onDailyPnl]).
+ * positions and orders, the daily P&L the overview with the funds card it comes from ([onDailyPnl]). [resume] is set
+ * while the popup's draft waits on the chart, and the button says it opens that order again.
  */
 @Composable
 internal fun MobileTradeBar(
     account: AccountSnapshot,
     onOpen: () -> Unit,
     onPositions: () -> Unit,
-    modifier: Modifier = Modifier, dense: Boolean = false, onDailyPnl: () -> Unit = onPositions,
+    modifier: Modifier = Modifier, dense: Boolean = false, onDailyPnl: () -> Unit = onPositions, resume: Boolean = false,
 ) {
     val colors = TradingColors
     val known = account.equityKnown && account.balanceKnown
@@ -65,7 +66,7 @@ internal fun MobileTradeBar(
             Button(onOpen, Modifier.heightIn(min = 48.dp).testTag("open-order"), colors = brandButtonColors(), contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
                 Icon(AppIcons.Add, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                Text("下单")
+                Text(if (resume) "继续下单" else "下单")
             }
         }
     }
@@ -336,7 +337,14 @@ internal fun MobileOrderDock(
                 ActionIcon(AppIcons.Close, "关闭并放弃本次下单", "close-order", enabled = !busy, onClick = onClose)
             }
             MobileOrderTypes(instrument, quote, capabilities, draft, onDraft, !busy, showSide = collapsed)
-            if (!collapsed) Column(Modifier.weight(1f).testTag("order-panel"), content = content)
+            // The form stays composed while minimized, as the sheet keeps its own, so it comes back scrolled and folded as
+            // it was left. Meanwhile it is not placed and has no semantics: nothing in it can be seen, pressed or focused.
+            Layout({
+                Column(if (collapsed) Modifier.clearAndSetSemantics { } else Modifier.testTag("order-panel"), content = content)
+            }, Modifier.weight(1f)) { form, constraints ->
+                if (collapsed) layout(0, 0) { }
+                else form.single().measure(constraints).let { placed -> layout(placed.width, placed.height) { placed.place(0, 0) } }
+            }
         }
     }
 }

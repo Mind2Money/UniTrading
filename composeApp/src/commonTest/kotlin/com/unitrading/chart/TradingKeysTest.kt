@@ -7,6 +7,7 @@ import com.unitrading.app.TradingPreferences
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Side
 import com.unitrading.ui.keyboardTradingSummary
+import com.unitrading.ui.skipConfirmationSummary
 import kotlin.test.*
 
 /** Which keys trade under each pair of trading keys, and what the interface says about them. */
@@ -62,5 +63,15 @@ class TradingKeysTest {
         val sizing = keyboardTradingSummary(instant, AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 500))
         assertContains(sizing, "按 W 或 S 打开下单栏并选好买入或卖出，不会直接下单")
         assertFalse("按键即成交" in sizing || "市价" in sizing)
+    }
+
+    @Test fun theSkipConfirmationRowSaysWhatAKeyDoesOnTheSelectedAccount() {
+        val plain = "所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。"
+        assertEquals(plain, skipConfirmationSummary())
+        // Cash amounts only add protection to what a key sends, which still goes out at once.
+        assertEquals(plain, skipConfirmationSummary(AccountBrackets(loss = 100_000_000)))
+        val sizing = skipConfirmationSummary(AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 500))
+        assertEquals("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；当前子账户按风险计算手数，开启键盘下单时按键只打开下单栏，不会直接下单。", sizing)
+        assertFalse("按键即成交" in sizing)
     }
 }

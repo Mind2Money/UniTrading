@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.LocalDate
 
 /** Orders, edits, cancels and history work on Paper Trading; closing a position is unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
@@ -225,7 +226,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
         // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
+        // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
         var advancedOrder by remember(runtime) { mutableStateOf(runtime.tradingPreferences.preferences.value.orderMoreSettings) }
+        var advancedChanges by remember(runtime) { mutableIntStateOf(0) }
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
         var busy by remember { mutableStateOf(false) }
@@ -243,6 +246,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val scope = rememberCoroutineScope()
         fun showNotice(message: String, attention: Boolean = false) {
             notice = TradingNotice(++nextNoticeId, message, if (attention) NoticeTone.ATTENTION else NoticeTone.INFO, persistent = attention)
+        }
+        // An automatic flatten that ends unconfirmed is said on whatever page is open, naming the account: the account page's
+        // own notice shows only there, which on the desktop is inside 账户总览. A trigger fails once, on its trading day, so
+        // that day tells one failure from the next; what had failed before the screen opened is not announced again.
+        LaunchedEffect(runtime) {
+            var announced: Set<Triple<String, String, LocalDate>>? = null
+            runtime.accountRisk.rules.collect { rules ->
+                val failed = rules.flatMap { (login, accounts) ->
+                    accounts.mapNotNull { (id, rule) -> rule.trigger?.takeIf { it.flattenStatus == FlattenStatus.FAILED }?.let { Triple(login, id, it.day) } }
+                }.toSet()
+                val names = announced?.let { failed - it }.orEmpty().map { (login, id) ->
+                    registry.plugins.firstOrNull { it.descriptor.id == login }?.catalog?.value?.accounts?.firstOrNull { it.id == id }
+                        ?.let { runtime.accountAliases.aliases.value.account(login, it) } ?: id
+                }
+                if (names.isNotEmpty()) showNotice("${names.joinToString("、")} 自动平仓未完成，请检查券商持仓和挂单。", attention = true)
+                announced = failed
+            }
         }
         fun syncAccount() {
             if (busy || !market.connected) return
@@ -695,6 +715,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
                     else confirmation = action
                 }
+                // The order pages get this function as a reference and today compare it by instance. References to one local
+                // function are equal whatever draft each captured, so a page that compared them by equality would submit the
+                // draft it first saw; read through these states, every reference submits the draft as it is when pressed.
                 val latestMobileRequest by rememberUpdatedState(request)
                 val latestMobilePreview by rememberUpdatedState(preview)
                 fun reviewMobileOrder() {
@@ -748,6 +771,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
+                // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
+                    onBackCompleted = { if (!busy) closeOrder() })
                 val activate by rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
                 // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
                 // its own symbol and interval and becomes the active one at the first press inside it.
@@ -923,7 +950,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
-                        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // On a phone held sideways the rows do not fit: they scroll, and the buttons stay below them.
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("$loginName / $accountName / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             when (action) {
                                 is Confirmation.Place -> {
@@ -947,8 +975,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     },
                                         style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
-                                    livePreview?.warnings?.forEach { Text(it, color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
-                                    livePreview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                                    // An error says why 确认 is disabled, so it comes before the broker's notes.
+                                    livePreview?.errors?.forEach { Text(it, Modifier.testTag("confirm-error"), color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                                    livePreview?.warnings?.forEach { Text(it, Modifier.testTag("confirm-warning"), color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${shortId(action.order.id)}。" +
@@ -1243,7 +1272,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             if (!orderActive) draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                                             openOrderEditor()
                                         }, onPositions = { accountTab = 1; mobileTab = 4 }, dense = denseLandscape,
-                                            onDailyPnl = { accountTab = 0; mobileTab = 4 })
+                                            onDailyPnl = { accountTab = 0; mobileTab = 4 }, resume = useOrderPopup && orderActive)
                                     }
                                     if (!rail) MobileNavigation(mobileTab, selectTab)
                                 }
@@ -1300,10 +1329,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                     skipConfirmation = skipConfirmation, dockAdvanced = advancedOrder,
                                                     onDockAdvanced = { open ->
                                                         advancedOrder = open
-                                                        scope.launch { runtime.tradingPreferences.setOrderMoreSettings(open) }
+                                                        val change = ++advancedChanges
+                                                        scope.launch {
+                                                            if (!runtime.tradingPreferences.setOrderMoreSettings(open) && change == advancedChanges)
+                                                                advancedOrder = runtime.tradingPreferences.preferences.value.orderMoreSettings
+                                                        }
                                                     },
                                                     brackets = brackets, bracketOrder = request,
-                                                    orderNotice = orderNotice)
+                                                    // The minimized dock keeps its form; the notice shows above the chart meanwhile.
+                                                    orderNotice = if (orderOpen) orderNotice else ({}))
                                             }
                                         } else Column(Modifier.fillMaxSize()) { idleBar() }
                                     })

@@ -240,19 +240,24 @@ class MobileLayoutTest {
         compose.onNodeWithTag("trade-bar").assertExists()
     }
 
+    @Test fun theSheetsCompactArrowSubmitsTheDraftAsItIsWhenPressed() = phoneTest { compactArrowSubmitsTheDraftAsItIs(null) }
+
+    @Test fun theDocksCompactArrowSubmitsTheDraftAsItIsWhenPressed() = phoneTest { compactArrowSubmitsTheDraftAsItIs(OrderPanelLayout.DOCKED) }
+
     /**
-     * The compact bar's arrow sends the draft as it is when pressed. Its click used to keep the order of the moment the
-     * bar was first shown, so protection switched on while minimized was left out of the order that went out.
+     * The minimized bar's arrow sends the draft as it stands when pressed: a short whose stop and target were switched on
+     * in the bar itself after it was minimized. [layout] is the order page, or null for the one a phone opens by default.
      */
-    @Test fun compactArrowSubmitsTheProtectionSwitchedOnWhileMinimized() = phoneTest {
+    private fun compactArrowSubmitsTheDraftAsItIs(layout: OrderPanelLayout?) {
         // An empty account that records what it is sent: only the order placed here can carry the prices asserted below.
         val broker = OfflineOrderBroker()
         val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker))
-        runBlocking { assertTrue(offline.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) }
+        if (layout != null) runBlocking { assertTrue(offline.tradingPreferences.setOrderPanelLayout(layout)) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
             Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
         } }
         compose.onNodeWithTag("open-order").performClick()
+        if (layout == null) compose.onNodeWithTag("order-sheet-handle", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("order-side-SELL").performClick()
         compose.onNodeWithTag("minimize-order").performClick()
         compose.onNodeWithTag("compact-sl").performClick().assertIsOn()

@@ -16,6 +16,10 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.navigationevent.DirectNavigationEventInput
+import androidx.navigationevent.NavigationEventDispatcher
+import androidx.navigationevent.NavigationEventDispatcherOwner
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 import com.unitrading.app.AccountBrackets
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.OrderPanelLayout
@@ -195,6 +199,39 @@ class MobileOrderPagesTest {
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().assertIsOff()
         compose.onNodeWithTag("order-tp-enabled").assertIsOff()
         assertEquals(before, session.state.value, "closing, reopening and discarding never send an order")
+    }
+
+    /**
+     * Back on the popup puts it away like its ×, and the bar's button then says an order waits. Back once more drops that
+     * draft, as back on a minimized sheet or dock does. The test sends back through a dispatcher of its own.
+     */
+    @Test fun backPutsThePopupAwayThenDropsTheDraftThatTheBarSaysIsWaiting() = phoneTest {
+        val back = DirectNavigationEventInput()
+        val owner = object : NavigationEventDispatcherOwner {
+            override val navigationEventDispatcher = NavigationEventDispatcher().apply { addInput(back) }
+        }
+        runBlocking { assertTrue(runtime.tradingPreferences.setOrderPanelLayout(OrderPanelLayout.POPUP)) }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalNavigationEventDispatcherOwner provides owner) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(runtime) }
+        } }
+        val before = session.state.value
+        compose.onNodeWithTag("open-order").assertTextEquals("下单").performClick()
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.25")
+        compose.runOnIdle { back.backCompleted() }
+        compose.onNodeWithTag("order-popup").assertDoesNotExist()
+        compose.onNodeWithTag("open-order").assertTextEquals("继续下单").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.25")
+        compose.onNodeWithTag("close-order-dialog").performClick()
+        compose.onNodeWithTag("open-order").assertTextEquals("继续下单")
+
+        compose.runOnIdle { back.backCompleted() }
+        compose.onNodeWithTag("open-order").assertTextEquals("下单").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("0.10")
+        // Taken away with "取消订单", the draft leaves nothing waiting either.
+        compose.onNodeWithTag("order-quantity").performTextReplacement("0.25")
+        compose.onNodeWithTag("popup-discard-order").performClick()
+        compose.onNodeWithTag("open-order").assertTextEquals("下单")
+        assertEquals(before, session.state.value, "putting away and dropping never send an order")
     }
 
     @Test fun popupNamesTheAccountAndAnOrderPlacedFromItStartsAFreshDraft() = phoneTest {
