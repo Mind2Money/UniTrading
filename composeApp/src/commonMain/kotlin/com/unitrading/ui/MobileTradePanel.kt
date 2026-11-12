@@ -83,6 +83,7 @@ internal fun MobileOrderSheet(
     modifier: Modifier = Modifier, busy: Boolean = false, skipConfirmation: Boolean = false,
     onHidden: () -> Unit = {},
     brackets: AccountBrackets = AccountBrackets(), calculatedLots: Long? = null, accountName: String? = null,
+    reduction: Boolean = false,
     content: @Composable ColumnScope.() -> Unit, body: @Composable () -> Unit,
 ) {
     // The chart always occupies the same composition slot, including when the sheet is closed.
@@ -90,7 +91,7 @@ internal fun MobileOrderSheet(
         body()
         MobileOrderSheetSurface(
             instrument, quote, capabilities, draft, onDraft, panelState, onStateChange, onClose, onSubmit, canSubmit,
-            Modifier.matchParentSize(), busy, skipConfirmation, onHidden, brackets, calculatedLots, accountName, content)
+            Modifier.matchParentSize(), busy, skipConfirmation, onHidden, brackets, calculatedLots, accountName, reduction, content)
     }
 }
 
@@ -101,7 +102,7 @@ private fun MobileOrderSheetSurface(
     draft: OrderDraft, onDraft: (OrderDraft) -> Unit,
     panelState: MobileOrderPanelState, onStateChange: (MobileOrderPanelState) -> Unit,
     onClose: () -> Unit, onSubmit: () -> Unit, canSubmit: Boolean, modifier: Modifier, busy: Boolean, skipConfirmation: Boolean,
-    onHidden: () -> Unit, brackets: AccountBrackets, calculatedLots: Long?, accountName: String?,
+    onHidden: () -> Unit, brackets: AccountBrackets, calculatedLots: Long?, accountName: String?, reduction: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
@@ -194,7 +195,7 @@ private fun MobileOrderSheetSurface(
                         Crossfade(compact, Modifier.width(144.dp).height(48.dp), animationSpec = tween(120), label = "order-header") { collapsed ->
                             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                 if (collapsed) CompactOrderActions(instrument, quote, draft, onDraft, brackets, busy, skipConfirmation,
-                                    canSubmit && !busy && panelState != MobileOrderPanelState.CLOSED, onSubmit)
+                                    canSubmit && !busy && panelState != MobileOrderPanelState.CLOSED, onSubmit, reduction)
                                 else ActionIcon(AppIcons.ExpandMore, "最小化下单面板", "minimize-order", enabled = panelState != MobileOrderPanelState.CLOSED) {
                                     onStateChange(MobileOrderPanelState.MINIMIZED)
                                 }
@@ -294,6 +295,7 @@ internal fun MobileOrderDock(
     skipConfirmation: Boolean, keyboardOpen: Boolean,
     brackets: AccountBrackets = AccountBrackets(),
     calculatedLots: Long? = null,
+    reduction: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = TradingColors
@@ -326,7 +328,7 @@ internal fun MobileOrderDock(
                     Text(if (collapsed) "${compactQuantity(instrument, draft, brackets, calculatedLots)} ${instrument.quantityUnit} · ${draft.side.label()}" else accountName,
                         style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (collapsed) CompactOrderActions(instrument, quote, draft, onDraft, brackets, busy, skipConfirmation, canSubmit && !busy, onSubmit)
+                if (collapsed) CompactOrderActions(instrument, quote, draft, onDraft, brackets, busy, skipConfirmation, canSubmit && !busy, onSubmit, reduction)
                 else ActionIcon(AppIcons.ExpandMore, "最小化下单面板", "minimize-order", onClick = ::setMinimized)
                 ActionIcon(AppIcons.Close, "关闭并放弃本次下单", "close-order", enabled = !busy, onClick = onClose)
             }
@@ -343,20 +345,23 @@ private fun compactQuantity(instrument: Instrument, draft: OrderDraft, brackets:
 /**
  * What a minimized ticket keeps beside its summary, in the sheet's peek and in the dock alike: the stop loss and take
  * profit switches and the submit arrow. A protection that the account's cash brackets or loss-based sizing decide shows
- * what will be sent and cannot be switched here.
+ * what will be sent and cannot be switched here; on a [reduction], which goes without them, it shows as off.
  */
 @Composable
 private fun CompactOrderActions(
     instrument: Instrument, quote: Quote?, draft: OrderDraft, onDraft: (OrderDraft) -> Unit, brackets: AccountBrackets,
-    busy: Boolean, skipConfirmation: Boolean, submitEnabled: Boolean, onSubmit: () -> Unit,
+    busy: Boolean, skipConfirmation: Boolean, submitEnabled: Boolean, onSubmit: () -> Unit, reduction: Boolean = false,
 ) {
     val colors = TradingColors
     val focus = LocalFocusManager.current
     listOf(true, false).forEach { stop ->
         val requiredStop = stop && brackets.sizingRisk != null
         val managed = brackets.controls(stop) || requiredStop
-        val checked = if (requiredStop) draft.stopLoss.isNotBlank()
-            else managed || if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
+        val checked = when {
+            managed && reduction -> false
+            requiredStop -> draft.stopLoss.isNotBlank()
+            else -> managed || if (stop) draft.stopLossEnabled else draft.takeProfitEnabled
+        }
         val protectionColor = if (stop) colors.Stop else colors.Target
         // Keep the native 48dp touch target; only the visual badge is compact.
         IconToggleButton(checked = checked,

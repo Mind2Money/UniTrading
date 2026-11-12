@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.ChartPreferencesController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.geometry.Offset

@@ -89,7 +89,10 @@ internal data class AccountBrackets(
         val (limit, name) = listOfNotNull(ceiling to "单笔最大数量", lotRoom?.let { it to "子账户最大手数" },
             capacity?.let { it to "可下单上限" }, spec.maxLotsHundredths to "合约最大手数").minBy { it.first }
         val lots = minOf(affordable, limit / step * step)
-        require(lots > 0 && lots >= spec.minLotsHundredths) { "风险金额不足以下最小手数，请调整风险金额或止损价" }
+        // Name what left too little: the amount, or the ceiling that cut the quantity below one lot.
+        require(lots > 0 && lots >= spec.minLotsHundredths) {
+            if (lots < affordable) "受${name}限制，可下数量不足最小手数" else "风险金额不足以下最小手数，请调整风险金额或止损价"
+        }
         return lots to name.takeIf { lots < affordable }
     }
 

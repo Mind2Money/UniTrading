@@ -151,7 +151,8 @@ class AccountBracketsUiTest {
             val axis = node.config[SemanticsProperties.StateDescription].split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
             val scale = PriceScale(axis.getValue("low").toDouble(), axis.getValue("high").toDouble(), 18f, axis.getValue("plotBottom").toFloat())
             // Ten ticks under the ask the amount would buy seven contracts: the estimate of the drag stops at the lot cap of five, as the form will.
-            chart.performTouchInput { down(handle); moveTo(Offset(handle.x, scale.y(549_775))) }
+            // The handle sits close to that price on the shorter chart beside the docked form, so the drag first leaves the touch slop.
+            chart.performTouchInput { down(handle); moveTo(Offset(handle.x, scale.y(549_025))); moveTo(Offset(handle.x, scale.y(549_775))) }
             onNodeWithTag("chart-readout").assertTextContains("自动手数 5 张", substring = true)
             chart.performTouchInput { moveTo(Offset(handle.x, scale.y(549_525))) }
             onNodeWithTag("chart-readout").assertTextContains("自动手数 3 张", substring = true)
@@ -178,6 +179,7 @@ class AccountBracketsUiTest {
         // Selling one of the two only reduces the position: the order goes as it is, and the confirmation says so.
         onNodeWithTag("order-side-SELL").performClick()
         onNodeWithTag("order-error").assertDoesNotExist()
+        onNodeWithTag("order-account-brackets").assertTextEquals("减仓单 · 不附加子账户止损止盈")
         onNodeWithTag("review-order").assertIsEnabled().performClick()
         onNodeWithText(reduction).assertExists()
         onNodeWithTag("confirm-action").assertIsEnabled().performClick()
@@ -200,6 +202,27 @@ class AccountBracketsUiTest {
         onNodeWithTag("confirm-action").assertIsEnabled().performClick()
         awaitPlaced(broker, 2)
         assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.LIMIT, 100, 551_000), broker.placed.last())
+    }
+
+    @Test fun theMinimizedBarShowsTheAccountsProtectionOffForAReduction() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // Long two contracts: a buy adds and gets the account's stop and target, a sell of one only reduces and gets neither.
+        val broker = RiskFixture().apply { hold("100", listOf(riskPosition(Side.BUY, 200))) }
+        val runtime = runtimeWith(broker, cash).apply { runBlocking { assertTrue(tradingPreferences.setOrderPanelLayout(OrderPanelLayout.DOCKED)) } }
+        setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                Box(Modifier.requiredSize(450.dp, 850.dp)) { TradingScreen(runtime) }
+            }
+        }
+        onNodeWithTag("open-order").performClick()
+        onNodeWithTag("minimize-order").performClick()
+        onNodeWithTag("compact-sl").assertIsOn().assertIsNotEnabled()
+        onNodeWithTag("compact-tp").assertIsOn().assertIsNotEnabled()
+        onNodeWithTag("restore-order").performClick()
+        onNodeWithTag("order-side-SELL").performClick()
+        onNodeWithTag("order-account-brackets").assertTextEquals("减仓单 · 不附加子账户止损止盈")
+        onNodeWithTag("minimize-order").performClick()
+        onNodeWithTag("compact-sl").assertIsOff().assertIsNotEnabled()
+        onNodeWithTag("compact-tp").assertIsOff().assertIsNotEnabled()
     }
 
     @Test fun aKeyOrAMenuOrderAgainstThePositionGoesOutWithoutTheBrackets() = runDesktopComposeUiTest(width = 1400, height = 900) {

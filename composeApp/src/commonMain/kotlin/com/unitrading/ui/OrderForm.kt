@@ -100,11 +100,14 @@ internal fun OrderForm(
                 Text("自动手数 $lots · 风险 ${money(sizingRisk)} ${instrument.currency}" + (capacity.sizedUnder?.let { " · 受${it}限制" } ?: ""),
                     Modifier.testTag("order-risk-sized-quantity"), color = colors.Accent, style = type.bodySmall)
             } else if (brackets.enabled) {
+                // A built order that came back without the prices the amounts set is one against the position: it goes as it is.
+                val reduction = bracketOrder != null && (!brackets.controls(true) || bracketOrder.stopLoss == null) &&
+                    (!brackets.controls(false) || bracketOrder.takeProfit == null)
                 val prices = listOfNotNull(
                     "SL ${bracketOrder?.stopLoss?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(true) },
                     "TP ${bracketOrder?.takeProfit?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(false) },
                 )
-                Text("子账户自动保护 · ${prices.joinToString(" · ")}",
+                Text(if (reduction) "减仓单 · 不附加子账户止损止盈" else "子账户自动保护 · ${prices.joinToString(" · ")}",
                     Modifier.testTag("order-account-brackets"), color = colors.Accent, style = type.bodySmall)
             }
             // Stop loss and take profit belong to every order: the docked form shows them without unfolding anything.

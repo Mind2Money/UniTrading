@@ -307,6 +307,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             takeProfitEnabled = orderInput.takeProfitEnabled && instrument.parsePrice(orderInput.takeProfit)?.let { it > 0 } == true,
         ).request(instrument, quantityOverride = 0L) else null
         val bracketError = builtOrder.exceptionOrNull()?.message
+        // An order against the position goes without the account's brackets and the sizing stop; the minimized bar shows them off.
+        val reduction = request != null && brackets.enabled && !orderRule.bracketsApply(account, hedging, request)
         // The order forms read every bound on the quantity from here: the server's limit, the position a reduction works
         // against, and the ceiling that cut a sized quantity short.
         val capacity = serverCapacity.copy(reducible = reducible.takeIf { it > 0 }, sizedUnder = request?.takeIf { sizeByRisk && reducible == 0L }?.let {
@@ -1255,6 +1257,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                                         },
                                         brackets = brackets, calculatedLots = request?.lotsHundredths, accountName = accountName,
+                                        reduction = reduction,
                                         content = {
                                             notice?.let { current ->
                                                 Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
@@ -1287,7 +1290,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         if (orderOnChart) {
                                             MobileOrderDock(instrument, quote, plugin.capabilities, accountName, draft, ::changeDraft,
                                                 orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder,
-                                                preview?.valid == true && request != null, busy, skipConfirmation, keyboardOpen, brackets = brackets, calculatedLots = request?.lotsHundredths) {
+                                                preview?.valid == true && request != null, busy, skipConfirmation, keyboardOpen, brackets = brackets, calculatedLots = request?.lotsHundredths,
+                                                reduction = reduction) {
                                                 OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                                     ::reviewMobileOrder, Modifier.weight(1f),
                                                     environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity,
