@@ -12,19 +12,26 @@ internal val PendingOrder.remainingLots: Long get() = (request.lotsHundredths - 
 
 /**
  * The most lots [orders], all on one side, can fill, each with the lots [remaining] gives it: an ordinary order in full,
- * and of the broker-paired protection the larger of all its stops and all its targets. A stop and the target of its
- * bracket cancel each other, so at most one of the two fills.
+ * and the broker-paired protection by pairs. A stop and the target of its bracket cancel each other, so at most one of
+ * the two fills; which stop goes with which target is not known, so the legs are paired the way that fills the most:
+ * the largest stop with the smallest target, and so on. Brackets of equal legs count as one leg each.
  */
 private fun fillable(orders: List<PendingOrder>, remaining: (PendingOrder) -> Long = { it.remainingLots }): Long {
     var plain = 0L
-    var stops = 0L
-    var targets = 0L
+    val stops = mutableListOf<Long>()
+    val targets = mutableListOf<Long>()
     for (order in orders) when (order.role) {
         OrderRole.STOP_LOSS -> stops += remaining(order)
         OrderRole.TAKE_PROFIT -> targets += remaining(order)
         else -> plain += remaining(order)
     }
-    return plain + maxOf(stops, targets)
+    val largestStops = stops.sortedDescending()
+    val smallestTargets = targets.sorted()
+    var legs = 0L
+    for (i in 0 until maxOf(largestStops.size, smallestTargets.size)) {
+        legs += maxOf(largestStops.getOrElse(i) { 0L }, smallestTargets.getOrElse(i) { 0L })
+    }
+    return plain + legs
 }
 
 /**

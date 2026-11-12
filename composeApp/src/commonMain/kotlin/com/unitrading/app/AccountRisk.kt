@@ -371,7 +371,7 @@ internal class AccountRiskController(
                 val changed = order.request.copy(lotsHundredths = action.lotsHundredths ?: order.request.lotsHundredths)
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
                 // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
-                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect, LotCapUnit.of(broker.instruments))
+                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect, LotCapUnit.of(broker.instruments), edit = true)
                     ?: when (order.role) {
                         // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the
                         // amounts. They stay at their prices, unless the broker keeps them at their distance from the entry.

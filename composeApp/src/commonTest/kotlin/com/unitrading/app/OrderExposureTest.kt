@@ -75,14 +75,19 @@ class OrderExposureTest {
         val long = account(listOf(position(Side.BUY, 200)), legs)
         assertEquals(SymbolExposure(200, 0, 200), symbolExposure(long, "MESZ6"))
         val cap = AccountOrderLimits(maxLots = 200)
-        fun edit(snapshot: AccountSnapshot, id: String, lots: Long) =
-            snapshot.orders.single { it.id == id }.let { leg -> editedOrderExposure(snapshot, false, leg, lots) to cap.refusal(leg.request, editedOrderExposure(snapshot, false, leg, lots)) }
+        fun edit(snapshot: AccountSnapshot, id: String, lots: Long) = snapshot.orders.single { it.id == id }.let { leg ->
+            editedOrderExposure(snapshot, false, leg, lots) to cap.refusal(leg.request, editedOrderExposure(snapshot, false, leg, lots), edit = true)
+        }
         // A raised to 3: all the stops filling leave short 2, which the cap allows.
         assertEquals(ExposureEffect(200, 200, false) to null, edit(long, "A", 300))
         // B raised as well, after A: six lots of stops against the long of two would leave short 4.
         val raisedA = long.copy(orders = listOf(a.copy(request = a.request.copy(lotsHundredths = 300))) + legs.drop(1))
         assertEquals(ExposureEffect(200, 400, false), edit(raisedA, "B", 300).first)
         assertNotNull(edit(raisedA, "B", 300).second)
+        // Or the target of the other bracket raised after A: nothing says which stop goes with which target, and A with
+        // TB can both fill, so the legs pair the way that fills the most (A with TA, B with TB): six lots, short 4.
+        assertEquals(ExposureEffect(200, 400, false), edit(raisedA, "TB", 300).first)
+        assertNotNull(edit(raisedA, "TB", 300).second)
         // One leg raised to 6 at once: short 5.
         assertEquals(ExposureEffect(200, 500, false), edit(long, "A", 600).first)
         assertNotNull(edit(long, "A", 600).second)

@@ -48,10 +48,14 @@ class LotCapUnitTest {
         assertEquals("超过子账户最大持仓 3 张（按持仓和全部挂单成交后的最大持仓计）。", limits.refusal(buy, over, LotCapUnit.of(listOf(futures))))
         assertEquals("超过子账户最大持仓 3.00 手（按持仓和全部挂单成交后的最大持仓计）。", limits.refusal(buy, over, LotCapUnit.of(listOf(fx))))
         assertNull(limits.refusal(buy, ExposureEffect(200, 300, false), LotCapUnit.of(listOf(futures))))
-        // Already over the cap, an exit passes; anything else is refused even where it leaves the total as it was.
+        // Already over the cap, a new order passes only as an exit, even where it leaves the total as it was.
         assertNull(limits.refusal(buy, ExposureEffect(400, 400, true)))
         assertNull(limits.refusal(buy, ExposureEffect(400, 300, true)))
         assertNotNull(limits.refusal(buy, ExposureEffect(400, 400, false)))
         assertNotNull(limits.refusal(buy, ExposureEffect(500, 400, false)))
+        // An edit there passes while it leaves no more than there was: an entry order shrunk or moved, not grown.
+        assertNull(limits.refusal(buy, ExposureEffect(500, 400, false), edit = true))
+        assertNull(limits.refusal(buy, ExposureEffect(400, 400, false), edit = true))
+        assertNotNull(limits.refusal(buy, ExposureEffect(400, 500, false), edit = true))
     }
 }
