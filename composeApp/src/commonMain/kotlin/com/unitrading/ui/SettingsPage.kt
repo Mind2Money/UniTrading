@@ -114,7 +114,7 @@ internal fun SettingsPage(
 
             SettingsSection("交易") {
                 SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
-                    { chooseOrderLayout = true }, enabled = !busy, navigates = true)
+                    { chooseOrderLayout = true }, enabled = !busy)
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
                     supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
@@ -206,7 +206,7 @@ internal fun SettingsPage(
         title = { Text("下单界面") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("适用于手机和紧凑窗口。", Modifier.padding(bottom = 8.dp))
+                Text("适用于手机和紧凑窗口。", Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                 // Three choices that each need a line of explanation: a list, where segmented buttons would cut the text.
                 OrderPanelLayout.entries.forEach { layout ->
                     val selected = layout == tradingPreferences.orderPanelLayout
@@ -224,7 +224,7 @@ internal fun SettingsPage(
                         }
                     }
                 }
-                tradingPreferencesError?.let { Text(it, color = colors.Loss) }
+                tradingPreferencesError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
             }
         },
         confirmButton = { TextButton({ chooseOrderLayout = false }, Modifier.testTag("settings-order-layout-close"), enabled = !savingTradingPreferences) { Text("关闭") } },
