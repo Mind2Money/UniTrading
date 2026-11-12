@@ -40,11 +40,14 @@ internal fun AccountOrderLimitSettings(
     if (editing) {
         val scope = rememberCoroutineScope()
         val type = MaterialTheme.typography
-        var lots by remember { mutableStateOf(limits.maxLots?.let(unit::format).orEmpty()) }
+        // Fixed while the editor is open: a login can list its accounts before its contracts, and the cap is read in
+        // the unit it was filled in, not one that arrives later.
+        val editUnit = remember { unit }
+        var lots by remember { mutableStateOf(limits.maxLots?.let(editUnit::format).orEmpty()) }
         var symbols by remember { mutableStateOf(limits.blockedSymbols.sorted().joinToString(", ")) }
         var saving by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf<String?>(null) }
-        val max = unit.parse(lots)
+        val max = editUnit.parse(lots)
         val blocked = parseRestrictedSymbols(symbols)
         val valid = (lots.isBlank() || max != null) && blocked != null
         // On a hedging account every order opens a position of its own: both sides add up, and no order reduces one.
@@ -65,8 +68,8 @@ internal fun AccountOrderLimitSettings(
                 Text(if (hedging) "限制只在本应用生效，仍可手动撤单和平仓。" else "限制只在本应用生效。平仓、撤单和减仓单不受限制。",
                     style = type.bodyMedium, color = TradingColors.Muted)
                 OutlinedTextField(lots, { lots = it }, Modifier.fillMaxWidth().testTag("account-max-lots"),
-                    label = { Text("最大持仓（${unit.label}，留空不限）") }, singleLine = true, enabled = !saving,
-                    keyboardOptions = KeyboardOptions(keyboardType = if (unit.whole) KeyboardType.Number else KeyboardType.Decimal),
+                    label = { Text("最大持仓（${editUnit.label}，留空不限）") }, singleLine = true, enabled = !saving,
+                    keyboardOptions = KeyboardOptions(keyboardType = if (editUnit.whole) KeyboardType.Number else KeyboardType.Decimal),
                     supportingText = { Text(if (hedging) "持仓、未成交开仓挂单和新单合计，多空不抵扣。"
                         else "按每个品种的持仓加未成交开仓挂单可能形成的最大持仓合计。止损、止盈等减仓单不占额度。") },
                     isError = lots.isNotBlank() && max == null)
@@ -120,16 +123,19 @@ internal fun FlattenConfirmation(review: FlattenReview, onCancel: () -> Unit, on
         title = { Text(if (review.all) "平仓全部子账户？" else "平仓此子账户？") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (review.targets.isEmpty()) Text("没有可以处理的子账户。", style = type.bodySmall, color = muted)
-                else Text("将处理以下 ${review.targets.size} 个子账户的全部持仓和未成交挂单，包括确认后在执行前进入券商快照的订单。",
-                    style = type.bodySmall, color = muted)
+                // What is acted on comes first, as in the other confirmations, then what happens to it.
                 review.targets.forEach { ConfirmationAccount(it.broker, it.account, holdings(it)) }
+                if (review.targets.isEmpty()) Text("没有可以处理的子账户。", style = type.bodySmall, color = muted)
+                else {
+                    Text("将处理以上 ${review.targets.size} 个子账户的全部持仓和未成交挂单，包括确认后在执行前进入券商快照的订单。",
+                        style = type.bodySmall, color = muted)
+                    Text("先撤会开仓或加仓的挂单；止损、止盈等减仓单保留到平仓确认后再撤。", style = type.bodySmall, color = muted)
+                }
                 // Nothing can be sent for these, so they are neither targets nor failures afterwards.
                 if (review.skipped.isNotEmpty()) Text("以下 ${review.skipped.size} 个子账户不处理：", style = type.bodySmall, color = muted)
                 review.skipped.forEach { (target, reason) ->
                     ConfirmationAccount(target.broker, target.account, if (reason == FlattenSkip.READ_ONLY) "只读，跳过" else "未连接，跳过", muted = true)
                 }
-                if (review.targets.isNotEmpty()) Text("先撤会开仓或加仓的挂单；止损、止盈等减仓单保留到平仓确认后再撤。", style = type.bodySmall, color = muted)
             }
         },
         // The action is on the right, as in every confirmation of the app, closing one position included. It names
@@ -150,7 +156,7 @@ internal fun FlattenResults(outcomes: List<FlattenOutcome>, onClose: () -> Unit)
         title = { Text("平仓结果") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("已确认空仓且无挂单 $count / ${outcomes.size} 个子账户")
+                Text("已确认空仓且无挂单 $count / ${outcomes.size} 个子账户", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 outcomes.forEach { result ->
                     val (broker, child) = result.target
                     val message = result.note ?: (if (result.confirmed) FlattenStatus.FLAT else FlattenStatus.FAILED).text()

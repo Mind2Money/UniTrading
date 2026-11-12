@@ -113,7 +113,7 @@ private fun AccountRiskDialog(
             Text("冻结", style = type.labelLarge, color = scheme.primary)
             SegmentedChoice(listOf(RiskFreeze.DAY, RiskFreeze.WEEK), freeze, { if (it == RiskFreeze.DAY) "当日" else "当周" },
                 { if (it == RiskFreeze.DAY) "risk-freeze-day" else "risk-freeze-week" }, { freeze = it }, Modifier.fillMaxWidth(), enabled = editable)
-            if (frozen) Text("已冻结：券商交易日到 ${rule.frozenUntil} 之前无法修改或停用。", style = type.bodySmall)
+            if (frozen) Text("已冻结：券商交易日到 ${rule.frozenUntil} 之前无法修改或停用。", style = type.bodySmall, color = muted)
             else OutlinedButton({ requestSave(true) }, Modifier.fillMaxWidth().testTag("freeze-risk-settings"), enabled = editable && limits?.loss != null) {
                 Text(if (freeze == RiskFreeze.DAY) "冻结到下一交易日" else "冻结到下周一")
             }

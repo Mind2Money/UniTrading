@@ -67,7 +67,9 @@ class AccountRiskUiTest {
         onNodeWithTag("nav-4").performClick()
         onNodeWithTag("account-tab-1").performClick()
         onNodeWithTag("flatten-all-accounts").performClick()
-        onNodeWithText("将处理以下 1 个子账户", substring = true).assertExists()
+        // What is acted on comes first, then what happens to it, as in the other confirmations.
+        val target = onNodeWithText("100 · 持仓 1 · 挂单 1").fetchSemanticsNode().boundsInRoot
+        assertTrue(target.bottom <= onNodeWithText("将处理以上 1 个子账户", substring = true).fetchSemanticsNode().boundsInRoot.top)
         onNodeWithText("以下 2 个子账户不处理：").assertExists()
         // Each account reads as one item: alias, login and environment, then its id with the reason it is left alone.
         onNodeWithText("101 · 只读，跳过").assertTextContains("View only · ", substring = true)
@@ -258,6 +260,27 @@ class AccountRiskUiTest {
         onNodeWithTag("edit-account-order-limits").assertTextContains("最大 3 张", substring = true)
         onNodeWithTag("edit-account-order-limits").performClick()
         assertEquals("3", onNodeWithTag("account-max-lots").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    }
+
+    @Test fun theCapEditorKeepsItsUnitWhenTheContractsArriveWhileItIsOpen() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // Tradovate and Rithmic can list a login's accounts before its contracts; until then the cap reads in 手.
+        val broker = RiskFixture()
+        val risk = AccountRiskController(MemorySnapshotStore())
+        runBlocking { assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(300))) }
+        broker.catalog.value = BrokerCatalog(emptyList(), broker.accounts)
+        setContent { TradingTheme { AccountOrderLimitSettings(risk, broker, broker.accounts.first(), busy = false) } }
+        onNodeWithTag("edit-account-order-limits").performClick()
+        val field = onNodeWithTag("account-max-lots")
+        assertEquals("3.00", field.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        // The whole contracts arrive with the editor open: the untouched text stays valid, in the unit it was filled in.
+        runOnIdle { broker.catalog.value = BrokerCatalog(broker.source.instruments, broker.accounts) }
+        onNodeWithText("最大持仓（手，留空不限）", useUnmergedTree = true).assertExists()
+        field.assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Error))
+        onNodeWithTag("save-account-order-limits").assertIsEnabled().performClick()
+        waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("account-order-limits-editor").fetchSemanticsNodes().isEmpty() }
+        assertEquals(300L, risk.rule(broker, "100").orderLimits.maxLots)
+        // The row reads in the contracts' unit once they are listed.
+        onNodeWithTag("edit-account-order-limits").assertTextContains("最大 3 张", substring = true)
     }
 
     @Test fun aLockedAccountStillReviewsAnExitAndRefusesAnEntryBeforeAnyConfirmation() =
