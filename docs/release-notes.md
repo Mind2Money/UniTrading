@@ -2,42 +2,93 @@
 
 ## 简体中文
 
+🙏 **特别鸣谢**
+感谢 DC 群的 @XAU真爱粉 提交 [PR #3](https://github.com/Mind2Money/UniTrading/pull/3)：子账户风控（交易锁定、手数与品种限制、订单风控、平仓此子账户和全部子账户）、手机的停靠下单栏和独立弹窗、交易分析的本机平仓缓存，以及收藏周期按时长排序都来自这次贡献。
+
+📖 **新功能使用说明**
+1. 子账户风控：先在顶部“交易子账户”下拉里选中要管理的子账户，再打开「设置 → 子账户风控」，分别设置“交易锁定”“手数与品种限制”“订单风控”
+2. 平仓：账户页“交易”页签顶部的“平仓此子账户”“平仓全部子账户”，确认框列出要处理和要跳过的子账户
+3. 手机下单界面：在「设置 → 交易 → 下单界面」里选上滑面板、停靠下单栏或独立弹窗
+
+🛡️ **子账户风控**
+✅ 「设置 → 子账户风控」新增三项按子账户保存的规则：交易锁定、手数与品种限制、订单风控。平仓、撤单、收紧止损和挂减仓单（与持仓方向相反、不超过持仓数量的单）始终不受限制
+✅ 交易锁定：券商当日总盈亏达到亏损上限或盈利目标后，这个子账户暂停开仓、加仓和放宽止损，直到券商报告下一个交易日；盈亏回落、切换账户、重启或停用规则都不会提前解锁。选“平仓并锁定”时，触发后自动撤销开仓挂单并平掉全部持仓，止损止盈单留到平仓确认后再撤
+✅ 交易锁定规则可以冻结到下一交易日或下周一，冻结期间不能修改或停用；冻结按券商交易日计算，改本机时间不会解冻
+✅ 手数与品种限制：最大持仓把每个品种挂单全部成交后可能出现的最大持仓相加，期货按整数张，止损、止盈等减仓单不占额度；禁止交易的品种可以写根代码（MES 包括 @MES 和各月份合约）或具体月份
+✅ 订单风控：新开仓单按设置的金额自动带上止损止盈；或者按单笔风险金额和止损价计算数量，另设单笔最大数量，在图表上拖动草稿止损线时实时显示算出的数量。图表右键和键盘下单同样适用，减仓单不受影响
+✅ 账户页“交易”页签新增“平仓此子账户”和“平仓全部子账户”：先撤开仓挂单，平仓确认后再撤止损止盈。“全部”包括本应用所有登录下的子账户，Live 也在内；只读和未连接的子账户列出但跳过。开启“跳过交易确认”时也要确认
+✅ 本机风控记录读不出时，所有子账户暂停开仓，设置里出现“重置风控设置”，确认后清除这台设备上的全部风控规则
+⚠️ 交易锁定需要券商报告交易日，目前只有 Tradovate 能用，Rithmic 和本地模拟上不可用。Tradovate 上每个设了交易锁定的子账户约每 20 秒多一次资金快照请求，和下单指令排在同一个请求队列里
+⚠️ 规则只在这台设备上的 UniTrading 里生效，券商网站、其他终端和其他设备不受限制；应用退出、被系统挂起或断线时不检查盈亏，也不会自动平仓
+⚠️ 开启金额止损止盈后，Tradovate 和 Rithmic 上已有持仓的合约不能再加仓：券商不接受在已有净仓上叠加括号单
+⚠️ 以上功能只经过离线测试，没有在真实 Tradovate 或 Rithmic 账户上运行；Android 只做了编译检查
+
+📱 **手机下单界面**
+✅ 「设置 → 交易 → 下单界面」可选上滑面板（默认，就是原来的下单面板）、停靠下单栏或独立弹窗
+✅ 停靠下单栏竖屏在图表下方、横屏在图表右侧，不遮挡 K 线；止损止盈开关和价格始终可见，数量滑动条、参考 SL / TP 和预估放在“更多设置”里，展开与否会记住，下一单和重启后照旧
+✅ 独立弹窗在对话框里下单：点 ×、按返回或点对话框外面只是收起，草稿留在图表上，再点“下单”接着编辑；点“取消订单”才丢弃草稿
+⚠️ 停靠下单栏和独立弹窗只在桌面测试中验证过，手势、键盘和系统返回没有在 Android 设备上试过
+
+🧾 **下单确认**
+✅ 确认框显示止损价和止盈价，没有设置时写“未设置”；市价单的这两项标为预估，券商的提示也显示在确认框里，例如 Rithmic 市价单的括号按实际成交价生成
+
+👤 **账户页与交易分析**
+✅ 资金（余额、净值、今日盈亏、保证金）和回撤与风险移到账户页“总览”，“交易”页签放持仓、挂单、历史和两个平仓按钮
+✅ 交易分析把这台设备同步到的平仓记录在本机保留 30 天，券商不再返回的较早记录也计入统计；页眉写明本机记录从哪一天开始
+✅ 清除已保存登录时删除这些记录，断开某个登录时删除该登录的记录
+⚠️ 只记录应用运行并选中该子账户时同步到的记录，不会向券商补取更早的历史；记录以明文 JSON 存在应用数据目录，没有像已保存的登录那样加密
+
+📈 **图表**
+✅ 工具栏上的收藏周期按时长从短到长排列，未收藏的当前周期排在最后
+
 🔊 **成交音效**
 ✅ 「设置 → 交易」新增“成交音效”开关，默认开启，并写明这是搞笑功能：入场、止盈、止损成交时各播放一段搞笑音效
 ✅ 关闭后成交不再出声，正在播放的片段立即停止；关闭期间的成交不会在重新打开后补播
 
 ## English
 
+🙏 **Special thanks**
+Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Money/UniTrading/pull/3): the sub-account risk controls (trading lock, lot and symbol limits, order risk, and flattening one account or all of them), the docked and popup phone order pages, the local cache of closed trades for analytics and the starred intervals sorted by length all come from it.
+
+📖 **How to use the new features**
+1. Sub-account risk controls: pick the account in the "trading account" picker at the top, then open Settings → Sub-account risk and set up "trading lock", "lot and symbol limits" and "order risk"
+2. Flattening: "flatten this account" and "flatten all accounts" sit at the top of the Trading tab of the account page; the confirmation lists the accounts it will work on and the ones it skips
+3. Phone order page: choose the slide-up sheet, the docked bar or the popup under Settings → Trading → Order page
+
+🛡️ **Sub-account risk controls**
+✅ Settings → Sub-account risk has three rules, kept per trading account: trading lock, lot and symbol limits, and order risk. Closing, cancelling, tightening a stop and placing an order that only reduces a position (the opposite side, no more than the position) are never blocked
+✅ Trading lock: once the broker's day P&L reaches the loss limit or the profit target, the account cannot open, add or loosen a stop until the broker reports the next trading day; a P&L that comes back, switching accounts, restarting or turning the rule off does not end it early. With "flatten and lock" a trigger also cancels the opening orders and closes every position, keeping stops and targets until the close is confirmed
+✅ The trading lock rule can be frozen until the next trading day or the next Monday, and cannot be changed or turned off meanwhile; the freeze follows the broker's trading day, so changing the device clock does not end it
+✅ Lot and symbol limits: the cap adds up, per symbol, the largest position the working orders could leave if they all filled, in whole contracts for futures, so stops, targets and other reducing orders take none of it; a blocked symbol is a root (MES covers @MES and every MES month) or a single month
+✅ Order risk: new opening orders get a stop and target from cash amounts; or the quantity comes from a risk amount and the stop price, with a maximum per order, and dragging the draft stop on the chart shows the quantity as you go. Orders from the chart's context menu and the trading keys follow the same rule; orders that reduce a position are left as they are
+✅ The Trading tab of the account page has "flatten this account" and "flatten all accounts": opening orders are cancelled first, stops and targets once the close is confirmed. "All" covers the accounts of every login in the app, Live included; view-only accounts and those of logins that are not connected are listed and skipped. Both ask for confirmation even with confirmations turned off
+✅ When the risk rules saved on the device cannot be read, every account stops opening positions and Settings offers "reset risk settings", which clears all risk rules on this device once you confirm
+⚠️ The trading lock needs the broker's trading day, which only Tradovate reports, so it is not available on Rithmic or the local demo. On Tradovate each account with a trading lock adds a cash snapshot request about every 20 seconds, in the same request queue as orders
+⚠️ The rules apply to UniTrading on this device only: the broker's website, other platforms and other devices are not limited by them, and nothing is checked or flattened while the app is closed, suspended by the system or disconnected
+⚠️ With cash brackets on, Tradovate and Rithmic accounts cannot add to a contract they already hold: the broker does not take a new bracket on an existing net position
+⚠️ All of this was only checked in offline tests, never on a real Tradovate or Rithmic account; on Android it was only compiled
+
+📱 **Phone order page**
+✅ Settings → Trading → Order page offers the slide-up sheet (the default, and the order panel you had), a docked order bar and a popup
+✅ The docked bar sits below the chart in portrait and beside it in landscape, so it covers no bars; the stop and target switches and prices are always shown, while the quantity slider, the reference SL / TP and the estimates wait behind "more settings", which stays open or closed as you left it, also after a restart
+✅ The popup is a dialog: ×, back or a tap beside it only puts it away and leaves the draft on the chart, and "Order" opens it again; only "cancel order" drops the draft
+⚠️ The docked bar and the popup were only checked in desktop tests; gestures, the keyboard and system back have not been tried on an Android device
+
+🧾 **Order confirmation**
+✅ The confirmation shows the stop and target prices, or "not set"; for a market order they are marked as estimates, and the broker's notes show there too, such as Rithmic building a market order's bracket from the fill price
+
+👤 **Account page and analytics**
+✅ Funds (balance, equity, day P&L, margin) and drawdown and risk move to the Overview tab of the account page; the Trading tab has positions, orders, history and the two flatten buttons
+✅ Analytics keeps the closed trades this device synchronized for 30 days, so older trades the broker no longer returns still count; the header says from which day the device has them
+✅ Forgetting the saved logins deletes them, and disconnecting a login deletes that login's part
+⚠️ Only trades synchronized while the app ran with that account selected are kept, and no older history is fetched from the broker; they are stored as plain JSON in the app's data folder, not encrypted like the saved logins
+
+📈 **Charts**
+✅ Starred intervals on the toolbar run from shortest to longest, with a current interval that is not starred at the end
+
 🔊 **Fill sounds**
 ✅ Settings → Trading has a new "fill sounds" switch, on by default, and it says the sounds are a joke feature: a funny clip plays on an entry, take-profit or stop-loss fill
 ✅ Switched off, fills are silent and a clip that is playing stops at once; a fill that happened while it was off is not played after it is switched back on
-
-- 修复收起下单栏后更改止损止盈，确认下单可能使用旧草稿的问题。
-- Fix compact order submission using stale stop-loss and take-profit values.
-
-- 手机和紧凑窗口可在交易设置中选择停靠下单栏或独立弹窗。
-- Choose a docked or popup order ticket on phones and compact windows.
-
-- 自动手数模式支持拖动图表 SL，并实时预览手数。
-- Drag SL on the chart to preview the automatically calculated order size.
-
-- 子账户订单风控可选择按风险金额和止损价计算手数。
-- Add an account risk mode that sizes orders from the cash risk and stop price.
-
-- 统一交易设置中三个子账户风控入口的列表样式。
-- Use the same list style for the three subaccount risk settings.
-
-- 收藏周期按时长排序，新增子账户金额止损止盈，交易分析在本机缓存最近 30 天的平仓记录。
-- Sort favorite intervals by duration, add per-account cash-based brackets, and cache 30 days of closed trades for analytics.
-
-- 手机下单栏停靠在图表下方（竖屏）或右侧（横屏），收起时保留草稿。
-- The phone order editor docks below the chart in portrait and beside it in landscape. Minimizing preserves the draft.
-
-- 子账户可限制累计手数、禁用品种，并可二次确认撤单及平仓当前或全部子账户。
-- Add per-account exposure caps, blocked symbols and confirmed single/all-account liquidation.
-
-- 子账户本机盈亏锁定与规则冻结；资金与回撤移入总览。
-- Local per-account daily P&L locks and settings freeze; funds and drawdown move to the overview.
 
 # v1.5.0
 
