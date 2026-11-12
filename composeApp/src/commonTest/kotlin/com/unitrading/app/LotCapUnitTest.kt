@@ -44,8 +44,14 @@ class LotCapUnitTest {
     @Test fun theRefusalNamesTheCapInTheLoginsUnitAndTheCapStaysInHundredths() {
         val limits = AccountOrderLimits(maxLots = 300)
         val over = ExposureEffect(300, 400, false)
-        assertEquals("超过子账户最大持仓 3 张（含持仓和未成交开仓挂单）。", limits.refusal(buy, over, LotCapUnit.of(listOf(futures))))
-        assertEquals("超过子账户最大持仓 3.00 手（含持仓和未成交开仓挂单）。", limits.refusal(buy, over, LotCapUnit.of(listOf(fx))))
+        // The total is the largest position the holdings and every working order could leave, exits included.
+        assertEquals("超过子账户最大持仓 3 张（按持仓和全部挂单成交后的最大持仓计）。", limits.refusal(buy, over, LotCapUnit.of(listOf(futures))))
+        assertEquals("超过子账户最大持仓 3.00 手（按持仓和全部挂单成交后的最大持仓计）。", limits.refusal(buy, over, LotCapUnit.of(listOf(fx))))
         assertNull(limits.refusal(buy, ExposureEffect(200, 300, false), LotCapUnit.of(listOf(futures))))
+        // Already over the cap, an exit passes; anything else is refused even where it leaves the total as it was.
+        assertNull(limits.refusal(buy, ExposureEffect(400, 400, true)))
+        assertNull(limits.refusal(buy, ExposureEffect(400, 300, true)))
+        assertNotNull(limits.refusal(buy, ExposureEffect(400, 400, false)))
+        assertNotNull(limits.refusal(buy, ExposureEffect(500, 400, false)))
     }
 }

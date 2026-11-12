@@ -108,7 +108,8 @@ private fun AccountRiskDialog(
             SegmentedChoice(listOf(RiskAction.LOCK, RiskAction.FLATTEN), action, { if (it == RiskAction.LOCK) "只锁定" else "平仓并锁定" },
                 { if (it == RiskAction.LOCK) "risk-action-lock" else "risk-action-flatten" }, { action = it }, Modifier.fillMaxWidth(), enabled = editable)
             Text(if (action == RiskAction.LOCK) "保留券商已有挂单和持仓。"
-                else "先撤会开仓或加仓的挂单，再请求平仓并核对结果；止损等减仓单保留到平仓确认后再撤。",
+                else "先撤会开仓、加仓或反手的挂单，再请求平仓并核对结果；止损等减仓单由应用保留到平仓确认后再撤。" +
+                    "Tradovate 的平仓请求本身也会撤掉该合约的挂单，平仓失败后请到券商核对止损。",
                 style = type.bodySmall, color = muted)
             Text("冻结", style = type.labelLarge, color = scheme.primary)
             SegmentedChoice(listOf(RiskFreeze.DAY, RiskFreeze.WEEK), freeze, { if (it == RiskFreeze.DAY) "当日" else "当周" },

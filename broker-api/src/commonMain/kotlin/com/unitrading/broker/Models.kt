@@ -138,6 +138,11 @@ data class BrokerCapabilities(
      * needs both: without the trading day it could neither trigger nor tell when the locked day has ended.
      */
     val tradingDayPnl: Boolean = false,
+    /**
+     * The broker keeps a pending entry's stop loss and take profit at the same distance from it when its price changes:
+     * moving the entry moves them too. Elsewhere they stay at the prices they had.
+     */
+    val bracketsFollowEntry: Boolean = false,
 )
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)

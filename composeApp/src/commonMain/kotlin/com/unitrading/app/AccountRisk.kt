@@ -12,6 +12,10 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Clock
 
@@ -41,18 +45,47 @@ internal data class RiskLimits(
 @Serializable
 internal data class RiskTrigger(val day: LocalDate, val pnl: Long, val flattenStatus: FlattenStatus? = null)
 
+/** The sentences the contributed build saved as a flatten's state, before states were saved by name. */
+private val flattenSentences = mapOf(
+    "等待执行撤单和平仓" to FlattenStatus.WAITING,
+    "平仓结果待核对，请检查券商持仓和挂单" to FlattenStatus.IN_PROGRESS,
+    "未确认全部撤单和平仓，请检查券商持仓和挂单" to FlattenStatus.FAILED,
+    "券商已确认无持仓、无挂单" to FlattenStatus.FLAT,
+    "锁定未能保存，请检查存储并手动核对持仓" to FlattenStatus.UNSAVED,
+)
+
+/**
+ * Reads a trigger the way the contributed build saved it too, so that its rule file still loads. That build kept the
+ * rule's `action` in the trigger, which is dropped, and the flatten's state as the sentence it showed, which is read as
+ * the state it named; a sentence it did not write reads as [FlattenStatus.FAILED], which sends nothing by itself.
+ * Anything else this build does not know still makes the file unreadable.
+ */
+private object SavedTrigger : JsonTransformingSerializer<RiskTrigger>(RiskTrigger.serializer()) {
+    override fun transformDeserialize(element: JsonElement): JsonElement {
+        if (element !is JsonObject) return element
+        val status = (element["flattenStatus"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?.takeIf { text -> FlattenStatus.entries.none { it.name == text } }
+            ?.let { (flattenSentences[it] ?: FlattenStatus.FAILED).name }
+        return JsonObject(element - "action" + listOfNotNull(status?.let { "flattenStatus" to JsonPrimitive(it) }))
+    }
+}
+
 @Serializable
 internal data class AccountRiskRule(
     val limits: RiskLimits? = null,
-    /** The first broker trading day on which frozen [limits] may change again; null when they are not frozen. */
+    /**
+     * The first broker trading day on which frozen [limits] may change again; null when they are not frozen. Cleared
+     * once a fresh broker day has reached it, so that the freeze stays over when the broker's snapshot goes stale.
+     */
     val frozenUntil: LocalDate? = null,
-    val trigger: RiskTrigger? = null,
+    @Serializable(with = SavedTrigger::class) val trigger: RiskTrigger? = null,
     val orderLimits: AccountOrderLimits = AccountOrderLimits(),
     val brackets: AccountBrackets = AccountBrackets(),
 ) {
     /**
      * Whether the P&L limits are frozen on the broker's [tradingDay]. A freeze follows the trading day the lock itself
-     * uses and never the device clock: without a fresh broker day (null) the rule stays frozen.
+     * uses and never the device clock: without a fresh broker day (null) the rule stays frozen until one has reached
+     * [frozenUntil].
      */
     fun frozen(tradingDay: LocalDate?): Boolean = frozenUntil != null && (tradingDay == null || tradingDay < frozenUntil)
 
@@ -80,9 +113,14 @@ internal data class AccountRiskRule(
         else brackets.prices(order, spec, currency, quote, lotRoom(snapshot, hedging, order), capacity)
 }
 
-/** The first trading day after a freeze taken on [tradingDay]: the next day, or the Monday after it for a week. */
-internal fun riskFreezeEnd(tradingDay: LocalDate, period: RiskFreeze): LocalDate =
-    tradingDay.plus(if (period == RiskFreeze.DAY) 1 else 7 - tradingDay.dayOfWeek.ordinal, DateTimeUnit.DAY)
+/**
+ * The first trading day after a freeze taken on [tradingDay]: the next weekday, so a Friday's ends on the Monday, or
+ * the Monday after it for a week.
+ */
+internal fun riskFreezeEnd(tradingDay: LocalDate, period: RiskFreeze): LocalDate {
+    val weekday = tradingDay.dayOfWeek.ordinal // Monday is 0
+    return tradingDay.plus(if (period == RiskFreeze.DAY && weekday < 4) 1 else 7 - weekday, DateTimeUnit.DAY)
+}
 
 /** A positive amount typed with at most two decimals, in micros; null for anything else. */
 internal fun riskAmount(text: String): Long? = parseFixed(text, 2)?.takeIf { it in 1..99_999_999_999L }?.times(10_000)
@@ -176,8 +214,11 @@ internal class AccountRiskController(
     fun frozen(broker: BrokerPlugin, accountId: String): Boolean = broker.capabilities.tradingDayPnl &&
         rule(broker, accountId).let { it.frozenUntil != null && it.frozen(freshDay(broker, accountId)) }
 
-    suspend fun configure(broker: BrokerPlugin, id: String, limits: RiskLimits?, freeze: RiskFreeze? = null): String? =
-        storageMutex.withLock {
+    suspend fun configure(broker: BrokerPlugin, id: String, limits: RiskLimits?, freeze: RiskFreeze? = null): String? {
+        // A freeze needs the broker's trading day, and an account without a rule yet may have no fresh snapshot of it:
+        // ask once, as the monitor does, before saying there is none. Not under the storage lock every command waits for.
+        if (freeze != null && broker.capabilities.tradingDayPnl && freshDay(broker, id) == null) refreshPnl(broker, id)
+        return storageMutex.withLock {
             val previous = rule(broker, id)
             val supported = broker.capabilities.tradingDayPnl
             val day = if (supported) freshDay(broker, id) else null
@@ -195,6 +236,19 @@ internal class AccountRiskController(
                 else -> null
             }
         }
+    }
+
+    /** Asks the broker for an account's day P&L now, waiting at most 12 seconds; a failure leaves the snapshot as it was. */
+    private suspend fun refreshPnl(broker: BrokerPlugin, accountId: String) {
+        if (!broker.market.value.let { it.connected && it.tradingReady }) return
+        try {
+            withTimeoutOrNull(12_000) { broker.refreshDailyPnl(accountId) }
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (_: Exception) {
+            // No fresh snapshot then, which the caller reads as such.
+        }
+    }
 
     suspend fun configureOrders(broker: BrokerPlugin, id: String, limits: AccountOrderLimits): String? =
         commands(broker, id).withLock {
@@ -318,8 +372,25 @@ internal class AccountRiskController(
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
                 // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
                 paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect, LotCapUnit.of(broker.instruments))
-                    // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the amounts.
-                    ?: order.takeIf { it.role == OrderRole.ENTRY }?.let { amounts(it.request, changed.copy(entryPrice = action.price)) }
+                    ?: when (order.role) {
+                        // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the
+                        // amounts. They stay at their prices, unless the broker keeps them at their distance from the entry.
+                        OrderRole.ENTRY -> {
+                            val shift = if (!broker.capabilities.bracketsFollowEntry) 0L else action.price - (order.request.entryPrice ?: action.price)
+                            amounts(order.request, changed.copy(entryPrice = action.price,
+                                stopLoss = changed.stopLoss?.plus(shift), takeProfit = changed.takeProfit?.plus(shift)))
+                        }
+                        // A stop or a target changed on its own is held to them like the protection of the position: from
+                        // its entry price, for the lots of the leg. Cancelling one is never refused.
+                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> snapshot.positions
+                            .firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                                val stop = order.role == OrderRole.STOP_LOSS
+                                fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, lots, held.entryPrice,
+                                    stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
+                                amounts(leg(order.request.entryPrice, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                            }
+                        OrderRole.UNRESOLVED -> null
+                    }
             }
             is RiskCheck.PositionStop -> snapshot.positions.firstOrNull { it.id == action.positionId }.let { position ->
                 paused(position != null && !stopLoosened(position.side, position.stopLoss, action.stopLoss)) ?: position?.let {
@@ -342,10 +413,14 @@ internal class AccountRiskController(
      */
     private suspend fun evaluate(broker: BrokerPlugin, session: AccountSession): String? = storageMutex.withLock {
         val id = session.account.id
+        val fresh = freshPnl(broker, session)
+        // A freeze is over once a fresh broker day reaches its end. That is saved at once: a snapshot that goes stale
+        // later counts as frozen again, and would bring back a freeze that ended long ago.
+        rule(broker, id).let { if (it.frozenUntil != null && fresh != null && fresh.first >= it.frozenUntil) persist(broker, id, it.copy(frozenUntil = null)) }
         restriction(broker, session)?.let { return@withLock it }
         val previous = pnlRule(broker, id) ?: return@withLock null
         val limits = previous.limits
-        val (day, pnl) = freshPnl(broker, session) ?: return@withLock "等待券商当日盈亏数据。"
+        val (day, pnl) = fresh ?: return@withLock "等待券商当日盈亏数据。"
         val lossReached = limits?.loss?.let { pnl <= -it } == true
         val profitReached = limits?.profit?.let { pnl >= it } == true
         if (limits == null || (!lossReached && !profitReached)) {
@@ -494,7 +569,7 @@ internal class AccountRiskController(
                             if (due && pnlRule(broker, child.id) != null
                                 && broker.market.value.let { it.connected && it.tradingReady }) {
                                 lastRefresh[key] = time
-                                withTimeoutOrNull(12_000) { broker.refreshDailyPnl(child.id) }
+                                refreshPnl(broker, child.id)
                                 checkAccount()
                             }
                         } catch (cancel: CancellationException) {
@@ -537,9 +612,10 @@ internal class AccountRiskController(
     }
 
     /**
-     * Cancels what could open or add, closes every position, and only then cancels the orders that were reducing
-     * them. A stop the user placed after the entry therefore keeps working until its position is confirmed closed,
-     * and it is still there when a close fails. Nothing with an unknown outcome is sent again.
+     * Cancels what could open, add or reverse, closes every position, and only then cancels the orders that were
+     * reducing them: this app leaves a stop the user placed after the entry working until its position is confirmed
+     * closed. The broker may not. Tradovate's close request cancels the contract's working orders itself, so after a
+     * close that failed there the stop may be gone at the broker. Nothing with an unknown outcome is sent again.
      */
     private suspend fun flatten(
         broker: BrokerPlugin, raw: AccountSession, authorized: () -> Boolean = { true },
@@ -557,7 +633,10 @@ internal class AccountRiskController(
             // A refused cancel is no failure once the order has gone: it filled, or the broker cancelled it with its position.
             return withTimeoutOrNull(12_000) { raw.state.first { s -> s.orders.none { it.id == orderId } } } != null
         }
-        /** Orders that reduce no position now: entries, and whatever a closed position left behind. Entries go before the legs tied to them. */
+        /**
+         * Orders that reduce no position now: entries, what is more than a position can take (see [reducesPosition]),
+         * and whatever a closed position left behind. Entries go before the legs tied to them.
+         */
         suspend fun cancelOpening(): Boolean {
             while (true) {
                 val state = raw.state.value

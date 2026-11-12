@@ -365,6 +365,27 @@ class RithmicBrokerTest {
         assertEquals(41, server.requests(Rt.REQUEST_UPDATE_TARGET_LEVEL).single().int(Rf.TARGET_TICKS))
     }
 
+    /** The app's risk check moves a pending entry's stop and target with it on this broker, which is what the broker does. */
+    @Test fun aRepricedEntryTakesItsBracketAlongByItsTicks() = runTest {
+        val server = FakeRithmicServer().apply {
+            openOrders += limitEntry("E2", RithmicEnums.BUY, 1, 5490.0)
+            bracketStops["E2"] = 20L to 1L
+            bracketTargets["E2"] = 40L to 1L
+        }
+        val broker = ready(server)
+        assertTrue(broker.capabilities.bracketsFollowEntry)
+        val session = broker.openSession("ACC1")
+        val modify = session.modifyOrder("req-9", "E2", session.state.value.orders.single().version, 549100)
+        assertTrue(modify.accepted, modify.message)
+        assertEquals(5491.0, server.requests(Rt.REQUEST_MODIFY_ORDER).single().double(Rf.PRICE))
+        server.notifyOrder("E2", "modified") { double(Rf.PRICE, 5491.0) }
+        runCurrent()
+        val moved = session.state.value.orders.single().request
+        assertEquals(549100, moved.entryPrice)
+        assertEquals(548600, moved.stopLoss, "still 20 ticks under it")
+        assertEquals(550100, moved.takeProfit, "still 40 ticks over it")
+    }
+
     /** Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract found by product code stands in. */
     @Test fun continuousSymbolFallsBackToTheNearestExpiryWhenTheServerHasNoFrontMonth() = runTest {
         val server = FakeRithmicServer().apply { frontMonthNoData = true }

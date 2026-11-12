@@ -37,10 +37,12 @@ internal class RiskFixture(
     tradingDayPnl: Boolean = true,
     login: String = source.descriptor.id,
     children: List<AccountInfo>? = null,
+    /** As Rithmic: a pending entry's stop and target keep their distance from it when it moves. */
+    bracketsFollowEntry: Boolean = false,
 ) : BrokerPlugin by source {
     private val first = source.openSession(source.accounts.single().id)
     override val descriptor = source.descriptor.copy(id = login)
-    override val capabilities = source.capabilities.copy(hedging = hedging, tradingDayPnl = tradingDayPnl)
+    override val capabilities = source.capabilities.copy(hedging = hedging, tradingDayPnl = tradingDayPnl, bracketsFollowEntry = bracketsFollowEntry)
     override val accounts = children ?: listOf(first.account, AccountInfo("200", "Other child"))
     override val catalog = MutableStateFlow(BrokerCatalog(source.instruments, accounts))
     val request = OrderRequest(source.spec.symbol, Side.BUY, OrderKind.MARKET, 100)
@@ -254,13 +256,13 @@ class AccountRiskTest {
         assertNull(controller(store).configureOrders(broker, "100", AccountOrderLimits(500, setOf("MES", "CLZ6"))))
         val risk = controller(store)
         val session = risk.guard(broker, broker.openSession("100"))
-        // Long 3 with 1 more still to fill: 4 at worst. The bracket stop the broker paired with the position stays out.
+        // Long 3 with 1 more still to fill: 4 at worst. The bracket stop the broker paired with the position can only close it.
         broker.hold("100", listOf(riskPosition(Side.BUY, 300)), listOf(
             riskOrder("entry", Side.BUY, OrderKind.LIMIT, 200, 549_000, filled = 100),
             riskOrder("bracket", Side.SELL, OrderKind.STOP, 300, 548_000, OrderRole.STOP_LOSS)))
         assertTrue(session.placeOrder("equal", broker.request).accepted)
         val cap = session.placeOrder("cap", broker.request.copy(lotsHundredths = 101))
-        assertEquals(TradeResult(false, "超过子账户最大持仓 5 张（含持仓和未成交开仓挂单）。"), cap)
+        assertEquals(TradeResult(false, "超过子账户最大持仓 5 张（按持仓和全部挂单成交后的最大持仓计）。"), cap)
         assertTrue(session.placeOrder("otherMonth", broker.request.copy(symbol = "CLH7")).accepted, "another symbol adds to the same total")
         assertFalse(session.placeOrder("otherMonthCap", broker.request.copy(symbol = "CLH7", lotsHundredths = 101)).accepted)
         // A stop, a target and a partial close add nothing, and neither does moving or shrinking an order.
@@ -285,6 +287,12 @@ class AccountRiskTest {
         assertTrue(session.placeOrder("over-scale-out", sell).accepted)
         assertTrue(session.modifyOrder("over-move", "stop", 1, 549_000).accepted)
         assertFalse(session.placeOrder("over-add", broker.request).accepted)
+        // Over the cap only exits pass. Selling 6 against the long of 3 leaves the total where it is, at short 3.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 300)))
+        val over = TradeResult(false, "超过子账户最大持仓 1 张（按持仓和全部挂单成交后的最大持仓计）。")
+        assertEquals(over, session.placeOrder("over-reverse", sell.copy(lotsHundredths = 600)))
+        assertTrue(session.placeOrder("over-scale-out-again", sell).accepted)
+        assertTrue(session.placeOrder("over-stop", exitStop.copy(lotsHundredths = 300)).accepted)
     }
 
     @Test fun aBlockedSymbolStillTakesExitsForThePositionHeldThere() = runTest {
@@ -335,7 +343,7 @@ class AccountRiskTest {
         assertTrue(session.changeOrder("move", "leg", 1, 547_000, 100).accepted)
         assertTrue(session.changeOrder("whole-position", "leg", 1, 548_000, 200).accepted)
         // Six lots against a long of two would leave the account short four, twice the cap.
-        assertEquals("超过子账户最大持仓 2 张（含持仓和未成交开仓挂单）。", session.changeOrder("beyond", "leg", 1, 548_000, 600).message)
+        assertEquals("超过子账户最大持仓 2 张（按持仓和全部挂单成交后的最大持仓计）。", session.changeOrder("beyond", "leg", 1, 548_000, 600).message)
         assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(blockedSymbols = setOf("TEST"))))
         assertTrue(session.changeOrder("blocked-move", "leg", 1, 549_000, 100).accepted)
         assertEquals("该子账户禁止交易品种 TEST。", session.changeOrder("blocked-beyond", "leg", 1, 548_000, 300).message)
@@ -346,6 +354,28 @@ class AccountRiskTest {
         assertTrue(session.changeOrder("locked-whole", "leg", 1, 548_000, 200).accepted)
         assertEquals(listOf("change:leg:548000:600", "change:leg:547000:100", "change:leg:548000:200", "change:leg:549000:100",
             "change:leg:548000:200"), broker.events)
+    }
+
+    @Test fun twoBracketLegsRaisedOneAfterTheOtherAreCountedTogether() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(200)))
+        // Long 2 from two brackets of 1 that the broker could not pair with the position, so each leg is changed on its own.
+        fun legs(a: Long) = listOf(riskOrder("A", Side.SELL, OrderKind.STOP, a, 548_000, OrderRole.STOP_LOSS),
+            riskOrder("B", Side.SELL, OrderKind.STOP, 100, 547_975, OrderRole.STOP_LOSS),
+            riskOrder("TA", Side.SELL, OrderKind.LIMIT, 100, 552_000, OrderRole.TAKE_PROFIT),
+            riskOrder("TB", Side.SELL, OrderKind.LIMIT, 100, 552_025, OrderRole.TAKE_PROFIT))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200)), legs(100))
+        assertTrue(session.placeOrder("scale-out", sell).accepted, "a partial close beside the brackets")
+        // With A at 3, all the stops filling leave short 2: within the cap.
+        assertTrue(session.changeOrder("A", "A", 1, 548_000, 300).accepted)
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200)), legs(300))
+        // B at 3 as well would leave short 4, and so would one more sell beside them.
+        val over = "超过子账户最大持仓 2 张（按持仓和全部挂单成交后的最大持仓计）。"
+        assertEquals(over, session.changeOrder("B", "B", 1, 547_975, 300).message)
+        assertEquals(over, session.placeOrder("scale-out-after", sell).message)
+        assertEquals(listOf("place:100", "change:A:548000:300"), broker.events)
     }
 
     @Test fun anOrderThatOnlyReducesThePositionGoesWithoutBracketsAndAnEntryGetsThem() = runTest {
@@ -506,6 +536,50 @@ class AccountRiskTest {
             "change:entry:549000:100", "protect:held:548500:552000", "modify:own-stop:546000", "protect-order:sized:548000:549025"), broker.events)
     }
 
+    @Test fun aStopOrTargetChangedOnItsOwnIsHeldToTheAmountsLikeThePositions() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+        // Long 2 at 5499.50 from two brackets of 1 that the broker could not pair with the position: the legs of the one
+        // entered at 5500 are changed on their own. From the position's price its stop loses 97.50 and its target makes 202.50.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200).copy(entryPrice = 549_950)), listOf(
+            riskOrder("A", Side.SELL, OrderKind.STOP, 100, 548_000, OrderRole.STOP_LOSS),
+            riskOrder("TA", Side.SELL, OrderKind.LIMIT, 100, 554_000, OrderRole.TAKE_PROFIT)))
+        val loss = TradeResult(false, "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量")
+        val profit = TradeResult(false, "修改后的预估利润低于子账户设置；止盈只能设得更远")
+        // Dragged to 5440 the stop would lose 297.50; one tick further loses 98.75, still within the amount.
+        assertEquals(loss, session.changeOrder("loosen", "A", 1, 544_000, 100))
+        assertTrue(session.changeOrder("tick", "A", 1, 547_975, 100).accepted)
+        assertTrue(session.modifyOrder("tighten", "A", 1, 549_000).accepted)
+        assertEquals(loss, session.changeOrder("more", "A", 1, 548_000, 200), "two contracts on the same stop")
+        // The target may come a tick nearer and still make the amount, and no nearer than that.
+        assertTrue(session.changeOrder("nearer", "TA", 1, 553_975, 100).accepted)
+        assertEquals(profit, session.changeOrder("too-near", "TA", 1, 553_925, 100))
+        // Taking a leg away is a cancel, which no rule stops.
+        assertTrue(session.cancelOrder("cancel", "A").accepted)
+        assertEquals(listOf("change:A:547975:100", "modify:A:549000", "change:TA:553975:100", "cancel:A"), broker.events)
+    }
+
+    @Test fun whereTheBrokerMovesTheBracketWithItsEntryAMovedEntryKeepsItsAmounts() = runTest {
+        // A buy limit at 5490 whose stop 80 ticks under it loses 100 and whose target 160 above makes 200, to the cent.
+        val entry = riskOrder("entry", Side.BUY, OrderKind.LIMIT, 100, 549_000, stop = 547_000, target = 553_000)
+        val loss = TradeResult(false, "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量")
+        for (follows in listOf(false, true)) {
+            val broker = RiskFixture(bracketsFollowEntry = follows)
+            val risk = controller()
+            val session = risk.guard(broker, broker.openSession("100"))
+            assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
+            broker.hold("100", orders = listOf(entry))
+            // Tradovate moves the entry alone, so its stop is a tick further away; Rithmic takes both along by their ticks.
+            val up = session.modifyOrder("up", "entry", 1, 549_025)
+            if (follows) assertTrue(up.accepted, up.message) else assertEquals(loss, up)
+            assertTrue(session.modifyOrder("down", "entry", 1, 548_975).accepted)
+            // More contracts lose more at the same distance, wherever the bracket goes.
+            assertEquals(loss, session.changeOrder("more", "entry", 1, 549_025, 200))
+        }
+    }
+
     @Test fun thePnlLockNeedsABrokerThatReportsItsTradingDay() = runTest {
         // As Rithmic and the local demo: day P&L at best, and no trading day with it.
         val broker = RiskFixture(tradingDayPnl = false)
@@ -552,9 +626,10 @@ class AccountRiskTest {
         assertTrue(restored.frozen(broker, "100"))
         assertNotNull(restored.configure(broker, "100", null))
         assertNotNull(restored.configure(broker, "100", RiskLimits(400_000_000)))
+        // A Friday's freeze for the day ends on the Monday: no trading day falls on the Saturday.
         broker.pnl("200", 0, "2026-11-13")
         assertNull(restored.configure(broker, "200", RiskLimits(400_000_000), RiskFreeze.DAY))
-        assertEquals(LocalDate.parse("2026-11-14"), restored.rule(broker, "200").frozenUntil)
+        assertEquals(LocalDate.parse("2026-11-16"), restored.rule(broker, "200").frozenUntil)
         // Setting the device clock past the end changes nothing: without a fresh broker day the rule stays frozen.
         clock.time = Instant.parse("2026-12-01T00:00:00Z")
         assertTrue(restored.frozen(broker, "100"))
@@ -569,9 +644,62 @@ class AccountRiskTest {
         assertFalse(restored.frozen(broker, "100"))
         assertNull(restored.configure(broker, "100", null))
         assertEquals(AccountRiskRule(), restored.rule(broker, "100"))
+        // A day's freeze ends on the next weekday, a week's on the Monday after.
+        fun end(day: String, period: RiskFreeze) = riskFreezeEnd(LocalDate.parse(day), period).toString()
+        assertEquals(listOf("2026-11-17", "2026-11-20", "2026-11-23", "2026-11-23", "2026-11-23"),
+            listOf("2026-11-16", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22").map { end(it, RiskFreeze.DAY) })
+        assertEquals(listOf("2026-11-23", "2026-11-23", "2026-11-23"),
+            listOf("2026-11-16", "2026-11-20", "2026-11-22").map { end(it, RiskFreeze.WEEK) })
         assertEquals(200_500_000L, riskAmount("200.50"))
         assertEquals(999_999_999_990_000L, riskAmount("999999999.99"))
         for (text in listOf("0", "0.00", "-5", "100.001", "1000000000", "1.", "abc", "")) assertNull(riskAmount(text), text)
+    }
+
+    @Test fun aFreezeAsksTheBrokerOnceForTheTradingDayWhenTheLastSnapshotIsOld() = runTest {
+        val broker = RiskFixture()
+        val risk = controller(clock = broker.clock)
+        val limits = RiskLimits(200_000_000)
+        // No rule yet, so nothing has fetched this account's P&L lately: its last snapshot is three minutes old.
+        broker.pnl("100", 0, "2026-11-13")
+        broker.clock.time += 3.minutes
+        val asked = mutableListOf<String>()
+        broker.onRefresh = { asked += it }
+        assertEquals("等待券商交易日数据，暂不能冻结设置。", risk.configure(broker, "100", limits, RiskFreeze.DAY))
+        assertEquals(listOf("100"), asked, "asked once, and nothing new came")
+        assertNull(risk.rule(broker, "100").limits)
+        broker.onRefresh = { asked += it; broker.pnl(it, 0, "2026-11-13") }
+        assertNull(risk.configure(broker, "100", limits, RiskFreeze.DAY))
+        assertEquals(LocalDate.parse("2026-11-16"), risk.rule(broker, "100").frozenUntil)
+        // Saving without a freeze needs no trading day, and a fresh one needs no request.
+        assertNull(risk.configure(broker, "200", limits))
+        broker.pnl("200", 0, "2026-11-13")
+        assertNull(risk.configure(broker, "200", limits, RiskFreeze.WEEK))
+        assertEquals(listOf("100", "100"), asked)
+    }
+
+    @Test fun aFreezeThatHasEndedStaysEndedWhenTheSnapshotGoesStale() = runTest {
+        val broker = RiskFixture()
+        val store = MemorySnapshotStore()
+        val risk = controller(store, broker.clock)
+        for (id in listOf("100", "200")) {
+            broker.pnl(id, 0, "2026-11-11")
+            assertNull(risk.configure(broker, id, RiskLimits(200_000_000), RiskFreeze.DAY))
+        }
+        // The broker reaches the 12th: an order sees it on one child, the monitor on the other, and both save the end.
+        broker.pnl("100", 0, "2026-11-12")
+        assertTrue(risk.guard(broker, broker.openSession("100")).placeOrder("entry", broker.request).accepted)
+        assertNull(risk.rule(broker, "100").frozenUntil)
+        broker.pnl("200", 0, "2026-11-12")
+        val monitor = backgroundScope.launch { risk.monitor(BrokerRegistry(listOf(broker))) }
+        withTimeout(5_000) { risk.rules.first { risk.rule(broker, "200").frozenUntil == null } }
+        monitor.cancelAndJoin()
+        assertEquals(listOf(null, null), listOf("100", "200").map { controller(store, broker.clock).rule(broker, it).frozenUntil })
+        // Later the snapshot is stale for a while, as after every fill on Tradovate: the rule can still be changed and switched off.
+        broker.clock.time += 3.minutes
+        for (id in listOf("100", "200")) {
+            assertFalse(risk.frozen(broker, id))
+            assertNull(risk.configure(broker, id, null))
+        }
     }
 
     @Test fun unreadableRulesStopEntriesOnEveryAccountUntilTheyAreReset() = runTest {
@@ -610,6 +738,42 @@ class AccountRiskTest {
         assertEquals(500L, restarted.rule(broker, "200").orderLimits.maxLots)
         assertTrue(restarted.resetUnreadable(), "nothing to reset")
         assertEquals(500L, restarted.rule(broker, "200").orderLimits.maxLots)
+    }
+
+    @Test fun aRuleFileTheContributedBuildWroteStillLoads() = runTest {
+        val broker = RiskFixture()
+        val id = broker.descriptor.id
+        // The file as build 7a62e87 of the contribution wrote it with the default Json, which leaves defaults out: each
+        // trigger also held the rule's action, and the state of a flatten was the sentence the screen showed. The last
+        // sentence is one it never wrote.
+        val sentences = listOf("等待执行撤单和平仓", "平仓结果待核对，请检查券商持仓和挂单", "未确认全部撤单和平仓，请检查券商持仓和挂单",
+            "券商已确认无持仓、无挂单", "锁定未能保存，请检查存储并手动核对持仓", "以后的版本写的状态")
+        val flattening = sentences.mapIndexed { index, sentence -> """"${101 + index}":{"limits":{"loss":200000000,"action":"FLATTEN"},""" +
+            """"trigger":{"day":"2026-11-11","pnl":-205000000,"action":"FLATTEN","flattenStatus":"$sentence"}}""" }
+        val locked = """"100":{"limits":{"loss":200000000},"frozenUntil":"2026-11-12","trigger":{"day":"2026-11-11","pnl":-205000000,"action":"LOCK"},""" +
+            """"orderLimits":{"maxLots":500,"blockedSymbols":["MES"]},"brackets":{"loss":100000000}}"""
+        val store = MemorySnapshotStore().apply { write("account-risk-v1", """{"$id":{$locked,${flattening.joinToString(",")}}}""") }
+        val risk = controller(store, broker.clock)
+        assertFalse(risk.storageUnreadable.value)
+        val day = LocalDate.parse("2026-11-11")
+        assertEquals(AccountRiskRule(RiskLimits(200_000_000), LocalDate.parse("2026-11-12"), RiskTrigger(day, -205_000_000),
+            AccountOrderLimits(500, setOf("MES")), AccountBrackets(loss = 100_000_000)), risk.rule(broker, "100"))
+        assertEquals(listOf(FlattenStatus.WAITING, FlattenStatus.IN_PROGRESS, FlattenStatus.FAILED, FlattenStatus.FLAT, FlattenStatus.UNSAVED,
+            FlattenStatus.FAILED), (101..106).map { risk.rule(broker, "$it").trigger?.flattenStatus })
+        // The lock it saved still holds, and the next save writes this build's format.
+        broker.pnl("100", 0)
+        assertFalse(risk.guard(broker, broker.openSession("100")).placeOrder("entry", broker.request).accepted)
+        assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(400)))
+        val saved = store.read("account-risk-v1")!!
+        assertTrue(""""trigger":{"day":"2026-11-11","pnl":-205000000},"orderLimits":{"maxLots":400""" in saved, saved)
+        assertTrue(""""trigger":{"day":"2026-11-11","pnl":-205000000,"flattenStatus":"IN_PROGRESS"}""" in saved, saved)
+        assertEquals(risk.rules.value, controller(store, broker.clock).rules.value)
+        // What this build cannot read still stops entries: a trigger with anything else it does not know, a state that is
+        // not a word, a file of another shape, or no JSON at all.
+        for (text in listOf("""{"$id":{"100":{"trigger":{"day":"2026-11-11","pnl":-205000000,"action":"LOCK","fromANewerBuild":1}}}}""",
+            """{"$id":{"100":{"trigger":{"day":"2026-11-11","pnl":-205000000,"flattenStatus":3}}}}""", """{"$id":[1]}""", """{"$id":""")) {
+            assertTrue(controller(MemorySnapshotStore().apply { write("account-risk-v1", text) }).storageUnreadable.value, text)
+        }
     }
 
     @Test fun profitableFlattenCancelsEntriesBeforeClosingAndDoesNotResendOnRestart() = runTest {
@@ -687,6 +851,25 @@ class AccountRiskTest {
         // Each stop goes as soon as its own position is confirmed closed, and not before.
         assertEquals(listOf("close:held", "cancel:stop", "close:sold", "cancel:cover"), broker.events)
         assertEquals(AccountSnapshot("100", 25_000_000_000L), broker.snapshots.getValue("100").value)
+    }
+
+    @Test fun flattenCancelsWhatCouldReverseAPositionBeforeTheClose() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val target = listOf(FlattenTarget(broker, broker.accounts.first()))
+        // Long 1 with a target, a stop and a sell limit of 3, all placed by hand; long 2 elsewhere with the broker's bracket.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100), riskPosition(Side.BUY, 200, "bracketed", "OTHRZ6")), listOf(
+            riskOrder("target", Side.SELL, OrderKind.LIMIT, 100, 552_000),
+            riskOrder("stop", Side.SELL, OrderKind.STOP, 100, 548_000),
+            riskOrder("reverse", Side.SELL, OrderKind.LIMIT, 300, 553_000),
+            riskOrder("sl", Side.SELL, OrderKind.STOP, 200, 548_000, OrderRole.STOP_LOSS, symbol = "OTHRZ6"),
+            riskOrder("tp", Side.SELL, OrderKind.LIMIT, 200, 552_000, OrderRole.TAKE_PROFIT, symbol = "OTHRZ6")))
+        broker.onClose = { TradeResult(false, "market closed") }
+        assertFalse(risk.flattenAccounts(BrokerRegistry(listOf(broker)), target).single().confirmed)
+        // The stop comes first and takes the whole long of 1: the target and the sell of 3 beside it could leave the
+        // account short, so they go before the close. The bracket's stop and target are one pair for the long of 2.
+        assertEquals(listOf("cancel:target", "cancel:reverse", "close:held"), broker.events)
+        assertEquals(listOf("stop", "sl", "tp"), broker.orderIds("100"), "what a failed close leaves can only take each position to flat")
     }
 
     @Test fun anExitThatFillsWhileItsPositionClosesIsClosedInAnotherPass() = runTest {

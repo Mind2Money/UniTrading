@@ -48,6 +48,8 @@ class AccountRiskUiTest {
             assertTrue(confirm.fetchSemanticsNode().boundsInRoot.left > cancel.fetchSemanticsNode().boundsInRoot.left)
             confirm.assertTextEquals("平仓")
             cancel.assertTextEquals("取消")
+            // The app keeps the exits until a close is confirmed, which Tradovate's own close request does not.
+            onNodeWithText("止损、止盈等减仓单由应用保留到平仓确认后再撤。Tradovate 的平仓请求本身也会撤掉该合约的挂单", substring = true).assertExists()
             cancel.performClick()
             runOnIdle { assertTrue(cancellations == 1 && confirmations == 0) }
             confirm.performClick()
@@ -243,6 +245,16 @@ class AccountRiskUiTest {
         onNodeWithText("持仓、未成交开仓挂单和新单合计，多空不抵扣。", substring = true).assertExists()
         onNodeWithText("限制只在本应用生效，仍可手动撤单和平仓。").assertExists()
         onAllNodesWithText("减仓单", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun theAutomaticFlattenSaysTradovatesCloseCancelsTheStopItself() = runDesktopComposeUiTest(width = 450, height = 850) {
+        val broker = RiskFixture()
+        val risk = AccountRiskController(MemorySnapshotStore())
+        setContent { TradingTheme { AccountRiskSettings(risk, broker, broker.accounts.first(), busy = false) } }
+        onNodeWithTag("edit-account-risk").performClick()
+        onNodeWithTag("risk-action-flatten").performClick()
+        onNodeWithText("止损等减仓单由应用保留到平仓确认后再撤。Tradovate 的平仓请求本身也会撤掉该合约的挂单，平仓失败后请到券商核对止损。",
+            substring = true).assertExists()
     }
 
     @Test fun theCapIsTypedInWholeContractsWhereEveryInstrumentTradesThem() = runDesktopComposeUiTest(width = 450, height = 850) {

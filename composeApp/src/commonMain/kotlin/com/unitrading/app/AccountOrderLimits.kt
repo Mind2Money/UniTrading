@@ -48,9 +48,10 @@ internal data class AccountOrderLimits(
 
     /**
      * Why [request], a new order or a working one as an edit leaves it, is not allowed; null when it is. [effect] is
-     * what the action does to the account's exposure. Both limits only stop what adds exposure: an exit passes in a
-     * blocked symbol, and the cap refuses nothing that leaves the total where it was or lower, so a stop, a target or
-     * a partial close also goes through on an account that is already over a lowered cap. [unit] only words the cap.
+     * what the action does to the account's exposure. Both limits let an exit through: in a blocked symbol, and on an
+     * account whose total would be over the cap, where nothing else passes. So a stop, a target or a partial close also
+     * goes through on an account that is already over a lowered cap, while an order that would reverse the position
+     * does not, even when it leaves the total where it was. An exit never raises the total. [unit] only words the cap.
      */
     fun refusal(request: OrderRequest, effect: ExposureEffect, unit: LotCapUnit = LotCapUnit.LOTS): String? {
         val codes = listOfNotNull(request.symbol, request.sourceSymbol).map { it.uppercase() }
@@ -64,8 +65,8 @@ internal data class AccountOrderLimits(
         if (blocked != null && !effect.neutral) return "该子账户禁止交易品种 $blocked。"
         val limit = maxLots ?: return null
         if (request.lotsHundredths <= 0) return "手数必须大于零。"
-        return if (effect.after > limit && effect.after > effect.before) {
-            "超过子账户最大持仓 ${unit.format(limit)} ${unit.label}（含持仓和未成交开仓挂单）。"
+        return if (effect.after > limit && (effect.after > effect.before || !effect.neutral)) {
+            "超过子账户最大持仓 ${unit.format(limit)} ${unit.label}（按持仓和全部挂单成交后的最大持仓计）。"
         } else null
     }
 }

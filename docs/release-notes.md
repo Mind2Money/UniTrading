@@ -12,15 +12,16 @@
 
 🛡️ **子账户风控**
 ✅ 「设置 → 子账户风控」新增三项按子账户保存的规则：交易锁定、手数与品种限制、订单风控。平仓、撤单、收紧止损和挂减仓单不受这些规则限制（两个平仓按钮执行期间除外）；减仓单指与持仓方向相反、不超过持仓数量，并且不会让该品种挂单全部成交后可能出现的最大持仓变大的单
-✅ 交易锁定：券商当日总盈亏达到亏损上限或盈利目标后，这个子账户暂停开仓、加仓和放宽止损，直到券商报告下一个交易日；盈亏回落、切换账户、重启或停用规则都不会提前解锁。选“平仓并锁定”时，触发后自动撤销开仓挂单并平掉全部持仓，止损止盈单留到平仓确认后再撤
-✅ 交易锁定规则可以冻结到下一交易日或下周一，冻结期间不能修改或停用；冻结按券商交易日计算，改本机时间不会解冻
-✅ 手数与品种限制：最大持仓把每个品种挂单全部成交后可能出现的最大持仓相加，期货按整数张，止损、止盈等减仓单不占额度；禁止交易的品种可以写根代码（MES 包括 @MES 和各月份合约）或具体月份
-✅ 订单风控：新开仓单按设置的金额自动带上止损止盈；或者按单笔风险金额和止损价计算数量，另设单笔最大数量，在图表上拖动草稿止损线时实时显示算出的数量。图表右键和键盘下单同样适用，减仓单不受影响
-✅ 账户页“交易”页签新增“平仓此子账户”和“平仓全部子账户”：先撤开仓挂单，平仓确认后再撤止损止盈。“全部”包括本应用所有登录下的子账户，Live 也在内；只读和未连接的子账户列出但跳过。开启“跳过交易确认”时也要确认
+✅ 交易锁定：券商当日总盈亏达到亏损上限或盈利目标后，这个子账户暂停开仓、加仓和放宽止损，直到券商报告下一个交易日；盈亏回落、切换账户、重启或停用规则都不会提前解锁。选“平仓并锁定”时，触发后先撤会开仓、加仓或反手的挂单，再平掉全部持仓，止损止盈单由应用留到平仓确认后再撤
+✅ 交易锁定规则可以冻结到下一交易日（周五冻结到下周一）或下周一，冻结期间不能修改或停用；冻结按券商交易日计算，改本机时间不会解冻，结束后券商数据暂时过时也不会重新冻结；冻结时券商快照已过时，应用先重取一次交易日
+✅ 手数与品种限制：最大持仓把每个品种挂单全部成交后可能出现的最大持仓相加，期货按整数张，止损、止盈等减仓单不占额度，与券商配对的一组止损止盈只按较大的一边计；超过上限时只能减仓，不能反手；禁止交易的品种可以写根代码（MES 包括 @MES 和各月份合约）或具体月份
+✅ 订单风控：新开仓单按设置的金额自动带上止损止盈；或者按单笔风险金额和止损价计算数量，另设单笔最大数量，在图表上拖动草稿止损线时实时显示算出的数量。图表右键和键盘下单同样适用，减仓单不受影响。改挂单和止损止盈时（包括单独修改的止损止盈腿）亏损和利润也不能越过设置的金额，Rithmic 挂单的止损止盈随入场价一起移动
+✅ 账户页“交易”页签新增“平仓此子账户”和“平仓全部子账户”：先撤会开仓、加仓或反手的挂单，平仓确认后再撤止损止盈。“全部”包括本应用所有登录下的子账户，Live 也在内；只读和未连接的子账户列出但跳过。开启“跳过交易确认”时也要确认
 ✅ 本机风控记录读不出时，所有子账户暂停开仓，设置里出现“重置风控设置”，确认后清除这台设备上的全部风控规则
 ⚠️ 交易锁定需要券商报告交易日，目前只有 Tradovate 能用，Rithmic 和本地模拟上不可用。Tradovate 上每个设了交易锁定的子账户约每 20 秒多一次资金快照请求，和下单指令排在同一个请求队列里
 ⚠️ 规则只在这台设备上的 UniTrading 里生效，券商网站、其他终端和其他设备不受限制；应用退出、被系统挂起或断线时不检查盈亏，也不会自动平仓
 ⚠️ 开启金额止损止盈后，Tradovate 和 Rithmic 上已有持仓的合约不能再加仓：应用不在已有净仓上叠加括号单
+⚠️ Tradovate 的平仓请求本身会撤掉该合约的全部挂单：自动平仓或平仓按钮没有完成时，止损可能已被券商撤掉，请到券商核对
 ⚠️ 以上功能只经过离线测试，没有在真实 Tradovate 或 Rithmic 账户上运行；Android 只做了编译检查
 
 📱 **手机下单界面**
@@ -57,15 +58,16 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 
 🛡️ **Sub-account risk controls**
 ✅ Settings → Sub-account risk has three rules, kept per trading account: trading lock, lot and symbol limits, and order risk. Closing, cancelling, tightening a stop and placing an order that only reduces a position are not blocked, except while a flatten button is running; such an order is on the opposite side, no larger than the position, and does not raise the largest position the symbol's orders could leave if they all filled
-✅ Trading lock: once the broker's day P&L reaches the loss limit or the profit target, the account cannot open, add or loosen a stop until the broker reports the next trading day; a P&L that comes back, switching accounts, restarting or turning the rule off does not end it early. With "flatten and lock" a trigger also cancels the opening orders and closes every position, keeping stops and targets until the close is confirmed
-✅ The trading lock rule can be frozen until the next trading day or the next Monday, and cannot be changed or turned off meanwhile; the freeze follows the broker's trading day, so changing the device clock does not end it
-✅ Lot and symbol limits: the cap adds up, per symbol, the largest position the working orders could leave if they all filled, in whole contracts for futures, so stops, targets and other reducing orders take none of it; a blocked symbol is a root (MES covers @MES and every MES month) or a single month
-✅ Order risk: new opening orders get a stop and target from cash amounts; or the quantity comes from a risk amount and the stop price, with a maximum per order, and dragging the draft stop on the chart shows the quantity as you go. Orders from the chart's context menu and the trading keys follow the same rule; orders that reduce a position are left as they are
-✅ The Trading tab of the account page has "flatten this account" and "flatten all accounts": opening orders are cancelled first, stops and targets once the close is confirmed. "All" covers the accounts of every login in the app, Live included; view-only accounts and those of logins that are not connected are listed and skipped. Both ask for confirmation even with confirmations turned off
+✅ Trading lock: once the broker's day P&L reaches the loss limit or the profit target, the account cannot open, add or loosen a stop until the broker reports the next trading day; a P&L that comes back, switching accounts, restarting or turning the rule off does not end it early. With "flatten and lock" a trigger also cancels the orders that could open, add or reverse and closes every position; the app keeps stops and targets until the close is confirmed
+✅ The trading lock rule can be frozen until the next trading day (a Friday's until Monday) or the next Monday, and cannot be changed or turned off meanwhile; the freeze follows the broker's trading day, so changing the device clock does not end it, and once it has ended a broker snapshot that goes stale does not bring it back; when the broker's snapshot is old, freezing fetches the trading day once
+✅ Lot and symbol limits: the cap adds up, per symbol, the largest position the working orders could leave if they all filled, in whole contracts for futures, so stops, targets and other reducing orders take none of it, and a stop and target the broker pairs count once, by the larger side; over the cap only orders that reduce a position pass, never a reversal; a blocked symbol is a root (MES covers @MES and every MES month) or a single month
+✅ Order risk: new opening orders get a stop and target from cash amounts; or the quantity comes from a risk amount and the stop price, with a maximum per order, and dragging the draft stop on the chart shows the quantity as you go. Orders from the chart's context menu and the trading keys follow the same rule; orders that reduce a position are left as they are. Changing an order or its stop and target, a stop or target leg changed on its own included, cannot go past the amounts either, and on Rithmic a pending entry's stop and target move with its price
+✅ The Trading tab of the account page has "flatten this account" and "flatten all accounts": orders that could open, add or reverse are cancelled first, stops and targets once the close is confirmed. "All" covers the accounts of every login in the app, Live included; view-only accounts and those of logins that are not connected are listed and skipped. Both ask for confirmation even with confirmations turned off
 ✅ When the risk rules saved on the device cannot be read, every account stops opening positions and Settings offers "reset risk settings", which clears all risk rules on this device once you confirm
 ⚠️ The trading lock needs the broker's trading day, which only Tradovate reports, so it is not available on Rithmic or the local demo. On Tradovate each account with a trading lock adds a cash snapshot request about every 20 seconds, in the same request queue as orders
 ⚠️ The rules apply to UniTrading on this device only: the broker's website, other platforms and other devices are not limited by them, and nothing is checked or flattened while the app is closed, suspended by the system or disconnected
 ⚠️ With cash brackets on, Tradovate and Rithmic accounts cannot add to a contract they already hold: the app does not put a new bracket on an existing net position
+⚠️ Tradovate's close request cancels the contract's working orders itself: when an automatic flatten or a flatten button does not finish, the stop may already be gone at the broker, so check there
 ⚠️ All of this was only checked in offline tests, never on a real Tradovate or Rithmic account; on Android it was only compiled
 
 📱 **Phone order page**

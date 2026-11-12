@@ -11,33 +11,68 @@ private fun Long.bounded() = coerceIn(0, LOT_BOUND)
 internal val PendingOrder.remainingLots: Long get() = (request.lotsHundredths - filledLotsHundredths).bounded()
 
 /**
- * One symbol of a net account, in hundredths of a lot: the signed position, and the working orders on each side that
- * are not broker-paired protection. [worst] is the largest position either side can leave when all of its orders
+ * The most lots [orders], all on one side, can fill, each with the lots [remaining] gives it: an ordinary order in full,
+ * and of the broker-paired protection the larger of all its stops and all its targets. A stop and the target of its
+ * bracket cancel each other, so at most one of the two fills.
+ */
+private fun fillable(orders: List<PendingOrder>, remaining: (PendingOrder) -> Long = { it.remainingLots }): Long {
+    var plain = 0L
+    var stops = 0L
+    var targets = 0L
+    for (order in orders) when (order.role) {
+        OrderRole.STOP_LOSS -> stops += remaining(order)
+        OrderRole.TAKE_PROFIT -> targets += remaining(order)
+        else -> plain += remaining(order)
+    }
+    return plain + maxOf(stops, targets)
+}
+
+/**
+ * One symbol of a net account, in hundredths of a lot: the signed position, and the most lots the working orders on
+ * each side can fill (see [fillable]). [worst] is the largest position either side can leave when all of its orders
  * fill, so it never falls below the position held.
  */
 internal data class SymbolExposure(val net: Long, val buys: Long, val sells: Long) {
     val worst: Long get() = maxOf(net + buys, sells - net)
     /** The lots an order on [side] can take off the position: none when it is on the position's own side, or there is none. */
     fun closable(side: Side): Long = (if (side == Side.BUY) -net else net).coerceAtLeast(0)
+    /** With a new order of [lots] on [side]: a new order is never broker-paired protection. */
     fun with(side: Side, lots: Long) = if (side == Side.BUY) copy(buys = buys + lots) else copy(sells = sells + lots)
 }
 
-/** [symbol] as [snapshot] has it, without [except]: the order an edit is about to replace. */
-internal fun symbolExposure(snapshot: AccountSnapshot, symbol: String, except: PendingOrder? = null): SymbolExposure {
+/** [symbol] as [snapshot] has it, each working order with the lots [remaining] gives it: an edit passes what it leaves. */
+internal fun symbolExposure(
+    snapshot: AccountSnapshot, symbol: String, remaining: (PendingOrder) -> Long = { it.remainingLots },
+): SymbolExposure {
     val net = snapshot.positions.filter { it.symbol == symbol }
         .sumOf { if (it.side == Side.BUY) it.lotsHundredths.bounded() else -it.lotsHundredths.bounded() }
-    val working = snapshot.orders.filter { it.request.symbol == symbol && !it.isProtection && it.id != except?.id }
-    return SymbolExposure(net, working.filter { it.request.side == Side.BUY }.sumOf { it.remainingLots },
-        working.filter { it.request.side == Side.SELL }.sumOf { it.remainingLots })
+    val working = snapshot.orders.filter { it.request.symbol == symbol }
+    fun side(side: Side) = fillable(working.filter { it.request.side == side }, remaining)
+    return SymbolExposure(net, side(Side.BUY), side(Side.SELL))
 }
 
 /**
- * Whether [order] can only reduce a position the account holds. On a net account that is an order against the net
- * position of its symbol, whoever placed it: a stop added after the entry is an ordinary order to the broker. On a
- * hedging account every order opens a position of its own, so only broker-paired protection reduces one.
+ * Whether [order] may keep working while a flatten closes the positions, because it can only take the position of its
+ * symbol towards flat. On a net account that is an order against the net position, whoever placed it (a stop added
+ * after the entry is an ordinary order to the broker), and only while it fits in what the orders before it leave of
+ * that position: stops come first, as what may still protect a position whose close fails, then the others in the order
+ * of [snapshot], with a broker-paired stop and target as one pair. An order beyond that could reverse the position.
+ * On a hedging account every order opens a position of its own, so only broker-paired protection reduces one.
  */
-internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order: PendingOrder): Boolean =
-    if (hedging) order.isProtection else symbolExposure(snapshot, order.request.symbol).closable(order.request.side) > 0
+internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order: PendingOrder): Boolean {
+    if (hedging) return order.isProtection
+    val (symbol, side) = order.request.let { it.symbol to it.side }
+    val held = symbolExposure(snapshot, symbol).closable(side)
+    if (held <= 0) return false
+    val kept = mutableListOf<PendingOrder>()
+    for (candidate in snapshot.orders.filter { it.request.symbol == symbol && it.request.side == side }
+        .sortedBy { it.request.kind != OrderKind.STOP }) {
+        val fits = fillable(kept + candidate) <= held
+        if (candidate.id == order.id) return fits
+        if (fits) kept += candidate
+    }
+    return false
+}
 
 /**
  * What an action does to an account's exposure, in hundredths of a lot.
@@ -59,8 +94,8 @@ internal fun newOrderExposure(snapshot: AccountSnapshot, hedging: Boolean, reque
 
 /**
  * The effect of leaving [order] working with [lotsHundredths] in total, its filled part included: a quantity edit, or
- * a price edit with the quantity it has. Broker-paired protection stays out of the sums until an edit makes it
- * bigger; from then on it counts like any other order, so what exceeds the position is an opening order.
+ * a price edit with the quantity it has. A broker-paired stop or target counts at its new size among the stops or the
+ * targets of its side, so a leg raised past the position opens what exceeds it, also when it is the second one raised.
  */
 internal fun editedOrderExposure(
     snapshot: AccountSnapshot, hedging: Boolean, order: PendingOrder, lotsHundredths: Long = order.request.lotsHundredths,
@@ -73,17 +108,17 @@ private fun exposureEffect(
     val now = lots.bounded()
     val old = replaced?.remainingLots ?: 0
     val raised = now > old
-    val protection = replaced?.isProtection == true
     if (hedging) {
+        val protection = replaced?.isProtection == true
         val gross = snapshot.positions.sumOf { it.lotsHundredths.bounded() } +
             snapshot.orders.filterNot { it.isProtection }.sumOf { it.remainingLots }
         return ExposureEffect(gross, gross + if (protection) (now - old).coerceAtLeast(0) else now - old, protection && !raised)
     }
     val others = (snapshot.positions.map { it.symbol } + snapshot.orders.map { it.request.symbol }).toSet().minus(symbol)
         .sumOf { symbolExposure(snapshot, it).worst }
-    val rest = symbolExposure(snapshot, symbol, replaced)
-    val before = if (replaced == null || protection) rest else rest.with(side, old)
-    val after = if (protection && !raised) rest else rest.with(side, now)
+    val before = symbolExposure(snapshot, symbol)
+    val after = if (replaced == null) before.with(side, now)
+        else symbolExposure(snapshot, symbol) { if (it.id == replaced.id) now else it.remainingLots }
     val closable = before.closable(side)
     // Only a new order or a raised quantity can open something; a smaller or merely moved exit stays an exit.
     val exit = if (replaced == null) now in 1..closable else closable > 0 && (!raised || now <= closable)
@@ -98,7 +133,10 @@ internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: 
     // Lots that only offset working orders on the other side leave the total where it was; every lot past them adds
     // one to it. An order far larger than any real one therefore shows where the total would start from.
     val probe = newOrderExposure(snapshot, hedging, request.copy(lotsHundredths = LOT_BOUND))
-    return maxOf(probe.before, cap) - (probe.after - LOT_BOUND)
+    val start = probe.after - LOT_BOUND
+    if (probe.before <= cap) return cap - start
+    // Over the cap only an exit passes: no more than the position, and no lot that would raise the total.
+    return if (hedging) 0 else minOf(symbolExposure(snapshot, request.symbol).closable(request.side), probe.before - start)
 }
 
 /**

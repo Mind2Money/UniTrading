@@ -129,7 +129,8 @@ internal fun FlattenConfirmation(review: FlattenReview, onCancel: () -> Unit, on
                 else {
                     Text("将处理以上 ${review.targets.size} 个子账户的全部持仓和未成交挂单，包括确认后在执行前进入券商快照的订单。",
                         style = type.bodySmall, color = muted)
-                    Text("先撤会开仓或加仓的挂单；止损、止盈等减仓单保留到平仓确认后再撤。", style = type.bodySmall, color = muted)
+                    Text("先撤会开仓、加仓或反手的挂单；止损、止盈等减仓单由应用保留到平仓确认后再撤。" +
+                        "Tradovate 的平仓请求本身也会撤掉该合约的挂单，平仓失败后请到券商核对止损。", style = type.bodySmall, color = muted)
                 }
                 // Nothing can be sent for these, so they are neither targets nor failures afterwards.
                 if (review.skipped.isNotEmpty()) Text("以下 ${review.skipped.size} 个子账户不处理：", style = type.bodySmall, color = muted)
