@@ -97,8 +97,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             return@TradingTheme
         }
         fun disconnectCurrent() {
-            registry.unregister(plugin.descriptor.id)
+            val id = plugin.descriptor.id
+            registry.unregister(id)
             selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "")
+            // The closed trades cached for the analytics page go with the login.
+            loginScope.launch { runtime.analyticsCache.clear(id) }
         }
         val catalog by key(plugin) { plugin.catalog.collectAsState() }
         if (catalog.accounts.isEmpty() || catalog.instruments.isEmpty()) {
@@ -125,7 +128,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             OutlinedButton({ showConnection = true }, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Tradovate") }
                             connectRithmic?.let { OutlinedButton(it, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Rithmic") } }
                             TextButton({ disconnectCurrent() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("断开连接") }
-                            SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
+                            SavedLoginControls(runtime) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
                         }
                     }
                 }
@@ -141,16 +144,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onDispose { runtime.livePnl.untrack(session) }
         }
         val account by key(session) { session.state.collectAsState() }
-        val analyticsTrades = if (localDemo) account.trades else {
+        // What this device cached of the account's closed trades; the local demo keeps its whole history itself.
+        val cachedTrades = if (localDemo) emptyList() else {
             val cached by runtime.analyticsCache.rows.collectAsState()
-            val cachedTrades = cached[plugin.descriptor.id]?.get(accountId).orEmpty()
+            // The only writer of the cache. A login that was just disconnected or forgotten is not written back.
             LaunchedEffect(session) {
-                session.state.map { it.trades }.distinctUntilChanged().collect {
-                    runtime.analyticsCache.update(plugin.descriptor.id, accountId, it)
+                session.state.map { it.trades }.distinctUntilChanged().collect { trades ->
+                    if (registry.plugins.any { it === plugin }) runtime.analyticsCache.update(plugin.descriptor.id, accountId, trades)
                 }
             }
-            remember(cachedTrades, account.trades) { mergeAnalyticsTrades(cachedTrades, account.trades) }
+            cached[plugin.descriptor.id]?.get(accountId).orEmpty()
         }
+        val analyticsTrades = remember(cachedTrades, account.trades) { mergeAnalyticsTrades(cachedTrades, account.trades) }
         val loginName = aliases.login(plugin.descriptor)
         val accountName = aliases.account(plugin.descriptor.id, session.account)
         val market by key(plugin) { plugin.market.collectAsState() }
@@ -1100,11 +1105,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
                             else -> key(plugin, accountId) {
-                                if (!localDemo) LaunchedEffect(session) {
-                                    runtime.analyticsCache.update(plugin.descriptor.id, accountId, session.state.value.trades)
-                                }
                                 AccountAnalyticsPage(session.account, analyticsTrades, Modifier.weight(1f).fillMaxWidth(),
-                                    name = accountName, cached = !localDemo)
+                                    name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs })
                             }
                         }
                     }
@@ -1266,7 +1268,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
-                                onForgotten = { selectBroker(""); scope.launch { runtime.analyticsCache.clear() } }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
                         }
                     }
@@ -1295,7 +1297,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
-                                onForgotten = { selectBroker(""); scope.launch { runtime.analyticsCache.clear() } }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
+                                onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
                         }
                     }

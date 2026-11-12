@@ -6,11 +6,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.unitrading.app.SavedTradovateAccounts
+import com.unitrading.app.TradingRuntime
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
+/**
+ * Retry and forget for the saved logins, on every page that offers them. Forgetting also deletes the closed trades
+ * cached for the analytics page, which are kept per login.
+ */
 @Composable
-internal fun SavedLoginControls(saved: SavedTradovateAccounts, grouped: Boolean = false, onForgotten: () -> Unit) {
+internal fun SavedLoginControls(runtime: TradingRuntime, grouped: Boolean = false, onForgotten: () -> Unit) {
+    val saved = runtime.savedLogins
     if (!saved.available) return
     val message by saved.message.collectAsState()
     val restoring by saved.restoring.collectAsState()
@@ -35,10 +42,16 @@ internal fun SavedLoginControls(saved: SavedTradovateAccounts, grouped: Boolean 
         }
     }
     if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text("清除已保存登录？") },
-        text = { Text("清除后将断开本机已保存的 Tradovate / Rithmic 连接，并删除保存的登录状态（含已记住的 Rithmic 密码）。浏览器密码、服务器订单和仓位不受影响。") },
+        text = { Text("清除后将断开本机已保存的 Tradovate / Rithmic 连接，并删除保存的登录状态（含已记住的 Rithmic 密码）和本机缓存的交易分析平仓记录。浏览器密码、服务器订单和仓位不受影响。") },
         confirmButton = { TextButton({
             confirm = false
-            scope.launch { busy = true; try { if (saved.forgetAll()) onForgotten() } finally { busy = false } }
+            scope.launch { busy = true; try {
+                if (saved.forgetAll()) {
+                    onForgotten()
+                    // These controls leave the page once the logins are gone, which cancels this scope; the cached trades are deleted all the same.
+                    withContext(NonCancellable) { runtime.analyticsCache.clear() }
+                }
+            } finally { busy = false } }
         }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("确认清除") } },
         dismissButton = { TextButton({ confirm = false }) { Text("取消") } })
 }

@@ -54,11 +54,16 @@ data class ChartPreferences(
                 chart.symbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }
         }) { "图表窗口设置无效" }
     }
+    /** The starred intervals, shortest first. Nothing else orders them: the file keeps the order they were starred in. */
     val favorites: List<Timeframe> get() = favoriteLengths.sorted().map(Timeframe::ofSeconds)
     val custom: List<Timeframe> get() = customLengths.map(Timeframe::ofSeconds)
     val lastTimeframe: Timeframe? get() = lastLength?.let(Timeframe::ofSeconds)
 
-    fun withFavorites(value: List<Timeframe>) = copy(favoriteSeconds = value.map { it.seconds }.sorted())
+    fun withFavorites(value: List<Timeframe>) = copy(favoriteSeconds = value.map { it.seconds })
+    /** Stars [value], or takes its star away; the other starred intervals keep their saved order. */
+    fun withFavoriteToggled(value: Timeframe) = favoriteLengths.let { saved ->
+        copy(favoriteSeconds = if (value.seconds in saved) saved - value.seconds else saved + value.seconds)
+    }
     fun withCustom(value: List<Timeframe>) = copy(customSeconds = value.map { it.seconds })
     fun withLastTimeframe(value: Timeframe) = copy(lastTimeframeSeconds = value.seconds)
 
@@ -97,10 +102,9 @@ class ChartPreferencesController(private val store: SnapshotStore) {
     }
 
     suspend fun toggleFavorite(timeframe: Timeframe): Boolean = saveMutex.withLock {
-        val current = preferences.value
-        val next = if (timeframe in current.favorites) current.favorites - timeframe else current.favorites + timeframe
-        if (next.size > ChartPreferences.MAX_FAVORITES) { error.value = "收藏周期最多 ${ChartPreferences.MAX_FAVORITES} 个"; return@withLock false }
-        persist(current.withFavorites(next))
+        val next = preferences.value.withFavoriteToggled(timeframe)
+        if (next.favorites.size > ChartPreferences.MAX_FAVORITES) { error.value = "收藏周期最多 ${ChartPreferences.MAX_FAVORITES} 个"; return@withLock false }
+        persist(next)
     }
 
     suspend fun addCustom(timeframe: Timeframe): Boolean = saveMutex.withLock {

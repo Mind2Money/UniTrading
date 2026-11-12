@@ -39,7 +39,7 @@ internal fun LoginWelcome(runtime: TradingRuntime, onLogin: () -> Unit, onTheme:
                 message?.let { Text(it, Modifier.testTag("saved-login-status"), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
                 Button(onLogin, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login"), colors = brandButtonColors()) { Text("登录 Tradovate") }
                 if (onLoginRithmic != null) OutlinedButton(onLoginRithmic, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login-rithmic")) { Text("登录 Rithmic") }
-                if (savedCount > 0 || message != null) SavedLoginControls(runtime.savedLogins) {}
+                if (savedCount > 0 || message != null) SavedLoginControls(runtime) {}
                 TextButton(onTheme, Modifier.testTag("open-theme")) {
                     Icon(AppIcons.Palette, contentDescription = null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))

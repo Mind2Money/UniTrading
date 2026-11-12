@@ -212,8 +212,9 @@ private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Un
     Box {
         ToolbarPill(Modifier.height(32.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // The starred intervals arrive ordered by length. One shown without a star goes after them, so they keep their places.
                 val shown = if (timeframe in intervals.favorites) intervals.favorites else intervals.favorites + timeframe
-                shown.sortedBy { it.seconds }.forEach { frame -> PillSegment(frame.shortLabel, frame == timeframe, Modifier.testTag("interval-inline-${frame.id}")) { onTimeframe(frame) } }
+                shown.forEach { frame -> PillSegment(frame.shortLabel, frame == timeframe, Modifier.testTag("interval-inline-${frame.id}")) { onTimeframe(frame) } }
                 Box(Modifier.clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { expanded = true }
                     .semantics { contentDescription = "选择时间周期" }.testTag("interval-menu").padding(horizontal = 4.dp, vertical = 6.dp)) {
                     Icon(AppIcons.ExpandMore, contentDescription = null, Modifier.size(18.dp), tint = colors.Muted)

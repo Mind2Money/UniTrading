@@ -179,7 +179,7 @@ internal fun SettingsPage(
             }
 
             if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
-                SavedLoginControls(runtime.savedLogins, grouped = true, onForgotten = onForgotten)
+                SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
             }
 
             if (localDemo) SettingsSection("本地模拟") {

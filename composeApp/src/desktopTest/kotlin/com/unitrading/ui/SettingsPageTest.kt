@@ -172,7 +172,7 @@ class SettingsPageTest {
         val runtime = TradingRuntime(MemorySnapshotStore(), credentialStore = store)
         runBlocking { runtime.savedLogins.restore() }
         compose.setContent { TradingTheme {
-            Column { SavedLoginControls(runtime.savedLogins, grouped = true) { forgotten = true } }
+            Column { SavedLoginControls(runtime, grouped = true) { forgotten = true } }
         } }
         compose.onNodeWithTag("settings-restore-logins").assertIsEnabled()
         compose.onNodeWithTag("forget-saved-logins").assertIsEnabled().performClick()

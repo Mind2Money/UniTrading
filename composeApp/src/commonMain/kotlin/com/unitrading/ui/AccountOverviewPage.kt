@@ -12,6 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.AccountAliasesController
+import com.unitrading.app.overviewTotals
 import com.unitrading.broker.*
 
 /**
@@ -97,12 +98,13 @@ internal fun AccountContextBar(
     }
 }
 
-/** The trading child's equity and P&L, and the way to its positions and orders. */
+/** The trading child's funds, drawdown and the net result of its loaded closed trades, and the way to its positions and orders. */
 @Composable
 internal fun AccountOverviewPage(
     plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, market: MarketSnapshot,
     onOpenTrading: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
 ) {
+    val totals = remember(snapshot) { overviewTotals(snapshot) }
     val names = LocalAccountAliases.current
     val accountName = names.account(plugin.descriptor.id, account)
     val colors = TradingColors
@@ -124,6 +126,17 @@ internal fun AccountOverviewPage(
             }
             item(key = "summary") {
                 AccountSummary(snapshot, connected = market.connected, currency = account.currency)
+            }
+            item(key = "history") {
+                Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Metric("已加载历史净盈亏", totals.realizedMicros?.let { money(it, true) } ?: "—",
+                            color = colors.pnl(totals.realizedMicros), valueTag = "overview-realized")
+                        // The total stays "—" while a trade's net result is unknown; the note says why.
+                        if (totals.unknownClosed > 0) Text("${totals.unknownClosed} 笔历史净盈亏待确认，未计为零。", Modifier.testTag("overview-unknown-closed"),
+                            style = MaterialTheme.typography.bodySmall, color = colors.Caution)
+                    }
+                }
             }
             item(key = "child") {
                 Surface(shape = MaterialTheme.shapes.medium, color = colors.Surface) {
