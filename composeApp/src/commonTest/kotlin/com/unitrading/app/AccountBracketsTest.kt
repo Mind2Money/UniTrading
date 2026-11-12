@@ -65,16 +65,16 @@ class AccountBracketsTest {
             risk.prices(tight, spec, "USD", quote, lotRoom, capacity).lotsHundredths to risk.sizingLimit(tight, spec, quote, lotRoom, capacity)
         assertEquals(24_000L, risk.copy(sizingMaxLots = 999_999_999).prices(tight, futures, "USD", quote).lotsHundredths)
         assertEquals(500L to "单笔最大数量", lots())
-        assertEquals(200L to "子账户最大手数", lots(lotRoom = 250), "what the lot cap leaves, on the contract grid")
+        assertEquals(200L to "子账户最大持仓", lots(lotRoom = 250), "what the lot cap leaves, on the contract grid")
         assertEquals(300L to "可下单上限", lots(capacity = 300))
-        assertEquals(200L to "子账户最大手数", lots(lotRoom = 200, capacity = 300), "the lowest of them")
+        assertEquals(200L to "子账户最大持仓", lots(lotRoom = 200, capacity = 300), "the lowest of them")
         assertEquals(400L to "合约最大手数", lots(spec = futures.copy(maxLotsHundredths = 400)))
         // With the stop 80 ticks away the amount buys three contracts, and a ceiling of three cuts nothing.
         val wide = tight.copy(stopLoss = 548_025)
         assertEquals(300L, risk.prices(wide, futures, "USD", quote, 300, 300).lotsHundredths)
         assertNull(risk.sizingLimit(wide, futures, quote, 300, 300))
         // A ceiling under one contract leaves nothing to send, and the message names that ceiling, not the amount.
-        assertEquals("受子账户最大手数限制，可下数量不足最小手数", failure { risk.prices(tight, futures, "USD", quote, lotRoom = 0) })
+        assertEquals("受子账户最大持仓限制，可下数量不足最小手数", failure { risk.prices(tight, futures, "USD", quote, lotRoom = 0) })
         assertEquals("受可下单上限限制，可下数量不足最小手数", failure { risk.prices(tight, futures, "USD", quote, capacity = 50) })
         assertNull(risk.sizingLimit(tight, futures, quote, lotRoom = 0), "nothing was sized")
         // The check at submit holds an order to the amount and to the ceiling of the rule.
@@ -121,7 +121,7 @@ class AccountBracketsTest {
         assertNull(sizing.copy(orderLimits = AccountOrderLimits()).lotRoom(long, false, tight))
         // A reduction keeps the quantity it was given, also where the cap is already exceeded.
         assertSame(scaleOut, sizing.copy(orderLimits = AccountOrderLimits(100)).bracketed(scaleOut, futures, "USD", quote, long, hedging = false))
-        assertEquals("受子账户最大手数限制，可下数量不足最小手数",
+        assertEquals("受子账户最大持仓限制，可下数量不足最小手数",
             failure { sizing.copy(orderLimits = AccountOrderLimits(300)).bracketed(tight, futures, "USD", quote, long, hedging = false) })
     }
 

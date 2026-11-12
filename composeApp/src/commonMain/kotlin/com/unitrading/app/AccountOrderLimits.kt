@@ -14,8 +14,10 @@ internal fun parseRestrictedSymbols(text: String): Set<String>? {
 
 /**
  * The unit a login's position cap is shown and typed in. Where every instrument the login lists trades whole contracts
- * (Tradovate, Rithmic) it is whole numbers of their own unit, 张; otherwise, and while the login lists none, two
- * decimals of 手 as on the local demo. The cap itself is kept in hundredths either way.
+ * (Tradovate, Rithmic) it is whole numbers of their own unit, 张; where any trades fractions, two decimals of 手 as on
+ * the local demo. A login that lists none yet is a remote futures login whose contract specs have not loaded (the demo
+ * always lists its instruments), so it is whole 张 too and the unit does not change under an open form. The cap itself
+ * is kept in hundredths either way.
  */
 internal class LotCapUnit private constructor(val whole: Boolean, val label: String) {
     /** [hundredths] in this unit. A whole unit drops a fraction, which whole contracts could not reach anyway. */
@@ -30,7 +32,8 @@ internal class LotCapUnit private constructor(val whole: Boolean, val label: Str
         val LOTS = LotCapUnit(false, "手")
 
         fun of(instruments: List<Instrument>): LotCapUnit =
-            if (instruments.isNotEmpty() && instruments.all { it.quantityDecimals == 0 }) LotCapUnit(true, instruments.first().quantityUnit)
+            if (instruments.isEmpty()) LotCapUnit(true, "张")
+            else if (instruments.all { it.quantityDecimals == 0 }) LotCapUnit(true, instruments.first().quantityUnit)
             else LOTS
     }
 }

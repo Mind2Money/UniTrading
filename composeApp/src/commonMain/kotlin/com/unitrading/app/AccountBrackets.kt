@@ -86,7 +86,7 @@ internal data class AccountBrackets(
         val ticks = distance / tick
         require(ticks >= maxOf(1L, spec.minStopTicks)) { "止损距离小于合约允许的最小距离" }
         val affordable = checkedMultiply(risk, 100) / spec.tickValueMicrosPerLot / ticks / step * step
-        val (limit, name) = listOfNotNull(ceiling to "单笔最大数量", lotRoom?.let { it to "子账户最大手数" },
+        val (limit, name) = listOfNotNull(ceiling to "单笔最大数量", lotRoom?.let { it to "子账户最大持仓" },
             capacity?.let { it to "可下单上限" }, spec.maxLotsHundredths to "合约最大手数").minBy { it.first }
         val lots = minOf(affordable, limit / step * step)
         // Name what left too little: the amount, or the ceiling that cut the quantity below one lot.

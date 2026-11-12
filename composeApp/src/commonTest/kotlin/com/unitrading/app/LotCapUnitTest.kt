@@ -23,10 +23,14 @@ class LotCapUnitTest {
         assertEquals(999_999_900, unit.parse("9999999"))
         assertNull(unit.parse("10000000"), "beyond the largest cap the rules keep")
         assertNull(unit.parse("99999999999999999"))
+        // A login whose contract specs have not loaded yet lists none: only the demo trades fractions, and it lists its own.
+        val unloaded = LotCapUnit.of(emptyList())
+        assertTrue(unloaded.whole)
+        assertEquals("张", unloaded.label)
     }
 
-    @Test fun anyFractionalInstrumentOrNoneAtAllKeepsTwoDecimalsOfLots() {
-        for (unit in listOf(LotCapUnit.of(listOf(futures, fx)), LotCapUnit.of(listOf(fx)), LotCapUnit.of(emptyList()))) {
+    @Test fun anyFractionalInstrumentKeepsTwoDecimalsOfLots() {
+        for (unit in listOf(LotCapUnit.of(listOf(futures, fx)), LotCapUnit.of(listOf(fx)))) {
             assertFalse(unit.whole)
             assertEquals("手", unit.label)
             assertEquals("2.50", unit.format(250))

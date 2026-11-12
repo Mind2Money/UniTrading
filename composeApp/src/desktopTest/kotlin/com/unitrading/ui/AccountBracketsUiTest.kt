@@ -298,7 +298,7 @@ class AccountBracketsUiTest {
         onNodeWithTag("order-risk-sized-quantity").assertTextEquals("自动手数 5 张 · 风险 300.00 USD · 受单笔最大数量限制")
         runBlocking { assertNull(runtime.accountRisk.configureOrders(broker, "100", AccountOrderLimits(400))) }
         waitForIdle()
-        onNodeWithTag("order-risk-sized-quantity").assertTextEquals("自动手数 4 张 · 风险 300.00 USD · 受子账户最大手数限制")
+        onNodeWithTag("order-risk-sized-quantity").assertTextEquals("自动手数 4 张 · 风险 300.00 USD · 受子账户最大持仓限制")
         // One contract held elsewhere leaves three under the cap, and the server now answers that it takes two.
         runOnIdle {
             broker.capacity = 200
