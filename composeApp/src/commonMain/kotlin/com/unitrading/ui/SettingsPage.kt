@@ -109,7 +109,7 @@ internal fun SettingsPage(
                     onSync, enabled = plugin.capabilities.resynchronize && market.connected && !busy)
                 SettingsRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", AppIcons.Add, "settings-connect", onConnect)
                 if (onConnectRithmic != null) SettingsRow("连接 Rithmic", "登录 Test / Paper / Live 系统", AppIcons.Add, "settings-connect-rithmic", onConnectRithmic)
-                if (!localDemo) SettingsRow("断开 $loginName", "断开当前连接，保留本机登录，清除它的本机分析缓存", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
+                if (!localDemo) SettingsRow("断开 $loginName", "断开当前连接，保留本机登录", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 
             SettingsSection("交易") {

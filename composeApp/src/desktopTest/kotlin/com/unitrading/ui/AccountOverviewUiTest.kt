@@ -45,7 +45,7 @@ class AccountOverviewUiTest {
         val account = plugin.accounts.first()
         val win = ClosedTrade("win", "p", "MES", Side.BUY, 100, 1, 2, 10, 20, 3_000_000, "fixture")
         var snapshot by mutableStateOf(AccountSnapshot(account.id, 1_000_000_000, trades = listOf(win, win.copy(id = "loss", netPnlMicros = -1_000_000))))
-        compose.setContent { TradingTheme { AccountOverviewPage(plugin, account, snapshot, MarketSnapshot(), {}, Modifier.requiredSize(400.dp, 800.dp)) } }
+        compose.setContent { TradingTheme { AccountOverviewPage(plugin, account, snapshot, snapshot.trades, MarketSnapshot(), {}, Modifier.requiredSize(400.dp, 800.dp)) } }
         val list = compose.onNode(hasScrollToNodeAction() and hasAnyAncestor(hasTestTag("account-overview")))
         compose.onNodeWithTag("overview-equity-USD").assertTextEquals("1000.00")
         compose.onNodeWithTag("drawdown-room-value").assertExists()

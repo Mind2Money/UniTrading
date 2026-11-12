@@ -16,7 +16,8 @@ import kotlin.time.Duration.Companion.days
  * Closed trades this device has synchronized, per login and account, for the analytics page: what the broker returned
  * while the app ran with that account selected, kept for 30 days after the trade closed. It never asks the broker for
  * older history. The trades are stored as plain JSON (`analytics-trades-v1`) in the app's private data folder, not
- * encrypted like the saved logins; forgetting the saved logins clears them all, disconnecting a login clears its part.
+ * encrypted like the saved logins; forgetting the saved logins clears them all. Disconnecting a login keeps its part:
+ * the login stays saved and comes back, and the broker would not return its older trades again.
  */
 internal class AnalyticsTradeCache(private val store: SnapshotStore, private val clock: Clock = Clock.System) {
     private val mutex = Mutex()
@@ -25,26 +26,33 @@ internal class AnalyticsTradeCache(private val store: SnapshotStore, private val
     val rows = mutableRows.asStateFlow()
     private var persisted = mutableRows.value
 
-    /** The stored trades; a file that cannot be read counts as empty and is replaced by the next write. */
+    /**
+     * The stored trades without those older than 30 days; every caller writes its result, so the file loses them too.
+     * A file that cannot be read counts as empty and is replaced by the next write.
+     */
     private suspend fun load(): Map<String, Map<String, List<ClosedTrade>>> {
         if (!loaded) {
             persisted = withContext(Dispatchers.Default) {
                 runCatching { store.read(KEY)?.let { Json.decodeFromString<Map<String, Map<String, List<ClosedTrade>>>>(it) } }.getOrNull().orEmpty()
             }
-            mutableRows.value = persisted
+            mutableRows.value = recent(persisted)
             loaded = true
         }
         return mutableRows.value
     }
 
+    /**
+     * Reads the file if nothing has yet and writes it back when trades older than 30 days were dropped, so they leave
+     * it even in a run where no login updates the cache.
+     */
+    suspend fun prune() = mutex.withLock { persist(load()) }
+
     /** Reconciles the account's cached trades with the broker's snapshot [fresh], as [mergeAnalyticsTrades] does, and stores the result. */
     suspend fun update(broker: String, account: String, fresh: List<ClosedTrade>) = mutex.withLock {
         val current = load()
-        val cutoff = (clock.now() - 30.days).toEpochMilliseconds()
         val latest = mergeAnalyticsTrades(current[broker]?.get(account).orEmpty(), fresh)
-        val next = (current + (broker to (current[broker].orEmpty() + (account to latest)))).mapValues { (_, accounts) ->
-            accounts.mapValues { (_, trades) -> trades.filter { it.closedAtMs >= cutoff } }.filterValues { it.isNotEmpty() }
-        }.filterValues { it.isNotEmpty() }
+        // The snapshot can reach back further than 30 days, so the trim runs after the reconciliation too.
+        val next = recent(current + (broker to (current[broker].orEmpty() + (account to latest))))
         mutableRows.value = next
         persist(next)
     }
@@ -55,6 +63,13 @@ internal class AnalyticsTradeCache(private val store: SnapshotStore, private val
         loaded = true
         mutableRows.value = next
         persist(next, force = true)
+    }
+
+    private fun recent(rows: Map<String, Map<String, List<ClosedTrade>>>): Map<String, Map<String, List<ClosedTrade>>> {
+        val cutoff = (clock.now() - 30.days).toEpochMilliseconds()
+        return rows.mapValues { (_, accounts) ->
+            accounts.mapValues { (_, trades) -> trades.filter { it.closedAtMs >= cutoff } }.filterValues { it.isNotEmpty() }
+        }.filterValues { it.isNotEmpty() }
     }
 
     private suspend fun persist(next: Map<String, Map<String, List<ClosedTrade>>>, force: Boolean = false) {
@@ -68,18 +83,23 @@ internal class AnalyticsTradeCache(private val store: SnapshotStore, private val
 }
 
 /**
- * The trades to show and to keep for one account. The broker's snapshot [fresh] is authoritative from its earliest
- * close on: a cached trade in that range which the snapshot no longer has was withdrawn or paired again under another
- * id, so it is dropped instead of being counted beside its replacement. Cached trades that closed before that stay,
- * and a trade in the snapshot replaces the cached one with its id. An empty snapshot (nothing synchronized yet)
- * changes nothing.
+ * The trades to show and to keep for one account, reconciled contract by contract. For a contract the broker's
+ * snapshot [fresh] has trades of, the snapshot is authoritative from that contract's earliest close in it on: a cached
+ * trade of the contract in that range which the snapshot no longer has was withdrawn or paired again under another id,
+ * so it is dropped instead of being counted beside its replacement. A contract the snapshot has no trades of keeps all
+ * its cached trades: a broker can leave a whole contract out (Rithmic does when the replay of its fills does not end on
+ * the server's position, or when the contract's details are missing), which says nothing about them. Cached trades that
+ * closed before their contract's range stay, so a withdrawn trade that was its contract's earliest stays until the
+ * 30-day trim. A trade in the snapshot replaces the cached one with its id. An empty snapshot (nothing synchronized
+ * yet) changes nothing.
  */
 internal fun mergeAnalyticsTrades(cached: List<ClosedTrade>, fresh: List<ClosedTrade>): List<ClosedTrade> {
     if (cached.isEmpty()) return fresh
     if (fresh.isEmpty()) return cached
-    val covered = fresh.minOf { it.closedAtMs }
+    val covered = fresh.groupBy { it.symbol }.mapValues { (_, trades) -> trades.minOf { it.closedAtMs } }
     val known = cached.associateBy { it.id }
-    val merged = cached.filter { it.closedAtMs < covered }.associateByTo(linkedMapOf()) { it.id }
+    val merged = cached.filter { trade -> covered[trade.symbol].let { start -> start == null || trade.closedAtMs < start } }
+        .associateByTo(linkedMapOf()) { it.id }
     fresh.forEach { trade ->
         val previous = known[trade.id]
         // The broker reports a trade again before its fees are loaded; the same trade keeps the net result cached for it.

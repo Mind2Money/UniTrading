@@ -98,13 +98,17 @@ internal fun AccountContextBar(
     }
 }
 
-/** The trading child's funds, drawdown and the net result of its loaded closed trades, and the way to its positions and orders. */
+/**
+ * The trading child's funds, drawdown and the net result of its closed [trades], and the way to its positions and
+ * orders. [trades] is the list the analytics page counts (the broker's snapshot with the trades cached on this
+ * device), so both pages show the same total.
+ */
 @Composable
 internal fun AccountOverviewPage(
-    plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, market: MarketSnapshot,
+    plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, trades: List<ClosedTrade>, market: MarketSnapshot,
     onOpenTrading: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
 ) {
-    val totals = remember(snapshot) { overviewTotals(snapshot) }
+    val totals = remember(snapshot, trades) { overviewTotals(snapshot.copy(trades = trades)) }
     val names = LocalAccountAliases.current
     val accountName = names.account(plugin.descriptor.id, account)
     val colors = TradingColors

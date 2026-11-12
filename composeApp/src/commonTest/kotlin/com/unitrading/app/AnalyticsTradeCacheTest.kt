@@ -6,13 +6,14 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 class AnalyticsTradeCacheTest {
     private var now = Instant.parse("2026-11-11T12:00:00Z")
     private val clock = object : Clock { override fun now() = now }
-    private fun trade(id: String, age: Int, pnl: Long?) =
-        ClosedTrade(id, "p", "MES", Side.BUY, 100, 100, 125, 0, (now - age.days).toEpochMilliseconds(), pnl, "fill")
+    private fun trade(id: String, age: Int, pnl: Long?, symbol: String = "MES") =
+        ClosedTrade(id, "p", symbol, Side.BUY, 100, 100, 125, 0, (now - age.days).toEpochMilliseconds(), pnl, "fill")
 
     @Test fun restoresRecentTradesWithoutCrossingAccountsOrDoubleCounting() = runTest {
         val store = MemorySnapshotStore()
@@ -57,7 +58,7 @@ class AnalyticsTradeCacheTest {
         reopened.update("broker", "a", emptyList())
         assertEquals(listOf(older, start, kept, added), reopened.rows.value["broker"]?.get("a"))
         reopened.update("broker", "a", listOf(kept, added))
-        assertEquals(listOf(older, start, kept, added), reopened.rows.value["broker"]?.get("a"), "what closed before the snapshot's first close stays")
+        assertEquals(listOf(older, start, kept, added), reopened.rows.value["broker"]?.get("a"), "what closed before its contract's first close in the snapshot stays")
         // Another account of the login is reconciled on its own.
         reopened.update("broker", "b", listOf(withdrawn))
         reopened.update("broker", "a", listOf(added))
@@ -90,8 +91,77 @@ class AnalyticsTradeCacheTest {
         // The same id with a later close replaces the cached trade although that one closed before the snapshot's range.
         val restated = moved.copy(closedAtMs = live.closedAtMs + 1, netPnlMicros = 2_500_000)
         assertEquals(listOf(old, live, restated), mergeAnalyticsTrades(listOf(old, moved), listOf(live, restated)))
-        // A trade closing exactly at the snapshot's first close is inside its range.
+        // A trade closing exactly at its contract's first close in the snapshot is inside the range.
         assertEquals(listOf(old, live), mergeAnalyticsTrades(listOf(old, live.copy(id = "same-instant")), listOf(live)))
+    }
+
+    /**
+     * Rithmic leaves a whole contract out of a snapshot when the replay of its fills does not end on the server's
+     * position, which says nothing about that contract's trades: each contract is reconciled with its own trades.
+     */
+    @Test fun aContractTheSnapshotLeavesOutKeepsItsCachedTrades() = runTest {
+        val mnqMonday = trade("mnq-monday", 7, 1_000_000, "MNQZ6")
+        val mesMonday = trade("mes-monday", 7, 4_000_000, "MESZ6").let { it.copy(closedAtMs = it.closedAtMs + 2.minutes.inWholeMilliseconds) }
+        val mesWednesday = trade("mes-wednesday", 5, -2_000_000, "MESZ6")
+        val mnqThursday = trade("mnq-thursday", 4, 3_000_000, "MNQZ6")
+        val cached = listOf(mnqMonday, mesMonday, mesWednesday, mnqThursday)
+        // MES is left out: its trades stay, although they closed after the snapshot's first close (MNQ's).
+        assertEquals(cached, mergeAnalyticsTrades(cached, listOf(mnqMonday, mnqThursday)))
+        // MNQ is left out and MES is back from Wednesday on: MNQ keeps its trades, MES's Monday trade closed before MES's range.
+        assertEquals(cached, mergeAnalyticsTrades(cached, listOf(mesWednesday)))
+        // Inside a contract's own range a trade the snapshot no longer has is still dropped.
+        assertEquals(listOf(mnqMonday, mesMonday, mesWednesday), mergeAnalyticsTrades(cached, listOf(mnqMonday, mesMonday, mesWednesday)))
+        // The stored cache keeps them too, so a later session that pairs MES again from Wednesday on still has the Monday trade.
+        val store = MemorySnapshotStore()
+        AnalyticsTradeCache(store, clock).run { update("rithmic", "a", cached); update("rithmic", "a", listOf(mnqMonday, mnqThursday)) }
+        assertTrue("mes-monday" in store.read("analytics-trades-v1")!!)
+        val reopened = AnalyticsTradeCache(store, clock).also { it.update("rithmic", "a", listOf(mesWednesday)) }
+        assertEquals(cached, reopened.rows.value["rithmic"]?.get("a"))
+    }
+
+    /**
+     * The documented limit of the rule: a trade the broker withdrew that was the earliest of its contract cannot be told
+     * from one that left the broker's window, so it stays until the 30-day trim.
+     */
+    @Test fun aWithdrawnTradeThatWasItsContractsEarliestStaysUntilTheThirtyDayTrim() = runTest {
+        val cache = AnalyticsTradeCache(MemorySnapshotStore(), clock)
+        val withdrawn = trade("pair-101", 4, 50_000_000)
+        val kept = trade("pair-102", 2, -20_000_000)
+        cache.update("tradovate", "a", listOf(withdrawn, kept))
+        cache.update("tradovate", "a", listOf(kept))
+        assertEquals(listOf(withdrawn, kept), cache.rows.value["tradovate"]?.get("a"))
+        now += 27.days
+        cache.update("tradovate", "a", listOf(kept))
+        assertEquals(listOf(kept), cache.rows.value["tradovate"]?.get("a"))
+    }
+
+    /** The trim runs when the file is read too, so trades past 30 days leave it in a run where no login updates the cache. */
+    @Test fun loadingDropsTradesOlderThanThirtyDaysAndRewritesTheFileOnlyWhenThatRemovedAny() = runTest {
+        val memory = MemorySnapshotStore()
+        var writes = 0
+        val store = object : SnapshotStore {
+            override fun read(key: String) = memory.read(key)
+            override fun write(key: String, value: String) { writes++; memory.write(key, value) }
+        }
+        val recent = trade("recent", 2, 1_000_000)
+        AnalyticsTradeCache(store, clock).run {
+            update("login-a", "x", listOf(trade("aging", 20, 2_000_000), recent))
+            update("login-b", "y", listOf(trade("other", 25, 3_000_000)))
+        }
+        writes = 0
+        // Nothing is past 30 days yet: reading the file leaves it as it is.
+        AnalyticsTradeCache(store, clock).prune()
+        assertEquals(0, writes)
+        now += 11.days
+        val reopened = AnalyticsTradeCache(store, clock)
+        reopened.prune()
+        assertEquals(mapOf("login-a" to mapOf("x" to listOf(recent))), reopened.rows.value)
+        assertEquals(1, writes)
+        val stored = memory.read("analytics-trades-v1")!!
+        assertTrue("recent" in stored && "aging" !in stored && "other" !in stored && "login-b" !in stored)
+        // The rewritten file has nothing left to trim.
+        AnalyticsTradeCache(store, clock).prune()
+        assertEquals(1, writes)
     }
 
     @Test fun trimsToThirtyDaysAfterReconcilingWithTheWholeSnapshot() = runTest {

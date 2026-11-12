@@ -78,6 +78,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val loginMessage by runtime.savedLogins.message.collectAsState()
         var manuallySelected by remember { mutableStateOf(false) }
         LaunchedEffect(runtime) { runtime.savedLogins.restore() }
+        // Trades cached past 30 days leave the file at start, also when no login updates the cache in this run.
+        LaunchedEffect(runtime) { runtime.analyticsCache.prune() }
         LaunchedEffect(restoredBrokerId) { if (!manuallySelected) restoredBrokerId?.let { brokerId = it } }
         fun selectBroker(id: String) {
             manuallySelected = true
@@ -97,12 +99,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = connectRithmic)
             return@TradingTheme
         }
+        // The login stays saved and comes back, so the closed trades cached for it stay too: the broker would not return the older ones again.
         fun disconnectCurrent() {
-            val id = plugin.descriptor.id
-            registry.unregister(id)
+            registry.unregister(plugin.descriptor.id)
             selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "")
-            // The closed trades cached for the analytics page go with the login.
-            loginScope.launch { runtime.analyticsCache.clear(id) }
         }
         val catalog by key(plugin) { plugin.catalog.collectAsState() }
         if (catalog.accounts.isEmpty() || catalog.instruments.isEmpty()) {
@@ -1145,7 +1145,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                         AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
                         when (accountTab) {
-                            0 -> AccountOverviewPage(plugin, session.account, account, market, { if (!busy) accountTab = 1 },
+                            0 -> AccountOverviewPage(plugin, session.account, account, analyticsTrades, market, { if (!busy) accountTab = 1 },
                                 Modifier.weight(1f).fillMaxWidth(), busy)
                             1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
                                 PageTopBar("持仓与订单", accountName, actions = { barStatus() })
