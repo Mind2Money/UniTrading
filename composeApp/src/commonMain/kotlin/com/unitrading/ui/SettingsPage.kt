@@ -66,6 +66,7 @@ internal fun SettingsPage(
     val indicators by runtime.indicators.settings.collectAsState()
     val notificationsAvailable by runtime.livePnl.available.collectAsState()
     val paused by runtime.paused.collectAsState()
+    val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
     val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
     val account = plugin.accounts.firstOrNull { it.id == accountId }
     val names = LocalAccountAliases.current
@@ -114,13 +115,6 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy, navigates = true)
-                // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
-                AccountRiskRecovery(runtime.accountRisk, busy)
-                if (account != null && !account.readOnly) {
-                    AccountBracketSettings(runtime.accountRisk, plugin, account, busy)
-                    AccountRiskSettings(runtime.accountRisk, plugin, account, busy)
-                    AccountOrderLimitSettings(runtime.accountRisk, plugin, account, busy)
-                }
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
                     supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
@@ -163,6 +157,18 @@ internal fun SettingsPage(
                 tradingPreferencesError?.let {
                     Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp).testTag("trading-preferences-error"),
                         color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            // The rules of the selected trading child, kept apart from the preferences that apply to every account.
+            val tradingChild = account?.takeUnless { it.readOnly }
+            if (riskUnreadable || tradingChild != null) SettingsSection("子账户风控") {
+                // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
+                AccountRiskRecovery(runtime.accountRisk, busy)
+                if (tradingChild != null) {
+                    AccountRiskSettings(runtime.accountRisk, plugin, tradingChild, busy)
+                    AccountOrderLimitSettings(runtime.accountRisk, plugin, tradingChild, busy)
+                    AccountBracketSettings(runtime.accountRisk, plugin, tradingChild, busy)
                 }
             }
 

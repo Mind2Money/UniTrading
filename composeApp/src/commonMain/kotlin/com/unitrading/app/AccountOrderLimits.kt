@@ -12,6 +12,29 @@ internal fun parseRestrictedSymbols(text: String): Set<String>? {
     return codes.takeIf { it.size <= 200 && it.all(symbolCode::matches) }
 }
 
+/**
+ * The unit a login's position cap is shown and typed in. Where every instrument the login lists trades whole contracts
+ * (Tradovate, Rithmic) it is whole numbers of their own unit, 张; otherwise, and while the login lists none, two
+ * decimals of 手 as on the local demo. The cap itself is kept in hundredths either way.
+ */
+internal class LotCapUnit private constructor(val whole: Boolean, val label: String) {
+    /** [hundredths] in this unit. A whole unit drops a fraction, which whole contracts could not reach anyway. */
+    fun format(hundredths: Long): String = if (whole) (hundredths / 100).toString() else formatFixed(hundredths, 2)
+
+    /** A cap as typed, in hundredths; null for anything else, including a fraction where whole units are required. */
+    fun parse(text: String): Long? =
+        (if (whole) parseFixed(text, 0)?.let { runCatching { checkedMultiply(it, 100) }.getOrNull() } else parseFixed(text, 2))
+            ?.takeIf { it in 1..999_999_999L }
+
+    companion object {
+        val LOTS = LotCapUnit(false, "手")
+
+        fun of(instruments: List<Instrument>): LotCapUnit =
+            if (instruments.isNotEmpty() && instruments.all { it.quantityDecimals == 0 }) LotCapUnit(true, instruments.first().quantityUnit)
+            else LOTS
+    }
+}
+
 @Serializable
 internal data class AccountOrderLimits(
     val maxLots: Long? = null,
@@ -24,9 +47,9 @@ internal data class AccountOrderLimits(
      * Why [request], a new order or a working one as an edit leaves it, is not allowed; null when it is. [effect] is
      * what the action does to the account's exposure. Both limits only stop what adds exposure: an exit passes in a
      * blocked symbol, and the cap refuses nothing that leaves the total where it was or lower, so a stop, a target or
-     * a partial close also goes through on an account that is already over a lowered cap.
+     * a partial close also goes through on an account that is already over a lowered cap. [unit] only words the cap.
      */
-    fun refusal(request: OrderRequest, effect: ExposureEffect): String? {
+    fun refusal(request: OrderRequest, effect: ExposureEffect, unit: LotCapUnit = LotCapUnit.LOTS): String? {
         val codes = listOfNotNull(request.symbol, request.sourceSymbol).map { it.uppercase() }
         val blocked = blockedSymbols.firstOrNull { code ->
             val root = code.removePrefix("@")
@@ -39,7 +62,7 @@ internal data class AccountOrderLimits(
         val limit = maxLots ?: return null
         if (request.lotsHundredths <= 0) return "手数必须大于零。"
         return if (effect.after > limit && effect.after > effect.before) {
-            "超过子账户最大手数 ${formatFixed(limit, 2)}（含持仓和未成交开仓挂单）。"
+            "超过子账户最大持仓 ${unit.format(limit)} ${unit.label}（含持仓和未成交开仓挂单）。"
         } else null
     }
 }

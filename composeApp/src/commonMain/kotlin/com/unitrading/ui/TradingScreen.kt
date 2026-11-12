@@ -1120,15 +1120,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 Modifier.weight(1f).fillMaxWidth(), busy)
                             1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
                                 PageTopBar("持仓与订单", accountName, actions = { barStatus() })
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                                // The same buttons as a position's own "平仓" below, for the whole child or every child.
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     val closeColors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                                     OutlinedButton(
                                         onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
                                         modifier = Modifier.weight(1f).testTag("flatten-selected-account"),
                                         enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
-                                        colors = closeColors, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                    ) { Text("一键平仓") }
+                                        colors = closeColors,
+                                    ) { Text("平仓此子账户") }
                                     OutlinedButton(
                                         onClick = {
                                             // View-only accounts and logins that cannot trade now are listed as skipped, not as targets.
@@ -1136,8 +1137,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         },
                                         modifier = Modifier.weight(1f).testTag("flatten-all-accounts"),
-                                        enabled = !busy, colors = closeColors, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                    ) { Text("一键平仓全部子账户") }
+                                        enabled = !busy, colors = closeColors,
+                                    ) { Text("平仓全部子账户") }
                                 }
                                 TradeTerminal(plugin, account, market, selectedPositionId, compact,
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1; showOverview = false },

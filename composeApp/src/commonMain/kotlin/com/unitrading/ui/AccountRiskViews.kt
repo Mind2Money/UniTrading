@@ -30,7 +30,6 @@ internal fun AccountRiskSettings(
             delay(1_000)
         }
     }
-    val accountName = LocalAccountAliases.current.account(plugin.descriptor.id, account)
     var open by remember(plugin.descriptor.id, account.id) { mutableStateOf(false) }
     val detail = when {
         unreadable -> "本机风控记录无法读取"
@@ -43,19 +42,23 @@ internal fun AccountRiskSettings(
         else -> "未启用"
     }
     // Without the broker's day P&L and trading day there is nothing to set up; a rule left by an older file can still be cleared.
-    SettingsRow("子账户交易锁定", detail, AppIcons.Key, "edit-account-risk", { open = true },
+    SettingsRow("交易锁定", detail, AppIcons.Key, "edit-account-risk", { open = true },
         enabled = !busy && !unreadable && (supported || rule.limits != null), navigates = true)
-    if (open) AccountRiskDialog(account, accountName, rule, frozen, supported, { open = false }) { limits, freeze ->
+    if (open) AccountRiskDialog(plugin, account, rule, frozen, supported, { open = false }) { limits, freeze ->
         controller.configure(plugin, account.id, limits, freeze)
     }
 }
 
 @Composable
 private fun AccountRiskDialog(
-    account: AccountInfo, accountName: String, rule: AccountRiskRule, frozen: Boolean, supported: Boolean,
+    plugin: BrokerPlugin, account: AccountInfo, rule: AccountRiskRule, frozen: Boolean, supported: Boolean,
     onDismiss: () -> Unit, onSave: suspend (RiskLimits?, RiskFreeze?) -> String?,
 ) {
     val scope = rememberCoroutineScope()
+    val type = MaterialTheme.typography
+    val scheme = MaterialTheme.colorScheme
+    val muted = TradingColors.Muted
+    val accountName = LocalAccountAliases.current.account(plugin.descriptor.id, account)
     var loss by remember { mutableStateOf(rule.limits?.loss?.let { money(it) }.orEmpty()) }
     var profit by remember { mutableStateOf(rule.limits?.profit?.let { money(it) }.orEmpty()) }
     var action by remember { mutableStateOf(rule.limits?.action ?: RiskAction.LOCK) }
@@ -86,67 +89,67 @@ private fun AccountRiskDialog(
             confirm = true
         } else save(value, null)
     }
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { if (!saving) confirm = false },
-            title = { Text(if (freezeOnSave) "确认锁定盈亏设置？" else "确认启用自动平仓？") },
-            text = { Text(buildString {
-                append("子账户 $accountName（${account.id}）。")
-                if (freezeOnSave) append("规则在券商进入${if (freeze == RiskFreeze.DAY) "下一个交易日" else "下周一的交易日"}之前无法修改或关闭，调整本机时间不会提前解除。")
-                if (action == RiskAction.FLATTEN) append("一旦券商当日总盈亏达到任一额度，应用会锁定开仓、撤销挂单并提交平仓，可能立即触发。")
-            }) },
-            confirmButton = { TextButton({
+    FormDialog("交易锁定", "保存", editable && limits != null, { requestSave(false) }, onDismiss,
+        "risk-editor", "cancel-risk-settings", "save-risk-settings", dismissEnabled = !saving) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("$accountName · ${account.id}", style = type.titleSmall)
+            Text("使用券商当日总盈亏。触发后本应用暂停开仓、加仓和放宽止损；仍可平仓、撤单、收紧止损或挂减仓单。", style = type.bodyMedium, color = muted)
+            if (!supported) Text("$PNL_LOCK_UNSUPPORTED。已保存的规则不生效，可以停用。", style = type.bodySmall, color = scheme.error)
+            OutlinedTextField(loss, { loss = it }, Modifier.fillMaxWidth().testTag("risk-loss"),
+                label = { Text("亏损上限（${account.currency}）") }, singleLine = true, enabled = editable,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = loss.isNotBlank() && parsedLoss == null)
+            OutlinedTextField(profit, { profit = it }, Modifier.fillMaxWidth().testTag("risk-profit"),
+                label = { Text("盈利目标（${account.currency}）") }, singleLine = true, enabled = editable,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = profit.isNotBlank() && parsedProfit == null)
+            Text("触发后", style = type.labelLarge, color = scheme.primary)
+            SegmentedChoice(listOf(RiskAction.LOCK, RiskAction.FLATTEN), action, { if (it == RiskAction.LOCK) "只锁定" else "平仓并锁定" },
+                { if (it == RiskAction.LOCK) "risk-action-lock" else "risk-action-flatten" }, { action = it }, Modifier.fillMaxWidth(), enabled = editable)
+            Text(if (action == RiskAction.LOCK) "保留券商已有挂单和持仓。"
+                else "先撤会开仓或加仓的挂单，再请求平仓并核对结果；止损等减仓单保留到平仓确认后再撤。",
+                style = type.bodySmall, color = muted)
+            Text("冻结", style = type.labelLarge, color = scheme.primary)
+            SegmentedChoice(listOf(RiskFreeze.DAY, RiskFreeze.WEEK), freeze, { if (it == RiskFreeze.DAY) "当日" else "当周" },
+                { if (it == RiskFreeze.DAY) "risk-freeze-day" else "risk-freeze-week" }, { freeze = it }, Modifier.fillMaxWidth(), enabled = editable)
+            if (frozen) Text("已冻结：券商交易日到 ${rule.frozenUntil} 之前无法修改或停用。", style = type.bodySmall)
+            else OutlinedButton({ requestSave(true) }, Modifier.fillMaxWidth().testTag("freeze-risk-settings"), enabled = editable && limits?.loss != null) {
+                Text(if (freeze == RiskFreeze.DAY) "冻结到下一交易日" else "冻结到下周一")
+            }
+            Text("按券商交易日计算。冻结前必须设置亏损上限，并且已收到券商的交易日数据。", style = type.bodySmall, color = muted)
+            Text("仅在应用运行且连接有效时监控。其他客户端仍可下单。", style = type.bodySmall, color = muted)
+            if (rule.limits != null && !frozen && !saving) TextButton({ save(null, null) }, Modifier.testTag("disable-risk-settings"),
+                colors = ButtonDefaults.textButtonColors(contentColor = scheme.error)) { Text("停用规则") }
+            error?.let { Text(it, color = scheme.error, style = type.bodySmall) }
+        }
+    }
+    // Over the form, which it goes back to; with "平仓并锁定" chosen a freeze also switches on the automatic flatten.
+    if (confirm) AlertDialog(
+        onDismissRequest = { if (!saving) confirm = false },
+        title = { Text(if (freezeOnSave) "冻结交易锁定规则？" else "启用自动平仓？") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The rule as it will be saved, under the account it applies to.
+            ConfirmationAccount(plugin, account, limits?.let { value -> listOfNotNull(
+                value.loss?.let { "亏损上限 ${money(it)} ${account.currency}" },
+                value.profit?.let { "盈利目标 ${money(it)} ${account.currency}" },
+                if (value.action == RiskAction.FLATTEN) "平仓并锁定" else "只锁定",
+            ).joinToString(" · ") })
+            if (freezeOnSave) Text("规则在券商进入${if (freeze == RiskFreeze.DAY) "下一个交易日" else "下周一的交易日"}之前无法修改或关闭，调整本机时间不会提前解除。",
+                style = type.bodySmall, color = muted)
+            if (action == RiskAction.FLATTEN) Text("一旦券商当日总盈亏达到任一额度，应用会锁定开仓、撤销挂单并提交平仓，可能立即触发。",
+                style = type.bodySmall, color = muted)
+        } },
+        confirmButton = {
+            TextButton({
                 confirm = false
                 save(limits, freeze.takeIf { freezeOnSave })
-            }, enabled = !saving && limits != null) { Text("确认启用") } },
-            dismissButton = { TextButton({ confirm = false }) { Text("返回") } },
-        )
-        return
-    }
-    AlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text("子账户锁定规则") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()).testTag("risk-editor"), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("$accountName · ${account.id}", style = MaterialTheme.typography.titleSmall)
-                if (!supported) Text("$PNL_LOCK_UNSUPPORTED。已保存的规则不生效，可以停用。", color = TradingColors.Loss)
-                Text("使用券商当日总盈亏。触发后本应用暂停开仓、加仓和放宽止损；仍可平仓、撤单、收紧止损或挂减仓单。", style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(loss, { loss = it }, Modifier.fillMaxWidth().testTag("risk-loss"),
-                    label = { Text("亏损上限（${account.currency}）") }, singleLine = true, enabled = editable,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    isError = loss.isNotBlank() && parsedLoss == null)
-                OutlinedTextField(profit, { profit = it }, Modifier.fillMaxWidth().testTag("risk-profit"),
-                    label = { Text("盈利目标（${account.currency}）") }, singleLine = true, enabled = editable,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    isError = profit.isNotBlank() && parsedProfit == null)
-                Text("触发后", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(action == RiskAction.LOCK, { action = RiskAction.LOCK }, label = { Text("只锁定") }, enabled = editable)
-                    FilterChip(action == RiskAction.FLATTEN, { action = RiskAction.FLATTEN }, label = { Text("平仓并锁定") }, enabled = editable)
-                }
-                Text(if (action == RiskAction.LOCK) "保留券商已有挂单和持仓。"
-                    else "先撤会开仓或加仓的挂单，再请求平仓并核对结果；止损等减仓单保留到平仓确认后再撤。",
-                    style = MaterialTheme.typography.bodySmall)
-                Text("设置冻结（按券商交易日）", style = MaterialTheme.typography.labelLarge)
-                Text("冻结前必须设置亏损上限，并且已收到券商的交易日数据。", style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(freeze == RiskFreeze.DAY, { freeze = RiskFreeze.DAY }, label = { Text("当日") }, enabled = editable)
-                    FilterChip(freeze == RiskFreeze.WEEK, { freeze = RiskFreeze.WEEK }, label = { Text("当周") }, enabled = editable)
-                }
-                if (frozen) Text("已冻结：券商交易日到 ${rule.frozenUntil} 之前无法修改或停用。")
-                else TextButton({ requestSave(true) }, enabled = editable && limits?.loss != null,
-                    modifier = Modifier.testTag("freeze-risk-settings")) { Text("锁定亏损 / 盈利设置") }
-                Text("仅在应用运行且连接有效时监控。其他客户端仍可下单。", style = MaterialTheme.typography.bodySmall)
-                error?.let { Text(it, color = TradingColors.Loss) }
-                if (rule.limits != null && !frozen && !saving) TextButton({ save(null, null) }, Modifier.testTag("disable-risk-settings")) { Text("停用规则") }
+            }, Modifier.testTag(if (freezeOnSave) "confirm-risk-freeze" else "confirm-risk-flatten"), enabled = !saving && limits != null,
+                colors = if (action == RiskAction.FLATTEN) ButtonDefaults.textButtonColors(contentColor = scheme.error) else ButtonDefaults.textButtonColors()) {
+                Text(if (freezeOnSave) "冻结" else "启用自动平仓")
             }
         },
-        confirmButton = {
-            TextButton({ requestSave(false) }, enabled = editable && limits != null, modifier = Modifier.testTag("save-risk-settings")) {
-                Text("保存规则")
-            }
-        },
-        dismissButton = { TextButton(onDismiss, enabled = !saving) { Text("关闭") } },
+        dismissButton = { TextButton({ confirm = false }, enabled = !saving) { Text("返回") } },
     )
 }
 
@@ -160,7 +163,7 @@ internal fun AccountRiskRecovery(controller: AccountRiskController, busy: Boolea
     var failed by remember { mutableStateOf(false) }
     if (!unreadable) return
     SettingsRow("重置风控设置", if (failed) "重置失败，请检查本机存储后重试" else "本机风控记录无法读取，已暂停开仓和改单",
-        AppIcons.DeleteSweep, "reset-account-risk", { confirm = true }, enabled = !busy && !resetting, destructive = true)
+        AppIcons.RestartAlt, "reset-account-risk", { confirm = true }, enabled = !busy && !resetting, destructive = true)
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
         title = { Text("重置风控设置？") },

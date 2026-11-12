@@ -260,7 +260,7 @@ class AccountRiskTest {
             riskOrder("bracket", Side.SELL, OrderKind.STOP, 300, 548_000, OrderRole.STOP_LOSS)))
         assertTrue(session.placeOrder("equal", broker.request).accepted)
         val cap = session.placeOrder("cap", broker.request.copy(lotsHundredths = 101))
-        assertEquals(TradeResult(false, "超过子账户最大手数 5.00（含持仓和未成交开仓挂单）。"), cap)
+        assertEquals(TradeResult(false, "超过子账户最大持仓 5 张（含持仓和未成交开仓挂单）。"), cap)
         assertTrue(session.placeOrder("otherMonth", broker.request.copy(symbol = "CLH7")).accepted, "another symbol adds to the same total")
         assertFalse(session.placeOrder("otherMonthCap", broker.request.copy(symbol = "CLH7", lotsHundredths = 101)).accepted)
         // A stop, a target and a partial close add nothing, and neither does moving or shrinking an order.
@@ -335,7 +335,7 @@ class AccountRiskTest {
         assertTrue(session.changeOrder("move", "leg", 1, 547_000, 100).accepted)
         assertTrue(session.changeOrder("whole-position", "leg", 1, 548_000, 200).accepted)
         // Six lots against a long of two would leave the account short four, twice the cap.
-        assertEquals("超过子账户最大手数 2.00（含持仓和未成交开仓挂单）。", session.changeOrder("beyond", "leg", 1, 548_000, 600).message)
+        assertEquals("超过子账户最大持仓 2 张（含持仓和未成交开仓挂单）。", session.changeOrder("beyond", "leg", 1, 548_000, 600).message)
         assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(blockedSymbols = setOf("TEST"))))
         assertTrue(session.changeOrder("blocked-move", "leg", 1, 549_000, 100).accepted)
         assertEquals("该子账户禁止交易品种 TEST。", session.changeOrder("blocked-beyond", "leg", 1, 548_000, 300).message)

@@ -127,11 +127,13 @@ internal fun AccountOverviewPage(
             item(key = "summary") {
                 AccountSummary(snapshot, connected = market.connected, currency = account.currency)
             }
+            // Every card has the summary's shape and inset, and a titled one its title in the style of "回撤与风险".
             item(key = "history") {
                 Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Metric("已加载历史净盈亏", totals.realizedMicros?.let { money(it, true) } ?: "—",
-                            color = colors.pnl(totals.realizedMicros), valueTag = "overview-realized")
+                        Text("已加载历史净盈亏", style = MaterialTheme.typography.titleMedium)
+                        Text(totals.realizedMicros?.let { money(it, true) } ?: "—", Modifier.testTag("overview-realized"),
+                            style = MaterialTheme.typography.titleSmall, color = colors.pnl(totals.realizedMicros), maxLines = 1)
                         // The total stays "—" while a trade's net result is unknown; the note says why.
                         if (totals.unknownClosed > 0) Text("${totals.unknownClosed} 笔历史净盈亏待确认，未计为零。", Modifier.testTag("overview-unknown-closed"),
                             style = MaterialTheme.typography.bodySmall, color = colors.Caution)
@@ -139,12 +141,13 @@ internal fun AccountOverviewPage(
                 }
             }
             item(key = "child") {
-                Surface(shape = MaterialTheme.shapes.medium, color = colors.Surface) {
+                Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(accountName, style = MaterialTheme.typography.titleMedium)
                             if (accountName != account.name) Text(account.name, color = colors.Muted, style = MaterialTheme.typography.bodySmall)
-                            Text("持仓 ${snapshot.positions.size} · 挂单 ${snapshot.orders.size} · ${account.currency}", color = colors.Muted)
+                            Text("持仓 ${snapshot.positions.size} · 挂单 ${snapshot.orders.size} · ${account.currency}", color = colors.Muted,
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                         TextButton(onOpenTrading, enabled = !busy, modifier = Modifier.testTag("overview-open-${account.id}")) { Text("查看交易") }
                     }

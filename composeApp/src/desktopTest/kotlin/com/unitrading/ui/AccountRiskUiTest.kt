@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -30,7 +31,7 @@ class AccountRiskUiTest {
         }
     }
 
-    @Test fun bulkCloseConfirmationReversesTheButtonsAndRequiresExplicitConfirmation() =
+    @Test fun bulkCloseConfirmationPutsTheActionOnTheRightAndRequiresExplicitConfirmation() =
         runDesktopComposeUiTest(width = 450, height = 800) {
             val broker = OfflineOrderBroker()
             var confirmations = 0
@@ -43,7 +44,10 @@ class AccountRiskUiTest {
             }
             val confirm = onNodeWithTag("confirm-bulk-flatten")
             val cancel = onNodeWithTag("cancel-bulk-flatten")
-            assertTrue(confirm.fetchSemanticsNode().boundsInRoot.left < cancel.fetchSemanticsNode().boundsInRoot.left)
+            // As in every confirmation of the app: the action on the right, named for what it does.
+            assertTrue(confirm.fetchSemanticsNode().boundsInRoot.left > cancel.fetchSemanticsNode().boundsInRoot.left)
+            confirm.assertTextEquals("平仓")
+            cancel.assertTextEquals("取消")
             cancel.performClick()
             runOnIdle { assertTrue(cancellations == 1 && confirmations == 0) }
             confirm.performClick()
@@ -65,8 +69,9 @@ class AccountRiskUiTest {
         onNodeWithTag("flatten-all-accounts").performClick()
         onNodeWithText("将处理以下 1 个子账户", substring = true).assertExists()
         onNodeWithText("以下 2 个子账户不处理：").assertExists()
-        onNodeWithText("只读，跳过", substring = true).assertTextContains("View only · 101", substring = true)
-        onNodeWithText("未连接，跳过", substring = true).assertTextContains("Unreachable · 300", substring = true)
+        // Each account reads as one item: alias, login and environment, then its id with the reason it is left alone.
+        onNodeWithText("101 · 只读，跳过").assertTextContains("View only · ", substring = true)
+        onNodeWithText("300 · 未连接，跳过").assertTextContains("Unreachable · ", substring = true)
         onNodeWithTag("confirm-bulk-flatten").performClick()
         waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("已确认空仓且无挂单 1 / 1 个子账户").fetchSemanticsNodes().isNotEmpty() }
         // One outcome for the one target: neither skipped account is reported as a failure, and nothing was sent for them.
@@ -135,7 +140,7 @@ class AccountRiskUiTest {
         shot("03-risk-rules")
         onNodeWithTag("freeze-risk-settings").performScrollTo().performClick()
         onNodeWithText("下一个交易日", substring = true).assertExists()
-        onNodeWithText("确认启用").performClick()
+        onNodeWithTag("confirm-risk-freeze").assertTextEquals("冻结").performClick()
         // Frozen until the trading day after the one the broker reports, whatever the device's calendar says.
         waitUntil(timeoutMillis = 5_000) { runtime.accountRisk.rule(broker, child.id).frozenUntil != null }
         assertEquals("2026-11-12", runtime.accountRisk.rule(broker, child.id).frozenUntil.toString())
@@ -230,12 +235,29 @@ class AccountRiskUiTest {
         onAllNodesWithTag("edit-account-order-limits")[0].performClick()
         onNodeWithText("止损、止盈等减仓单不占额度。", substring = true).assertExists()
         onNodeWithText("限制只在本应用生效。平仓、撤单和减仓单不受限制。").assertExists()
-        onNodeWithText("取消").performClick()
+        onNodeWithTag("cancel-account-order-limits").performClick()
         // Every order opens a position of its own there: both sides add up, and nothing is promised about reducing orders.
         onAllNodesWithTag("edit-account-order-limits")[1].performClick()
         onNodeWithText("持仓、未成交开仓挂单和新单合计，多空不抵扣。", substring = true).assertExists()
         onNodeWithText("限制只在本应用生效，仍可手动撤单和平仓。").assertExists()
         onAllNodesWithText("减仓单", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun theCapIsTypedInWholeContractsWhereEveryInstrumentTradesThem() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // The fixture's contracts trade in whole 张, as on Tradovate and Rithmic.
+        val broker = RiskFixture()
+        val risk = AccountRiskController(MemorySnapshotStore())
+        setContent { TradingTheme { AccountOrderLimitSettings(risk, broker, broker.accounts.first(), busy = false) } }
+        onNodeWithTag("edit-account-order-limits").performClick()
+        onNodeWithText("最大持仓（张，留空不限）", useUnmergedTree = true).assertExists()
+        onNodeWithTag("account-max-lots").performTextInput("2.5")
+        onNodeWithTag("save-account-order-limits").assertIsNotEnabled()
+        onNodeWithTag("account-max-lots").performTextReplacement("3")
+        onNodeWithTag("save-account-order-limits").assertIsEnabled().performClick()
+        waitUntil(timeoutMillis = 5_000) { risk.rule(broker, "100").orderLimits.maxLots == 300L }
+        onNodeWithTag("edit-account-order-limits").assertTextContains("最大 3 张", substring = true)
+        onNodeWithTag("edit-account-order-limits").performClick()
+        assertEquals("3", onNodeWithTag("account-max-lots").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
     }
 
     @Test fun aLockedAccountStillReviewsAnExitAndRefusesAnEntryBeforeAnyConfirmation() =

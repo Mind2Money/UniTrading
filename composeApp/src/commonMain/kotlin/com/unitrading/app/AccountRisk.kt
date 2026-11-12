@@ -310,14 +310,14 @@ internal class AccountRiskController(
         }
         return when (action) {
             is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
-                paused(effect.neutral) ?: limits.refusal(action.request, effect)
+                paused(effect.neutral) ?: limits.refusal(action.request, effect, LotCapUnit.of(broker.instruments))
             }
             is RiskCheck.Change -> {
                 val order = snapshot.orders.firstOrNull { it.id == action.orderId } ?: return "挂单已更新，请重新选择。"
                 val changed = order.request.copy(lotsHundredths = action.lotsHundredths ?: order.request.lotsHundredths)
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
                 // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
-                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect)
+                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect, LotCapUnit.of(broker.instruments))
                     // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the amounts.
                     ?: order.takeIf { it.role == OrderRole.ENTRY }?.let { amounts(it.request, changed.copy(entryPrice = action.price)) }
             }
