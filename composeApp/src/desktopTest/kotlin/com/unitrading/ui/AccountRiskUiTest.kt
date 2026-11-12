@@ -262,24 +262,24 @@ class AccountRiskUiTest {
         assertEquals("3", onNodeWithTag("account-max-lots").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
     }
 
-    @Test fun theCapEditorKeepsItsUnitWhenTheContractsArriveWhileItIsOpen() = runDesktopComposeUiTest(width = 450, height = 850) {
-        // Tradovate and Rithmic can list a login's accounts before its contracts; until then the cap reads in 手.
+    @Test fun theCapReadsInWholeContractsBeforeAndAfterTheContractsArrive() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // Tradovate and Rithmic can list a login's accounts before its contracts. Only the demo trades fractions, and it
+        // always lists its instruments, so a login with none yet is whole contracts: the open editor keeps its unit.
         val broker = RiskFixture()
         val risk = AccountRiskController(MemorySnapshotStore())
         runBlocking { assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(300))) }
         broker.catalog.value = BrokerCatalog(emptyList(), broker.accounts)
         setContent { TradingTheme { AccountOrderLimitSettings(risk, broker, broker.accounts.first(), busy = false) } }
-        onNodeWithTag("edit-account-order-limits").performClick()
+        onNodeWithTag("edit-account-order-limits").assertTextContains("最大 3 张", substring = true).performClick()
         val field = onNodeWithTag("account-max-lots")
-        assertEquals("3.00", field.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
-        // The whole contracts arrive with the editor open: the untouched text stays valid, in the unit it was filled in.
+        assertEquals("3", field.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        onNodeWithText("最大持仓（张，留空不限）", useUnmergedTree = true).assertExists()
         runOnIdle { broker.catalog.value = BrokerCatalog(broker.source.instruments, broker.accounts) }
-        onNodeWithText("最大持仓（手，留空不限）", useUnmergedTree = true).assertExists()
+        onNodeWithText("最大持仓（张，留空不限）", useUnmergedTree = true).assertExists()
         field.assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Error))
         onNodeWithTag("save-account-order-limits").assertIsEnabled().performClick()
         waitUntil(timeoutMillis = 5_000) { onAllNodesWithTag("account-order-limits-editor").fetchSemanticsNodes().isEmpty() }
         assertEquals(300L, risk.rule(broker, "100").orderLimits.maxLots)
-        // The row reads in the contracts' unit once they are listed.
         onNodeWithTag("edit-account-order-limits").assertTextContains("最大 3 张", substring = true)
     }
 

@@ -138,11 +138,12 @@ internal fun FlattenConfirmation(review: FlattenReview, onCancel: () -> Unit, on
                 }
             }
         },
-        // The action is on the right, as in every confirmation of the app, closing one position included. It names
-        // what it does in the error colour, and it is asked even with "跳过交易确认" on.
+        // The action is on the right and looks like the confirmation that closes one position on the same page: a filled
+        // button in the error colour that names what it does. It is asked even with "跳过交易确认" on.
         confirmButton = {
-            TextButton(onConfirm, Modifier.testTag("confirm-bulk-flatten"), enabled = review.targets.isNotEmpty(),
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("平仓") }
+            val fill = actionFill(MaterialTheme.colorScheme.error)
+            Button(onConfirm, Modifier.testTag("confirm-bulk-flatten"), enabled = review.targets.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = fill, contentColor = contentOn(fill))) { Text("平仓") }
         },
         dismissButton = { TextButton(onCancel, Modifier.testTag("cancel-bulk-flatten")) { Text("取消") } },
     )
