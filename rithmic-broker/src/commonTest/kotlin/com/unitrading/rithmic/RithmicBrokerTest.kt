@@ -298,6 +298,9 @@ class RithmicBrokerTest {
         assertFalse(session.state.value.positions.single().protectionEditable)
         val orders = session.state.value.orders.associateBy { it.id }
         assertTrue(listOf("S1", "S2", "T1").all { orders.getValue(it).standaloneEditable }, "the lone target is locked with the position too")
+        // The legs of one bracket name its entry's basket, and the server cancels the others when one fills: S1 and T1 are one
+        // group, S2 the only leg left of its own.
+        assertEquals(mapOf("S1" to "E1", "S2" to "E9", "T1" to "E1"), orders.mapValues { it.value.ocoGroup })
         assertFalse(broker.capabilities.modifyOrderQuantity)
         assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("S2", 550000, 100).errors, "a sell stop at the bid would trigger at once")
         assertFalse(session.previewOrderChange("S2", 548500, 200).valid, "the size stays")
@@ -350,6 +353,7 @@ class RithmicBrokerTest {
         val session = broker.openSession("ACC1")
         val order = session.state.value.orders.single()
         assertEquals(548500, order.request.stopLoss); assertEquals(550000, order.request.takeProfit); assertTrue(order.protectionEditable)
+        assertNull(order.ocoGroup, "an entry is no leg")
         assertTrue(session.previewOrderProtection("E2", 548000, 550000).valid)
         assertFalse(session.modifyOrderProtection("req-14", "E2", order.version, 548000, 550500).accepted)
         val result = session.modifyOrderProtection("req-15", "E2", order.version, 548000, 550000)

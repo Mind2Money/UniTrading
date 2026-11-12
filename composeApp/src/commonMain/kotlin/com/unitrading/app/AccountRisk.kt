@@ -90,12 +90,13 @@ internal data class AccountRiskRule(
     fun frozen(tradingDay: LocalDate?): Boolean = frozenUntil != null && (tradingDay == null || tradingDay < frozenUntil)
 
     /**
-     * Whether the cash brackets or the sizing apply to a new [order]. One that only reduces the position held needs
-     * neither: it gets no stop loss or take profit of its own and keeps the quantity it was given. The order form and
-     * the guard both ask here, so they cannot disagree on what an exit is.
+     * Whether the cash brackets or the sizing apply to a new [order]. One that only reduces the position held, against it
+     * and for no more than it, needs neither: it gets no stop loss or take profit of its own and keeps the quantity it
+     * was given, whatever else works against the position ([ExposureEffect.reduces]). The order form and the guard both
+     * ask here, so they cannot disagree on it.
      */
     fun bracketsApply(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Boolean =
-        brackets.enabled && !newOrderExposure(snapshot, hedging, order).neutral
+        brackets.enabled && !newOrderExposure(snapshot, hedging, order).reduces
 
     /** The lots the lot cap still leaves a new order like [order], for a quantity sized from a loss amount; null without a cap. */
     fun lotRoom(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Long? =
@@ -355,7 +356,11 @@ internal class AccountRiskController(
         val hedging = broker.capabilities.hedging
         val rule = rule(broker, session.account.id)
         val limits = rule.orderLimits
-        fun paused(harmless: Boolean) = pause?.takeUnless { harmless }?.let { it.trimEnd('。') + stillAllowed(hedging) }
+        val unit = LotCapUnit.of(broker.instruments)
+        /** [covered]: what is refused would reduce the position, but the exits already working could take all of it. */
+        fun paused(harmless: Boolean, covered: Boolean = false) = pause?.takeUnless { harmless }?.let {
+            if (covered) EXITS_COVER_POSITION else it.trimEnd('。') + stillAllowed(hedging)
+        }
         /** The cash amounts, for a pending entry or a position that an edit turns from [before] into [after]. */
         fun amounts(before: OrderRequest, after: OrderRequest): String? {
             if (!rule.brackets.enabled) return null
@@ -364,14 +369,16 @@ internal class AccountRiskController(
         }
         return when (action) {
             is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
-                paused(effect.neutral) ?: limits.refusal(action.request, effect, LotCapUnit.of(broker.instruments))
+                paused(effect.harmless, covered = effect.reduces) ?: limits.refusal(action.request, effect, unit)
             }
             is RiskCheck.Change -> {
                 val order = snapshot.orders.firstOrNull { it.id == action.orderId } ?: return "挂单已更新，请重新选择。"
                 val changed = order.request.copy(lotsHundredths = action.lotsHundredths ?: order.request.lotsHundredths)
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
-                // An exit may move or shrink; an entry can only be cancelled, and a stop may not move away from the market.
-                paused(effect.neutral && !order.stopLoosenedAt(action.price)) ?: limits.refusal(changed, effect, LotCapUnit.of(broker.instruments), edit = true)
+                // An order that reduces may move or shrink, and grow as an exit; an entry can only be cancelled, and a stop
+                // may not move away from the market.
+                val loosened = order.stopLoosenedAt(action.price)
+                paused(effect.harmless && !loosened, covered = effect.reduces && !loosened) ?: limits.refusal(changed, effect, unit)
                     ?: when (order.role) {
                         // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the
                         // amounts. They stay at their prices, unless the broker keeps them at their distance from the entry.
@@ -380,15 +387,24 @@ internal class AccountRiskController(
                             amounts(order.request, changed.copy(entryPrice = action.price,
                                 stopLoss = changed.stopLoss?.plus(shift), takeProfit = changed.takeProfit?.plus(shift)))
                         }
-                        // A stop or a target changed on its own is held to them like the protection of the position: from
-                        // its entry price, for the lots of the leg. Cancelling one is never refused.
-                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> snapshot.positions
-                            .firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                        // A stop or a target changed on its own. Raised past what the position can take, it would open a
+                        // position without a stop, also where the position has gone. Its price is held to the amounts like
+                        // the protection of the position, from the position's entry for no more lots than the position has,
+                        // where it moves to cost the position more: down for a long, up for a short. A smaller one at the
+                        // same price always passes, and cancelling one is never refused.
+                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> when {
+                            !rule.brackets.enabled -> null
+                            effect.grows && !effect.exit -> "保护单数量不能超过持仓：超出的部分是不带止损的开仓。"
+                            else -> snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                                val was = order.request.entryPrice
+                                val costlier = was == null || if (held.side == Side.BUY) action.price < was else action.price > was
+                                if (!costlier) return@let null
                                 val stop = order.role == OrderRole.STOP_LOSS
-                                fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, lots, held.entryPrice,
-                                    stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
-                                amounts(leg(order.request.entryPrice, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                                fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
+                                    held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
+                                amounts(leg(was, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
                             }
+                        }
                         OrderRole.UNRESOLVED -> null
                     }
             }

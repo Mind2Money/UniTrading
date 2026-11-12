@@ -493,6 +493,12 @@ class TradovateTests {
         val entry = account.state.value.orders.single { it.id == "700" }
         assertEquals(OrderRole.ENTRY, entry.role)
         assertEquals("701" to "702", entry.stopLossOrderId to entry.takeProfitOrderId)
+        // The suspended legs the entry names wait for it, and cancel each other once it has filled: one OCO group.
+        val legs = account.state.value.orders.filter { it.id in setOf("701", "702") }
+        assertEquals(listOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT), legs.sortedBy { it.id }.map { it.role })
+        assertNotNull(legs.first().ocoGroup)
+        assertEquals(1, legs.map { it.ocoGroup }.distinct().size)
+        assertNull(entry.ocoGroup)
         assertEquals(5_480_000_000L to 5_510_000_000L, entry.request.stopLoss to entry.request.takeProfit)
         assertTrue(entry.protectionEditable)
         assertEquals("入场尚未成交，保护单等待激活", account.state.value.orders.single { it.id == "701" }.note)

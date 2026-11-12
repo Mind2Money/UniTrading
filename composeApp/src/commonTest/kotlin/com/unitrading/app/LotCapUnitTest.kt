@@ -53,9 +53,21 @@ class LotCapUnitTest {
         assertNull(limits.refusal(buy, ExposureEffect(400, 300, true)))
         assertNotNull(limits.refusal(buy, ExposureEffect(400, 400, false)))
         assertNotNull(limits.refusal(buy, ExposureEffect(500, 400, false)))
-        // An edit there passes while it leaves no more than there was: an entry order shrunk or moved, not grown.
-        assertNull(limits.refusal(buy, ExposureEffect(500, 400, false), edit = true))
-        assertNull(limits.refusal(buy, ExposureEffect(400, 400, false), edit = true))
-        assertNotNull(limits.refusal(buy, ExposureEffect(400, 500, false), edit = true))
+        // An edit that raises no lots passes there while it leaves no more than there was: an entry order moved or made smaller.
+        assertNull(limits.refusal(buy, ExposureEffect(500, 400, false, grows = false)))
+        assertNull(limits.refusal(buy, ExposureEffect(400, 400, false, grows = false)))
+        assertNotNull(limits.refusal(buy, ExposureEffect(400, 500, false, grows = false)))
+        // One that raises them is held to the same rule as a new order, wherever the total ends up.
+        assertNotNull(limits.refusal(buy, ExposureEffect(500, 400, false, grows = true)))
+        assertNull(limits.refusal(buy, ExposureEffect(500, 400, true, grows = true)))
+    }
+
+    @Test fun aBlockedSymbolTakesExitsAndSaysWhyAReductionBesideOthersIsNone() {
+        val blocked = AccountOrderLimits(blockedSymbols = setOf("MES"))
+        assertNull(blocked.refusal(buy, ExposureEffect(300, 300, true)))
+        assertNull(blocked.refusal(buy, ExposureEffect(300, 300, false, reduces = true, grows = false)), "moved or made smaller")
+        assertEquals(EXITS_COVER_POSITION, blocked.refusal(buy, ExposureEffect(300, 300, false, reduces = true)))
+        assertEquals("该子账户禁止交易品种 MES。", blocked.refusal(buy, ExposureEffect(300, 400, false)))
+        assertEquals("该子账户禁止交易品种 MES。", blocked.refusal(buy, ExposureEffect(300, 300, false, grows = false)), "an entry only goes")
     }
 }

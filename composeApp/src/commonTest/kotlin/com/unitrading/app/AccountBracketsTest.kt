@@ -103,6 +103,13 @@ class AccountBracketsTest {
         val scaleOut = OrderRequest("MES", Side.SELL, OrderKind.MARKET, 100)
         assertFalse(cash.bracketsApply(long, false, scaleOut))
         assertSame(scaleOut, cash.bracketed(scaleOut, futures, "USD", quote, long, hedging = false))
+        // Beside the broker's brackets of 2 and 1 a sell of 3 still only reduces the long: it needs no bracket of its own,
+        // whatever their legs may do. Whether it may go at all is for the lock and the limits.
+        fun leg(id: String, lots: Long, role: OrderRole) = PendingOrder(id, OrderRequest("MES", Side.SELL,
+            if (role == OrderRole.STOP_LOSS) OrderKind.STOP else OrderKind.LIMIT, lots, 548_000), 0, role = role, ocoGroup = id.takeLast(1))
+        val bracketed = long.copy(orders = listOf(leg("sa", 200, OrderRole.STOP_LOSS), leg("ta", 200, OrderRole.TAKE_PROFIT),
+            leg("sb", 100, OrderRole.STOP_LOSS), leg("tb", 100, OrderRole.TAKE_PROFIT)))
+        assertFalse(cash.bracketsApply(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
         // Adding, reversing, an order in a flat account and every order of a hedging account are entries.
         val add = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 100)
         assertEquals(add.copy(stopLoss = 548_025, takeProfit = 554_025), cash.bracketed(add, futures, "USD", quote, long, hedging = false))

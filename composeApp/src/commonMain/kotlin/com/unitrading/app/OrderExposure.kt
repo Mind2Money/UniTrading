@@ -11,27 +11,31 @@ private fun Long.bounded() = coerceIn(0, LOT_BOUND)
 internal val PendingOrder.remainingLots: Long get() = (request.lotsHundredths - filledLotsHundredths).bounded()
 
 /**
- * The most lots [orders], all on one side, can fill, each with the lots [remaining] gives it: an ordinary order in full,
- * and the broker-paired protection by pairs. A stop and the target of its bracket cancel each other, so at most one of
- * the two fills; which stop goes with which target is not known, so the legs are paired the way that fills the most:
- * the largest stop with the smallest target, and so on. Brackets of equal legs count as one leg each.
+ * Why a paused account or a blocked symbol refuses an order that reduces the position but is no exit: the orders already
+ * working against the position could take all of it, and with this one as well the account could end up on the other side.
  */
-private fun fillable(orders: List<PendingOrder>, remaining: (PendingOrder) -> Long = { it.remainingLots }): Long {
-    var plain = 0L
-    val stops = mutableListOf<Long>()
-    val targets = mutableListOf<Long>()
-    for (order in orders) when (order.role) {
-        OrderRole.STOP_LOSS -> stops += remaining(order)
-        OrderRole.TAKE_PROFIT -> targets += remaining(order)
-        else -> plain += remaining(order)
+internal const val EXITS_COVER_POSITION = "已挂的止损、止盈等减仓单已覆盖持仓，再加这笔可能反手。请先撤销或减少已挂的减仓单，或直接平仓。"
+
+/**
+ * The stops and targets of entries that have not filled, as the entries name them in [PendingOrder.stopLossOrderId] and
+ * [PendingOrder.takeProfitOrderId]. Such a leg cannot fill before its entry, and then only takes back what the entry
+ * added, so until then it counts for nothing.
+ */
+private fun AccountSnapshot.waitingLegs(): Set<String> = orders.filter { it.role == OrderRole.ENTRY && it.filledLotsHundredths == 0L }
+    .flatMapTo(mutableSetOf()) { listOfNotNull(it.stopLossOrderId, it.takeProfitOrderId) }
+
+/**
+ * The most lots [orders], all on one side, can fill, each with the lots [remaining] gives it. An ordinary order counts in
+ * full, and so does a stop or target the broker gives no [PendingOrder.ocoGroup]: nothing says it cancels another one.
+ * The legs of one group cancel each other as they fill, so a group fills no more than the larger of its stops' lots and
+ * its targets' lots.
+ */
+private fun fillable(orders: List<PendingOrder>, remaining: (PendingOrder) -> Long): Long {
+    val (legs, plain) = orders.partition { it.isProtection && it.ocoGroup != null }
+    return plain.sumOf(remaining) + legs.groupBy { it.ocoGroup }.values.sumOf { group ->
+        val (stops, targets) = group.partition { it.role == OrderRole.STOP_LOSS }
+        maxOf(stops.sumOf(remaining), targets.sumOf(remaining))
     }
-    val largestStops = stops.sortedDescending()
-    val smallestTargets = targets.sorted()
-    var legs = 0L
-    for (i in 0 until maxOf(largestStops.size, smallestTargets.size)) {
-        legs += maxOf(largestStops.getOrElse(i) { 0L }, smallestTargets.getOrElse(i) { 0L })
-    }
-    return plain + legs
 }
 
 /**
@@ -43,18 +47,23 @@ internal data class SymbolExposure(val net: Long, val buys: Long, val sells: Lon
     val worst: Long get() = maxOf(net + buys, sells - net)
     /** The lots an order on [side] can take off the position: none when it is on the position's own side, or there is none. */
     fun closable(side: Side): Long = (if (side == Side.BUY) -net else net).coerceAtLeast(0)
-    /** With a new order of [lots] on [side]: a new order is never broker-paired protection. */
+    /** With a new order of [lots] on [side]: a new order is an ordinary one, in no group and waiting for nothing. */
     fun with(side: Side, lots: Long) = if (side == Side.BUY) copy(buys = buys + lots) else copy(sells = sells + lots)
 }
 
-/** [symbol] as [snapshot] has it, each working order with the lots [remaining] gives it: an edit passes what it leaves. */
+/**
+ * [symbol] as [snapshot] has it, each working order with the lots [remaining] gives it: an edit passes what it leaves.
+ * A leg that waits for its entry counts for nothing, except the order [edited], which counts as it is left: an edit
+ * cannot hide lots that way.
+ */
 internal fun symbolExposure(
-    snapshot: AccountSnapshot, symbol: String, remaining: (PendingOrder) -> Long = { it.remainingLots },
+    snapshot: AccountSnapshot, symbol: String, edited: String? = null, remaining: (PendingOrder) -> Long = { it.remainingLots },
 ): SymbolExposure {
     val net = snapshot.positions.filter { it.symbol == symbol }
         .sumOf { if (it.side == Side.BUY) it.lotsHundredths.bounded() else -it.lotsHundredths.bounded() }
+    val waiting = snapshot.waitingLegs() - setOfNotNull(edited)
     val working = snapshot.orders.filter { it.request.symbol == symbol }
-    fun side(side: Side) = fillable(working.filter { it.request.side == side }, remaining)
+    fun side(side: Side) = fillable(working.filter { it.request.side == side }) { if (it.id in waiting) 0 else remaining(it) }
     return SymbolExposure(net, side(Side.BUY), side(Side.SELL))
 }
 
@@ -63,7 +72,7 @@ internal fun symbolExposure(
  * symbol towards flat. On a net account that is an order against the net position, whoever placed it (a stop added
  * after the entry is an ordinary order to the broker), and only while it fits in what the orders before it leave of
  * that position: stops come first, as what may still protect a position whose close fails, then the others in the order
- * of [snapshot], with a broker-paired stop and target as one pair. An order beyond that could reverse the position.
+ * of [snapshot], counted as [fillable] counts them. An order beyond that could reverse the position.
  * On a hedging account every order opens a position of its own, so only broker-paired protection reduces one.
  */
 internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order: PendingOrder): Boolean {
@@ -71,10 +80,11 @@ internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order:
     val (symbol, side) = order.request.let { it.symbol to it.side }
     val held = symbolExposure(snapshot, symbol).closable(side)
     if (held <= 0) return false
+    val waiting = snapshot.waitingLegs()
     val kept = mutableListOf<PendingOrder>()
     for (candidate in snapshot.orders.filter { it.request.symbol == symbol && it.request.side == side }
         .sortedBy { it.request.kind != OrderKind.STOP }) {
-        val fits = fillable(kept + candidate) <= held
+        val fits = fillable(kept + candidate) { if (it.id in waiting) 0 else it.remainingLots } <= held
         if (candidate.id == order.id) return fits
         if (fits) kept += candidate
     }
@@ -88,21 +98,32 @@ internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order:
  * position plus the unfilled part of every order that is not protection. [before] and [after] are those totals, which
  * the lot cap compares.
  *
- * [neutral] says the action is an exit: it cannot raise the worst case of its symbol, and the order it places or
- * changes only works against the position held, for no more lots than that position has. A stop, a target and a
- * partial close are neutral, also side by side; an order that would reverse the position is not, and neither is
- * anything on the position's own side or in a symbol without a position. A new order on a hedging account never is.
+ * [reduces] says the order placed or left by an edit works against the position held, for no more lots than that
+ * position has: it needs no stop or target of its own. [exit] says that, on top of that, it fits in what the orders
+ * already working against the position leave of it: whatever of them fills, this one included, the account cannot end
+ * up on the other side. A stop, a target and a partial close are exits, also side by side, until together they could
+ * fill more than the position; a stop and the target of one broker bracket count once. [grows] says the action places
+ * an order or raises the lots of one. On a hedging account no new order reduces, as each opens a position of its own,
+ * and only the protection of a position moved or made smaller is an exit.
  */
-internal data class ExposureEffect(val before: Long, val after: Long, val neutral: Boolean)
+internal data class ExposureEffect(
+    val before: Long, val after: Long, val exit: Boolean, val reduces: Boolean = exit, val grows: Boolean = true,
+) {
+    /**
+     * What a pause or a blocked symbol lets through: an exit, or an order that reduces moved or made smaller, which
+     * leaves the orders against the position no larger than they were.
+     */
+    val harmless: Boolean get() = exit || (reduces && !grows)
+}
 
-/** The effect of placing [request]. Its [ExposureEffect.neutral] is the test for "this order is an exit". */
+/** The effect of placing [request]. Its [ExposureEffect.exit] is the test for "this order may go while nothing else may". */
 internal fun newOrderExposure(snapshot: AccountSnapshot, hedging: Boolean, request: OrderRequest): ExposureEffect =
     exposureEffect(snapshot, hedging, request.symbol, request.side, request.lotsHundredths, null)
 
 /**
  * The effect of leaving [order] working with [lotsHundredths] in total, its filled part included: a quantity edit, or
- * a price edit with the quantity it has. A broker-paired stop or target counts at its new size among the stops or the
- * targets of its side, so a leg raised past the position opens what exceeds it, also when it is the second one raised.
+ * a price edit with the quantity it has. A stop or target of a broker bracket counts at its new size within its group,
+ * so a leg raised past the position opens what exceeds it, also when it is the second one raised.
  */
 internal fun editedOrderExposure(
     snapshot: AccountSnapshot, hedging: Boolean, order: PendingOrder, lotsHundredths: Long = order.request.lotsHundredths,
@@ -113,23 +134,24 @@ private fun exposureEffect(
     snapshot: AccountSnapshot, hedging: Boolean, symbol: String, side: Side, lots: Long, replaced: PendingOrder?,
 ): ExposureEffect {
     val now = lots.bounded()
-    val old = replaced?.remainingLots ?: 0
-    val raised = now > old
+    val grows = replaced == null || now > replaced.remainingLots
     if (hedging) {
+        val old = replaced?.remainingLots ?: 0
         val protection = replaced?.isProtection == true
         val gross = snapshot.positions.sumOf { it.lotsHundredths.bounded() } +
             snapshot.orders.filterNot { it.isProtection }.sumOf { it.remainingLots }
-        return ExposureEffect(gross, gross + if (protection) (now - old).coerceAtLeast(0) else now - old, protection && !raised)
+        val exit = protection && !grows
+        return ExposureEffect(gross, gross + if (protection) (now - old).coerceAtLeast(0) else now - old, exit, exit, grows)
     }
     val others = (snapshot.positions.map { it.symbol } + snapshot.orders.map { it.request.symbol }).toSet().minus(symbol)
         .sumOf { symbolExposure(snapshot, it).worst }
-    val before = symbolExposure(snapshot, symbol)
+    val before = symbolExposure(snapshot, symbol, replaced?.id)
     val after = if (replaced == null) before.with(side, now)
-        else symbolExposure(snapshot, symbol) { if (it.id == replaced.id) now else it.remainingLots }
-    val closable = before.closable(side)
-    // Only a new order or a raised quantity can open something; a smaller or merely moved exit stays an exit.
-    val exit = if (replaced == null) now in 1..closable else closable > 0 && (!raised || now <= closable)
-    return ExposureEffect(others + before.worst, others + after.worst, exit && after.worst <= before.worst)
+        else symbolExposure(snapshot, symbol, replaced.id) { if (it.id == replaced.id) now else it.remainingLots }
+    val held = before.closable(side)
+    val reduces = held > 0 && now <= held && (now > 0 || replaced != null)
+    val exit = reduces && (if (side == Side.BUY) after.buys else after.sells) <= held
+    return ExposureEffect(others + before.worst, others + after.worst, exit, reduces, grows)
 }
 
 /**
@@ -142,8 +164,12 @@ internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: 
     val probe = newOrderExposure(snapshot, hedging, request.copy(lotsHundredths = LOT_BOUND))
     val start = probe.after - LOT_BOUND
     if (probe.before <= cap) return cap - start
-    // Over the cap only an exit passes: no more than the position, and no lot that would raise the total.
-    return if (hedging) 0 else minOf(symbolExposure(snapshot, request.symbol).closable(request.side), probe.before - start)
+    // Over the cap only an exit passes: no more than what the orders already on its side leave of the position, and no
+    // lot that would raise the total.
+    if (hedging) return 0
+    val exposure = symbolExposure(snapshot, request.symbol)
+    val left = exposure.closable(request.side) - if (request.side == Side.BUY) exposure.buys else exposure.sells
+    return minOf(left, probe.before - start).coerceAtLeast(0)
 }
 
 /**

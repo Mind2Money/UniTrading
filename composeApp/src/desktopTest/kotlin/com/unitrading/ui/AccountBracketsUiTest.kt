@@ -277,12 +277,15 @@ class AccountBracketsUiTest {
         waitUntil(timeoutMillis = 5_000) { broker.placed.size == 1 }
         // The stop typed for the buy sized that order; it is no part of this one.
         assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.MARKET, 100), broker.placed.single())
-        // With a stop and a target already working for the whole position, one more sell could leave the account short.
+        // With a stop and a target already working for the whole position the sell still only reduces it and takes no stop of
+        // its own; whether it may go beside them is for the lock and the limits, which refuse it where they apply.
         runOnIdle {
             broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(
                 riskOrder("stop", Side.SELL, OrderKind.STOP, 200, 548_000), riskOrder("target", Side.SELL, OrderKind.LIMIT, 200, 552_000)))
         }
-        onNodeWithTag("order-error").assertTextEquals("加上已挂的减仓单会超过持仓，请先撤销多余的挂单")
+        waitForIdle()
+        onNodeWithTag("order-error").assertDoesNotExist()
+        onNodeWithTag("order-reduction").assertTextEquals("减仓单 · 最多 2 张，按输入数量下单，不附加止损")
         // Back on the side of the position the order is sized again, from the stop it was given before.
         onNodeWithTag("order-side-BUY").performClick()
         onNodeWithTag("order-quantity").assertDoesNotExist()

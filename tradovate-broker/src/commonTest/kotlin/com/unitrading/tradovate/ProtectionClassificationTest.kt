@@ -95,6 +95,30 @@ class ProtectionClassificationTest {
         assertTrue(classifier.entryEditable(703))
         assertNull(classifier.forPosition(200, Side.BUY, 1).stopId)
     }
+    /** The two legs of each bracket share a group, which says that one of them filling cancels the other. */
+    @Test fun theLegsOfOneBracketShareAnOcoGroupAndNothingElseHasOne() {
+        val book = EntityBook().apply {
+            apply("position", position(3))
+            putOrder(order(701, "Stop", extra = ",\"ocoId\":702")); putOrder(order(702, "Limit", extra = ",\"ocoId\":701"))
+            putOrder(order(711, "Stop", extra = ",\"ocoId\":77")); putOrder(order(712, "Limit", extra = ",\"ocoId\":77"))
+            apply("order", json("""{"id":720,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Filled","timestamp":"$stamp"}"""))
+            putOrder(order(721, "Stop", extra = ",\"parentId\":720")); putOrder(order(722, "Limit", extra = ",\"parentId\":720"))
+            putOrder(order(731, "Limit", "Buy"))
+        }
+        val classifier = ProtectionClassifier(book, 100)
+        assertEquals(listOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT), listOf(701L, 702L).map { classifier.relation(it).role })
+        assertNotNull(classifier.ocoGroup(701))
+        assertEquals(classifier.ocoGroup(701), classifier.ocoGroup(702))
+        assertEquals(classifier.ocoGroup(711), classifier.ocoGroup(712))
+        assertNotEquals(classifier.ocoGroup(701), classifier.ocoGroup(711))
+        // Two children of one parent with no OCO between them can both fill, and an entry is no leg.
+        assertEquals(listOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT, OrderRole.ENTRY), listOf(721L, 722L, 731L).map { classifier.relation(it).role })
+        assertEquals(listOf(null, null, null), listOf(721L, 722L, 731L).map(classifier::ocoGroup))
+        // The one bracket of an ATM strategy is a group as well: the strategy cancels the other leg.
+        val atm = ProtectionClassifier(atmBook(), 100)
+        assertNotNull(atm.ocoGroup(701))
+        assertEquals(atm.ocoGroup(701), atm.ocoGroup(702))
+    }
     @Test fun sameParentAloneDoesNotInventAnOcoBetweenTwoIndependentExits() {
         val book = EntityBook().apply {
             apply("position", position())

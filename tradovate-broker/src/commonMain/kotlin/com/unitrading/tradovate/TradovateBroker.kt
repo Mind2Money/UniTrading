@@ -1410,7 +1410,8 @@ class TradovateBroker(
                     role = relation.role, positionId = if (protection != null && id in protection.confirmed) "$aid:$contract" else null, editable = editable, note = note,
                     filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100),
                     stopLossOrderId = stop?.toString(), takeProfitOrderId = target?.toString(),
-                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id), standaloneEditable = standalone)
+                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id), standaloneEditable = standalone,
+                    ocoGroup = classifier.ocoGroup(id))
             }
             val fills = book.list("fill").filter { f -> f.bool("active") != false && orders.any { it.long("id") == f.long("orderId") } }.mapNotNull { f ->
                 val spec = contractSpecs[f.long("contractId")] ?: return@mapNotNull null

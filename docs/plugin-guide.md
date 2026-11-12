@@ -52,6 +52,11 @@ TradingScreen(runtime)
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
 | `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
 
+挂单（`PendingOrder`）的两项字段影响[子账户风控](account-risk-lock.md)怎样计算持仓总量和减仓单：
+
+- `ocoGroup`：同属一组括号单的止损腿和止盈腿给同一个值，表示其中一条成交后券商撤掉其余（多目标括号把止损减量）；默认 null，表示券商没有说明。应用一组只按止损腿合计和止盈腿合计中较大的一个计，没有组的单按全部数量计。只有券商确实这样撤单时才能填，填错会少算可能反手的数量。Tradovate 填在 OCO 关联的两条腿和单层 ATM 的两条腿上，Rithmic 填同一入场单的子单（值为入场单的 basket id），本地模拟不填（止损止盈在持仓上）。
+- 入场单的 `stopLossOrderId` / `takeProfitOrderId`：指向挂在它上面的止损单和止盈单。入场单还没有任何成交时，应用不把这两张单计入持仓总量：它们要等入场成交才生效，之后也只平掉入场加上的仓位。所以只能填入场成交前不会成交的括号单。目前只有 Tradovate 填写（OSO 括号的子单，入场成交前为 Suspended）；Rithmic 不填，未成交入场单的括号按跳数档位记在入场单上，没有单独的单号。
+
 止损止盈的价格规则在 [ProtectionPrices.kt](../broker-api/src/commonMain/kotlin/com/unitrading/broker/ProtectionPrices.kt)，插件直接调用，不要各写一份。`entryProtectionError` 用于未成交订单：按订单方向与入场价比较，市价单要越过整个买卖价差。`positionProtectionError` 用于已有持仓：只校验改动的那条线，只和当前可平仓价比较，不看入场价，这样推保本和把止损推过入场价都不受影响。
 
 交易命令返回 `TradeResult`。`outcome` 区分 ACCEPTED、REJECTED、UNKNOWN；`accepted=true` 在远程插件中只表示已受理，不等于成交。结果未知时，不能据此判断未成交，也不能自动重发。示例远程插件按会话去重，同请求 ID 不重复发送；重新登录后应先核对服务器状态，内存中的去重记录不保证跨会话有效。
