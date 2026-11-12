@@ -6,11 +6,25 @@
 ✅ 「设置 → 交易」新增“成交音效”开关，默认开启，并写明这是搞笑功能：入场、止盈、止损成交时各播放一段搞笑音效
 ✅ 关闭后成交不再出声，正在播放的片段立即停止；关闭期间的成交不会在重新打开后补播
 
+🛡️ **入场后添加止损止盈**
+✅ Tradovate 和 Rithmic 的持仓可以在入场后添加止损、止盈：在图表持仓线上拖出 SL / TP，或在交易页点持仓的“止损/止盈”填写价格。止损以普通 Stop 单、止盈以普通 Limit 单下到交易商，数量等于当前持仓
+✅ 止损和止盈同时添加时作为一组 OCO 提交（Tradovate `placeOCO`，Rithmic OCO 请求）：成交一条，交易商服务器撤销另一条，软件关闭后同样有效
+✅ 已有一条、再加另一条时，软件先撤销已有那条，服务器确认撤销后，再把两条作为一组 OCO 重新提交。撤销到重新下单之间约 1–2 秒没有这条保护；若已有那条在撤销前成交，不再下单；若 OCO 被拒，提示仓位当前缺少这条保护
+✅ 软件下的止损止盈带有标签，单独一条也显示为该仓位的 SL / TP，可以拖动改价；其他来源、没有关联的反向单仍显示为“待确认”
+⚠️ 只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单。Rithmic 的 OCO 请求（模板 328）字段取自开源库 rithmic-rs，没有在真实服务器上发过；单独撤销 OCO 中的一条时，交易商是否同时撤销另一条也未核实，撤单后请看仓位上的保护是否还在
+
 ## English
 
 🔊 **Fill sounds**
 ✅ Settings → Trading has a new "fill sounds" switch, on by default, and it says the sounds are a joke feature: a funny clip plays on an entry, take-profit or stop-loss fill
 ✅ Switched off, fills are silent and a clip that is playing stops at once; a fill that happened while it was off is not played after it is switched back on
+
+🛡️ **Stop loss and take profit after entry**
+✅ Tradovate and Rithmic positions can take a stop loss and take profit after entry: drag SL / TP out of the position line on the chart, or enter prices under "Stop loss / take profit" on the position in the trade page. The stop goes to the broker as a plain Stop order and the target as a plain Limit order, sized to the position
+✅ Added together, they go out as one OCO pair (Tradovate `placeOCO`, the Rithmic OCO request): when one fills, the broker's server cancels the other, also while the app is closed
+✅ With one line in place, adding the other cancels it first and, once the server confirms the cancel, places both lines again as one OCO pair. The position goes without that line for about 1–2 seconds in between; if it filled before the cancel, nothing more is sent; if the OCO pair is rejected, the app says the position is now missing that line
+✅ Stops and targets the app places carry a tag, so a single one also shows as the position's SL / TP and can be dragged to a new price; unlinked opposite orders from elsewhere still show as unresolved
+⚠️ Tested offline only; no order has been placed this way on a Tradovate or Rithmic account. The Rithmic OCO request (template 328) follows the open-source rithmic-rs library and has never been sent to a live server. Whether a broker also cancels the other line when one line of an OCO pair is cancelled on its own is not confirmed: check the position's protection after such a cancel
 
 # v1.5.0
 

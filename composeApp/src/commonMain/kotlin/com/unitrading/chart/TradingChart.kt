@@ -198,7 +198,8 @@ fun TradingChart(
     // A market draft enters at the side of the quote it trades against, so its lines show even while the estimate is invalid.
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
-        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection), quote)
+        OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection,
+            actions.addPositionProtection), quote)
     val currentLines by rememberUpdatedState(lines)
     drawingLayer?.bindChart(
         orderLineAt = { point -> currentLines.any { it.edit != null && abs(currentScale.y(it.price) - point.y) <= 8 * density.density } },

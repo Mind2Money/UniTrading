@@ -17,6 +17,9 @@ import kotlin.time.Clock
 /** Initial history depth and cache window: twice the largest indicator period (1000). */
 const val CHART_BARS = 2000
 private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
+private const val REMOVE_BY_CANCEL = "这里不能移除止损/止盈；要去掉一条，请撤销它的挂单"
+/** How long adding the second protection line waits for the server to show the first one cancelled before giving up. */
+private const val REPLACE_WAIT_MS = 10_000L
 
 /** Server-authoritative adapter. No remote order is executed by the local demo engine. */
 class TradovateBroker(
@@ -31,7 +34,7 @@ class TradovateBroker(
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, ocoProtection = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -1600,13 +1603,17 @@ class TradovateBroker(
             override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = command(accountId, requestId, "protect:$positionId:$expectedVersion:$stopLoss:$takeProfit") {
                 val p = state.value.positions.firstOrNull { it.id == positionId } ?: errorArgument("仓位已结束或不属于当前账户")
                 require(p.version == expectedVersion && p.protectionEditable) { "仓位或保护订单关系已变化，请在官网核对" }
-                val changes = listOf(p.stopLoss != stopLoss, p.takeProfit != takeProfit).count { it }
-                require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                 val stop = p.stopLoss != stopLoss
-                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有止损/止盈，添加或删除保护请到官网操作" }
+                require(stop || p.takeProfit != takeProfit) { "止损/止盈尚未改变" }
+                require(!(stop && stopLoss == null) && !(p.takeProfit != takeProfit && takeProfit == null)) { REMOVE_BY_CANCEL }
                 val spec = instruments.first { it.symbol == p.symbol }
                 require(fresh(quotes[p.symbol])) { "止损/止盈修改需要有效的实时报价" }
                 positionProtectionError(spec, p, quotes[p.symbol], stopLoss, takeProfit)?.let { errorArgument(it) }
+                if (p.stopLoss == null && stopLoss != null || p.takeProfit == null && takeProfit != null) {
+                    return@command addProtection(accountId, requestId, p, spec, stopLoss, takeProfit)
+                }
+                require(stop != (p.takeProfit != takeProfit)) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
+                val price = requireNotNull(if (stop) stopLoss else takeProfit)
                 val binding = lock.withLock {
                     val resolution = ProtectionClassifier(book, accountId.toLong()).forPosition(positionId.substringAfter(':').toLong(), p.side, p.lotsHundredths / 100)
                     require(resolution.editable && resolution.revision == p.protectionRevision) { "保护订单关联或版本已变化，请重新选择" }
@@ -1621,6 +1628,74 @@ class TradovateBroker(
                     put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
                 })
             }
+        }
+    }
+
+    /**
+     * Adds a stop loss and/or take profit to [p] as plain exit orders sized to the position and tagged as the app's protection.
+     * With neither line in place, one line is a single order and two are an OCO pair. With one in place, adding the other
+     * cancels it, waits for the server to show it cancelled and not filled, and places both as an OCO pair: Tradovate cannot
+     * link a new order to a working one, and the position goes without that line in between. Runs inside [command].
+     */
+    private suspend fun addProtection(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?): TradeResult {
+        val contract = p.id.substringAfter(':').toLong()
+        val existing = lock.withLock {
+            val resolution = ProtectionClassifier(book, accountId.toLong()).forPosition(contract, p.side, p.lotsHundredths / 100)
+            require(resolution.editable && resolution.revision == p.protectionRevision) { "保护订单关联或版本已变化，请重新选择" }
+            require(resolution.stopId?.toString() == p.stopLossOrderId && resolution.targetId?.toString() == p.takeProfitOrderId) { "保护订单已被替换" }
+            listOfNotNull(resolution.stopId, resolution.targetId)
+        }
+        val pair = stopLoss != null && takeProfit != null
+        fun placed(result: TradeResult, what: String) =
+            if (result.accepted) result.copy(message = "$what 已提交：${result.message}") else result
+        if (existing.isEmpty()) return placed(sendWrite(accountId, requestId, "protect", null, if (pair) "order/placeoco" else "order/placeorder",
+            protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit)), if (pair) "止损+止盈 OCO" else if (stopLoss != null) "止损单" else "止盈单")
+        val oldId = existing.single()
+        val old = if (p.stopLossOrderId == oldId.toString()) "止损" else "止盈"
+        val cancelId = "$requestId-c"
+        val cancel = sendWrite(accountId, cancelId, "cancel", oldId, "order/cancelorder",
+            buildJsonObject { put("orderId", oldId); put("clOrdId", tag(cancelId)); put("isAutomated", false) })
+        if (!cancel.accepted) return cancel.copy(message = "撤销原${old}${if (cancel.outcome == CommandOutcome.UNKNOWN) "的结果未知" else "未成功"}，未下 OCO：${cancel.message}")
+        val settled = withTimeoutOrNull(REPLACE_WAIT_MS) { while (lock.withLock { "$accountId/$cancelId" in awaiting }) delay(50); true } == true
+        if (!settled) return TradeResult(false, "已请求撤销原$old，服务器 ${REPLACE_WAIT_MS / 1_000} 秒内未确认，未下 OCO；请同步账户后核对", outcome = CommandOutcome.UNKNOWN)
+        val problem = lock.withLock {
+            val filled = ProtectionClassifier(book, accountId.toLong(), includeInactive = true).filledQuantity(oldId) > 0 ||
+                book.item("order", oldId)?.str("ordStatus") in setOf("Filled", "Completed")
+            val current = accountFlows[accountId]?.value?.positions?.firstOrNull { it.id == p.id }
+            when {
+                filled -> "原${old}在撤销前已成交，未再下 OCO；请核对仓位"
+                current == null || current.side != p.side || current.lotsHundredths != p.lotsHundredths ->
+                    "原${old}已撤销，但仓位已变化，未下 OCO；请核对仓位与保护"
+                current.stopLoss != null || current.takeProfit != null || !current.protectionEditable ->
+                    "原${old}已撤销，但仓位上又出现了其他保护单，未下 OCO；请核对"
+                !connected || synchronizing || unknownCommands.isNotEmpty() -> "原${old}已撤销，但连接状态已变化，未下 OCO；仓位当前没有$old，请立即处理"
+                !fresh(quotes[p.symbol]) -> "原${old}已撤销，但实时报价已失效，未下 OCO；仓位当前没有$old，请立即处理"
+                else -> positionProtectionError(spec, current, quotes[p.symbol], stopLoss, takeProfit)
+                    ?.let { "原${old}已撤销，但$it，未下 OCO；仓位当前没有$old，请立即处理" }
+            }
+        }
+        if (problem != null) return TradeResult(false, problem)
+        val result = sendWrite(accountId, requestId, "protect", null, "order/placeoco", protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit))
+        return when {
+            result.accepted -> result.copy(message = "已撤销原$old，止损+止盈已作为 OCO 重新提交：${result.message}")
+            result.outcome == CommandOutcome.UNKNOWN -> result.copy(message = "原${old}已撤销；${result.message}")
+            else -> result.copy(message = "原${old}已撤销，但 OCO 被拒：${result.message}；仓位当前没有$old，请立即处理")
+        }
+    }
+
+    /** Exit orders for [p]: one plain stop or limit, or with both prices an OCO pair (stop first), each carrying the protection tag. */
+    private fun protectionBody(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?): JsonObject {
+        val legs = listOfNotNull(stopLoss?.let { true to it }, takeProfit?.let { false to it })
+        fun leg(stop: Boolean, price: Long) = buildJsonObject {
+            put("action", if (p.side == Side.BUY) "Sell" else "Buy"); put("orderType", if (stop) "Stop" else "Limit")
+            put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("timeInForce", "Day")
+            put("text", PROTECTION_TAG_PREFIX + requestId)
+        }
+        return buildJsonObject {
+            put("accountId", accountId.toLong()); put("symbol", spec.symbol); put("orderQty", p.lotsHundredths / 100)
+            leg(legs[0].first, legs[0].second).forEach { (key, value) -> put(key, value) }
+            put("clOrdId", tag(requestId)); put("isAutomated", false)
+            legs.getOrNull(1)?.let { (stop, price) -> put("other", leg(stop, price)) }
         }
     }
 
@@ -1724,10 +1799,13 @@ class TradovateBroker(
                 }
                 TradeResult(false, "Tradovate 拒绝：${safeMessage(response.str("failureText") ?: failure)}")
             } else {
-                if (kind == "place" && response.long("orderId") == null) throw TradovateRemoteException(0, "缺少订单回执 ID，无法确认结果")
+                val placing = kind == "place" || kind == "protect"
+                if (placing && response.long("orderId") == null) throw TradovateRemoteException(0, "缺少订单回执 ID，无法确认结果")
+                // placeOCO answers with the second order's id as ocoId; without it the other leg is not confirmed.
+                if (route == "order/placeoco" && (response.long("ocoId") ?: 0) <= 0) throw TradovateRemoteException(0, "缺少 OCO 另一条订单的回执 ID，无法确认结果")
                 lock.withLock {
+                    if (placing) awaiting[key] = wait.copy(entity = response.long("orderId"))
                     if (kind == "place") {
-                        awaiting[key] = wait.copy(entity = response.long("orderId"))
                         tradeFillTracker.acceptEntry(account.toLong(), wait.tag, response.long("orderId")!!)
                         tradeFillTracker.drain(book, authorizedAccounts).forEach { tradeEvents.tryEmit(it) }
                     }
@@ -1757,7 +1835,7 @@ class TradovateBroker(
             if (wait.account.toLongOrNull() !in authorizedAccounts) return@filter false
             val completeAccount = fullSnapshot && book.list("account").any { it.long("id")?.toString() == wait.account }
             when (wait.kind) {
-                "place" -> book.list("order").any { it.long("accountId")?.toString() == wait.account &&
+                "place", "protect" -> book.list("order").any { it.long("accountId")?.toString() == wait.account &&
                     (wait.entity != null && it.long("id") == wait.entity || it.str("clOrdId") == wait.tag) }
                 "modify" -> book.item("order", wait.entity ?: 0)?.let { order ->
                     val version = book.orderVersion(wait.entity ?: 0)

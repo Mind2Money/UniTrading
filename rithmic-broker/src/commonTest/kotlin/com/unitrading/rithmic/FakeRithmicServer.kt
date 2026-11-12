@@ -59,6 +59,8 @@ internal class FakeRithmicServer : RithmicWire {
     var snapshotDayClosed = "12.5"
     var denyDepth = false
     var silentDepth = false
+    /** Runs after a cancel is acknowledged, with the basket id: the order notifications the server would send next. */
+    var onCancel: (String) -> Unit = {}
 
     override suspend fun socket(url: String): RithmicWireSocket {
         require(url == FAKE_GATEWAY) { "unexpected gateway $url" }
@@ -236,8 +238,25 @@ internal class FakeRithmicServer : RithmicWire {
                     }
                 }
             }
+            Rt.REQUEST_OCO_ORDER -> {
+                if (orderReply == OrderReply.REJECT) { reply(Rt.RESPONSE_OCO_ORDER, codes = listOf("9", "OCO rejected")); return }
+                fun ints(field: Int) = m.values(field).map { (it as ProtoValue.Varint).value.toInt() }
+                fun doubles(field: Int) = m.values(field).map { Double.fromBits((it as ProtoValue.Fixed64).value) }
+                val ids = m.strings(Rf.SYMBOL).map { "B${++baskets}" }
+                reply(Rt.RESPONSE_OCO_ORDER, terminal = false) { strings(Rf.BASKET_ID, ids) }
+                reply(Rt.RESPONSE_OCO_ORDER)
+                ids.forEachIndexed { leg, basket ->
+                    socket.push {
+                        int32(Rf.TEMPLATE_ID, Rt.RITHMIC_ORDER_NOTIFICATION); string(Rf.BASKET_ID, basket); string(Rf.USER_TAG, m.strings(Rf.USER_TAG)[leg])
+                        string(Rf.ACCOUNT_ID, m.str(Rf.ACCOUNT_ID) ?: ""); string(Rf.SYMBOL, m.strings(Rf.SYMBOL)[leg]); string(Rf.EXCHANGE, m.strings(Rf.EXCHANGE)[leg])
+                        string(Rf.STATUS, "open"); int32(Rf.TRANSACTION_TYPE, ints(Rf.TRANSACTION_TYPE)[leg]); int32(Rf.QUANTITY, ints(Rf.QUANTITY)[leg])
+                        int32(Rf.PRICE_TYPE, ints(Rf.PRICE_TYPE)[leg]); double(Rf.PRICE, doubles(Rf.PRICE)[leg]); double(Rf.TRIGGER_PRICE, doubles(Rf.TRIGGER_PRICE)[leg])
+                        string(Rf.LINKED_BASKET_IDS, ids[1 - leg]); int32(Rf.SSBOE, (FAKE_TIME / 1_000).toInt())
+                    }
+                }
+            }
             Rt.REQUEST_MODIFY_ORDER -> reply(Rt.RESPONSE_MODIFY_ORDER) { string(Rf.BASKET_ID, m.str(Rf.BASKET_ID) ?: "") }
-            Rt.REQUEST_CANCEL_ORDER -> reply(Rt.RESPONSE_CANCEL_ORDER) { string(Rf.BASKET_ID, m.str(Rf.BASKET_ID) ?: "") }
+            Rt.REQUEST_CANCEL_ORDER -> { reply(Rt.RESPONSE_CANCEL_ORDER) { string(Rf.BASKET_ID, m.str(Rf.BASKET_ID) ?: "") }; onCancel(m.str(Rf.BASKET_ID) ?: "") }
             Rt.REQUEST_UPDATE_STOP_LEVEL -> reply(Rt.RESPONSE_UPDATE_STOP_LEVEL)
             Rt.REQUEST_UPDATE_TARGET_LEVEL -> reply(Rt.RESPONSE_UPDATE_TARGET_LEVEL)
             Rt.REQUEST_EXIT_POSITION -> reply(Rt.RESPONSE_EXIT_POSITION) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: "") }

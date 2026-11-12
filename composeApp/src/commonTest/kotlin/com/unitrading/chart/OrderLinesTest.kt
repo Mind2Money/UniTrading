@@ -139,8 +139,13 @@ class OrderLinesTest {
         assertEquals(EditableLine.Protection(bare, false, bare.entryPrice), line(bare).cells.single { it.kind == CellKind.ADD_TARGET }.drag)
         val halfDone = bare.copy(takeProfit = 5_510_000_000)
         assertEquals(listOf("买入", "毛 +5.00 USD", "SL", "1"), line(halfDone).texts())
-        for ((position, options) in listOf(bare to all.copy(addProtection = false), bare.copy(protectionEditable = false) to all))
+        for ((position, options) in listOf(bare to all.copy(addProtection = false, addPositionProtection = false), bare.copy(protectionEditable = false) to all))
             assertEquals(listOf("买入", "毛 +5.00 USD", "1"), line(position, options).texts())
+        // Tradovate and Rithmic: a position takes a stop and target after entry, a pending entry no brackets.
+        val afterEntryOnly = all.copy(addProtection = false, addPositionProtection = true)
+        assertEquals(listOf("买入", "毛 +5.00 USD", "TP", "SL", "1"), line(bare, afterEntryOnly).texts())
+        val plain = entry.copy(request = entry.request.copy(stopLoss = null, takeProfit = null), stopLossOrderId = null, takeProfitOrderId = null)
+        assertEquals(listOf("买入", "1", "限价"), pending(listOf(plain), options = afterEntryOnly).single().texts())
         assertEquals(LineTone.SELL, line(bare.copy(side = Side.SELL)).tone)
     }
 

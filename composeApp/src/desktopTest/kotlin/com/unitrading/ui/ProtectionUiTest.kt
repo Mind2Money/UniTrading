@@ -20,13 +20,17 @@ import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
 
-/** [standalone]: the unresolved orders change on their own, price and quantity, as Tradovate's do. */
-private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false, standalone: Boolean = false) : BrokerPlugin {
+/**
+ * [standalone]: the unresolved orders change on their own, price and quantity, as Tradovate's do. [oco]: stops and targets are
+ * added after entry as plain orders paired by OCO, as on Tradovate and Rithmic.
+ */
+private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false, standalone: Boolean = false, oco: Boolean = false) : BrokerPlugin {
     val spec = Instrument("TESTZ6", "Offline futures", "离线测试", 2, 25, 1_250_000, minLotsHundredths = 100,
         lotStepHundredths = 100, quantityUnit = "张", quantityDecimals = 0, estimatesIncludeFees = false)
     val time = 1_798_589_000_000L
     override val descriptor = BrokerDescriptor("offline-protection", "离线保护单测试", "Only synthetic fixtures", true, BrokerEnvironment.REMOTE_DEMO)
-    override val capabilities = BrokerCapabilities(hedging = false, modifyOrderQuantity = standalone)
+    override val capabilities = if (oco) BrokerCapabilities(hedging = false, addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true)
+        else BrokerCapabilities(hedging = false, modifyOrderQuantity = standalone)
     override val instruments = listOf(spec)
     override val accounts = listOf(AccountInfo("100", "离线测试账户"))
     override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
@@ -45,6 +49,8 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
     val accountState = MutableStateFlow(AccountSnapshot("100", 25_000_000_000, positions = listOf(position), orders = orders))
     var entryCalls = 0
     var protectionCalls = 0
+    /** The stop loss and take profit of the last protection request. */
+    var lastProtection: Pair<Long?, Long?>? = null
     /** Every order changed on its own: id, price and quantity. */
     val changes = mutableListOf<Triple<String, Long, Long>>()
     override fun history(symbol: String, timeframe: Timeframe) = (0..100).map { i ->
@@ -73,6 +79,7 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
         }
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?): TradeResult {
             protectionCalls++
+            lastProtection = stopLoss to takeProfit
             state.value = state.value.copy(positions = listOf(position.copy(stopLoss = stopLoss, takeProfit = takeProfit, version = 2)))
             return TradeResult(true, "离线保护价已更新")
         }
@@ -145,6 +152,23 @@ class ProtectionUiTest {
         compose.onNodeWithTag("protection-dialog").assertExists()
         compose.onNodeWithTag("protect-tp").assertTextContains(broker.spec.formatPrice(price))
         assertEquals(0, broker.protectionCalls, "Nothing reaches the broker before the confirmation")
+    }
+
+    /** As on Tradovate and Rithmic: an unprotected position takes a stop and a target in one step, sent as one OCO pair. */
+    @Test fun anUnprotectedPositionTakesBothLinesAtOnceAndTheDialogSaysTheyAreOneOcoPair() {
+        val broker = OfflineProtectionBroker(unprotected = true, oco = true)
+        render(broker)
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
+        compose.onNodeWithTag("protect-position-100:200").performClick()
+        compose.onNodeWithText("添加止损 / 止盈").assertDoesNotExist()
+        compose.onNodeWithTag("protect-sl").performTextReplacement(broker.spec.formatPrice(549000))
+        compose.onNodeWithTag("protect-tp").performTextReplacement(broker.spec.formatPrice(552000))
+        compose.onNodeWithText("添加止损 / 止盈").assertExists()
+        compose.onNodeWithTag("protection-add-note").assertTextContains("OCO", substring = true)
+        compose.onNodeWithTag("confirm-protection").assertIsEnabled().performClick()
+        compose.waitUntil(5000) { broker.protectionCalls == 1 }
+        assertEquals(549000L to 552000L, broker.lastProtection)
+        assertEquals(0, broker.entryCalls)
     }
 
     @Test fun positionRowCarriesItsRecognizedProtectionAndThePendingSectionDoesNot() {

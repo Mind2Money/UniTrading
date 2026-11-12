@@ -134,7 +134,7 @@ internal fun orderLines(
     if (options.showPositions) {
         positions.forEach { p ->
             val pnl = quote?.let { positionPnl(instrument, p, it) }
-            val canAdd = options.addProtection && p.protectionEditable
+            val canAdd = options.addPositionProtection && p.protectionEditable
             add(OrderLine(p.entryPrice, listOf(LineCell(CellKind.TITLE, p.side.label()), LineCell(CellKind.RESULT, resultLabel(pnl, true))) +
                 addButtons(EditableLine.Protection(p, false, p.entryPrice).takeIf { canAdd && p.takeProfit == null }, EditableLine.Protection(p, true, p.entryPrice).takeIf { canAdd && p.stopLoss == null }) +
                 LineCell(CellKind.VALUE, instrument.formatQuantity(p.lotsHundredths)) +
@@ -238,6 +238,8 @@ internal data class OrderLineOptions(
     val editPendingProtection: Boolean,
     val addProtection: Boolean = false,
     val removeProtection: Boolean = false,
+    /** An open position's missing stop or target can be dragged out of its tag; see [BrokerCapabilities.addPositionProtection]. */
+    val addPositionProtection: Boolean = addProtection,
 )
 
 /**
@@ -267,6 +269,7 @@ class ChartOrderActions(
     val onLineAction: (LineAction) -> Unit = {},
     val addProtection: Boolean = false,
     val removeProtection: Boolean = false,
+    val addPositionProtection: Boolean = addProtection,
     val entryKinds: Set<OrderKind> = emptySet(),
     val entryLots: Long? = null,
     val onEntryOrder: (side: Side, kind: OrderKind, price: Long) -> Unit = { _, _, _ -> },

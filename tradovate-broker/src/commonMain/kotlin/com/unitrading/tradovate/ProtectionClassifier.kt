@@ -1,6 +1,7 @@
 package com.unitrading.tradovate
 
 import com.unitrading.broker.OrderRole
+import com.unitrading.broker.PROTECTION_TAG_PREFIX
 import com.unitrading.broker.Side
 import kotlinx.serialization.json.*
 import kotlin.math.abs
@@ -32,20 +33,22 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
     private val filled = book.list("fill").filter { it.bool("active") != false }
         .groupBy { it.long("orderId") }.mapValues { (_, values) -> values.sumOf { (it.long("qty") ?: 0).coerceAtLeast(0) } }
     private val positions = book.list("position").filter { it.long("accountId") == accountId && (it.long("netPos") ?: 0) != 0L }
+    /** Orders any version of which carries the app's protection tag; a later modify may not repeat the text. */
+    private val tagged = book.list("orderVersion").filter { it.str("text")?.startsWith(PROTECTION_TAG_PREFIX) == true }
+        .mapNotNull { it.long("orderId") }.toSet()
     private val relations = mutableMapOf<Long, OrderRelation>()
     private val unsafe = mutableSetOf<Long>()
 
     init {
         for (order in active) {
             val id = order.long("id") ?: continue
-            val net = positions.firstOrNull { it.long("contractId") == order.long("contractId") }?.long("netPos") ?: 0
-            val opposite = net != 0L && order.str("action") == (if (net > 0) "Sell" else "Buy")
-            val linked = positive(order, "parentId") != null || positive(order, "ocoId") != null || memberships[id].orEmpty().isNotEmpty()
-            relations[id] = if (linked || opposite) unresolved("保护/退出关联尚未确认") else OrderRelation(OrderRole.ENTRY)
+            val opposite = reduces(order)
+            relations[id] = if (linked(order) || opposite) unresolved("保护/退出关联尚未确认") else OrderRelation(OrderRole.ENTRY)
         }
         classifyParents()
         classifyOco()
         classifyStrategies()
+        classifyTagged()
     }
 
     fun relation(orderId: Long): OrderRelation = relations[orderId] ?: unresolved("订单不在当前有效账户范围")
@@ -73,13 +76,16 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         }.ifEmpty { null }
         val confirmedIds = confirmed.mapNotNull { it.long("id") }.toSet()
         fun unavailable(message: String) = PositionProtection(revision = revision, note = message, confirmed = confirmedIds)
-        if (confirmed.isEmpty()) return if (relevant.isEmpty()) PositionProtection() else unavailable("存在反向挂单，保护关联尚未完整确认")
+        // A position with no exit at all is free to take a stop loss or take profit.
+        if (confirmed.isEmpty()) return if (relevant.isEmpty()) PositionProtection(editable = true) else unavailable("存在反向挂单，保护关联尚未完整确认")
         if (confirmed.map { relation(it.long("id")!!).group }.distinct().size != 1) return unavailable("存在多组保护，请在挂单列表中逐项核对")
         val stops = confirmed.filter { relation(it.long("id")!!).role == OrderRole.STOP_LOSS }
         val targets = confirmed.filter { relation(it.long("id")!!).role == OrderRole.TAKE_PROFIT }
         if (stops.size > 1 || targets.size > 1) return unavailable("存在多个同类止损/止盈，无法确定哪一条对应当前仓位")
-        if (confirmed.size == 2 && relation(confirmed.first().long("id")!!).group?.startsWith("parent:") == true && !linkedOco(confirmed[0], confirmed[1])) {
-            return unavailable("父子关系已确认，但尚未确认两条保护单的 OCO 互斥关系")
+        val group = relation(confirmed.first().long("id")!!).group
+        if (confirmed.size == 2 && !linkedOco(confirmed[0], confirmed[1])) {
+            if (group?.startsWith("parent:") == true) return unavailable("父子关系已确认，但尚未确认两条保护单的 OCO 互斥关系")
+            if (group?.startsWith("tag:") == true) return unavailable("止损和止盈是两张互不关联的订单，成交一条不会撤销另一条")
         }
         if (confirmed.any { remainingQuantity(it.long("id")!!) != quantity }) return unavailable("保护单剩余数量与当前净仓不一致，仅显示订单")
         if (relevant.any { relation(it.long("id")!!).role == OrderRole.UNRESOLVED }) return unavailable("另有反向单的关联尚未确认，暂不能修改仓位保护")
@@ -221,6 +227,29 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
         }
     }
 
+    /**
+     * A plain stop or limit the app placed as a position's stop loss or take profit: no parent, OCO or strategy says so, its
+     * tag does. Like an OCO leg it protects while it reduces the net position; the position's own checks (one of each,
+     * size, state) still decide whether it moves with the position.
+     */
+    private fun classifyTagged() {
+        for (order in active) {
+            val id = order.long("id") ?: continue
+            if (id !in tagged || id in unsafe || linked(order)) continue
+            val role = exitRole(id) ?: continue
+            val activated = reduces(order)
+            relations[id] = OrderRelation(role, "tag:${order.long("contractId")}", activated = activated,
+                note = if (activated) null else "当前没有可确认的同向净仓保护关联")
+        }
+    }
+
+    private fun linked(order: JsonObject) = positive(order, "parentId") != null || positive(order, "ocoId") != null ||
+        memberships[order.long("id")].orEmpty().isNotEmpty()
+    /** Whether [order] trades against the account's net position in its contract. */
+    private fun reduces(order: JsonObject): Boolean {
+        val net = positions.firstOrNull { it.long("contractId") == order.long("contractId") }?.long("netPos") ?: 0
+        return net != 0L && order.str("action") == (if (net > 0) "Sell" else "Buy")
+    }
     private fun exitRole(id: Long): OrderRole? = when (book.orderVersion(id)?.str("orderType")) {
         "Stop" -> OrderRole.STOP_LOSS
         "Limit" -> OrderRole.TAKE_PROFIT

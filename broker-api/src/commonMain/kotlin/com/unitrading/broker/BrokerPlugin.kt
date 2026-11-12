@@ -76,6 +76,12 @@ private const val STANDALONE_UNSUPPORTED = "当前交易商不支持单独修改
 /** The message for a stop or limit price that has already crossed the market, said of an order that may close a position. */
 const val CROSSED_ORDER_PRICE = "价格已越过当前报价，改后会立即触发或成交"
 
+/**
+ * Start of the tag on a stop or limit the app placed as a position's stop loss or take profit. A broker that keeps the tag
+ * on the order takes it as the evidence that a plain, unlinked exit protects the position.
+ */
+const val PROTECTION_TAG_PREFIX = "UT-P-"
+
 class BrokerRegistry(plugins: List<BrokerPlugin>) {
     private val mutablePlugins = kotlinx.coroutines.flow.MutableStateFlow(plugins)
     val state: StateFlow<List<BrokerPlugin>> = mutablePlugins

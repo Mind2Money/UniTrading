@@ -225,6 +225,9 @@ internal object Rt {
     const val RESPONSE_CANCEL_ORDER = 317
     const val REQUEST_SHOW_ORDERS = 320
     const val RESPONSE_SHOW_ORDERS = 321
+    /** Two orders linked one-cancels-other; every order field repeats once per leg, in leg order (rithmic-rs 3.3 `RequestOcoOrder`). */
+    const val REQUEST_OCO_ORDER = 328
+    const val RESPONSE_OCO_ORDER = 329
     const val REQUEST_BRACKET_ORDER = 330
     const val RESPONSE_BRACKET_ORDER = 331
     const val REQUEST_UPDATE_TARGET_LEVEL = 332

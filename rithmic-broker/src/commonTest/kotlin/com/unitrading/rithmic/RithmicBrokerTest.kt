@@ -306,6 +306,100 @@ class RithmicBrokerTest {
         assertEquals(RithmicEnums.PRICE_STOP_MARKET, sent.int(Rf.PRICE_TYPE)); assertEquals(1, sent.int(Rf.QUANTITY))
     }
 
+    private fun ProtoMessage.ints(field: Int) = values(field).map { (it as ProtoValue.Varint).value.toInt() }
+    private fun ProtoMessage.doubles(field: Int) = values(field).map { Double.fromBits((it as ProtoValue.Fixed64).value) }
+    private fun taggedStop(basket: String, tag: String = "${PROTECTION_TAG_PREFIX}first"): ProtoWriter.() -> Unit =
+        { limitEntry(basket, RithmicEnums.SELL, 1, 5490.0, priceType = RithmicEnums.PRICE_STOP_MARKET)(); string(Rf.USER_TAG, tag) }
+
+    @Test fun aStopAddedToABarePositionIsOnePlainTaggedStop() = runTest {
+        val server = FakeRithmicServer().apply { positions += positionRow(1, 5500.0) }
+        val session = ready(server).openSession("ACC1")
+        val p = session.state.value.positions.single()
+        assertTrue(p.protectionEditable)
+        val result = session.modifyProtection("req-80", p.id, p.version, 549000, null)
+        assertTrue(result.accepted, result.message)
+        assertTrue(server.requests(Rt.REQUEST_OCO_ORDER).isEmpty())
+        val sent = server.requests(Rt.REQUEST_NEW_ORDER).single()
+        assertEquals("${PROTECTION_TAG_PREFIX}req-80", sent.str(Rf.USER_TAG)); assertEquals(RithmicEnums.SELL, sent.int(Rf.TRANSACTION_TYPE))
+        assertEquals(RithmicEnums.PRICE_STOP_MARKET, sent.int(Rf.PRICE_TYPE)); assertEquals(5490.0, sent.double(Rf.TRIGGER_PRICE)); assertNull(sent.double(Rf.PRICE))
+        assertEquals(1, sent.int(Rf.QUANTITY)); assertEquals("simulator", sent.str(Rf.TRADE_ROUTE))
+        runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals(549000, after.stopLoss); assertTrue(after.protectionEditable)
+        assertEquals(OrderRole.STOP_LOSS, session.state.value.orders.single().role)
+        assertEquals(after.id, session.state.value.orders.single().positionId)
+    }
+
+    @Test fun aStopAndTargetAddedTogetherAreOneOcoRequestWithAFieldSlotPerLeg() = runTest {
+        val server = FakeRithmicServer().apply { positions += positionRow(1, 5500.0) }
+        val session = ready(server).openSession("ACC1")
+        val p = session.state.value.positions.single()
+        val result = session.modifyProtection("req-81", p.id, p.version, 549000, 551000)
+        assertTrue(result.accepted, result.message)
+        assertTrue(server.requests(Rt.REQUEST_NEW_ORDER).isEmpty())
+        val oco = server.requests(Rt.REQUEST_OCO_ORDER).single()
+        assertEquals(List(2) { "${PROTECTION_TAG_PREFIX}req-81" }, oco.strings(Rf.USER_TAG))
+        assertEquals(listOf("MESZ6", "MESZ6"), oco.strings(Rf.SYMBOL)); assertEquals(listOf("CME", "CME"), oco.strings(Rf.EXCHANGE))
+        assertEquals(listOf(1, 1), oco.ints(Rf.QUANTITY))
+        assertEquals(listOf(0.0, 5510.0), oco.doubles(Rf.PRICE)); assertEquals(listOf(5490.0, 0.0), oco.doubles(Rf.TRIGGER_PRICE))
+        assertEquals(listOf(RithmicEnums.PRICE_STOP_MARKET, RithmicEnums.PRICE_LIMIT), oco.ints(Rf.PRICE_TYPE))
+        assertEquals(listOf(RithmicEnums.SELL, RithmicEnums.SELL), oco.ints(Rf.TRANSACTION_TYPE))
+        assertEquals(listOf(RithmicEnums.DURATION_DAY, RithmicEnums.DURATION_DAY), oco.ints(Rf.DURATION))
+        assertEquals(listOf("simulator", "simulator"), oco.strings(Rf.TRADE_ROUTE))
+        assertEquals(listOf("ACC1"), oco.strings(Rf.ACCOUNT_ID))
+        runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals(549000, after.stopLoss); assertEquals(551000, after.takeProfit); assertTrue(after.protectionEditable)
+        assertEquals(setOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT), session.state.value.orders.map { it.role }.toSet())
+    }
+
+    @Test fun addingTheSecondLineCancelsTheFirstThenSendsBothAsAnOcoPair() = runTest {
+        val server = FakeRithmicServer().apply { positions += positionRow(1, 5500.0); openOrders += taggedStop("S1") }
+        val session = ready(server).openSession("ACC1")
+        val p = session.state.value.positions.single()
+        assertEquals(549000, p.stopLoss); assertEquals("S1", p.stopLossOrderId); assertTrue(p.protectionEditable)
+        assertEquals(OrderRole.STOP_LOSS, session.state.value.orders.single().role)
+        server.onCancel = { basket -> server.notifyOrder(basket, "cancelled") { string(Rf.COMPLETION_REASON, "Cancelled") } }
+        val result = session.modifyProtection("req-82", p.id, p.version, p.stopLoss, 551000)
+        assertTrue(result.accepted, result.message)
+        assertEquals("S1", server.requests(Rt.REQUEST_CANCEL_ORDER).single().str(Rf.BASKET_ID))
+        val oco = server.requests(Rt.REQUEST_OCO_ORDER).single()
+        assertEquals(listOf(0.0, 5510.0), oco.doubles(Rf.PRICE)); assertEquals(listOf(5490.0, 0.0), oco.doubles(Rf.TRIGGER_PRICE))
+        assertTrue(server.requests.indexOf(server.requests(Rt.REQUEST_CANCEL_ORDER).single()) < server.requests.indexOf(oco))
+        runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals(549000, after.stopLoss); assertEquals(551000, after.takeProfit); assertTrue(after.protectionEditable)
+        assertNotEquals("S1", after.stopLossOrderId)
+    }
+
+    @Test fun aFirstLineThatFilledWhileBeingCancelledIsNotReplaced() = runTest {
+        val server = FakeRithmicServer().apply { positions += positionRow(1, 5500.0); openOrders += taggedStop("S1") }
+        val session = ready(server).openSession("ACC1")
+        val p = session.state.value.positions.single()
+        server.onCancel = { basket -> server.fill(basket, "F9", RithmicEnums.SELL, 1, 5490.0, priceType = RithmicEnums.PRICE_STOP_MARKET) }
+        val result = session.modifyProtection("req-83", p.id, p.version, p.stopLoss, 551000)
+        assertFalse(result.accepted)
+        assertTrue("已成交" in result.message, result.message)
+        assertTrue(server.requests(Rt.REQUEST_OCO_ORDER).isEmpty())
+    }
+
+    /** Two tagged legs from different requests were never placed as one OCO: neither moves with the position. */
+    @Test fun aStopAndTargetOfDifferentFamiliesAreNotPairedProtection() = runTest {
+        val server = FakeRithmicServer().apply {
+            positions += positionRow(1, 5500.0)
+            openOrders += taggedStop("S1")
+            openOrders += { limitEntry("T1", RithmicEnums.SELL, 1, 5510.0)(); string(Rf.USER_TAG, "${PROTECTION_TAG_PREFIX}second") }
+        }
+        val session = ready(server).openSession("ACC1")
+        val p = session.state.value.positions.single()
+        assertFalse(p.protectionEditable)
+        assertTrue("互不关联" in p.protectionNote.orEmpty(), p.protectionNote)
+        assertEquals(549000, p.stopLoss); assertEquals(551000, p.takeProfit)
+        val orders = session.state.value.orders
+        assertTrue(orders.all { !it.editable && it.standaloneEditable && "互不关联" in it.note.orEmpty() }, "$orders")
+        assertFalse(session.modifyProtection("req-84", p.id, p.version, 548500, p.takeProfit).accepted)
+    }
+
     /** The quote is 5500.00 / 5500.25 against a 5490 entry, and the target has been reached without filling. */
     @Test fun aStopMovesToBreakEvenAndPastItButNotThroughTheMarket() = runTest {
         val server = FakeRithmicServer().apply {

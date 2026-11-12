@@ -26,6 +26,8 @@ internal class MockTradovateWire : TradovateWire {
     var rejectWrite = false
     var rejectMarket = false
     var capacityCheck: (JsonObject) -> JsonObject = { obj("""{"rejectReason":"Success"}""") }
+    /** Runs on each accepted order write before its reply: the account events the server would send for it. */
+    var onOrder: suspend (path: String, body: JsonObject?) -> Unit = { _, _ -> }
     var numericChartTime = false
     var chartEventHasRequestId = false
     var fractionalChartId = false
@@ -63,6 +65,8 @@ internal class MockTradovateWire : TradovateWire {
         if (path.startsWith("order/")) {
             if (failWrite) throw TradovateRemoteException(0, "timeout")
             if (rejectWrite) return obj("""{"failureReason":"Unauthorized","failureText":"Trading disabled"}""")
+            onOrder(path, body)
+            if (path == "order/placeoco") return obj("""{"orderId":711,"ocoId":712}""")
             return obj("""{"orderId":700,"oso1Id":701,"oso2Id":702}""")
         }
         error("Unexpected REST request: $path")
@@ -382,7 +386,7 @@ class TradovateTests {
         runCurrent()
         val account = broker.openSession("100")
         assertEquals(300, account.state.value.positions.single().lotsHundredths)
-        assertFalse(account.state.value.positions.single().protectionEditable)
+        assertTrue(account.state.value.positions.single().protectionEditable, "a position without exits can take a stop loss or take profit")
         assertEquals(1, account.state.value.executions.size)
         assertTrue(account.state.value.trades.isEmpty())
         assertTrue(broker.openSession("101").state.value.positions.isEmpty())

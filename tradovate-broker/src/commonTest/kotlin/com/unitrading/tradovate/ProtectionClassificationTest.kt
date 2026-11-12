@@ -18,6 +18,9 @@ private fun strategy(brackets: Int = 1, account: Long = 100, contract: Long = 20
     put("params", buildJsonObject { putJsonArray("brackets") { repeat(brackets) { add(buildJsonObject { put("qty", 1); put("profitTarget", 10); put("stopLoss", -5) }) } } }.toString())
 }
 private fun link(order: Long, label: String) = json("""{"id":${order + 5000},"orderStrategyId":5000,"orderId":$order,"label":"$label"}""")
+/** A plain exit whose version carries the app's protection tag, as Tradovate echoes the text the order was placed with. */
+private fun tagged(id: Long, type: String, action: String = "Sell", tag: String = "${PROTECTION_TAG_PREFIX}t1"): Pair<JsonObject, JsonObject> =
+    order(id, type, action).let { (order, version) -> order to JsonObject(version + ("text" to JsonPrimitive(tag))) }
 private fun EntityBook.putOrder(pair: Pair<JsonObject, JsonObject>) { apply("order", pair.first); apply("orderVersion", pair.second) }
 private fun atmBook(): EntityBook = EntityBook().apply {
     apply("position", position())
@@ -60,7 +63,8 @@ class ProtectionClassificationTest {
             putOrder(order(702, "Stop", "Buy", extra = ",\"ocoId\":701"))
         }
         assertTrue(ProtectionClassifier(book, 100).forPosition(200, Side.SELL, 1).editable)
-        assertFalse(ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1).editable)
+        // Buy exits protect no long: a long here would have no stop or target of its own.
+        ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1).let { assertNull(it.stopId); assertNull(it.targetId) }
     }
     @Test fun onlyNativeBracketsCoveringAnUnfilledWorkingEntryCanMoveBeforeTheFill() {
         fun book(entryStatus: String = "Working", bracketQuantity: Long = 1, atm: Boolean = false, extraStop: Boolean = false) = EntityBook().apply {
@@ -168,7 +172,43 @@ class ProtectionClassificationTest {
         val book = atmBook()
         assertFalse(ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 0).editable)
         book.apply("position", position(-1))
-        assertFalse(ProtectionClassifier(book, 100).forPosition(200, Side.SELL, 1).editable)
+        // The old long's sell exits are no stop or target of the short; the short has none until one is added.
+        ProtectionClassifier(book, 100).forPosition(200, Side.SELL, 1).let { assertNull(it.stopId); assertNull(it.targetId) }
+    }
+    @Test fun aPositionWithoutExitsCanTakeProtection() {
+        val p = ProtectionClassifier(EntityBook().apply { apply("position", position()) }, 100).forPosition(200, Side.BUY, 1)
+        assertTrue(p.editable)
+        assertNull(p.stopId); assertNull(p.targetId); assertNull(p.revision)
+    }
+    @Test fun aPlainExitTheAppTaggedProtectsThePositionAcrossModifies() {
+        val book = EntityBook().apply { apply("position", position()); putOrder(tagged(701, "Stop")) }
+        val classifier = ProtectionClassifier(book, 100)
+        assertEquals(OrderRole.STOP_LOSS, classifier.relation(701).role)
+        assertTrue(classifier.relation(701).activated)
+        val p = classifier.forPosition(200, Side.BUY, 1)
+        assertEquals(701, p.stopId); assertNull(p.targetId); assertTrue(p.editable)
+        // A modify writes a version without the text; the order it changed is still the one the app tagged.
+        book.apply("orderVersion", json("""{"id":3000,"orderId":701,"orderQty":1,"orderType":"Stop","stopPrice":5491}"""))
+        assertEquals(701, ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1).stopId)
+        // An untagged plain exit beside it is still unresolved and locks the position.
+        book.putOrder(order(702, "Limit"))
+        assertEquals(OrderRole.UNRESOLVED, ProtectionClassifier(book, 100).relation(702).role)
+        assertFalse(ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1).editable)
+    }
+    @Test fun aTaggedExitThatDoesNotReduceThePositionProtectsNothing() {
+        val book = EntityBook().apply { apply("position", position(-1)); putOrder(tagged(701, "Stop")) }
+        val classifier = ProtectionClassifier(book, 100)
+        assertFalse(classifier.relation(701).activated)
+        val p = classifier.forPosition(200, Side.SELL, 1)
+        assertNull(p.stopId); assertTrue(p.editable)
+    }
+    @Test fun twoTaggedExitsWithoutAnOcoLinkLockThePositionsProtection() {
+        val book = EntityBook().apply {
+            apply("position", position()); putOrder(tagged(701, "Stop")); putOrder(tagged(702, "Limit", tag = "${PROTECTION_TAG_PREFIX}t2"))
+        }
+        val p = ProtectionClassifier(book, 100).forPosition(200, Side.BUY, 1)
+        assertFalse(p.editable)
+        assertTrue("互不关联" in p.note.orEmpty(), p.note)
     }
 }
 
@@ -304,6 +344,102 @@ class ProtectionBrokerIntegrationTest {
         assertTrue(session.state.value.positions.single().version > p.version)
         assertFalse(session.modifyProtection("stale-link", p.id, p.version, 5_491_000_000, p.takeProfit).accepted)
         assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+    /** A long of one MESZ6 at 5500 with no exits, against the 5500 / 5500.25 quote. */
+    private suspend fun TestScope.bare(wire: MockTradovateWire): AccountSession {
+        val broker = broker(wire)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.account.entity("position", position()); runCurrent()
+        return broker.openSession("100")
+    }
+    private suspend fun TestScope.withTaggedStop(wire: MockTradovateWire): AccountSession {
+        val session = bare(wire)
+        val (stop, version) = tagged(701, "Stop", tag = "${PROTECTION_TAG_PREFIX}first")
+        wire.account.entity("order", stop); wire.account.entity("orderVersion", version); runCurrent()
+        return session
+    }
+    private fun orderPaths(wire: MockTradovateWire) = wire.requests.map { it.path }.filter { it.startsWith("order/") }
+
+    @Test fun aStopAddedToABarePositionIsOnePlainTaggedStop() = runTest {
+        val wire = MockTradovateWire()
+        val session = bare(wire)
+        val p = session.state.value.positions.single()
+        assertTrue(p.protectionEditable)
+        val result = session.modifyProtection("add-stop", p.id, p.version, 5_490_000_000, null)
+        assertTrue(result.accepted, result.message)
+        assertEquals(listOf("order/placeorder"), orderPaths(wire))
+        val body = wire.requests.single { it.path == "order/placeorder" }.body!!
+        assertEquals("Sell", body.str("action")); assertEquals("Stop", body.str("orderType")); assertEquals(5_490_000_000, body.priceValue("stopPrice"))
+        assertEquals(1, body.long("orderQty")); assertEquals("${PROTECTION_TAG_PREFIX}add-stop", body.str("text")); assertNull(body["other"])
+        // The server's order, tagged as placed, is then the position's stop loss.
+        val (order, version) = order(700, "Stop")
+        wire.account.entity("order", order); wire.account.entity("orderVersion", JsonObject(version + ("text" to JsonPrimitive(body.str("text")!!)))); runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals("700", after.stopLossOrderId); assertEquals(5_490_000_000, after.stopLoss); assertTrue(after.protectionEditable)
+        assertEquals(OrderRole.STOP_LOSS, session.state.value.orders.single().role)
+    }
+    @Test fun aStopAndTargetAddedTogetherAreOneOcoPair() = runTest {
+        val wire = MockTradovateWire()
+        val session = bare(wire)
+        val p = session.state.value.positions.single()
+        val result = session.modifyProtection("add-both", p.id, p.version, 5_490_000_000, 5_510_000_000)
+        assertTrue(result.accepted, result.message)
+        assertEquals(listOf("order/placeoco"), orderPaths(wire))
+        val body = wire.requests.single { it.path == "order/placeoco" }.body!!
+        assertEquals("Sell", body.str("action")); assertEquals("Stop", body.str("orderType")); assertEquals(5_490_000_000, body.priceValue("stopPrice"))
+        val other = body["other"]!!.jsonObject
+        assertEquals("Sell", other.str("action")); assertEquals("Limit", other.str("orderType")); assertEquals(5_510_000_000, other.priceValue("price"))
+        assertEquals("${PROTECTION_TAG_PREFIX}add-both", other.str("text"))
+        for ((id, type, peer) in listOf(Triple(711L, "Stop", 712L), Triple(712L, "Limit", 711L))) {
+            val (order, version) = order(id, type, extra = ",\"ocoId\":$peer")
+            wire.account.entity("order", order); wire.account.entity("orderVersion", version)
+        }
+        runCurrent()
+        val after = session.state.value.positions.single()
+        assertEquals("711", after.stopLossOrderId); assertEquals("712", after.takeProfitOrderId); assertTrue(after.protectionEditable)
+        assertTrue(session.state.value.orders.all { it.positionId == after.id && it.editable })
+    }
+    @Test fun addingTheSecondLineCancelsTheFirstThenPlacesBothAsAnOcoPair() = runTest {
+        val wire = MockTradovateWire()
+        val session = withTaggedStop(wire)
+        val p = session.state.value.positions.single()
+        assertEquals(5_490_000_000, p.stopLoss); assertEquals("701", p.stopLossOrderId); assertTrue(p.protectionEditable)
+        wire.onOrder = { path, body ->
+            if (path == "order/cancelorder") wire.account.entity("order",
+                json("""{"id":${body!!.long("orderId")},"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Canceled","timestamp":"$stamp"}"""))
+        }
+        val result = session.modifyProtection("add-target", p.id, p.version, p.stopLoss, 5_510_000_000)
+        assertTrue(result.accepted, result.message)
+        assertEquals(listOf("order/cancelorder", "order/placeoco"), orderPaths(wire))
+        assertEquals(701, wire.requests.single { it.path == "order/cancelorder" }.body!!.long("orderId"))
+        val oco = wire.requests.single { it.path == "order/placeoco" }.body!!
+        assertEquals(5_490_000_000, oco.priceValue("stopPrice")); assertEquals(5_510_000_000, oco["other"]!!.jsonObject.priceValue("price"))
+        assertEquals(1, oco.long("orderQty"))
+    }
+    @Test fun aFirstLineThatFilledWhileBeingCancelledIsNotReplaced() = runTest {
+        val wire = MockTradovateWire()
+        val session = withTaggedStop(wire)
+        val p = session.state.value.positions.single()
+        wire.onOrder = { path, _ ->
+            if (path == "order/cancelorder") {
+                wire.account.entity("order", json("""{"id":701,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Filled","timestamp":"$stamp"}"""))
+                wire.account.entity("fill", json("""{"id":801,"orderId":701,"contractId":200,"action":"Sell","qty":1,"price":5490,"active":true,"timestamp":"$stamp"}"""))
+            }
+        }
+        val result = session.modifyProtection("late-target", p.id, p.version, p.stopLoss, 5_510_000_000)
+        assertFalse(result.accepted)
+        assertTrue("已成交" in result.message, result.message)
+        assertEquals(listOf("order/cancelorder"), orderPaths(wire))
+    }
+    @Test fun aLineIsNotRemovedHereAndTwoExistingLinesStillMoveOneAtATime() = runTest {
+        val wire = MockTradovateWire()
+        val session = withTaggedStop(wire)
+        val p = session.state.value.positions.single()
+        assertFalse(session.modifyProtection("remove", p.id, p.version, null, null).accepted)
+        assertTrue(orderPaths(wire).isEmpty())
+        val moved = session.modifyProtection("move", p.id, p.version, 5_491_000_000, null)
+        assertTrue(moved.accepted, moved.message)
+        assertEquals(listOf("order/modifyorder"), orderPaths(wire))
     }
     @Test fun simulatedProtectionPriceEditPreservesOriginalTotalQuantityAfterPartialFill() = runTest {
         val wire = MockTradovateWire()

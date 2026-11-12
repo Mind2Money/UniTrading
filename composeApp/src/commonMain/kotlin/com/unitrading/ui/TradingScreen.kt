@@ -635,6 +635,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onProtection = { p, sl, tp -> editProtection(p, sl, tp, fromChart = true) },
                         onLineAction = { runLineAction(it) },
                         addProtection = plugin.capabilities.addProtection,
+                        addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
                         entryKinds = plugin.capabilities.orderKinds,
                         // A chart that is not the active one shows the quantity its symbol's order panel was left with.
@@ -841,19 +842,26 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val validVersion = current?.version == p.version
                     val capabilityError = protectionEditError(plugin.capabilities, p, sl, tp)
                     val priceError = if (validInput) positionProtectionError(spec, p, market.quotes[p.symbol], sl, tp) else null
+                    val addNote = protectionAddNote(plugin.capabilities, p, sl, tp)
+                    fun inputLabel(line: String, current: Long?) = when {
+                        current == null -> "$line（留空不设置）"
+                        plugin.capabilities.removeProtection -> "新$line（留空移除）"
+                        else -> "新$line（保留原价或修改）"
+                    }
                     fun estimate(price: Long?): String = price?.takeIf { it > 0 }?.let {
                         runCatching { "${money(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, it) - p.entryFeeMicros - commission(spec, p.lotsHundredths), true)} USD" }.getOrDefault("超出范围")
                     } ?: "未设置"
                     AlertDialog(
                         modifier = Modifier.testTag("protection-dialog"),
                         onDismissRequest = { if (!busy) protection = null },
-                        title = { Text("修改止损 / 止盈") },
+                        title = { Text(if (addNote != null) "添加止损 / 止盈" else "修改止损 / 止盈") },
                         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${shortId(p.id)}", style = MaterialTheme.typography.titleSmall)
                             Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
-                            PriceInput(if (plugin.capabilities.removeProtection) "新止损 SL（留空移除）" else "新止损 SL（保留原价或修改）", edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
-                            PriceInput(if (plugin.capabilities.removeProtection) "新止盈 TP（留空移除）" else "新止盈 TP（保留原价或修改）", edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
-                            if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", style = MaterialTheme.typography.bodySmall)
+                            PriceInput(inputLabel("止损 SL", p.stopLoss), edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
+                            PriceInput(inputLabel("止盈 TP", p.takeProfit), edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
+                            if (addNote != null) Text(addNote, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("protection-add-note"))
+                            else if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", style = MaterialTheme.typography.bodySmall)
                             capabilityError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
                             EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate(sl))
                             EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate(tp))

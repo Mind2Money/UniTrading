@@ -26,6 +26,10 @@ private const val PRELOAD_ROUTE_RETRY_MS = 15_000L
 private const val PRELOAD_RETRY_MS = 5 * 60_000L
 /** Before a series the server had no bars for is asked for again. */
 private const val PRELOAD_EMPTY_RETRY_MS = 60 * 60_000L
+private const val UNPAIRED_PROTECTION = "止损和止盈是两张互不关联的订单，成交一条不会撤销另一条"
+private const val REMOVE_BY_CANCEL = "这里不能移除止损/止盈；要去掉一条，请撤销它的挂单"
+/** How long adding the second protection line waits for the server to show the first one cancelled before giving up. */
+private const val REPLACE_WAIT_MS = 10_000L
 
 /**
  * R | Protocol API adapter. Four plant connections (ticker, order, PnL, history) share one login;
@@ -47,7 +51,7 @@ class RithmicBroker(
             RithmicEnvironment.LIVE -> BrokerEnvironment.RITHMIC_LIVE
         })
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -454,8 +458,8 @@ class RithmicBroker(
                             if (!synchronizing && message.bool(Rf.IS_SNAPSHOT) != true && now() >= liveSince && fill.id !in notifiedFills) {
                                 notifiedFills.add(fill.id)
                                 val role = when {
-                                    next.isBracketChild && next.isStop -> OrderRole.STOP_LOSS
-                                    next.isBracketChild && RithmicEnums.PRICE_LIMIT in setOf(next.priceType, next.origPriceType) -> OrderRole.TAKE_PROFIT
+                                    next.isProtectionLeg && next.isStop -> OrderRole.STOP_LOSS
+                                    next.isProtectionLeg && RithmicEnums.PRICE_LIMIT in setOf(next.priceType, next.origPriceType) -> OrderRole.TAKE_PROFIT
                                     else -> OrderRole.ENTRY
                                 }
                                 tradeEvents.tryEmit(TradeFill(fill.accountId, fill.basketId, fill.id, role))
@@ -1154,19 +1158,23 @@ class RithmicBroker(
             val rawPositions = positions.values.filter { it.accountId == aid && it.net != 0L }
             val protectionByOrder = mutableMapOf<String, String>()
             val singledOut = mutableSetOf<String>()
+            /** A stop and a target of one position that the server does not cancel against each other. */
+            val unlinked = mutableSetOf<String>()
             /** Legs the position's own protection edit moves; any other leg moves on its own. */
             val movable = mutableSetOf<String>()
             val mappedPositions = rawPositions.mapNotNull { p ->
                 val spec = specs[p.symbol] ?: return@mapNotNull null
                 val entry = p.avgPrice?.let(spec.scale::units)?.takeIf { it > 0 } ?: return@mapNotNull null
                 val side = if (p.net > 0) Side.BUY else Side.SELL
-                val children = accountOrders.filter { it.symbol == p.symbol && it.isBracketChild && it.side != null && it.side != side }
+                val children = accountOrders.filter { it.symbol == p.symbol && it.isProtectionLeg && it.side != null && it.side != side }
                 val stops = children.filter { it.priceType == RithmicEnums.PRICE_STOP_MARKET || it.priceType == RithmicEnums.PRICE_STOP_LIMIT }
                 val targets = children.filter { it.priceType == RithmicEnums.PRICE_LIMIT }
                 val stop = stops.singleOrNull(); val target = targets.singleOrNull()
-                val editable = stops.size <= 1 && targets.size <= 1
+                // A stop and a target from different families are two orders the server does not cancel against each other.
+                val unpaired = stop != null && target != null && stop.protectionFamily != target.protectionFamily
+                val editable = stops.size <= 1 && targets.size <= 1 && !unpaired
                 (stops + targets).forEach { protectionByOrder[it.basketId] = "$aid:${p.symbol}" }
-                listOfNotNull(stop, target).mapTo(singledOut) { it.basketId }
+                listOfNotNull(stop, target).mapTo(if (unpaired) unlinked else singledOut) { it.basketId }
                 if (editable) listOfNotNull(stop, target).mapTo(movable) { it.basketId }
                 val id = "$aid:${p.symbol}"
                 val prior = old?.positions?.firstOrNull { it.id == id }
@@ -1176,7 +1184,7 @@ class RithmicBroker(
                     target?.price?.let(spec.scale::units), 0, version = 1, protectionEditable = editable, feesKnown = false,
                     stopLossOrderId = stop?.basketId, takeProfitOrderId = target?.basketId,
                     protectionRevision = listOf(stop?.basketId, stop?.triggerPrice, target?.basketId, target?.price).joinToString("/"),
-                    protectionNote = if (editable) null else "该合约有多个括号保护单，请在 R | Trader 核对后再修改")
+                    protectionNote = when { editable -> null; unpaired -> UNPAIRED_PROTECTION; else -> "该合约有多个保护单，请在 R | Trader 核对后再修改" })
                 candidate.copy(version = if (prior?.copy(version = 1) == candidate) prior.version else (prior?.version ?: 0) + 1)
             }
             val pending = accountOrders.mapNotNull { order ->
@@ -1191,7 +1199,7 @@ class RithmicBroker(
                 val price = (if (kind == OrderKind.LIMIT) order.price else order.triggerPrice ?: order.price)?.let(spec.scale::units)
                 if (kind != OrderKind.MARKET && (price == null || price <= 0)) return@mapNotNull null
                 val role = when {
-                    !order.isBracketChild -> OrderRole.ENTRY
+                    !order.isProtectionLeg -> OrderRole.ENTRY
                     kind == OrderKind.STOP -> OrderRole.STOP_LOSS
                     kind == OrderKind.LIMIT -> OrderRole.TAKE_PROFIT
                     else -> OrderRole.UNRESOLVED
@@ -1215,8 +1223,10 @@ class RithmicBroker(
                     order.priceType in setOf(RithmicEnums.PRICE_LIMIT, RithmicEnums.PRICE_STOP_MARKET)
                 val note = when {
                     role == OrderRole.ENTRY && !editable -> if (order.filled > 0) "订单已部分成交，暂不可改价" else "订单状态为“${order.status}”，暂不可改价"
+                    role != OrderRole.ENTRY && order.basketId in unlinked ->
+                        if (standalone) "止损和止盈互不关联，只能单独修改这张单的价格" else "止损和止盈互不关联，仅显示"
                     role != OrderRole.ENTRY && order.basketId !in singledOut ->
-                        if (standalone) "括号保护单尚未唯一关联到当前净仓，只能单独修改这张单的价格" else "括号保护单尚未唯一关联到当前净仓，仅显示"
+                        if (standalone) "保护单尚未唯一关联到当前净仓，只能单独修改这张单的价格" else "保护单尚未唯一关联到当前净仓，仅显示"
                     role == OrderRole.UNRESOLVED -> "无法识别的括号订单类型"
                     else -> null
                 }
@@ -1415,19 +1425,102 @@ class RithmicBroker(
             override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = command(accountId, requestId, "protect:$positionId:$expectedVersion:$stopLoss:$takeProfit") {
                 val p = state.value.positions.firstOrNull { it.id == positionId } ?: errorArgument("仓位已结束或不属于当前账户")
                 require(p.version == expectedVersion && p.protectionEditable) { "仓位或保护订单关系已变化，请在 R | Trader 核对" }
-                val changes = listOf(p.stopLoss != stopLoss, p.takeProfit != takeProfit).count { it }
-                require(changes == 1) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                 val stop = p.stopLoss != stopLoss
-                val price = requireNotNull(if (stop) stopLoss else takeProfit) { "这里只能修改已有止损/止盈，添加或删除保护请在 R | Trader 操作" }
+                require(stop || p.takeProfit != takeProfit) { "止损/止盈尚未改变" }
+                require(!(stop && stopLoss == null) && !(p.takeProfit != takeProfit && takeProfit == null)) { REMOVE_BY_CANCEL }
                 val spec = lock.withLock { specs[p.symbol] } ?: errorArgument("合约规格尚未加载")
                 require(fresh(quotes[p.symbol])) { "止损/止盈修改需要有效的实时报价" }
                 positionProtectionError(spec.instrument, p, quotes[p.symbol], stopLoss, takeProfit)?.let { errorArgument(it) }
+                if (p.stopLoss == null && stopLoss != null || p.takeProfit == null && takeProfit != null) {
+                    return@command addProtection(accountId, requestId, p, spec, stopLoss, takeProfit)
+                }
+                require(stop != (p.takeProfit != takeProfit)) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
+                val price = requireNotNull(if (stop) stopLoss else takeProfit)
                 val id = requireNotNull(if (stop) p.stopLossOrderId else p.takeProfitOrderId) { "没有唯一可修改的保护订单" }
                 val raw = lock.withLock { orders[id] }
                 require(raw != null && raw.active && raw.side != null) { "保护订单已被替换或不再有效" }
                 sendWrite(accountId, requestId, "modify", id, Rt.REQUEST_MODIFY_ORDER, p.symbol, price, raw.sequence) {
                     modifyBody(accountId, id, spec, raw.quantity, if (stop) OrderKind.STOP else OrderKind.LIMIT, price)
                 }
+            }
+        }
+    }
+
+    /**
+     * Adds a stop loss and/or take profit to [p] as plain exit orders sized to the position and tagged as the app's protection.
+     * With neither line in place, one line is a single order (312) and two are an OCO pair (328). With one in place, adding
+     * the other cancels it, waits for the server to show it cancelled and not filled, and places both as an OCO pair; the
+     * position goes without that line in between. Runs inside [command].
+     */
+    private suspend fun addProtection(accountId: String, requestId: String, p: Position, spec: RithmicSpec, stopLoss: Long?, takeProfit: Long?): TradeResult {
+        val route = lock.withLock { tradeRoutes[spec.exchange] } ?: errorArgument("${spec.exchange} 没有可用的交易路由，请在 R | Trader 核对账户权限")
+        val existing = listOfNotNull(p.stopLossOrderId, p.takeProfitOrderId)
+        val pair = stopLoss != null && takeProfit != null
+        fun placed(result: TradeResult, what: String) = if (result.accepted) result.copy(message = "$what 已提交：${result.message}") else result
+        if (existing.isEmpty()) return placed(placeProtection(accountId, requestId, p, spec, route, stopLoss, takeProfit),
+            if (pair) "止损+止盈 OCO" else if (stopLoss != null) "止损单" else "止盈单")
+        val oldId = existing.single()
+        val old = if (p.stopLossOrderId == oldId) "止损" else "止盈"
+        val raw = lock.withLock { orders[oldId] }
+        require(raw != null && raw.active && !raw.commandInFlight) { "原${old}单正在处理或已结束，请刷新后重试" }
+        val cancelId = "$requestId-c"
+        val cancel = sendWrite(accountId, cancelId, "cancel", oldId, Rt.REQUEST_CANCEL_ORDER, p.symbol, null) {
+            string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId); string(Rf.BASKET_ID, oldId)
+            int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
+        }
+        if (!cancel.accepted) return cancel.copy(message = "撤销原${old}${if (cancel.outcome == CommandOutcome.UNKNOWN) "的结果未知" else "未成功"}，未下 OCO：${cancel.message}")
+        val settled = withTimeoutOrNull(REPLACE_WAIT_MS) { while (lock.withLock { "$accountId/$cancelId" in awaiting }) delay(50); true } == true
+        if (!settled) return TradeResult(false, "已请求撤销原$old，服务器 ${REPLACE_WAIT_MS / 1_000} 秒内未确认，未下 OCO；请同步账户后核对", outcome = CommandOutcome.UNKNOWN)
+        val problem = lock.withLock {
+            val ended = orders[oldId]
+            val current = accountFlows[accountId]?.value?.positions?.firstOrNull { it.id == p.id }
+            when {
+                ended != null && ended.filled > 0 -> "原${old}在撤销前已成交，未再下 OCO；请核对仓位"
+                current == null || current.side != p.side || current.lotsHundredths != p.lotsHundredths ->
+                    "原${old}已撤销，但仓位已变化，未下 OCO；请核对仓位与保护"
+                current.stopLoss != null || current.takeProfit != null || !current.protectionEditable ->
+                    "原${old}已撤销，但仓位上又出现了其他保护单，未下 OCO；请核对"
+                !connected || synchronizing || unknownCommands.isNotEmpty() -> "原${old}已撤销，但连接状态已变化，未下 OCO；仓位当前没有$old，请立即处理"
+                !fresh(quotes[p.symbol]) -> "原${old}已撤销，但实时报价已失效，未下 OCO；仓位当前没有$old，请立即处理"
+                else -> positionProtectionError(spec.instrument, current, quotes[p.symbol], stopLoss, takeProfit)
+                    ?.let { "原${old}已撤销，但$it，未下 OCO；仓位当前没有$old，请立即处理" }
+            }
+        }
+        if (problem != null) return TradeResult(false, problem)
+        val result = placeProtection(accountId, requestId, p, spec, route, stopLoss, takeProfit)
+        return when {
+            result.accepted -> result.copy(message = "已撤销原$old，止损+止盈已作为 OCO 重新提交：${result.message}")
+            result.outcome == CommandOutcome.UNKNOWN -> result.copy(message = "原${old}已撤销；${result.message}")
+            else -> result.copy(message = "原${old}已撤销，但 OCO 被拒：${result.message}；仓位当前没有$old，请立即处理")
+        }
+    }
+
+    /**
+     * Exit orders for [p], each carrying the protection tag: one plain stop or limit (312), or with both prices an OCO pair
+     * (328, stop first) whose order fields repeat once per leg.
+     */
+    private suspend fun placeProtection(accountId: String, requestId: String, p: Position, spec: RithmicSpec, route: String, stopLoss: Long?, takeProfit: Long?): TradeResult {
+        val legs = listOfNotNull(stopLoss?.let { true to it }, takeProfit?.let { false to it })
+        val quantity = p.lotsHundredths / 100
+        val exit = if (p.side == Side.BUY) RithmicEnums.SELL else RithmicEnums.BUY
+        val label = PROTECTION_TAG_PREFIX + requestId
+        val pair = legs.size == 2
+        return sendWrite(accountId, requestId, "protect", null, if (pair) Rt.REQUEST_OCO_ORDER else Rt.REQUEST_NEW_ORDER, p.symbol, null, label = label) {
+            string(Rf.FCM_ID, fcmId); string(Rf.IB_ID, ibId); string(Rf.ACCOUNT_ID, accountId)
+            for ((stop, price) in legs) {
+                string(Rf.USER_TAG, label)
+                string(Rf.SYMBOL, p.symbol); string(Rf.EXCHANGE, spec.exchange)
+                int32(Rf.QUANTITY, quantity.toInt())
+                // The new-order request takes quantity_64 too; the OCO request is sent as rithmic-rs sends it, without.
+                if (!pair) int64(Rf.QUANTITY_64, quantity)
+                // A leg's slot in a repeated field is its index, so the unused price of each leg is sent as 0.
+                if (!stop || pair) double(Rf.PRICE, if (stop) 0.0 else spec.scale.price(price))
+                if (stop || pair) double(Rf.TRIGGER_PRICE, if (stop) spec.scale.price(price) else 0.0)
+                int32(Rf.TRANSACTION_TYPE, exit)
+                int32(Rf.DURATION, RithmicEnums.DURATION_DAY)
+                int32(Rf.PRICE_TYPE, if (stop) RithmicEnums.PRICE_STOP_MARKET else RithmicEnums.PRICE_LIMIT)
+                string(Rf.TRADE_ROUTE, route)
+                int32(Rf.MANUAL_OR_AUTO, RithmicEnums.PLACEMENT_MANUAL)
             }
         }
     }
@@ -1511,18 +1604,19 @@ class RithmicBroker(
         result
     }
 
+    /** [label] is the user tag the request's orders carry, by which their notifications settle it. */
     private suspend fun sendWrite(account: String, requestId: String, kind: String, entity: String?, template: Int, symbol: String, expectedPrice: Long?,
-        baselineSequence: String? = null, build: ProtoWriter.() -> Unit): TradeResult {
+        baselineSequence: String? = null, label: String = tag(requestId), build: ProtoWriter.() -> Unit): TradeResult {
         val plant = orderPlant ?: return TradeResult(false, "订单连接不可用")
         val key = "$account/$requestId"
-        lock.withLock { awaiting[key] = Awaiting(account, kind, entity, tag(requestId), now(), expectedPrice, baselineSequence, symbol); publish() }
+        lock.withLock { awaiting[key] = Awaiting(account, kind, entity, label, now(), expectedPrice, baselineSequence, symbol); publish() }
         return try {
             val reply = plant.request(template, 20_000, build)
             if (reply.isEmpty()) throw RithmicRemoteException("empty", "缺少服务器回执")
             // The server sends the basket id on a part ahead of the terminal one.
             val basket = reply.firstNotNullOfOrNull { part -> part.str(Rf.BASKET_ID)?.trim()?.takeIf { it.isNotEmpty() } }
             lock.withLock {
-                if (kind == "place") {
+                if (kind == "place" || kind == "protect") {
                     // The order notification can beat this reply and settle the wait by its client tag already.
                     if (basket == null && key in awaiting) throw RithmicRemoteException("basket", "缺少订单回执 ID，无法确认结果")
                     awaiting[key]?.let { awaiting[key] = it.copy(entity = basket) }
@@ -1555,7 +1649,7 @@ class RithmicBroker(
     private fun reconcile(fullSnapshot: Boolean = false) {
         val completed = awaiting.filter { (_, wait) ->
             when (wait.kind) {
-                "place" -> orders.values.any { it.accountId == wait.account && (wait.entity != null && it.basketId == wait.entity || it.userTag == wait.tag) }
+                "place", "protect" -> orders.values.any { it.accountId == wait.account && (wait.entity != null && it.basketId == wait.entity || it.userTag == wait.tag) }
                 "modify" -> orders[wait.entity]?.let { order ->
                     val price = order.price ?: order.triggerPrice
                     !order.active || (order.sequence != null && order.sequence != wait.baselineSequence) ||

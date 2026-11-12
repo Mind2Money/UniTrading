@@ -133,7 +133,17 @@ data class BrokerCapabilities(
     val modifyPendingProtection: Boolean = true,
     /** A [PendingOrder.standaloneEditable] order can change its quantity as well as its price. */
     val modifyOrderQuantity: Boolean = false,
-)
+    /**
+     * A stop loss or take profit can be added to a position after entry, as a plain stop or limit order, and the two stand
+     * as one OCO pair at the broker. Adding the second line replaces the first with the pair, so a change that adds a line
+     * may move the other one in the same step, whatever [atomicProtectionEdit] says. Pending entries still follow
+     * [addProtection].
+     */
+    val ocoProtection: Boolean = false,
+) {
+    /** Whether an open position can take a stop loss or take profit it does not have yet. */
+    val addPositionProtection: Boolean get() = addProtection || ocoProtection
+}
 @Serializable
 data class AccountInfo(val id: String, val name: String, val currency: String = "USD", val readOnly: Boolean = false)
 @Serializable

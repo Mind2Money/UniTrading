@@ -102,6 +102,12 @@ internal data class RithmicOrder(
     val origPriceType: Int = 0,
 ) {
     val isBracketChild: Boolean get() = !originalBasketId.isNullOrBlank() && originalBasketId != basketId
+    /** A plain stop or limit the app placed as a position's stop loss or take profit; see [PROTECTION_TAG_PREFIX]. */
+    val isTaggedProtection: Boolean get() = !isBracketChild && userTag?.startsWith(PROTECTION_TAG_PREFIX) == true
+    /** An exit that protects a position: a bracket's stop or target, or one the app tagged as such. */
+    val isProtectionLeg: Boolean get() = isBracketChild || isTaggedProtection
+    /** Legs of one family are linked at the server: a bracket's children share their entry, and an OCO placement's legs their tag. */
+    val protectionFamily: String? get() = when { isBracketChild -> "bracket:$originalBasketId"; isTaggedProtection -> "tag:$userTag"; else -> null }
     /** A triggered stop reports as a market order; its original type still says stop. */
     val isStop: Boolean get() = priceType in STOP_PRICE_TYPES || origPriceType in STOP_PRICE_TYPES
     /** The server's wording for a working order varies, so only a modify or cancel under way blocks an edit; it judges the rest. */
@@ -179,7 +185,7 @@ internal fun pairFills(fills: List<RithmicFill>, orders: Map<String, RithmicOrde
             val lotsHundredths = checkedMultiply(quantity, 100)
             val gross = grossPnl(spec.instrument, lot.fill.side, lotsHundredths, entry, exit)
             val fees = commissionMicros?.let { checkedMultiply(checkedMultiply(it, 2), quantity) }
-            val reason = when { order?.isBracketChild != true -> "平仓"; order.isStop -> "止损"; else -> "止盈" }
+            val reason = when { order?.isProtectionLeg != true -> "平仓"; order.isStop -> "止损"; else -> "止盈" }
             trades += ClosedTrade("fill-${lot.fill.id}-${fill.id}", positionId, fill.symbol, lot.fill.side, lotsHundredths, entry, exit,
                 lot.fill.timeMs, fill.timeMs, fees?.let { checkedAdd(gross, -it) }, reason, gross, fees)
             lot.open -= quantity
