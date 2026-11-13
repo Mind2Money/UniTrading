@@ -97,7 +97,15 @@ fun TradingChart(
     val savedView = remember(accountKey, instrument.symbol, timeframe) { views?.view(viewKey) }
     var restoring by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.takeIf { it.edgeTimeMs != null && candles.isEmpty() }) }
     var viewport by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.viewport(candles) ?: ChartViewport(count = shownCount[0])) }
-    var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.priceScale()) }
+    // A price axis set by hand comes back only with a view of the past: a view on the newest bar opens on the automatic
+    // axis, centred on the current price, since the price has usually moved away from where the kept axis was.
+    var manualScale by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(savedView?.takeIf { it.edgeTimeMs != null }?.priceScale()) }
+    /** Whether a kept axis was checked against the bars it opened on; see [PriceScale.suits]. */
+    var manualChecked by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(manualScale == null) }
+    /** The middle of the automatic axis while it follows the price; see [PriceScale.followedCenter]. */
+    val autoCenter = remember(accountKey, instrument.symbol, timeframe) { doubleArrayOf(Double.NaN) }
+    /** Locked, the wheel moves the chart back and forth through time instead of zooming it. */
+    val locked = chrome.locked
     var previousCandles by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles) }
     var showHistory by remember { mutableStateOf(true) }
     var showPositions by remember { mutableStateOf(true) }
@@ -141,7 +149,8 @@ fun TradingChart(
     val plotBottom = paneLayout.firstOrNull()?.top ?: bottom
     val currentPlotBottom by rememberUpdatedState(plotBottom)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
-    val extras = buildList {
+    /** Prices the automatic axis keeps in view: the quote, the position and its protection, orders and the draft. */
+    val tradingPrices = buildList {
         quote?.let { add(it.bid); add(it.ask) }
         if (showPositions) selectedPosition?.let { p -> add(p.entryPrice); p.stopLoss?.let(::add); p.takeProfit?.let(::add) }
         if (showOrders) orders.forEach { order ->
@@ -152,8 +161,8 @@ fun TradingChart(
         if (preview?.valid == true) preview.entryPrice?.let(::add)
         draft?.stopLoss?.let(::add)
         draft?.takeProfit?.let(::add)
-        addAll(overlayScaleValues(overlays, range))
     }
+    val extras = tradingPrices + overlayScaleValues(overlays, range)
     // A newly enabled protection must be reachable even after the user manually zoomed the price axis.
     // Only activation/direction/type changes fit the range; moving a line keeps its frozen drag scale.
     LaunchedEffect(accountKey, instrument.symbol, draft?.side, draft?.kind, draft?.stopLoss != null, draft?.takeProfit != null) {
@@ -166,7 +175,25 @@ fun TradingChart(
             manualScale = manual.copy(low = maxOf(0.0, low - padding), high = high + padding)
         }
     }
-    val scale = drag?.scale ?: manualScale?.copy(top = top, bottom = plotBottom) ?: PriceScale.from(visible, extras, top, plotBottom)
+    val fitted = PriceScale.from(visible, extras, top, plotBottom)
+    // While the newest bar is on screen the automatic axis keeps the current price in the middle of the plot.
+    val livePrice = quote?.bid?.takeIf { it > 0 } ?: candles.lastOrNull()?.close
+    val autoMiddle = livePrice?.takeIf { candles.isNotEmpty() && range.last == candles.lastIndex }
+        ?.let { PriceScale.followedCenter(autoCenter[0].takeUnless { c -> c.isNaN() }, it, fitted.high - fitted.low) }
+    SideEffect { autoCenter[0] = autoMiddle ?: Double.NaN }
+    // Older bars far from the price may leave a centred axis; the newest fifth of the screen always stays in view.
+    val automatic = autoMiddle?.let {
+        val recent = visible.takeLast(maxOf(10, visible.size / 5)).flatMap { bar -> listOf(bar.low, bar.high) }
+        PriceScale.centered(visible, tradingPrices + recent, it, top, plotBottom)
+    } ?: fitted
+    // A kept axis that no longer suits the bars (the market moved away, other price units) gives way to the automatic one.
+    LaunchedEffect(manualChecked, candles.isEmpty()) {
+        if (!manualChecked && candles.isNotEmpty()) {
+            if (manualScale?.suits(fitted) == false) manualScale = null
+            manualChecked = true
+        }
+    }
+    val scale = drag?.scale ?: manualScale?.takeIf { manualChecked || it.suits(fitted) }?.copy(top = top, bottom = plotBottom) ?: automatic
     val currentScale by rememberUpdatedState(scale)
     val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
     val currentVisible by rememberUpdatedState(visible)
@@ -176,6 +203,7 @@ fun TradingChart(
     val currentQuote by rememberUpdatedState(quote)
     val currentDrawingLayer by rememberUpdatedState(drawingLayer)
     val currentTotal by rememberUpdatedState(candles.size)
+    val currentLocked by rememberUpdatedState(locked)
     val orderVersions = orders.map { listOf(it.id, it.version, it.role, it.positionId, it.editable, it.filledLotsHundredths, it.request, it.protectionEditable) }
     val movedDraft = drag?.let { edit ->
         when (val line = edit.line) {
@@ -375,36 +403,71 @@ fun TradingChart(
                         }
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；滚轮缩放时间，在右侧价格轴上滚动缩放价格；上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键可在该价位画水平线或挂限价单、突破单。" +
+                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；" + (if (locked) "图表已锁定，滚轮前后移动图表；" else "滚轮缩放时间，在右侧价格轴上滚动缩放价格；") + "上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键或长按打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键或长按可在该价位画水平线、下市价单，或挂限价单、突破单。" +
                                 (actions.tradingKeys?.let {
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
                                 } ?: "")
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
                         .pointerHoverIcon(chartCursor)
                         .pointerInput(accountKey, instrument.symbol, timeframe, size) {
+                            /** The menu of the order line at [point], or else the plot's own; whether one opened. */
+                            fun openChartMenu(point: Offset, touch: Boolean): Boolean {
+                                if (point.x !in left..right || point.y !in top..currentPlotBottom) return false
+                                val line = lineAt(point, currentTags, currentLines, currentScale, (if (touch) 14 else 8) * density.density)
+                                if (line != null) lineMenu = LineMenu(point, line.cells.filter { it.action != null })
+                                else {
+                                    // Nothing under the pointer: the plot's own menu, at the price the crosshair shows there.
+                                    val price = currentScale.price(point.y, instrument.tickSize)
+                                    val orders = plotOrders(price, currentQuote, currentActions.entryKinds)
+                                    if (orders.isEmpty() && currentDrawingLayer == null) return false
+                                    plotMenu = PlotMenu(point, price, orders)
+                                }
+                                return true
+                            }
                             // On the Initial pass, so the tap and drag detectors below never see the press that opens a menu.
+                            // A right click and a finger held still on the plot open the same menus.
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                                    if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
-                                    // The drawing layer saw the press first: it opened a drawing's menu or cancelled a placement.
+                                    if (event.type != PointerEventType.Press) continue
+                                    // The drawing layer saw the press first: it opened a drawing's menu, cancelled a placement, or
+                                    // took a press on a drawing it holds, whose menu it opens itself when the finger stays.
                                     if (event.changes.any { it.isConsumed }) continue
-                                    val point = event.changes.firstOrNull()?.position ?: continue
-                                    if (point.x !in left..right || point.y !in top..currentPlotBottom) continue
-                                    val line = lineAt(point, currentTags, currentLines, currentScale, 8 * density.density)
-                                    if (line != null) lineMenu = LineMenu(point, line.cells.filter { it.action != null })
-                                    else {
-                                        // Nothing under the pointer: the plot's own menu, at the price the crosshair shows there.
-                                        val price = currentScale.price(point.y, instrument.tickSize)
-                                        val orders = plotOrders(price, currentQuote, currentActions.entryKinds)
-                                        if (orders.isEmpty() && currentDrawingLayer == null) continue
-                                        plotMenu = PlotMenu(point, price, orders)
+                                    val down = event.changes.firstOrNull() ?: continue
+                                    if (event.buttons.isSecondaryPressed) {
+                                        if (openChartMenu(down.position, touch = false)) event.changes.forEach { it.consume() }
+                                        continue
                                     }
-                                    event.changes.forEach { it.consume() }
+                                    if (down.type != PointerType.Touch || event.changes.count { it.pressed } != 1) continue
+                                    val point = down.position
+                                    // The finger has to stay down, alone and still, for the long-press time; a lift, a slide or a
+                                    // second finger leaves the gesture to the tap, pan and pinch detectors.
+                                    val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        while (true) {
+                                            val next = awaitPointerEvent(PointerEventPass.Initial)
+                                            val finger = next.changes.firstOrNull { it.id == down.id }
+                                            if (next.changes.any { it.isConsumed } || next.changes.count { it.pressed } != 1 || finger == null || !finger.pressed ||
+                                                (finger.position - point).getDistance() > viewConfiguration.touchSlop) break
+                                        }
+                                        true
+                                    }
+                                    if (released != null) continue
+                                    // A drawing under the finger first, as for a right click, then an order line, then the plot.
+                                    val layer = currentDrawingLayer
+                                    val ctx = layer?.ctx
+                                    val opened = (layer != null && ctx != null && layer.controller.openMenuAt(point, ctx, layer.orderLineAt)) ||
+                                        openChartMenu(point, touch = true)
+                                    if (!opened) { layer?.controller?.showTooltip(point); continue }
+                                    // The crosshair shows the price the menu names; the rest of the gesture belongs to the menu.
+                                    crosshair = visibleIndex(point.x); crosshairY = point.y
+                                    do {
+                                        val next = awaitPointerEvent(PointerEventPass.Initial)
+                                        next.changes.forEach { it.consume() }
+                                    } while (next.changes.any { it.pressed })
                                 }
                             }
                         }
@@ -419,10 +482,12 @@ fun TradingChart(
                                         val ticks = change.scrollDelta
                                         change.consume()
                                         if (drag != null) continue
-                                        if (point.x >= right && point.y < currentPlotBottom) manualScale = (manualScale ?: currentScale).zoomWheel(ticks.y, instrument.tickSize * 4.0)
+                                        if (point.x >= right && point.y < currentPlotBottom && !currentLocked) manualScale = (manualScale ?: currentScale).zoomWheel(ticks.y, instrument.tickSize * 4.0)
                                         else {
-                                            // Sideways scrolling (Shift + wheel, or a trackpad) moves through time; rolling zooms.
-                                            viewport = if (abs(ticks.x) > abs(ticks.y)) viewport.pan(-ticks.x * plotWidth * .1f, plotWidth, currentTotal)
+                                            // Sideways scrolling (Shift + wheel, or a trackpad) moves through time; rolling zooms, or on a
+                                            // locked chart moves through time too: rolling towards the user goes later, as Shift + wheel does.
+                                            val sideways = abs(ticks.x) > abs(ticks.y)
+                                            viewport = if (sideways || currentLocked) viewport.pan(-(if (sideways) ticks.x else ticks.y) * plotWidth * .1f, plotWidth, currentTotal)
                                                 else viewport.zoomAt(ticks.y, ((point.x - left) / plotWidth).coerceIn(0f, 1f), currentTotal)
                                             if (crosshair != null) crosshair = visibleIndex(point.x, viewport)
                                         }
@@ -706,7 +771,8 @@ fun TradingChart(
                 plotMenu?.let { menu ->
                     PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
-                        onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price) },
+                        // A market order takes no price: it fills at the quote, as the trading keys' does.
+                        onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price.takeUnless { order.kind == OrderKind.MARKET }) },
                         stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection)
                 }
                 val bar = visible.getOrNull(readoutIndex)
@@ -727,6 +793,8 @@ fun TradingChart(
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
+                    locked = locked.takeIf { chrome.onLocked != null && !compact },
+                    onLocked = { chrome.onLocked?.invoke(!locked) },
                     // On phones the small control sits bottom-left, away from the newest bars at the right edge.
                     modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
@@ -786,6 +854,10 @@ class ChartChrome(
     val drawings: ChartDrawings? = null,
     /** Where the chart keeps how it showed each series, so it opens again as it was left; null starts every series afresh. */
     val views: ChartViewMemory? = null,
+    /** Locked, the mouse wheel moves the chart through time instead of zooming it. */
+    val locked: Boolean = false,
+    /** Receives the lock button's choice; null leaves the button out (phones, which have no wheel). */
+    val onLocked: ((Boolean) -> Unit)? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

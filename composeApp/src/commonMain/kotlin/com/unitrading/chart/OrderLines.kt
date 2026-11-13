@@ -258,7 +258,8 @@ internal data class OrderLineOptions(
  * draft takes the price at once, while a pending order or position changes on the broker only after the screen's
  * confirmation. The estimates feed the readout during a drag. Grouped in one parameter for the same reason as [ChartChrome].
  *
- * The plot's context menu offers limit and stop entries of [entryKinds] at the clicked price. [entryLots] is the quantity
+ * The plot's context menu offers a market buy and sell and the limit and stop entries of [entryKinds] at the clicked
+ * price, from a right click or a long press. [entryLots] is the quantity
  * they would carry, the order panel's, or null while that does not parse; [onEntryOrder] hands the pick to the screen,
  * which sends it through the order panel's checks and confirmation. No [entryKinds], no orders in the menu.
  *
@@ -283,7 +284,8 @@ class ChartOrderActions(
     val addPositionProtection: Boolean = addProtection,
     val entryKinds: Set<OrderKind> = emptySet(),
     val entryLots: Long? = null,
-    val onEntryOrder: (side: Side, kind: OrderKind, price: Long) -> Unit = { _, _, _ -> },
+    /** The menu's pick; [price] is null for a market order. */
+    val onEntryOrder: (side: Side, kind: OrderKind, price: Long?) -> Unit = { _, _, _ -> },
     val tradingKeys: TradingKeys? = null,
     val instantOrders: Boolean = false,
     val onMarketOrder: (Side) -> Unit = {},

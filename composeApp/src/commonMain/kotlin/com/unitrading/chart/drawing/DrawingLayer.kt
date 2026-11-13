@@ -200,7 +200,10 @@ internal fun Modifier.drawingInput(layer: DrawingLayer): Modifier {
                                 if (taken) event.changes.forEach { it.consume() }
                                 hold?.cancel()
                                 val at = change.position
-                                if (!placing && (touch || !taken)) hold = scope.launch {
+                                // A finger held on a drawing the layer took opens its menu; a mouse held on the chart shows
+                                // the bar's values. A finger held anywhere else is the chart's long press, which opens the
+                                // same menus as a right click and shows the values only where none opens.
+                                if (!placing && touch == taken) hold = scope.launch {
                                     delay(450)
                                     if (taken) controller.openMenuAt(at, ctx, layer.orderLineAt) else controller.showTooltip(at)
                                 }

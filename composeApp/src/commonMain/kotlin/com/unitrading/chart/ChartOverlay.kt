@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.*
@@ -270,7 +271,10 @@ private fun CustomIntervalRow(onAdd: (Timeframe) -> Unit) {
     }
 }
 
-/** Zoom and scroll controls floating above the time axis; [compact] keeps zoom and reset, since phones pan by dragging. */
+/**
+ * Zoom and scroll controls floating above the time axis; [compact] keeps zoom and reset, since phones pan by dragging.
+ * [locked] adds the lock button, lit while the chart is locked (the wheel then moves it through time); null leaves it out.
+ */
 @Composable
 internal fun ChartNavigation(
     onZoomIn: () -> Unit,
@@ -280,6 +284,8 @@ internal fun ChartNavigation(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    locked: Boolean? = null,
+    onLocked: () -> Unit = {},
 ) {
     val button = Modifier.size(36.dp)
     ToolbarPill(modifier) {
@@ -291,6 +297,10 @@ internal fun ChartNavigation(
                 ActionIcon(AppIcons.ChevronRight, "较新", "chart-later", button, iconSize = 20.dp, onClick = onLater)
             }
             ActionIcon(AppIcons.RestartAlt, "重置视图", "chart-reset", button, iconSize = 20.dp, onClick = onReset)
+            if (locked != null) ActionIcon(if (locked) AppIcons.Lock else AppIcons.LockOpen,
+                if (locked) "已锁定：滚轮前后移动图表，点按解锁" else "锁定图表：滚轮改为前后移动", "chart-lock",
+                button.semantics { stateDescription = if (locked) "已锁定" else "未锁定" }, iconSize = 20.dp,
+                tint = if (locked) TradingColors.Accent else Color.Unspecified, onClick = onLocked)
         }
     }
 }

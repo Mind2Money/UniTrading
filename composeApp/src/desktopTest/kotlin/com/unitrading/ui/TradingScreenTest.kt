@@ -128,7 +128,7 @@ class TradingScreenTest {
         val chart = compose.onNodeWithTag("trading-chart")
         val bounds = chart.fetchSemanticsNode().size
         val extras = listOfNotNull(q.bid, q.ask, current.entryPrice, current.stopLoss, current.takeProfit)
-        val scale = PriceScale.from(bars, extras, 18f * .6f, bounds.height - 30f * .6f)
+        val scale = chart.chartAxis(.6f)
         val y = scale.y(current.stopLoss!!)
         chart.performTouchInput {
             down(Offset(bounds.width * .55f, y))
@@ -185,7 +185,7 @@ class TradingScreenTest {
             } + draftPrices
         val chart = compose.onNodeWithTag("trading-chart")
         val bounds = chart.fetchSemanticsNode().size
-        val scale = PriceScale.from(plugin.history(instrument.symbol, Timeframe.M5).takeLast(80), extras, 18f * .6f, bounds.height - 30f * .6f)
+        val scale = chart.chartAxis(.6f)
         val y = scale.y(price)
         chart.performTouchInput {
             down(Offset(bounds.width * .55f, y))

@@ -59,7 +59,7 @@ class ChartViewMemoryUiTest {
         tap("chart-zoom-in"); tap("chart-zoom-in"); tap("chart-earlier")
         val five = view()
         assertTrue(five.first < 80.0 && five.second > 0.0, "$five")
-        // The price axis set by hand comes back with the rest.
+        // The price axis set by hand comes back with a view of the past.
         val plot = compose.onNodeWithTag("trading-chart")
         val size = plot.fetchSemanticsNode().size
         plot.performMouseInput { moveTo(Offset(size.width - 20f, size.height * .4f)); scroll(2f) }
@@ -90,6 +90,50 @@ class ChartViewMemoryUiTest {
         assertEquals(Triple(80.0, 0.0, true), view())
         tap("interval-inline-5"); tap("interval-inline-15")
         assertEquals(Triple(80.0, 0.0, true), view())
+    }
+
+    @Test fun aViewOnTheNewestBarOpensCentredOnThePriceEvenAfterAHandSetAxis() {
+        render()
+        val plot = compose.onNodeWithTag("trading-chart")
+        fun middle() = state().let { (it.getValue("low").toDouble() + it.getValue("high").toDouble()) / 2 }
+        val price = broker.market.value.quotes.getValue("TESTZ6").bid.toDouble()
+        val span = state().let { it.getValue("high").toDouble() - it.getValue("low").toDouble() }
+        assertEquals(price, middle(), span * .26, "the automatic axis keeps the price near the middle")
+        // An axis dragged away by hand is kept while the series is shown, and dropped when it opens again on the newest bar.
+        val size = plot.fetchSemanticsNode().size
+        plot.performMouseInput { moveTo(Offset(size.width * .5f, size.height * .4f)); press(); moveBy(Offset(0f, size.height * .3f)); release() }
+        compose.waitForIdle()
+        assertEquals(false, view().third)
+        tap("interval-inline-15"); tap("interval-inline-5")
+        assertEquals(true, view().third)
+        assertEquals(price, middle(), span * .26)
+    }
+
+    @Test fun aLockedChartScrollsThroughTimeWithTheWheel() {
+        render()
+        val plot = compose.onNodeWithTag("trading-chart")
+        val size = plot.fetchSemanticsNode().size
+        fun wheel(ticks: Float, x: Float = size.width * .5f) { plot.performMouseInput { moveTo(Offset(x, size.height * .4f)); scroll(ticks) }; compose.waitForIdle() }
+        wheel(-2f)
+        assertTrue(view().first < 80.0, "unlocked, the wheel zooms")
+        val zoomed = view()
+        tap("chart-lock")
+        assertEquals("true", state()["locked"])
+        wheel(-3f)
+        assertEquals(zoomed.first, view().first, "locked, the wheel does not zoom")
+        assertTrue(view().second > zoomed.second, "rolling away from the user goes back in time")
+        val back = view()
+        wheel(1f)
+        assertTrue(view().second < back.second, "rolling towards the user comes forward")
+        val axis = state().let { it.getValue("low") to it.getValue("high") }
+        wheel(2f, size.width - 20f)
+        assertEquals(axis, state().let { it.getValue("low") to it.getValue("high") }, "the price axis does not zoom either")
+        // The lock is kept after a restart.
+        compose.waitUntil(5_000) { com.unitrading.app.ChartPreferencesController(store).preferences.value.chartLocked }
+        restart()
+        assertEquals("true", state()["locked"])
+        tap("chart-lock")
+        assertEquals("false", state()["locked"])
     }
 
     @Test fun aPhoneKeepsTheViewWhileAnotherPageIsShown() {

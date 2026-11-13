@@ -36,6 +36,8 @@ data class ChartPreferences(
     val lastTimeframeSeconds: Int? = null,
     /** The chart windows open beside the main chart, in the order they were opened. */
     val extraCharts: List<SavedChart> = emptyList(),
+    /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
+    val chartLocked: Boolean = false,
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -115,6 +117,10 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setChartLocked(locked: Boolean): Boolean = saveMutex.withLock {
+        preferences.value.chartLocked == locked || persist(preferences.value.copy(chartLocked = locked))
     }
 
     suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean = saveMutex.withLock {

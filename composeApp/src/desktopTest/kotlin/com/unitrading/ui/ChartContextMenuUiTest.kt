@@ -49,7 +49,69 @@ class ChartContextMenuUiTest {
         chart().performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
     }
+    /** A finger held still on the row of [price] until the long press fires. */
+    private fun longPress(price: Long) {
+        val at = pointAt(price)
+        chart().performTouchInput { longClick(at) }
+        compose.waitForIdle()
+    }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
+
+    @Test fun theMenuOffersAMarketBuyAndSellWhereverItOpensAndTheyTakeNoPrice() {
+        render()
+        rightClick(549_000)
+        item("BUY-MARKET").assertTextContains("买入市价 1 张")
+        item("SELL-MARKET").assertTextContains("卖出市价 1 张").performClick()
+        compose.waitForIdle()
+        item("SELL-MARKET").assertDoesNotExist()
+        compose.onNodeWithText("TESTZ6 · 卖出市价 · 1 张").assertExists()
+        assertTrue(broker.placed.isEmpty(), "Nothing reaches the broker before the confirmation")
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.MARKET, 100), broker.placed.single(), "at the market, not at the clicked price")
+
+        rightClick(551_000)
+        item("BUY-MARKET").assertExists("over the market as well")
+        item("SELL-MARKET").assertExists()
+    }
+
+    @Test fun aLongPressOpensTheSameMenuAsARightClick() {
+        render(skipConfirmation = true)
+        longPress(549_000)
+        item("horizontal-line").assertTextContains("在 5490.00 画水平线")
+        item("BUY-MARKET").assertExists()
+        item("SELL-STOP").assertExists()
+        item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00").performClick()
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.LIMIT, 100, 549_000), broker.placed.single())
+        assertTrue(runtime.drawings.drawings.isEmpty(), "the press that opened the menu drew nothing")
+    }
+
+    @Test fun aTapOrASlideOpensNoMenu() {
+        render()
+        val at = pointAt(549_000)
+        chart().performTouchInput { click(at) }
+        compose.waitForIdle()
+        item("horizontal-line").assertDoesNotExist()
+        chart().performTouchInput { swipe(at, at + Offset(120f, 0f), durationMillis = 1_000) }
+        compose.waitForIdle()
+        item("horizontal-line").assertDoesNotExist()
+    }
+
+    @Test fun aLongPressOnADrawingOpensTheDrawingsMenu() {
+        render()
+        rightClick(551_000)
+        item("horizontal-line").performClick()
+        compose.waitForIdle()
+        // Unselected, as a fresh press on a phone finds it.
+        compose.runOnIdle { runtime.drawings.escape() }
+        // The mouse that drew the line leaves, so the finger is the only pointer.
+        chart().performMouseInput { exit() }
+        compose.waitForIdle()
+        longPress(551_000)
+        compose.onNodeWithTag("drawing-menu-settings").assertExists()
+        item("horizontal-line").assertDoesNotExist()
+    }
 
     @Test fun theMenuDrawsAHorizontalLineAtThePriceUnderThePointer() {
         render()

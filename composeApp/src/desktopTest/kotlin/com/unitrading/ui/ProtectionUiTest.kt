@@ -200,7 +200,7 @@ class ProtectionUiTest {
         render(broker)
         val chart = compose.onNodeWithTag("trading-chart")
         val bounds = chart.fetchSemanticsNode().size
-        val scale = PriceScale.from(broker.history("TESTZ6", Timeframe.M5).takeLast(80), listOf(550500, 550525, 550000, 549000, 552000), 18f * .6f, bounds.height - 30f * .6f)
+        val scale = chart.chartAxis(.6f)
         val y = scale.y(552000)
         chart.performTouchInput { down(Offset(bounds.width * .55f, y)); moveBy(Offset(0f, -6f)); moveBy(Offset(0f, -18f)); up() }
         compose.onNodeWithTag("protection-dialog").assertExists()
@@ -239,7 +239,7 @@ class ProtectionUiTest {
         render(broker, skipConfirmation = true)
         val chart = compose.onNodeWithTag("trading-chart")
         val bounds = chart.fetchSemanticsNode().size
-        val scale = PriceScale.from(broker.history("TESTZ6", Timeframe.M5).takeLast(80), listOf(550500, 550525, 550000, 549000, 552000), 18f * .6f, bounds.height - 30f * .6f)
+        val scale = chart.chartAxis(.6f)
         val from = scale.y(549000)
         val distance = scale.y(551000) - from
         chart.performTouchInput { down(Offset(bounds.width * .55f, from)); moveBy(Offset(0f, distance / 4)); moveBy(Offset(0f, distance * 3 / 4)); up() }
@@ -335,6 +335,16 @@ class ProtectionUiTest {
         val at = button("撤销止损 #702")
         chart().performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
+        compose.onNodeWithTag("line-menu-0").assertTextContains("撤销止损 #702").performClick()
+        compose.onNodeWithText("确认撤单").assertExists()
+        compose.onNodeWithTag("line-menu-0").assertDoesNotExist()
+    }
+    @Test fun aLongPressOffersTheLineButtonsByNameAsARightClickDoes() {
+        render(OfflineProtectionBroker())
+        val at = button("撤销止损 #702")
+        chart().performTouchInput { longClick(at) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("plot-menu-horizontal-line").assertDoesNotExist()
         compose.onNodeWithTag("line-menu-0").assertTextContains("撤销止损 #702").performClick()
         compose.onNodeWithText("确认撤单").assertExists()
         compose.onNodeWithTag("line-menu-0").assertDoesNotExist()

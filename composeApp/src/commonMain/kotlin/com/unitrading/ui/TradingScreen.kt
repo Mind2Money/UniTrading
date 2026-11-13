@@ -885,7 +885,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews, toolbarEnd = {
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
+                            locked = chartPreferences.chartLocked && !chartCompact,
+                            onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (compact && orderFlowSupported) ActionIcon(AppIcons.TrendingUp, "订单流分析", "open-order-flow") {
                                         closeOrder(); showOrderFlow = true

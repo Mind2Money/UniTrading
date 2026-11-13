@@ -45,6 +45,41 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
             val padding = maxOf((max - min) * 0.16, 8.0)
             return PriceScale(maxOf(0.0, min - padding), max + padding, top, bottom)
         }
+
+        /**
+         * The automatic axis while the newest bar is on screen: as tall as [candles] need, centred on [center], the current
+         * price. Bars far from the price may leave it; prices in [keep] (a position, its protection, orders, a draft) do not,
+         * and one further away widens the axis evenly on both sides, so the price stays in the middle.
+         */
+        fun centered(candles: List<Candle>, keep: List<Long>, center: Double, top: Float, bottom: Float): PriceScale {
+            val fitted = from(candles, listOf(center.roundToLong()), top, bottom)
+            val half = maxOf((fitted.high - fitted.low) / 2, keep.filter { it > 0 }.maxOfOrNull { kotlin.math.abs(it - center) * KEEP_MARGIN } ?: 0.0, 4.0)
+            return PriceScale(maxOf(0.0, center - half), center + half, top, bottom)
+        }
+
+        /**
+         * Where [centered] puts the middle of the axis: at [price], and it stays at [previous] while the price moves no more
+         * than [FOLLOW_SHARE] of the axis height [span] away from it, so the bars do not jump at every tick.
+         */
+        fun followedCenter(previous: Double?, price: Long, span: Double): Double =
+            previous?.takeIf { kotlin.math.abs(price - it) <= span * FOLLOW_SHARE } ?: price.toDouble()
+
+        /** A quarter of the height: the price stays between a quarter and three quarters of the way up. */
+        const val FOLLOW_SHARE = .25
+        /**
+         * How far past the farthest price [centered] keeps, as a multiple of its distance from the middle: it stays about 12%
+         * of the height from the edge, as [from] pads the bars, clear of the zoom buttons that float over the bottom.
+         */
+        private const val KEEP_MARGIN = 1.3
+    }
+    /**
+     * Whether this axis, set by hand and kept, still suits the bars it opens on: it must overlap the [fitted] axis they need
+     * and be at most 20 times taller or shorter. A kept axis fails this after the market moved away from it, or when it was
+     * kept for the same symbol at a broker that counts prices in other units.
+     */
+    fun suits(fitted: PriceScale): Boolean {
+        val ratio = (high - low) / (fitted.high - fitted.low)
+        return ratio.isFinite() && ratio in 1.0 / 20..20.0 && high > fitted.low && low < fitted.high
     }
 }
 

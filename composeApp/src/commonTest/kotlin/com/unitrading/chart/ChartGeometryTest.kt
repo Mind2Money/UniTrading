@@ -80,6 +80,30 @@ class ChartGeometryTest {
             assertTrue(scale.y(100).isFinite())
         }
     }
+    @Test fun theAutomaticAxisCentresOnThePriceAndKeepsTradingPricesInView() {
+        val bars = (0 until 20).map { Candle(it.toLong(), 1_000, 1_010L + it, 990L - it, 1_000) }
+        val centred = PriceScale.centered(bars, emptyList(), 1_000.0, 0f, 100f)
+        assertEquals(1_000.0, (centred.low + centred.high) / 2, .00001)
+        val fitted = PriceScale.from(bars, emptyList(), 0f, 100f)
+        assertEquals(fitted.high - fitted.low, centred.high - centred.low, .00001, "as tall as the bars need")
+        // A stop far below widens the axis on both sides: the price stays in the middle.
+        val stop = PriceScale.centered(bars, listOf(800), 1_000.0, 0f, 100f)
+        assertEquals(1_000.0, (stop.low + stop.high) / 2, .00001)
+        assertTrue(stop.low < 800)
+        assertTrue(PriceScale.centered(emptyList(), emptyList(), 1.0, 0f, 100f).let { it.high > it.low && it.low >= 0.0 })
+    }
+    @Test fun theCentreStaysUntilThePriceMovesAQuarterOfTheAxis() {
+        assertEquals(1_000.0, PriceScale.followedCenter(null, 1_000, 100.0))
+        assertEquals(1_000.0, PriceScale.followedCenter(1_000.0, 1_020, 100.0), "a small move keeps the bars still")
+        assertEquals(1_030.0, PriceScale.followedCenter(1_000.0, 1_030, 100.0), "a larger one centres again")
+    }
+    @Test fun aKeptAxisMustStillSuitTheBars() {
+        val fitted = PriceScale(1_000.0, 1_100.0, 0f, 100f)
+        assertTrue(PriceScale(1_020.0, 1_080.0, 0f, 1f).suits(fitted))
+        assertFalse(PriceScale(2_000.0, 2_100.0, 0f, 1f).suits(fitted), "the market moved away from it")
+        assertFalse(PriceScale(0.0, 1_000_000.0, 0f, 1f).suits(fitted), "prices in other units")
+        assertFalse(PriceScale(1_049.0, 1_050.0, 0f, 1f).suits(fitted))
+    }
     @Test fun nearbyPriceLabelsStaySeparateAndInsideBounds() {
         assertEquals(listOf(100f, 125f, 150f), spreadLabelCenters(listOf(100f, 105f, 110f), 20f, 200f, 25f))
         assertEquals(listOf(150f, 175f, 200f), spreadLabelCenters(listOf(180f, 190f, 199f), 20f, 200f, 25f))

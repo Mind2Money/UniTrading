@@ -397,7 +397,7 @@ class MobileOrderDockTest {
             session.state.value.orders.filter { it.request.symbol == instrument.symbol }.mapNotNull { it.request.entryPrice }
         val chart = compose.onNodeWithTag("trading-chart")
         val size = chart.fetchSemanticsNode().size
-        val scale = PriceScale.from(plugin.history(instrument.symbol, Timeframe.M5).takeLast(80), extras, 18f * .75f, size.height - 30f * .75f)
+        val scale = chart.chartAxis(.75f)
         val y = scale.y(entry)
         chart.performTouchInput { down(Offset(size.width * .55f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)) }
         compose.onNodeWithTag("chart-readout").assertTextContains("入场预览", substring = true)
@@ -432,7 +432,7 @@ class MobileOrderDockTest {
             before.orders.filter { it.request.symbol == instrument.symbol }.mapNotNull { it.request.entryPrice }
         val chart = compose.onNodeWithTag("trading-chart")
         val size = chart.fetchSemanticsNode().size
-        val scale = PriceScale.from(plugin.history(instrument.symbol, Timeframe.M5).takeLast(80), extras, 18f * .75f, size.height - 30f * .75f)
+        val scale = chart.chartAxis(.75f)
         val y = scale.y(entry)
         chart.performTouchInput { down(Offset(size.width * .55f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
         compose.onNodeWithTag("order-panel").assertDoesNotExist()

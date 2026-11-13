@@ -9,29 +9,38 @@ import kotlin.test.*
 /** Which entry orders the plot's context menu offers at a price, and how it names them. */
 class PlotContextMenuTest {
     private val quote = Quote(bid = 550_500, ask = 550_525, timeMs = 0)
+    private val market = listOf(Side.BUY to OrderKind.MARKET, Side.SELL to OrderKind.MARKET)
     private fun orders(price: Long, kinds: Set<OrderKind> = OrderKind.entries.toSet(), at: Quote? = quote) =
         plotOrders(price, at, kinds).map { it.side to it.kind }
+    /** The orders that rest at the price, without the market buy and sell offered everywhere. */
+    private fun resting(price: Long, kinds: Set<OrderKind> = OrderKind.entries.toSet(), at: Quote? = quote) =
+        orders(price, kinds, at).filter { it.second != OrderKind.MARKET }
+
+    @Test fun aMarketBuyAndSellComeFirstWhereverTheMenuOpens() {
+        for (price in listOf(550_000L, 550_500, 550_525, 551_000)) assertEquals(market, orders(price).take(2), "at $price")
+        assertEquals(market, orders(550_500, at = Quote(550_500, 550_500, 0)), "a quote without a spread still trades at the market")
+    }
 
     @Test fun aPriceUnderTheMarketOffersABuyLimitAndASellStop() {
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.STOP), orders(550_000))
+        assertEquals(market + listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.STOP), orders(550_000))
     }
 
     @Test fun aPriceOverTheMarketOffersASellLimitAndABuyStop() {
-        assertEquals(listOf(Side.SELL to OrderKind.LIMIT, Side.BUY to OrderKind.STOP), orders(551_000))
+        assertEquals(market + listOf(Side.SELL to OrderKind.LIMIT, Side.BUY to OrderKind.STOP), orders(551_000))
     }
 
     @Test fun aLimitMayRestOnItsOwnEdgeOfTheSpreadAndAStopHasToBeBeyondIt() {
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT), orders(550_500), "at the bid")
-        assertEquals(listOf(Side.SELL to OrderKind.LIMIT), orders(550_525), "at the ask")
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.LIMIT), orders(550_550, at = Quote(550_500, 550_600, 0)), "inside a wide spread")
-        assertTrue(orders(550_500, at = Quote(550_500, 550_500, 0)).isEmpty(), "on a quote without a spread nothing can rest")
+        assertEquals(listOf(Side.BUY to OrderKind.LIMIT), resting(550_500), "at the bid")
+        assertEquals(listOf(Side.SELL to OrderKind.LIMIT), resting(550_525), "at the ask")
+        assertEquals(listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.LIMIT), resting(550_550, at = Quote(550_500, 550_600, 0)), "inside a wide spread")
+        assertTrue(resting(550_500, at = Quote(550_500, 550_500, 0)).isEmpty(), "on a quote without a spread nothing can rest")
     }
 
     @Test fun nothingIsOfferedWithoutAQuoteOrOfAKindTheBrokerLacks() {
-        assertTrue(orders(550_000, at = null).isEmpty())
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT), orders(550_000, setOf(OrderKind.MARKET, OrderKind.LIMIT)))
-        assertEquals(listOf(Side.BUY to OrderKind.STOP), orders(551_000, setOf(OrderKind.STOP)))
-        assertTrue(orders(550_000, setOf(OrderKind.MARKET)).isEmpty(), "the menu never offers a market order")
+        assertTrue(orders(550_000, at = null).isEmpty(), "not even a market order, whose side of the market is unknown")
+        assertEquals(market + listOf(Side.BUY to OrderKind.LIMIT), orders(550_000, setOf(OrderKind.MARKET, OrderKind.LIMIT)))
+        assertEquals(listOf(Side.BUY to OrderKind.STOP), orders(551_000, setOf(OrderKind.STOP)), "a broker without market orders gets none")
+        assertEquals(market, orders(550_000, setOf(OrderKind.MARKET)))
         assertTrue(orders(550_000, emptySet()).isEmpty())
     }
 
@@ -41,6 +50,14 @@ class PlotContextMenuTest {
         assertEquals("卖出突破 @ 5500.00", plotOrderLabel(futures, PlotOrder(Side.SELL, OrderKind.STOP), null, 550_000), "no quantity that parses in the order panel")
         val lots = Instrument("EURUSD", "Euro", "Forex", 5, tickValueMicrosPerLot = 1_000_000)
         assertEquals("卖出限价 0.10 手 @ 1.08500", plotOrderLabel(lots, PlotOrder(Side.SELL, OrderKind.LIMIT), 10, 108_500))
+    }
+
+    @Test fun aMarketOrderIsNamedWithoutThePriceItWillNotFillAt() {
+        val futures = Instrument("TESTZ6", "Test", "Test", 2, 25, 1_250_000, quantityUnit = "张", quantityDecimals = 0)
+        assertEquals("买入市价 2 张", plotOrderLabel(futures, PlotOrder(Side.BUY, OrderKind.MARKET), 200, 550_000))
+        assertEquals("卖出市价", plotOrderLabel(futures, PlotOrder(Side.SELL, OrderKind.MARKET), null, 550_000))
+        assertEquals("卖出市价 2 张 · 开仓自动附加 SL", plotOrderLabel(futures, PlotOrder(Side.SELL, OrderKind.MARKET), 200, 550_000, attached = "SL"))
+        assertEquals("买入市价 · 打开下单栏填写 SL", plotOrderLabel(futures, PlotOrder(Side.BUY, OrderKind.MARKET), 200, 550_000, sizing = true))
     }
 
     @Test fun theLabelSaysWhatTheAccountsBracketsDoToTheOrder() {

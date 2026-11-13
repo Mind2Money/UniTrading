@@ -33,14 +33,18 @@ internal data class PlotOrder(val side: Side, val kind: OrderKind)
 internal data class PlotMenu(val at: Offset, val price: Long, val orders: List<PlotOrder>)
 
 /**
- * The entry orders that can rest at [price], limits first. A limit buys under the ask and sells over the bid; a stop
+ * The entry orders the menu offers at [price]: a market buy and sell first, which fill at the quote wherever the menu
+ * opened, then those that can rest at [price], limits first. A limit buys under the ask and sells over the bid; a stop
  * buys over the ask and sells under the bid. So a price under the market offers a buy limit and a sell stop, one over
  * it a sell limit and a buy stop, and one inside the spread the two limits. Without a quote nothing is offered, as
- * the side of the market is unknown. The broker's own check still decides when the order is sent.
+ * the side of the market is unknown and a market order would go out blind. The broker's own check still decides when
+ * the order is sent.
  */
 internal fun plotOrders(price: Long, quote: Quote?, kinds: Set<OrderKind>): List<PlotOrder> {
     quote ?: return emptyList()
     return listOfNotNull(
+        PlotOrder(Side.BUY, OrderKind.MARKET),
+        PlotOrder(Side.SELL, OrderKind.MARKET),
         PlotOrder(Side.BUY, OrderKind.LIMIT).takeIf { price < quote.ask },
         PlotOrder(Side.SELL, OrderKind.LIMIT).takeIf { price > quote.bid },
         PlotOrder(Side.BUY, OrderKind.STOP).takeIf { price > quote.ask },
@@ -49,15 +53,17 @@ internal fun plotOrders(price: Long, quote: Quote?, kinds: Set<OrderKind>): List
 }
 
 /**
- * "买入限价 1 张 @ 5505.00"; the quantity is left out while the order panel holds none that parses. On an account that
+ * "买入限价 1 张 @ 5505.00", or "买入市价 1 张" for a market order, which has no price of its own; the quantity is left
+ * out while the order panel holds none that parses. On an account that
  * sizes its orders from a stop ([sizing]) the item only opens the order panel, where the stop sets the quantity, and
  * says so. Otherwise it names the protection the account's cash amounts add ([attached]), which no other step shows
  * when orders go out without a confirmation.
  */
 internal fun plotOrderLabel(instrument: Instrument, order: PlotOrder, lotsHundredths: Long?, price: Long,
     sizing: Boolean = false, attached: String? = null): String =
-    "${order.side.label()}${order.kind.label()} " + (lotsHundredths?.takeUnless { sizing }?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit} " } ?: "") +
-        "@ ${instrument.formatPrice(price)}" + when {
+    listOfNotNull("${order.side.label()}${order.kind.label()}",
+        lotsHundredths?.takeUnless { sizing }?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" },
+        if (order.kind == OrderKind.MARKET) null else "@ ${instrument.formatPrice(price)}").joinToString(" ") + when {
             sizing -> " · 打开下单栏填写 SL"
             attached != null -> " · 开仓自动附加 $attached"
             else -> ""
@@ -78,16 +84,22 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                 onClick = { onDismiss(); onLine() },
                 modifier = Modifier.testTag("plot-menu-horizontal-line"),
             )
-            if (onLine != null && menu.orders.isNotEmpty()) DividerLine(Modifier.padding(vertical = 4.dp))
-            menu.orders.forEach { order ->
-                DropdownMenuItem(
-                    text = {
-                        Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price, stopRequiredForSizing, attached),
-                            color = if (order.side == Side.BUY) colors.UpText else colors.DownText)
-                    },
-                    onClick = { onDismiss(); onOrder(order) },
-                    modifier = Modifier.testTag("plot-menu-${order.side.name}-${order.kind.name}"),
-                )
+            // The line, the market orders and the orders resting at the price, each group set apart from the one before.
+            val groups = listOf(menu.orders.filter { it.kind == OrderKind.MARKET }, menu.orders.filter { it.kind != OrderKind.MARKET })
+            var above = onLine != null
+            groups.filter { it.isNotEmpty() }.forEach { group ->
+                if (above) DividerLine(Modifier.padding(vertical = 4.dp))
+                above = true
+                group.forEach { order ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price, stopRequiredForSizing, attached),
+                                color = if (order.side == Side.BUY) colors.UpText else colors.DownText)
+                        },
+                        onClick = { onDismiss(); onOrder(order) },
+                        modifier = Modifier.testTag("plot-menu-${order.side.name}-${order.kind.name}"),
+                    )
+                }
             }
         }
     }
