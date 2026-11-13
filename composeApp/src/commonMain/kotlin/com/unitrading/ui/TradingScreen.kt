@@ -270,8 +270,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         // The first unread failed flatten takes the notice's place whenever there is no other notice. A later notice only puts
         // it off, and an account switch, which clears the notice of the moment, leaves it: it goes when it is dismissed.
         fun shownNotice() = notice ?: unreadFailures.firstOrNull()?.let(::failureNotice)
+        // Only the card of a failure takes that failure off. A receipt can be dismissed twice: the minimized sheet keeps its
+        // form composed, with a second card of the notice that times out beside the one over the chart.
         fun dismissNotice(current: TradingNotice) {
-            if (notice?.id == current.id) notice = null else unreadFailures.firstOrNull()?.let(runtime.accountRisk::acknowledge)
+            if (notice?.id == current.id) notice = null
+            else unreadFailures.firstOrNull { failureNotice(it) == current }?.let(runtime.accountRisk::acknowledge)
         }
         fun syncAccount() {
             if (busy || !market.connected) return

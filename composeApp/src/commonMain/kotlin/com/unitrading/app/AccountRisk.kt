@@ -435,8 +435,9 @@ internal class AccountRiskController(
                         // A stop or a target changed on its own. Its price is held to the amounts like the protection of the
                         // position, from the position's entry for no more lots than the position has, where it moves to cost
                         // the position more, down for a long and up for a short, or where it takes more lots: a stop raised
-                        // at its price loses more, so no number of steps takes it past the amount. A smaller one at the same
-                        // price always passes, and cancelling one is never refused.
+                        // at its price loses more, so no number of edits of the leg takes it past the amount. A leg made
+                        // smaller at the same price always passes, and cancelling one is never refused. A new stop placed
+                        // beside it, or in its place once it is cancelled, is a protective stop, which the amounts do not hold.
                         OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else
                             snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
                                 val was = order.request.entryPrice

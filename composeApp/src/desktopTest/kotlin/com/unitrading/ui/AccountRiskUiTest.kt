@@ -259,6 +259,41 @@ class AccountRiskUiTest {
         onNodeWithTag("trade-notice").assertDoesNotExist()
     }
 
+    @Test fun aReceiptClosingByItselfOverTheMinimizedSheetLeavesTheFailureUnread() = runDesktopComposeUiTest(width = 450, height = 850) {
+        // The account sync's receipt is a notice that closes by itself; the sync waits until the test lets it finish.
+        val synced = CompletableDeferred<Unit>()
+        val fixture = RiskFixture(TestClock(Clock.System.now()))
+        fixture.hold("100", listOf(riskPosition(Side.BUY, 100)))
+        fixture.onClose = { TradeResult(false, "交易商拒绝平仓") }
+        val broker = object : BrokerPlugin by fixture {
+            override val capabilities = fixture.capabilities.copy(resynchronize = true)
+            override suspend fun resynchronize() = synced.await()
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        runBlocking { assertNull(runtime.accountRisk.configure(broker, "100", RiskLimits(200_000_000, action = RiskAction.FLATTEN))) }
+        show(runtime)
+        fixture.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, fixture)
+        // The default page, the sheet, minimized with its draft: it keeps the form composed, and a card of the notice in it.
+        onNodeWithTag("open-order").performClick()
+        onNodeWithTag("minimize-order").performClick()
+        onNodeWithTag("connection-status").performClick()
+        onNodeWithTag("resynchronize-account").performClick()
+        // A phone has no pointer to rest on the receipt and hold it open; the test's own goes to a corner first.
+        onAllNodes(isRoot()).onFirst().performMouseInput { moveTo(androidx.compose.ui.geometry.Offset(4f, 846f)) }
+        runOnIdle { synced.complete(Unit) }
+        // Both cards of the notice, the one over the chart and the one the minimized sheet hides.
+        fun notices() = onAllNodesWithTag("trade-notice", useUnmergedTree = true).fetchSemanticsNodes()
+            .map { node -> node.config[SemanticsProperties.Text].joinToString { it.text } }
+        waitUntil(timeoutMillis = 5_000) { notices() == listOf("账户状态已同步", "账户状态已同步") }
+        // Each card closes the receipt by itself. That reads nothing else: the failure behind it comes back.
+        mainClock.advanceTimeBy(9_000)
+        waitForIdle()
+        assertEquals(listOf(FlattenFailure(broker.descriptor.id, fixture.accounts.first())), runtime.accountRisk.unreadFailures.value)
+        assertEquals(listOf(FAILED_100, FAILED_100), notices())
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
+    }
+
     @Test fun aFailedFlattenIsShownOnThePagesBeforeTheTradingScreenToo() = runDesktopComposeUiTest(width = 450, height = 850) {
         // The login shown lists no contracts yet, so its page has no chart and no notices of its own. The other login's
         // automatic flatten fails meanwhile.
