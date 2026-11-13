@@ -91,6 +91,25 @@ class OrderExposureTest {
         assertNull(AccountOrderLimits(maxLots = 400).refusal(stop(200), newOrderExposure(covered, false, stop(200))))
     }
 
+    @Test fun stopsThatAlreadyTakeThePositionLeaveNoRoomForAnotherProtectiveStop() {
+        fun stop(lots: Long, side: Side = Side.SELL) = OrderRequest("MESZ6", side, OrderKind.STOP, lots, 548_000)
+        fun byHand(id: String, side: Side, kind: OrderKind, lots: Long) = PendingOrder(id, OrderRequest("MESZ6", side, kind, lots, 548_000), 0)
+        // Long 2 with a stop of 2 placed by hand: a second stop, of 2 or of 1, could only open a short.
+        val stopped = account(listOf(position(Side.BUY, 200)), listOf(byHand("stop", Side.SELL, OrderKind.STOP, 200)))
+        assertFalse(newOrderExposure(stopped, false, stop(200)).protective)
+        assertFalse(newOrderExposure(stopped, false, stop(100)).harmless)
+        // An order to add beside it makes no room for one, and the broker's own bracket of 2 takes the long as well.
+        val adding = stopped.copy(orders = stopped.orders + byHand("add", Side.BUY, OrderKind.LIMIT, 300))
+        assertFalse(newOrderExposure(adding, false, stop(200)).protective)
+        assertFalse(newOrderExposure(account(listOf(position(Side.BUY, 200)), bracket("A", 200)), false, stop(200)).protective)
+        // A stop of 1 beside a stop of 1 still fits, and a short works the same way on its own side.
+        val half = account(listOf(position(Side.BUY, 200)), listOf(byHand("stop", Side.SELL, OrderKind.STOP, 100)))
+        assertTrue(newOrderExposure(half, false, stop(100)).protective)
+        val short = account(listOf(position(Side.SELL, 200)), listOf(byHand("stop", Side.BUY, OrderKind.STOP, 200)))
+        assertFalse(newOrderExposure(short, false, stop(200, Side.BUY)).protective)
+        assertTrue(newOrderExposure(account(listOf(position(Side.SELL, 200))), false, stop(200, Side.BUY)).protective)
+    }
+
     @Test fun anEditCountsWhatTheOrderLeavesWorkingAndAnOrderThatReducesMayMoveOrShrink() {
         val stop = order("stop", Side.SELL, 300, filled = 100)
         val entry = order("add", Side.BUY, 100)
@@ -309,8 +328,10 @@ class OrderExposureTest {
         // What already works against the long takes its share: a stop of 2 leaves 1, a bracket of 3 none.
         assertEquals(100, room(long.copy(orders = long.orders + order("stop", Side.SELL, 200)), false, Side.SELL, 200))
         assertEquals(0, room(long.copy(orders = long.orders + bracket("A", 300)), false, Side.SELL, 200))
-        // A stop for the long is no exit beside that bracket, and passes all the same: up to the whole long.
-        assertEquals(300, room(long.copy(orders = long.orders + bracket("A", 300)), false, Side.SELL, 200, kind = OrderKind.STOP))
+        // A stop for the long is no exit beside a target of the whole long and passes all the same, up to the whole long;
+        // beside the bracket's own stop of the whole long there is no room for another stop either.
+        assertEquals(300, room(long.copy(orders = long.orders + order("target", Side.SELL, 300)), false, Side.SELL, 200, kind = OrderKind.STOP))
+        assertEquals(0, room(long.copy(orders = long.orders + bracket("A", 300)), false, Side.SELL, 200, kind = OrderKind.STOP))
         assertEquals(0, room(long, false, Side.BUY, 200, kind = OrderKind.STOP), "a buy stop adds to the long")
         // A hedging account adds everything up: 4 held and 1 working.
         assertEquals(200, room(long, true, Side.SELL, 700))

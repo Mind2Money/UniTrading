@@ -406,9 +406,10 @@ internal class AccountRiskController(
          * an exit, or a protective stop (a stop that reduces). The refusal names what is in the way: the order itself, or
          * the other orders working against the position beside it.
          */
-        fun raisedPast(order: PendingOrder, effect: ExposureEffect): String? = when {
+        fun raisedPast(order: PendingOrder, effect: ExposureEffect, lots: Long): String? = when {
             !rule.brackets.enabled || !effect.grows || effect.exit || !(effect.against || order.isProtection) -> null
-            order.request.kind == OrderKind.STOP && effect.reduces -> null
+            order.request.kind == OrderKind.STOP && effect.reduces &&
+                stopsFit(snapshot, order.request.symbol, order.request.side, lots, edited = order.id) -> null
             effect.reduces -> "保护单加上其他已挂的减仓单会超过持仓：超出的部分是不带止损的开仓。请先撤销或减少其他减仓单。"
             else -> "保护单数量不能超过持仓：超出的部分是不带止损的开仓。"
         }
@@ -425,7 +426,7 @@ internal class AccountRiskController(
                 // only be cancelled, and a stop may not move away from the market.
                 val loosened = order.stopLoosenedAt(action.price)
                 paused(effect.harmless && !loosened, covered = effect.reduces && !loosened) ?: limits.refusal(changed, effect, unit)
-                    ?: raisedPast(order, effect)
+                    ?: raisedPast(order, effect, changed.lotsHundredths - order.filledLotsHundredths)
                     ?: when (order.role) {
                         // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the
                         // amounts. They stay at their prices, unless the broker keeps them at their distance from the entry.

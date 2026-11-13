@@ -124,22 +124,37 @@ internal data class ExposureEffect(
 /** The effect of placing [request]. Its [ExposureEffect.exit] is the test for "this order may go while nothing else may". */
 internal fun newOrderExposure(snapshot: AccountSnapshot, hedging: Boolean, request: OrderRequest): ExposureEffect =
     exposureEffect(snapshot, hedging, request.symbol, request.side, request.lotsHundredths, null)
-        // A stop beside a target that already takes the whole position protects it; a second full stop beside both
-        // could only open the other side, so a protective stop may not raise the worst case.
-        .let { if (request.kind == OrderKind.STOP && it.reduces && it.after <= it.before) it.copy(protective = true) else it }
+        // A stop beside a target that already takes the whole position protects it, as the owner wants; one beside stops
+        // that already take it could only open the other side, so stacked stops are no protection.
+        .let { if (request.kind == OrderKind.STOP && it.reduces && stopsFit(snapshot, request.symbol, request.side, request.lotsHundredths)) it.copy(protective = true) else it }
 
 /**
- * Whether a new [request] against the position fits beside the orders on its side that no broker bracket groups: an
- * order beside them could fill after them and open the other side. The broker's own brackets are left out: they shrink
- * with the position or are adjusted by the user, and an order beside them is the usual scale-out.
+ * Whether the stops working on [side] of [symbol], with [lots] more — a new stop, or the stop [edited] at that size —
+ * still fit in the position, so that stops alone can never reverse it. Targets are left out on purpose: a stop beside a
+ * target of the whole position may go, at the risk of both filling. A leg that waits for its entry counts for nothing.
+ */
+internal fun stopsFit(snapshot: AccountSnapshot, symbol: String, side: Side, lots: Long, edited: String? = null): Boolean {
+    val held = symbolExposure(snapshot, symbol).closable(side)
+    val waiting = snapshot.waitingLegs()
+    val stops = snapshot.orders.filter {
+        it.request.symbol == symbol && it.request.side == side && it.request.kind == OrderKind.STOP && it.id != edited && it.id !in waiting
+    }
+    return held > 0 && stops.sumOf { it.remainingLots } + lots.bounded() <= held
+}
+
+/**
+ * Whether a new [request] against the position fits beside the orders on its side that the broker does not hold as its
+ * protection (stops and targets placed by hand, which it lists as ordinary orders): an order beside them could fill
+ * after them and open the other side. The broker's own stops and targets are left out, a bracket with one leg as well
+ * as an OCO pair: an order beside them is the usual scale-out, after which the user cuts the legs to what is left.
  */
 internal fun fitsBesideUngrouped(snapshot: AccountSnapshot, request: OrderRequest): Boolean {
     val held = symbolExposure(snapshot, request.symbol).closable(request.side)
     val waiting = snapshot.waitingLegs()
-    val ungrouped = snapshot.orders.filter {
-        it.request.symbol == request.symbol && it.request.side == request.side && it.ocoGroup == null && it.id !in waiting
+    val byHand = snapshot.orders.filter {
+        it.request.symbol == request.symbol && it.request.side == request.side && !it.isProtection && it.id !in waiting
     }
-    return fillable(ungrouped) { it.remainingLots } + request.lotsHundredths.bounded() <= held
+    return fillable(byHand) { it.remainingLots } + request.lotsHundredths.bounded() <= held
 }
 
 /**
@@ -192,8 +207,10 @@ internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: 
     val exposure = symbolExposure(snapshot, request.symbol)
     val held = exposure.closable(request.side)
     val sameSide = if (request.side == Side.BUY) exposure.buys else exposure.sells
-    // A protective stop may take the room the worst case leaves above what already works on its side.
-    val left = if (request.kind == OrderKind.STOP) minOf(held, exposure.worst - sameSide + held) else held - sameSide
+    // A protective stop may take what the stops already on its side leave of the position.
+    val stops = snapshot.orders.filter { it.request.symbol == request.symbol && it.request.side == request.side && it.request.kind == OrderKind.STOP }
+        .sumOf { it.remainingLots }
+    val left = if (request.kind == OrderKind.STOP) held - stops else held - sameSide
     return minOf(left, probe.before - start).coerceAtLeast(0)
 }
 

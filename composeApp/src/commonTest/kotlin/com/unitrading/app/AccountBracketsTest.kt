@@ -114,11 +114,14 @@ class AccountBracketsTest {
             leg("sb", 100, OrderRole.STOP_LOSS), leg("tb", 100, OrderRole.TAKE_PROFIT)))
         assertFalse(cash.bracketsApply(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
         assertNull(cash.reductionRefusal(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
-        val byHand = long.copy(orders = bracketed.orders.map { it.copy(ocoGroup = null) })
+        val byHand = long.copy(orders = bracketed.orders.map { it.copy(ocoGroup = null, role = OrderRole.UNRESOLVED) })
         assertEquals(EXITS_COVER_POSITION, cash.reductionRefusal(byHand, false, scaleOut))
-        val targetsOnly = long.copy(orders = byHand.orders.filter { it.role == OrderRole.TAKE_PROFIT })
+        val targetsOnly = long.copy(orders = byHand.orders.filter { it.request.kind == OrderKind.LIMIT })
         assertNull(cash.reductionRefusal(targetsOnly, false, scaleOut.copy(kind = OrderKind.STOP, lotsHundredths = 300, entryPrice = 547_000)))
         assertNull(AccountRiskRule().reductionRefusal(byHand, false, scaleOut.copy(lotsHundredths = 300)))
+        // A bracket with one leg is the broker's as well: its stop leg, in no OCO group, leaves a scale-out to go as usual.
+        val oneLeg = long.copy(orders = listOf(leg("sa", 300, OrderRole.STOP_LOSS).copy(ocoGroup = null)))
+        assertNull(cash.reductionRefusal(oneLeg, false, scaleOut))
         // Adding, reversing, an order in a flat account and every order of a hedging account are entries.
         val add = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 100)
         assertEquals(add.copy(stopLoss = 548_025, takeProfit = 554_025), cash.bracketed(add, futures, "USD", quote, long, hedging = false))

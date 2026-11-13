@@ -422,20 +422,20 @@ class AccountRiskTest {
             riskOrder("tp", Side.SELL, OrderKind.LIMIT, 200, 552_000, OrderRole.TAKE_PROFIT, group = "b")))
         assertEquals(covered, session.placeOrder("scale-out-beside", sell).message)
         // Brackets of 5 and 1 on a long of 6: neither a sell of 3 fits beside them, nor a leg raised, while the legs themselves
-        // still move. A new stop of 6 for the long still goes, as it only adds protection.
+        // still move. Their stops already take the whole long, so a new stop of 6 could only open a short and is no protection.
         broker.hold("100", listOf(riskPosition(Side.BUY, 600)), listOf(
             riskOrder("A", Side.SELL, OrderKind.STOP, 500, 548_000, OrderRole.STOP_LOSS, group = "a"),
             riskOrder("TA", Side.SELL, OrderKind.LIMIT, 500, 552_000, OrderRole.TAKE_PROFIT, group = "a"),
             riskOrder("B", Side.SELL, OrderKind.STOP, 100, 548_000, OrderRole.STOP_LOSS, group = "b"),
             riskOrder("TB", Side.SELL, OrderKind.LIMIT, 100, 552_000, OrderRole.TAKE_PROFIT, group = "b")))
         assertEquals(covered, session.placeOrder("half", sell.copy(lotsHundredths = 300)).message)
-        assertTrue(session.placeOrder("stop", exitStop.copy(lotsHundredths = 600)).accepted)
+        assertEquals(covered, session.placeOrder("stop", exitStop.copy(lotsHundredths = 600)).message)
         assertEquals(covered, session.changeOrder("raise-B", "B", 1, 548_000, 200).message)
         assertTrue(session.modifyOrder("tighten-A", "A", 1, 548_500).accepted)
         assertTrue(session.changeOrder("target-B", "TB", 1, 553_000, 100).accepted)
         // What adds stays refused for the lock itself.
         assertEquals("2026-11-11 交易日已锁定 · 达到亏损额度$stillAllowed", session.placeOrder("add", broker.request).message)
-        assertEquals(listOf("modify:stop:548500", "change:stop:548000:100", "place:100", "place:100", "modify:A:548500", "change:TB:553000:100"),
+        assertEquals(listOf("modify:stop:548500", "change:stop:548000:100", "place:100", "modify:A:548500", "change:TB:553000:100"),
             broker.events)
     }
 
@@ -850,6 +850,10 @@ class AccountRiskTest {
         broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(riskOrder("stop", Side.SELL, OrderKind.STOP, 100, 548_000),
             riskOrder("target", Side.SELL, OrderKind.LIMIT, 200, 552_000)))
         assertTrue(session.changeOrder("stop-beside-target", "stop", 1, 548_000, 200).accepted)
+        // Beside a stop of the whole long a second stop raised to it could only open a short: it is no protection.
+        broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(riskOrder("stop", Side.SELL, OrderKind.STOP, 200, 548_000),
+            riskOrder("second", Side.SELL, OrderKind.STOP, 100, 547_000)))
+        assertEquals(beside, session.changeOrder("second-stop", "second", 1, 547_000, 200).message)
         broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(riskOrder("stop", Side.SELL, OrderKind.STOP, 200, 548_000),
             riskOrder("target", Side.SELL, OrderKind.LIMIT, 100, 552_000)))
         assertEquals(beside, session.changeOrder("target-beside-stop", "target", 1, 552_000, 200).message)
