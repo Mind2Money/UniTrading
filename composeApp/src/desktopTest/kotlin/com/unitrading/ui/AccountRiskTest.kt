@@ -517,10 +517,11 @@ class AccountRiskTest {
         assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(600)))
         assertTrue(session.placeOrder("scale-out", sell.copy(lotsHundredths = 300)).accepted)
         assertEquals(listOf(sell.copy(lotsHundredths = 300)), broker.placed)
-        // The legs alone could take the whole long, so beside them the sell is no exit: with the cash amounts on it would go
-        // without a stop of its own, and in a blocked symbol it reduces nothing that is not already covered. Both say why.
+        // With the cash amounts on, a sell beside the position's own brackets is the usual scale-out: it goes as it is,
+        // with no stop of its own. In a blocked symbol the legs alone could take the whole long, so it says why it is no exit.
         assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
-        assertEquals(EXITS_COVER_POSITION, session.placeOrder("bracketed", sell.copy(lotsHundredths = 300)).message)
+        assertTrue(session.placeOrder("bracketed", sell.copy(lotsHundredths = 300)).accepted)
+        assertEquals(sell.copy(lotsHundredths = 300), broker.placed.last())
         assertNull(risk.configureBrackets(broker, "100", AccountBrackets()))
         assertNull(risk.configureOrders(broker, "100", AccountOrderLimits(600, setOf("TEST"))))
         assertEquals(EXITS_COVER_POSITION, session.placeOrder("blocked", sell.copy(lotsHundredths = 300)).message)
@@ -528,7 +529,7 @@ class AccountRiskTest {
         broker.onClose = { TradeResult(false, "market closed") }
         val target = listOf(FlattenTarget(broker, broker.accounts.first()))
         assertFalse(risk.flattenAccounts(BrokerRegistry(listOf(broker)), target).single().confirmed)
-        assertEquals(listOf("place:100", "close:held"), broker.events)
+        assertEquals(listOf("place:100", "place:100", "close:held"), broker.events)
         assertEquals(listOf("A", "TA", "B", "TB"), broker.orderIds("100"))
     }
 
@@ -608,7 +609,10 @@ class AccountRiskTest {
             // short of 3 with no stop. It is refused, and the screen is told the same before any confirmation.
             assertEquals(TradeResult(false, EXITS_COVER_POSITION), session.placeOrder("scale-out", sell), "$brackets")
             assertEquals(EXITS_COVER_POSITION, risk.refusal(broker, session, RiskCheck.Place(sell)))
-            // A stop for the long still goes, as it is.
+            // A stop for the long goes where only the target covers it; beside the stop of 2 as well it would add nothing but
+            // a short, and is refused the same way.
+            assertEquals(TradeResult(false, EXITS_COVER_POSITION), session.placeOrder("stop", exitStop.copy(lotsHundredths = 100)))
+            broker.hold("100", listOf(riskPosition(Side.BUY, 200)), covered.drop(1))
             assertTrue(session.placeOrder("stop", exitStop.copy(lotsHundredths = 100)).accepted)
             // With only a stop of 1 working, the same sell fits beside it and goes without brackets.
             broker.hold("100", listOf(riskPosition(Side.BUY, 200)), covered.take(1).map { it.copy(request = it.request.copy(lotsHundredths = 100)) })

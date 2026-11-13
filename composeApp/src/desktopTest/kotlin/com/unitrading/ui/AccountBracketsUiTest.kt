@@ -286,8 +286,12 @@ class AccountBracketsUiTest {
         waitForIdle()
         onNodeWithTag("order-error").assertTextEquals(EXITS_COVER_POSITION)
         onNodeWithTag("review-order").assertIsNotEnabled()
+        // Beside the stop of 2 as well a stop adds nothing but a short; where only the target covers the long it may go.
         onNodeWithTag("order-kind-STOP").performClick()
         onNodeWithTag("order-entry").performTextReplacement("5480.00")
+        onNodeWithTag("order-error").assertTextEquals(EXITS_COVER_POSITION)
+        runOnIdle { broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(riskOrder("target", Side.SELL, OrderKind.LIMIT, 200, 552_000))) }
+        waitForIdle()
         onNodeWithTag("order-error").assertDoesNotExist()
         onNodeWithTag("order-reduction").assertTextEquals("减仓单 · 最多 2 张，按输入数量下单，不附加止损")
         onNodeWithTag("review-order").assertIsEnabled()

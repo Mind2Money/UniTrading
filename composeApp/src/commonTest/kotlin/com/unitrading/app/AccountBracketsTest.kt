@@ -104,17 +104,21 @@ class AccountBracketsTest {
         assertFalse(cash.bracketsApply(long, false, scaleOut))
         assertSame(scaleOut, cash.bracketed(scaleOut, futures, "USD", quote, long, hedging = false))
         assertNull(cash.reductionRefusal(long, false, scaleOut))
-        // Beside the broker's brackets of 2 and 1 a sell of 3 still only reduces the long: it gets no bracket of its own.
-        // But their legs alone can take the whole long, so after the sell they could open a short with no stop: the
-        // brackets refuse it. A stop for the long is no such risk, and without brackets nothing is refused here.
+        // Beside the broker's brackets of 2 and 1 a sell of 3 still only reduces the long: it gets no bracket of its own,
+        // and the brackets let it go as the usual scale-out. The same legs placed by hand, which no broker groups, could
+        // all fill after it and open a short with no stop: the brackets refuse it there. A stop for the long that raises
+        // nothing is no such risk, and without brackets nothing is refused here.
         fun leg(id: String, lots: Long, role: OrderRole) = PendingOrder(id, OrderRequest("MES", Side.SELL,
             if (role == OrderRole.STOP_LOSS) OrderKind.STOP else OrderKind.LIMIT, lots, 548_000), 0, role = role, ocoGroup = id.takeLast(1))
         val bracketed = long.copy(orders = listOf(leg("sa", 200, OrderRole.STOP_LOSS), leg("ta", 200, OrderRole.TAKE_PROFIT),
             leg("sb", 100, OrderRole.STOP_LOSS), leg("tb", 100, OrderRole.TAKE_PROFIT)))
         assertFalse(cash.bracketsApply(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
-        assertEquals(EXITS_COVER_POSITION, cash.reductionRefusal(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
-        assertNull(cash.reductionRefusal(bracketed, false, scaleOut.copy(kind = OrderKind.STOP, lotsHundredths = 300, entryPrice = 547_000)))
-        assertNull(AccountRiskRule().reductionRefusal(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
+        assertNull(cash.reductionRefusal(bracketed, false, scaleOut.copy(lotsHundredths = 300)))
+        val byHand = long.copy(orders = bracketed.orders.map { it.copy(ocoGroup = null) })
+        assertEquals(EXITS_COVER_POSITION, cash.reductionRefusal(byHand, false, scaleOut))
+        val targetsOnly = long.copy(orders = byHand.orders.filter { it.role == OrderRole.TAKE_PROFIT })
+        assertNull(cash.reductionRefusal(targetsOnly, false, scaleOut.copy(kind = OrderKind.STOP, lotsHundredths = 300, entryPrice = 547_000)))
+        assertNull(AccountRiskRule().reductionRefusal(byHand, false, scaleOut.copy(lotsHundredths = 300)))
         // Adding, reversing, an order in a flat account and every order of a hedging account are entries.
         val add = OrderRequest("MES", Side.BUY, OrderKind.MARKET, 100)
         assertEquals(add.copy(stopLoss = 548_025, takeProfit = 554_025), cash.bracketed(add, futures, "USD", quote, long, hedging = false))

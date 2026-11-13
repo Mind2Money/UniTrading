@@ -101,13 +101,15 @@ internal data class AccountRiskRule(
         brackets.enabled && !newOrderExposure(snapshot, hedging, order).reduces
 
     /**
-     * Why the brackets refuse a new [order] that [bracketsApply] leaves without a stop, or null. Beside the orders already
-     * working against the position it could fill after them and open the other side with no stop, so it has to be an exit;
-     * a protective stop may go all the same, as it only adds protection. Without brackets nothing is refused here. The
+     * Why the brackets refuse a new [order] that [bracketsApply] leaves without a stop, or null. Beside the orders
+     * working against the position that no broker bracket groups it could fill after them and open the other side with no
+     * stop, so it has to fit beside them; a protective stop may go all the same, as it only adds protection, and a
+     * scale-out beside the position's own bracket is the usual way out. Without brackets nothing is refused here. The
      * order form and the guard both ask here.
      */
     fun reductionRefusal(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): String? =
-        newOrderExposure(snapshot, hedging, order).takeIf { brackets.enabled && it.reduces && !it.exit && !it.protective }
+        newOrderExposure(snapshot, hedging, order)
+            .takeIf { brackets.enabled && !hedging && it.reduces && !it.protective && !fitsBesideUngrouped(snapshot, order) }
             ?.let { EXITS_COVER_POSITION }
 
     /** The lots the lot cap still leaves a new order like [order], for a quantity sized from a loss amount; null without a cap. */

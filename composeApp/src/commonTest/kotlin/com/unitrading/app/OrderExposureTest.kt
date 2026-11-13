@@ -81,9 +81,12 @@ class OrderExposureTest {
         assertNull(cap.refusal(stop(200), effect(stop(200))))
         assertNull(cap.refusal(stop(100), effect(stop(100))))
         assertNotNull(cap.refusal(request(Side.SELL, 100), place(long, Side.SELL, 100)))
-        // Beside a stop of 2 as well, a second stop of 2 could leave short 4: no cap below that takes it.
+        // Beside a stop of 2 as well, a second stop of 2 could leave short 4: it protects nothing more, so it is no
+        // protective stop, a pause or a blocked symbol refuses it, and only a cap of 4 takes it.
         val covered = long.copy(orders = long.orders + order("stop", Side.SELL, 200, OrderRole.STOP_LOSS))
-        assertEquals(ExposureEffect(200, 400, false, reduces = true, protective = true), newOrderExposure(covered, false, stop(200)))
+        assertEquals(ExposureEffect(200, 400, false, reduces = true), newOrderExposure(covered, false, stop(200)))
+        assertFalse(newOrderExposure(covered, false, stop(200)).harmless)
+        assertEquals(EXITS_COVER_POSITION, blocked.refusal(stop(200), newOrderExposure(covered, false, stop(200))))
         assertNotNull(cap.refusal(stop(200), newOrderExposure(covered, false, stop(200))))
         assertNull(AccountOrderLimits(maxLots = 400).refusal(stop(200), newOrderExposure(covered, false, stop(200))))
     }

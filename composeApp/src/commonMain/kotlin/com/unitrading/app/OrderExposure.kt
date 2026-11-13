@@ -124,7 +124,23 @@ internal data class ExposureEffect(
 /** The effect of placing [request]. Its [ExposureEffect.exit] is the test for "this order may go while nothing else may". */
 internal fun newOrderExposure(snapshot: AccountSnapshot, hedging: Boolean, request: OrderRequest): ExposureEffect =
     exposureEffect(snapshot, hedging, request.symbol, request.side, request.lotsHundredths, null)
-        .let { if (request.kind == OrderKind.STOP && it.reduces) it.copy(protective = true) else it }
+        // A stop beside a target that already takes the whole position protects it; a second full stop beside both
+        // could only open the other side, so a protective stop may not raise the worst case.
+        .let { if (request.kind == OrderKind.STOP && it.reduces && it.after <= it.before) it.copy(protective = true) else it }
+
+/**
+ * Whether a new [request] against the position fits beside the orders on its side that no broker bracket groups: an
+ * order beside them could fill after them and open the other side. The broker's own brackets are left out: they shrink
+ * with the position or are adjusted by the user, and an order beside them is the usual scale-out.
+ */
+internal fun fitsBesideUngrouped(snapshot: AccountSnapshot, request: OrderRequest): Boolean {
+    val held = symbolExposure(snapshot, request.symbol).closable(request.side)
+    val waiting = snapshot.waitingLegs()
+    val ungrouped = snapshot.orders.filter {
+        it.request.symbol == request.symbol && it.request.side == request.side && it.ocoGroup == null && it.id !in waiting
+    }
+    return fillable(ungrouped) { it.remainingLots } + request.lotsHundredths.bounded() <= held
+}
 
 /**
  * The effect of leaving [order] working with [lotsHundredths] in total, its filled part included: a quantity edit, or
@@ -174,8 +190,10 @@ internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: 
     // protective stop, no more than the position whatever works beside it; and no lot that would raise the total.
     if (hedging) return 0
     val exposure = symbolExposure(snapshot, request.symbol)
-    val left = exposure.closable(request.side) -
-        if (request.kind == OrderKind.STOP) 0 else if (request.side == Side.BUY) exposure.buys else exposure.sells
+    val held = exposure.closable(request.side)
+    val sameSide = if (request.side == Side.BUY) exposure.buys else exposure.sells
+    // A protective stop may take the room the worst case leaves above what already works on its side.
+    val left = if (request.kind == OrderKind.STOP) minOf(held, exposure.worst - sameSide + held) else held - sameSide
     return minOf(left, probe.before - start).coerceAtLeast(0)
 }
 
