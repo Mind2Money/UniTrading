@@ -10,7 +10,7 @@ import kotlinx.serialization.Serializable
  * entry would otherwise size an order as large as the broker's protocol allows.
  *
  * The amounts are for orders that open or add. One that only reduces a position is neither priced nor checked here:
- * see [AccountRiskRule.bracketsApply].
+ * see [AccountRiskRule.bracketsApply], and [AccountRiskRule.reductionRefusal] for when it may go without a stop.
  */
 @Serializable
 internal data class AccountBrackets(

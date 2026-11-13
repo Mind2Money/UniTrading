@@ -40,9 +40,9 @@ class OrderExposureTest {
         assertEquals(ExposureEffect(300, 400, false), place(long, Side.BUY, 100), "an add")
         assertEquals(ExposureEffect(300, 400, false), place(long, Side.SELL, 100, "NQZ6"), "a symbol without a position")
         // Reversing leaves a worst case no larger than the position held, so a cap above it lets it through, but it is
-        // more than the position: it reduces nothing and needs a stop like any entry.
-        assertEquals(ExposureEffect(300, 300, false), place(long, Side.SELL, 300))
-        assertEquals(ExposureEffect(300, 500, false), place(long, Side.SELL, 600))
+        // more than the position: it reduces nothing and needs a stop like any entry, although it works against the long.
+        assertEquals(ExposureEffect(300, 300, false, against = true), place(long, Side.SELL, 300))
+        assertEquals(ExposureEffect(300, 500, false, against = true), place(long, Side.SELL, 600))
         assertFalse(place(long, Side.SELL, 0).reduces)
         // A stop of 1 placed by hand leaves room for one more exit of 1. A stop of 2 leaves none: a partial close that filled
         // first would leave the stop to open a short. Those orders still reduce, and need no stop of their own.
@@ -59,6 +59,35 @@ class OrderExposureTest {
         assertEquals(ExposureEffect(100, 100, true), place(long.copy(positions = long.positions.drop(1)), Side.BUY, 100, "ESZ6"), "a buy covers the short")
     }
 
+    @Test fun aStopForThePositionProtectsItWhateverAlreadyWorksAgainstIt() {
+        // Long 2 with a sell limit of 2 placed by hand as its target: it takes the whole long, so nothing beside it is an exit.
+        val long = account(listOf(position(Side.BUY, 200)), listOf(order("target", Side.SELL, 200)))
+        fun stop(lots: Long, side: Side = Side.SELL) = OrderRequest("MESZ6", side, OrderKind.STOP, lots, 548_000)
+        fun effect(order: OrderRequest) = newOrderExposure(long, false, order)
+        // A sell stop of 2 or 1 is the long's stop all the same: a pause and a blocked symbol let it through.
+        assertEquals(ExposureEffect(200, 200, false, reduces = true, protective = true), effect(stop(200)))
+        assertTrue(effect(stop(200)).harmless && effect(stop(100)).harmless)
+        // A sell limit of 1 is no stop, a sell stop of 3 is more than the long, and a buy stop adds to it.
+        assertFalse(place(long, Side.SELL, 100).harmless)
+        assertFalse(effect(stop(300)).protective)
+        assertFalse(effect(stop(100, Side.BUY)).protective)
+        assertFalse(newOrderExposure(long, true, stop(100)).protective, "on a hedging account it opens a short of its own")
+        // A blocked symbol takes it, and so does a cap the account is already over while it raises nothing. A sell of 1
+        // there is no exit, and is refused.
+        val blocked = AccountOrderLimits(blockedSymbols = setOf("MES"))
+        assertNull(blocked.refusal(stop(200), effect(stop(200))))
+        assertEquals(EXITS_COVER_POSITION, blocked.refusal(request(Side.SELL, 100), place(long, Side.SELL, 100)))
+        val cap = AccountOrderLimits(maxLots = 100)
+        assertNull(cap.refusal(stop(200), effect(stop(200))))
+        assertNull(cap.refusal(stop(100), effect(stop(100))))
+        assertNotNull(cap.refusal(request(Side.SELL, 100), place(long, Side.SELL, 100)))
+        // Beside a stop of 2 as well, a second stop of 2 could leave short 4: no cap below that takes it.
+        val covered = long.copy(orders = long.orders + order("stop", Side.SELL, 200, OrderRole.STOP_LOSS))
+        assertEquals(ExposureEffect(200, 400, false, reduces = true, protective = true), newOrderExposure(covered, false, stop(200)))
+        assertNotNull(cap.refusal(stop(200), newOrderExposure(covered, false, stop(200))))
+        assertNull(AccountOrderLimits(maxLots = 400).refusal(stop(200), newOrderExposure(covered, false, stop(200))))
+    }
+
     @Test fun anEditCountsWhatTheOrderLeavesWorkingAndAnOrderThatReducesMayMoveOrShrink() {
         val stop = order("stop", Side.SELL, 300, filled = 100)
         val entry = order("add", Side.BUY, 100)
@@ -70,8 +99,8 @@ class OrderExposureTest {
         assertEquals(ExposureEffect(300, 300, false, reduces = true, grows = false), moved, "a price change")
         assertTrue(moved.harmless)
         assertEquals(ExposureEffect(300, 300, true, grows = false), editedOrderExposure(long, false, stop, 200), "one lot left fits beside the leg")
-        assertEquals(ExposureEffect(300, 300, false), editedOrderExposure(long, false, stop, 400), "three left would reverse the position")
-        assertEquals(ExposureEffect(300, 700, false), editedOrderExposure(long, false, stop, 900))
+        assertEquals(ExposureEffect(300, 300, false, against = true), editedOrderExposure(long, false, stop, 400), "three left would reverse the position")
+        assertEquals(ExposureEffect(300, 700, false, against = true), editedOrderExposure(long, false, stop, 900))
         assertEquals(ExposureEffect(300, 300, false, grows = false), editedOrderExposure(long, false, entry), "an entry reduces nothing, moved or not")
         assertFalse(editedOrderExposure(long, false, entry).harmless)
         assertEquals(ExposureEffect(300, 250, false, grows = false), editedOrderExposure(long, false, entry, 50), "smaller, and still an entry")
@@ -79,8 +108,27 @@ class OrderExposureTest {
         // A stop leg counts at its new size too, and what exceeds the position opens one.
         assertEquals(ExposureEffect(300, 300, false, reduces = true, grows = false), editedOrderExposure(long, false, leg))
         assertEquals(ExposureEffect(300, 300, true), editedOrderExposure(long.copy(orders = listOf(entry, leg)), false, leg, 200))
-        assertEquals(ExposureEffect(300, 400, false), editedOrderExposure(long.copy(orders = listOf(entry, leg)), false, leg, 600))
+        assertEquals(ExposureEffect(300, 400, false, against = true), editedOrderExposure(long.copy(orders = listOf(entry, leg)), false, leg, 600))
         assertFalse(editedOrderExposure(account(orders = listOf(leg)), false, leg).reduces, "nothing is left for it to protect")
+    }
+
+    @Test fun anOrderAgainstThePositionMayMoveOrShrinkWhateverItsSize() {
+        // Long 1 after a partial close, with both legs of its bracket of 2 still working: each is more than the long.
+        val long = account(listOf(position(Side.BUY, 100)), bracket("S", 200))
+        val stop = long.orders.single { it.id == "S" }
+        val moved = editedOrderExposure(long, false, stop)
+        assertEquals(ExposureEffect(100, 100, false, reduces = false, grows = false, against = true), moved)
+        assertTrue(moved.harmless, "moving it takes nothing more than it did")
+        assertTrue(editedOrderExposure(long, false, stop, 150).harmless)
+        assertTrue(editedOrderExposure(long, false, long.orders.single { it.id == "TS" }).harmless)
+        // Raised it is no longer harmless, and neither is a leg whose position has gone, nor an entry.
+        assertFalse(editedOrderExposure(long, false, stop, 300).harmless)
+        assertFalse(editedOrderExposure(long.copy(positions = emptyList()), false, stop).harmless)
+        assertFalse(editedOrderExposure(long.copy(orders = listOf(order("add", Side.BUY, 100))), false, order("add", Side.BUY, 100)).harmless)
+        // A blocked symbol lets it move, wherever it goes; raised there, it is refused.
+        val blocked = AccountOrderLimits(blockedSymbols = setOf("MES"))
+        assertNull(blocked.refusal(stop.request, moved))
+        assertEquals("该子账户禁止交易品种 MES。", blocked.refusal(stop.request.copy(lotsHundredths = 300), editedOrderExposure(long, false, stop, 300)))
     }
 
     @Test fun theLegsOfOneBrokerBracketCountOnceAndLegsWithoutAGroupInFull() {
@@ -93,16 +141,16 @@ class OrderExposureTest {
             editedOrderExposure(snapshot, false, leg, lots).let { it to cap.refusal(leg.request.copy(lotsHundredths = lots), it) }
         }
         // A raised to 3: max(3, 1) + max(1, 1) = 4 sells, so all the stops filling leave short 2, which the cap allows.
-        assertEquals(ExposureEffect(200, 200, false) to null, edit(long, "A", 300))
+        assertEquals(ExposureEffect(200, 200, false, against = true) to null, edit(long, "A", 300))
         // B raised to 3 after it: max(3, 1) + max(3, 1) = 6 against the long of 2 would leave short 4.
         val raisedA = raised(long, "A", 300)
-        assertEquals(ExposureEffect(200, 400, false), edit(raisedA, "B", 300).first)
+        assertEquals(ExposureEffect(200, 400, false, against = true), edit(raisedA, "B", 300).first)
         assertNotNull(edit(raisedA, "B", 300).second)
         // So does TB raised to 3 after A, as A and TB belong to different brackets and can both fill: max(3, 1) + max(1, 3).
-        assertEquals(ExposureEffect(200, 400, false), edit(raisedA, "TB", 300).first)
+        assertEquals(ExposureEffect(200, 400, false, against = true), edit(raisedA, "TB", 300).first)
         assertNotNull(edit(raisedA, "TB", 300).second)
         // One leg raised to 6 at once: short 5.
-        assertEquals(ExposureEffect(200, 500, false), edit(long, "A", 600).first)
+        assertEquals(ExposureEffect(200, 500, false, against = true), edit(long, "A", 600).first)
         assertNotNull(edit(long, "A", 600).second)
         // Where the broker names no group, nothing says which legs cancel each other: all four count.
         assertEquals(SymbolExposure(200, 0, 400), symbolExposure(long.copy(orders = legs.map { it.copy(ocoGroup = null) }), "MESZ6"))
@@ -126,8 +174,8 @@ class OrderExposureTest {
         // TA raised to 3 after it 4 more: A or TA, and B, can all fill.
         val stopOnly = account(listOf(position(Side.BUY, 200)), bracket("A", 100) + order("B", Side.SELL, 100, OrderRole.STOP_LOSS))
         assertEquals(SymbolExposure(200, 0, 200), symbolExposure(stopOnly, "MESZ6"))
-        assertEquals(ExposureEffect(200, 200, false) to null, edit(stopOnly, "B", 300))
-        assertEquals(ExposureEffect(200, 400, false), edit(raised(stopOnly, "B", 300), "TA", 300).first)
+        assertEquals(ExposureEffect(200, 200, false, against = true) to null, edit(stopOnly, "B", 300))
+        assertEquals(ExposureEffect(200, 400, false, against = true), edit(raised(stopOnly, "B", 300), "TA", 300).first)
         assertNotNull(edit(raised(stopOnly, "B", 300), "TA", 300).second)
     }
 
@@ -236,9 +284,9 @@ class OrderExposureTest {
     }
 
     @Test fun theRoomUnderACapIsTheLargestOrderTheCapLetsThrough() {
-        fun room(snapshot: AccountSnapshot, hedging: Boolean, side: Side, cap: Long, symbol: String = "MESZ6"): Long {
-            val lots = lotsUnderCap(snapshot, hedging, request(side, 1, symbol), cap)
-            fun refusal(size: Long) = request(side, size, symbol).let { AccountOrderLimits(cap).refusal(it, newOrderExposure(snapshot, hedging, it)) }
+        fun room(snapshot: AccountSnapshot, hedging: Boolean, side: Side, cap: Long, symbol: String = "MESZ6", kind: OrderKind = OrderKind.MARKET): Long {
+            val lots = lotsUnderCap(snapshot, hedging, request(side, 1, symbol).copy(kind = kind), cap)
+            fun refusal(size: Long) = request(side, size, symbol).copy(kind = kind).let { AccountOrderLimits(cap).refusal(it, newOrderExposure(snapshot, hedging, it)) }
             if (lots > 0) assertNull(refusal(lots), "$lots $side under $cap")
             assertNotNull(refusal(lots + 1), "${lots + 1} $side under $cap")
             return lots
@@ -258,6 +306,9 @@ class OrderExposureTest {
         // What already works against the long takes its share: a stop of 2 leaves 1, a bracket of 3 none.
         assertEquals(100, room(long.copy(orders = long.orders + order("stop", Side.SELL, 200)), false, Side.SELL, 200))
         assertEquals(0, room(long.copy(orders = long.orders + bracket("A", 300)), false, Side.SELL, 200))
+        // A stop for the long is no exit beside that bracket, and passes all the same: up to the whole long.
+        assertEquals(300, room(long.copy(orders = long.orders + bracket("A", 300)), false, Side.SELL, 200, kind = OrderKind.STOP))
+        assertEquals(0, room(long, false, Side.BUY, 200, kind = OrderKind.STOP), "a buy stop adds to the long")
         // A hedging account adds everything up: 4 held and 1 working.
         assertEquals(200, room(long, true, Side.SELL, 700))
         assertEquals(0, room(long, true, Side.BUY, 400))

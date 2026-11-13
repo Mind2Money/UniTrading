@@ -139,7 +139,9 @@ internal fun AccountOverviewPage(
                         Text(totals.realizedMicros?.let { money(it, true) } ?: "—", Modifier.testTag("overview-realized"),
                             style = MaterialTheme.typography.titleSmall, color = colors.pnl(totals.realizedMicros), maxLines = 1)
                         // As on the analytics page, the total adds up the known results and the note names the trades left out.
-                        if (totals.unknownClosed > 0) Text("另有 ${totals.unknownClosed} 笔净盈亏待确认，未计入。", Modifier.testTag("overview-unknown-closed"),
+                        // With none known there is no total, and nothing for the others to be counted beside.
+                        if (totals.unknownClosed > 0) Text("${if (totals.knownClosed > 0) "另有 " else ""}${totals.unknownClosed} 笔净盈亏待确认，未计入。",
+                            Modifier.testTag("overview-unknown-closed"),
                             style = MaterialTheme.typography.bodySmall, color = colors.Caution)
                     }
                 }

@@ -64,6 +64,17 @@ class AccountOverviewUiTest {
         ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", target)
     }
 
+    /** With no result known there is no total to show, and the note does not speak of others besides one. */
+    @Test fun overviewWithNoKnownResultShowsNoTotalAndCountsThePendingTrades() {
+        val account = plugin.accounts.first()
+        val pending = ClosedTrade("cached", "p", "MES", Side.BUY, 100, 1, 2, 10, 20, null, "fixture")
+        val snapshot = AccountSnapshot(account.id, 1_000_000_000, trades = listOf(pending, pending.copy(id = "fees-missing")))
+        compose.setContent { TradingTheme { AccountOverviewPage(plugin, account, snapshot, snapshot.trades, MarketSnapshot(), {}, Modifier.requiredSize(400.dp, 800.dp)) } }
+        compose.onNode(hasScrollToNodeAction() and hasAnyAncestor(hasTestTag("account-overview"))).performScrollToNode(hasTestTag("overview-unknown-closed"))
+        compose.onNodeWithTag("overview-realized").assertTextEquals("—")
+        compose.onNodeWithTag("overview-unknown-closed").assertTextEquals("2 笔净盈亏待确认，未计入。")
+    }
+
     @Test fun quickSwitchersRouteLoginAndChildIndependently() {
         var broker: String? = null
         var child: String? = null

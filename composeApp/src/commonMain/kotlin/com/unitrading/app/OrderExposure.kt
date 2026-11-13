@@ -11,8 +11,9 @@ private fun Long.bounded() = coerceIn(0, LOT_BOUND)
 internal val PendingOrder.remainingLots: Long get() = (request.lotsHundredths - filledLotsHundredths).bounded()
 
 /**
- * Why a paused account or a blocked symbol refuses an order that reduces the position but is no exit: the orders already
- * working against the position could take all of it, and with this one as well the account could end up on the other side.
+ * Why a paused account, a blocked symbol or the cash brackets refuse an order that reduces the position but is no exit
+ * and no protective stop: the orders already working against the position could take all of it, and with this one as
+ * well the account could end up on the other side.
  */
 internal const val EXITS_COVER_POSITION = "已挂的止损、止盈等减仓单已覆盖持仓，再加这笔可能反手。请先撤销或减少已挂的减仓单，或直接平仓。"
 
@@ -103,22 +104,27 @@ internal fun reducesPosition(snapshot: AccountSnapshot, hedging: Boolean, order:
  * already working against the position leave of it: whatever of them fills, this one included, the account cannot end
  * up on the other side. A stop, a target and a partial close are exits, also side by side, until together they could
  * fill more than the position; a stop and the target of one broker bracket count once. [grows] says the action places
- * an order or raises the lots of one. On a hedging account no new order reduces, as each opens a position of its own,
- * and only the protection of a position moved or made smaller is an exit.
+ * an order or raises the lots of one. [against] says the order is on the side opposite the position held, whatever its
+ * size. [protective] says a new order is a protective stop: a stop that [reduces]. It only adds protection, so it may go
+ * where nothing else may, also where the orders already working against the position cover it, although then it could
+ * fill after them and open the other side; an edit is never one here. On a hedging account no new order reduces, as each
+ * opens a position of its own, and only the protection of a position moved or made smaller is an exit.
  */
 internal data class ExposureEffect(
     val before: Long, val after: Long, val exit: Boolean, val reduces: Boolean = exit, val grows: Boolean = true,
+    val against: Boolean = reduces, val protective: Boolean = false,
 ) {
     /**
-     * What a pause or a blocked symbol lets through: an exit, or an order that reduces moved or made smaller, which
-     * leaves the orders against the position no larger than they were.
+     * What a pause or a blocked symbol lets through: an exit, a protective stop, or an order against the position moved
+     * or made smaller, whatever its size, which leaves the orders against the position no larger than they were.
      */
-    val harmless: Boolean get() = exit || (reduces && !grows)
+    val harmless: Boolean get() = exit || protective || (against && !grows)
 }
 
 /** The effect of placing [request]. Its [ExposureEffect.exit] is the test for "this order may go while nothing else may". */
 internal fun newOrderExposure(snapshot: AccountSnapshot, hedging: Boolean, request: OrderRequest): ExposureEffect =
     exposureEffect(snapshot, hedging, request.symbol, request.side, request.lotsHundredths, null)
+        .let { if (request.kind == OrderKind.STOP && it.reduces) it.copy(protective = true) else it }
 
 /**
  * The effect of leaving [order] working with [lotsHundredths] in total, its filled part included: a quantity edit, or
@@ -151,7 +157,7 @@ private fun exposureEffect(
     val held = before.closable(side)
     val reduces = held > 0 && now <= held && (now > 0 || replaced != null)
     val exit = reduces && (if (side == Side.BUY) after.buys else after.sells) <= held
-    return ExposureEffect(others + before.worst, others + after.worst, exit, reduces, grows)
+    return ExposureEffect(others + before.worst, others + after.worst, exit, reduces, grows, against = held > 0)
 }
 
 /**
@@ -164,11 +170,12 @@ internal fun lotsUnderCap(snapshot: AccountSnapshot, hedging: Boolean, request: 
     val probe = newOrderExposure(snapshot, hedging, request.copy(lotsHundredths = LOT_BOUND))
     val start = probe.after - LOT_BOUND
     if (probe.before <= cap) return cap - start
-    // Over the cap only an exit passes: no more than what the orders already on its side leave of the position, and no
-    // lot that would raise the total.
+    // Over the cap only an exit passes, no more than what the orders already on its side leave of the position, or a
+    // protective stop, no more than the position whatever works beside it; and no lot that would raise the total.
     if (hedging) return 0
     val exposure = symbolExposure(snapshot, request.symbol)
-    val left = exposure.closable(request.side) - if (request.side == Side.BUY) exposure.buys else exposure.sells
+    val left = exposure.closable(request.side) -
+        if (request.kind == OrderKind.STOP) 0 else if (request.side == Side.BUY) exposure.buys else exposure.sells
     return minOf(left, probe.before - start).coerceAtLeast(0)
 }
 

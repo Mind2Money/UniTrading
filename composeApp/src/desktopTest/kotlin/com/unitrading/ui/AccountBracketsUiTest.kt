@@ -277,16 +277,22 @@ class AccountBracketsUiTest {
         waitUntil(timeoutMillis = 5_000) { broker.placed.size == 1 }
         // The stop typed for the buy sized that order; it is no part of this one.
         assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.MARKET, 100), broker.placed.single())
-        // With a stop and a target already working for the whole position the sell still only reduces it and takes no stop of
-        // its own; whether it may go beside them is for the lock and the limits, which refuse it where they apply.
+        // With a stop and a target already working for the whole position the sell would go with no stop of its own, and
+        // after it they could fill to open a short: the form says so before anything is reviewed. A stop for the long may go.
         runOnIdle {
             broker.hold("100", listOf(riskPosition(Side.BUY, 200)), listOf(
                 riskOrder("stop", Side.SELL, OrderKind.STOP, 200, 548_000), riskOrder("target", Side.SELL, OrderKind.LIMIT, 200, 552_000)))
         }
         waitForIdle()
+        onNodeWithTag("order-error").assertTextEquals(EXITS_COVER_POSITION)
+        onNodeWithTag("review-order").assertIsNotEnabled()
+        onNodeWithTag("order-kind-STOP").performClick()
+        onNodeWithTag("order-entry").performTextReplacement("5480.00")
         onNodeWithTag("order-error").assertDoesNotExist()
         onNodeWithTag("order-reduction").assertTextEquals("减仓单 · 最多 2 张，按输入数量下单，不附加止损")
+        onNodeWithTag("review-order").assertIsEnabled()
         // Back on the side of the position the order is sized again, from the stop it was given before.
+        onNodeWithTag("order-kind-MARKET").performClick()
         onNodeWithTag("order-side-BUY").performClick()
         onNodeWithTag("order-quantity").assertDoesNotExist()
         onNodeWithTag("order-risk-sized-quantity").assertTextEquals("自动手数 3 张 · 风险 99.00 USD")

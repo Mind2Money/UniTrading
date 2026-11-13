@@ -20,6 +20,7 @@ class AccountOverviewTest {
         assertNull(unknown.floatingMicros)
         assertNull(unknown.realizedMicros, "with no result known there is no total, not a zero")
         assertEquals(2, unknown.unknownClosed)
+        assertEquals(0, unknown.knownClosed, "nothing is counted, so the note names no others besides")
         assertNull(overviewTotals(AccountSnapshot("a", 0, balanceKnown = false)).floatingMicros)
         assertNull(overviewTotals(AccountSnapshot("a", 0, trades = listOf(trade.copy(netPnlMicros = Long.MAX_VALUE), trade))).realizedMicros)
     }
@@ -30,5 +31,6 @@ class AccountOverviewTest {
             trade.copy(id = "fees-missing", netPnlMicros = null))))
         assertEquals(2_000_000L, totals.realizedMicros)
         assertEquals(1, totals.unknownClosed)
+        assertEquals(2, totals.knownClosed)
     }
 }

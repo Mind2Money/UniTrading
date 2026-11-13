@@ -66,8 +66,9 @@ private fun AccountRiskDialog(
     var confirm by remember { mutableStateOf(false) }
     var freezeOnSave by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    // A freeze may first wait up to 12 s for the broker's trading day. The form says so and can still be closed: the save
-    // goes with the form, so closing gives up the wait before anything is written.
+    // A freeze may first wait up to 12 s for the broker's trading day. The form says so until the save ends and can still be
+    // closed: the save goes with the form, so closing while the broker is asked gives up the wait and writes nothing; once
+    // the answer is in, the write is not interrupted and the freeze is saved all the same.
     var fetchingDay by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val parsedLoss = riskAmount(loss)

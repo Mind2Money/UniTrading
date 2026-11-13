@@ -2,12 +2,11 @@ package com.unitrading.app
 
 import com.unitrading.broker.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.DateTimeUnit
@@ -95,11 +94,21 @@ internal data class AccountRiskRule(
     /**
      * Whether the cash brackets or the sizing apply to a new [order]. One that only reduces the position held, against it
      * and for no more than it, needs neither: it gets no stop loss or take profit of its own and keeps the quantity it
-     * was given, whatever else works against the position ([ExposureEffect.reduces]). The order form and the guard both
-     * ask here, so they cannot disagree on it.
+     * was given ([ExposureEffect.reduces]); whether it may go beside what else works against the position is for
+     * [reductionRefusal]. The order form and the guard both ask here, so they cannot disagree on it.
      */
     fun bracketsApply(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Boolean =
         brackets.enabled && !newOrderExposure(snapshot, hedging, order).reduces
+
+    /**
+     * Why the brackets refuse a new [order] that [bracketsApply] leaves without a stop, or null. Beside the orders already
+     * working against the position it could fill after them and open the other side with no stop, so it has to be an exit;
+     * a protective stop may go all the same, as it only adds protection. Without brackets nothing is refused here. The
+     * order form and the guard both ask here.
+     */
+    fun reductionRefusal(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): String? =
+        newOrderExposure(snapshot, hedging, order).takeIf { brackets.enabled && it.reduces && !it.exit && !it.protective }
+            ?.let { EXITS_COVER_POSITION }
 
     /** The lots the lot cap still leaves a new order like [order], for a quantity sized from a loss amount; null without a cap. */
     fun lotRoom(snapshot: AccountSnapshot, hedging: Boolean, order: OrderRequest): Long? =
@@ -161,8 +170,12 @@ internal data class FlattenTarget(val broker: BrokerPlugin, val account: Account
 /** [note] says why an account was not worked on at all; without one the outcome is the flatten's own, confirmed or not. */
 internal data class FlattenOutcome(val target: FlattenTarget, val confirmed: Boolean, val note: String? = null)
 
-/** An automatic flatten of [account], on the login whose broker id is [login], that ended without the broker confirming it flat. */
-internal data class FlattenFailure(val login: String, val account: AccountInfo)
+/**
+ * An automatic flatten of [account], on the login whose broker id is [login], that ended without the broker confirming it
+ * flat; or, when [interrupted], one that the monitor's end cut off (the screen built again or closed), so that what it
+ * sent is not known. Its state stays [FlattenStatus.IN_PROGRESS] then, which sends nothing again.
+ */
+internal data class FlattenFailure(val login: String, val account: AccountInfo, val interrupted: Boolean = false)
 
 /** Why a flatten of every sub-account leaves one out. Nothing can be sent for it, so it is not a failure either. */
 internal enum class FlattenSkip { DISCONNECTED, READ_ONLY }
@@ -206,12 +219,17 @@ internal class AccountRiskController(
      * cannot be read might have forbidden it.
      */
     val storageUnreadable = unreadable.asStateFlow()
-    private val failures = MutableSharedFlow<FlattenFailure>(extraBufferCapacity = 64)
+    private val unread = MutableStateFlow<List<FlattenFailure>>(emptyList())
     /**
-     * Each automatic flatten that ends unconfirmed, once, as it ends. Nothing is replayed: a collector hears of the ones
-     * that end while it collects, and the earlier ones, a previous run's included, show only in [RiskTrigger.flattenStatus].
+     * The automatic flattens of this run that ended unconfirmed or were cut off, in the order they ended, each until
+     * [acknowledge] takes it off. They are kept here and not on the screen, so a screen built again, as Android does for
+     * a change of dark mode, font size or language, still shows the ones not read. A previous run's show only in
+     * [RiskTrigger.flattenStatus].
      */
-    val flattenFailures: SharedFlow<FlattenFailure> = failures.asSharedFlow()
+    val unreadFailures: StateFlow<List<FlattenFailure>> = unread.asStateFlow()
+
+    /** Takes [failure], once the user has dismissed it, off [unreadFailures]. */
+    fun acknowledge(failure: FlattenFailure) = unread.update { it - failure }
 
     fun rule(broker: BrokerPlugin, accountId: String) =
         rules.value[broker.descriptor.id]?.get(accountId) ?: AccountRiskRule()
@@ -355,7 +373,8 @@ internal class AccountRiskController(
 
     /**
      * Why [action] would be refused on this account, or null: the P&L lock, the pause while broker P&L is missing, an
-     * unreadable rule file, the lot cap, the blocked symbols and, for an edit, the cash amounts of the brackets, all
+     * unreadable rule file, the lot cap, the blocked symbols and the brackets (a new order that would go without a stop
+     * beside the exits already working, and for an edit the cash amounts and the lots raised against the position), all
      * read from the account as it is now. The screen asks before it opens a confirmation; [guard] decides again when
      * the command is sent, where it also prices or checks a new order against the brackets.
      */
@@ -379,18 +398,32 @@ internal class AccountRiskController(
             val spec = broker.instruments.firstOrNull { it.symbol == before.symbol } ?: return "合约规格尚未加载"
             return rule.brackets.editRefusal(before, after, spec, session.account.currency)
         }
+        /**
+         * With the brackets on, what an edit that raises [order] would open without a stop: lots past the position, of an
+         * order against it whoever placed it, or of a stop or target whose position has gone. Raised, the order has to stay
+         * an exit, or a protective stop (a stop that reduces). The refusal names what is in the way: the order itself, or
+         * the other orders working against the position beside it.
+         */
+        fun raisedPast(order: PendingOrder, effect: ExposureEffect): String? = when {
+            !rule.brackets.enabled || !effect.grows || effect.exit || !(effect.against || order.isProtection) -> null
+            order.request.kind == OrderKind.STOP && effect.reduces -> null
+            effect.reduces -> "保护单加上其他已挂的减仓单会超过持仓：超出的部分是不带止损的开仓。请先撤销或减少其他减仓单。"
+            else -> "保护单数量不能超过持仓：超出的部分是不带止损的开仓。"
+        }
         return when (action) {
             is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
                 paused(effect.harmless, covered = effect.reduces) ?: limits.refusal(action.request, effect, unit)
+                    ?: rule.reductionRefusal(snapshot, hedging, action.request)
             }
             is RiskCheck.Change -> {
                 val order = snapshot.orders.firstOrNull { it.id == action.orderId } ?: return "挂单已更新，请重新选择。"
                 val changed = order.request.copy(lotsHundredths = action.lotsHundredths ?: order.request.lotsHundredths)
                 val effect = editedOrderExposure(snapshot, hedging, order, changed.lotsHundredths)
-                // An order that reduces may move or shrink, and grow as an exit; an entry can only be cancelled, and a stop
-                // may not move away from the market.
+                // Any order against the position may move or shrink, whatever its size, and grow as an exit; an entry can
+                // only be cancelled, and a stop may not move away from the market.
                 val loosened = order.stopLoosenedAt(action.price)
                 paused(effect.harmless && !loosened, covered = effect.reduces && !loosened) ?: limits.refusal(changed, effect, unit)
+                    ?: raisedPast(order, effect)
                     ?: when (order.role) {
                         // An entry keeps the stop and target it was placed with: moved or enlarged, it still has to meet the
                         // amounts. They stay at their prices, unless the broker keeps them at their distance from the entry.
@@ -399,24 +432,21 @@ internal class AccountRiskController(
                             amounts(order.request, changed.copy(entryPrice = action.price,
                                 stopLoss = changed.stopLoss?.plus(shift), takeProfit = changed.takeProfit?.plus(shift)))
                         }
-                        // A stop or a target changed on its own. Raised past what the position can take, it would open a
-                        // position without a stop, also where the position has gone. Its price is held to the amounts like
-                        // the protection of the position, from the position's entry for no more lots than the position has,
-                        // where it moves to cost the position more: down for a long, up for a short. A smaller one at the
-                        // same price always passes, and cancelling one is never refused.
-                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> when {
-                            !rule.brackets.enabled -> null
-                            effect.grows && !effect.exit -> "保护单数量不能超过持仓：超出的部分是不带止损的开仓。"
-                            else -> snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                        // A stop or a target changed on its own. Its price is held to the amounts like the protection of the
+                        // position, from the position's entry for no more lots than the position has, where it moves to cost
+                        // the position more, down for a long and up for a short, or where it takes more lots: a stop raised
+                        // at its price loses more, so no number of steps takes it past the amount. A smaller one at the same
+                        // price always passes, and cancelling one is never refused.
+                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else
+                            snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
                                 val was = order.request.entryPrice
                                 val costlier = was == null || if (held.side == Side.BUY) action.price < was else action.price > was
-                                if (!costlier) return@let null
+                                if (!costlier && !effect.grows) return@let null
                                 val stop = order.role == OrderRole.STOP_LOSS
                                 fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
                                     held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
                                 amounts(leg(was, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
                             }
-                        }
                         OrderRole.UNRESOLVED -> null
                     }
             }
@@ -623,21 +653,29 @@ internal class AccountRiskController(
             if (!persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = FlattenStatus.IN_PROGRESS)))) return
             trigger
         }
-        val confirmed = try {
-            withTimeoutOrNull(60_000) { flatten(broker, raw) } == true
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (_: Exception) {
-            false
-        }
-        storageMutex.withLock {
-            val current = rule(broker, id)
-            if (current.trigger?.day == trigger.day) {
-                val status = if (confirmed) FlattenStatus.FLAT else FlattenStatus.FAILED
-                persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = status)))
-                // Told also when the state could not be saved: the position may be open either way.
-                if (!confirmed) failures.tryEmit(FlattenFailure(broker.descriptor.id, raw.account))
+        try {
+            val confirmed = try {
+                withTimeoutOrNull(60_000) { flatten(broker, raw) } == true
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                false
             }
+            storageMutex.withLock {
+                val current = rule(broker, id)
+                if (current.trigger?.day == trigger.day) {
+                    val status = if (confirmed) FlattenStatus.FLAT else FlattenStatus.FAILED
+                    persist(broker, id, current.copy(trigger = trigger.copy(flattenStatus = status)))
+                    // Told also when the state could not be saved: the position may be open either way.
+                    if (!confirmed) unread.update { it + FlattenFailure(broker.descriptor.id, raw.account) }
+                }
+            }
+        } catch (cancel: CancellationException) {
+            // The monitor ended before the outcome was saved: the screen was built again or closed. What was sent is not
+            // known, and IN_PROGRESS stays saved, so nothing is sent again; the user is told to check at the broker. The
+            // update does not suspend, so the cancellation cannot stop it.
+            unread.update { it + FlattenFailure(broker.descriptor.id, raw.account, interrupted = true) }
+            throw cancel
         }
     }
 

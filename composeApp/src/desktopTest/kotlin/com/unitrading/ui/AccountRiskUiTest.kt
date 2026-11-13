@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
@@ -279,6 +282,32 @@ class AccountRiskUiTest {
         onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
         onNodeWithTag("dismiss-trade-notice").performClick()
         onNodeWithTag("trade-notice").assertDoesNotExist()
+    }
+
+    @Test fun aFailedFlattenOutlastsTheScreenBeingBuiltAgain() = runDesktopComposeUiTest(width = 450, height = 850) {
+        val (broker, runtime) = failingFlatten()
+        // Android builds the screen again for a change of dark mode, font size or language; the runtime outlives it.
+        var shown by mutableStateOf(true)
+        setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                Box(Modifier.requiredSize(450.dp, 850.dp)) { if (shown) TradingScreen(runtime) }
+            }
+        }
+        broker.pnl("100", -250_000_000)
+        awaitFailedFlattenNotice(runtime, broker)
+        runOnIdle { shown = false }
+        onNodeWithTag("trade-notice").assertDoesNotExist()
+        runOnIdle { shown = true }
+        onNodeWithTag("trade-notice").assertTextEquals(FAILED_100).assertIsDisplayed()
+        onNodeWithTag("dismiss-trade-notice").performClick()
+        onNodeWithTag("trade-notice").assertDoesNotExist()
+        assertEquals(emptyList(), runtime.accountRisk.unreadFailures.value)
+        // Built once more, the screen has nothing left to say, and the flatten that failed was not sent again.
+        runOnIdle { shown = false }
+        runOnIdle { shown = true }
+        onNodeWithTag("trade-bar").assertIsDisplayed()
+        onNodeWithTag("trade-notice").assertDoesNotExist()
+        assertEquals(listOf("close:held"), broker.events)
     }
 
     @Test fun thePnlLockIsNotOfferedWithoutABrokerTradingDay() = runDesktopComposeUiTest(width = 450, height = 850) {

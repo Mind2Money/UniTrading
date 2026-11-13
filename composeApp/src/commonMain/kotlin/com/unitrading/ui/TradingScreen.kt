@@ -63,20 +63,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val enabled = runtime.tradingPreferences.preferences.map { it.tradeSounds }.stateIn(this)
         TradeSoundController(player, enabled = enabled).run(runtime.registry)
     }
-    // Automatic flattens that ended unconfirmed, each kept until it is dismissed, whichever page shows meanwhile. Collected
-    // from before the monitor starts, because a failure is not sent again to a late collector.
-    val unreadFailures = remember(runtime) { mutableStateListOf<TradingNotice>() }
-    LaunchedEffect(runtime) {
-        var count = 0L
-        runtime.accountRisk.flattenFailures.collect { failure ->
-            val name = runtime.accountAliases.aliases.value.account(failure.login, failure.account)
-            // Below zero, so that no other notice has the same id.
-            unreadFailures += TradingNotice(-(++count), "$name 自动平仓未完成，请检查券商持仓和挂单。", NoticeTone.ATTENTION, persistent = true)
-        }
-    }
+    // Automatic flattens that ended unconfirmed or were cut off, each kept until it is dismissed, whichever page shows
+    // meanwhile. The controller keeps them, so a screen built again (Android recreates it for dark mode, font size or
+    // language) still shows the unread ones.
+    val unreadFailures by runtime.accountRisk.unreadFailures.collectAsState()
     LaunchedEffect(runtime) { runtime.accountRisk.monitor(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
     val aliases by runtime.accountAliases.aliases.collectAsState()
+    /** The notice of [failure]. One shows at a time, so they share an id, below zero where no other notice has one. */
+    fun failureNotice(failure: FlattenFailure) = TradingNotice(-1, aliases.account(failure.login, failure.account) +
+        (if (failure.interrupted) " 自动平仓被中断，结果待核对" else " 自动平仓未完成") + "，请检查券商持仓和挂单。", NoticeTone.ATTENTION, persistent = true)
     CompositionLocalProvider(LocalAccountAliases provides aliases) {
     TradingTheme(theme) {
         val colors = TradingColors
@@ -105,8 +101,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
         // The pages in front of the trading screen have no notices of their own: an unread failure shows over them.
         val failureOverlay: @Composable BoxScope.() -> Unit = {
-            unreadFailures.firstOrNull()?.let { current ->
-                FloatingNoticeCard(current, "trade-notice", { unreadFailures.remove(current) }, Modifier.align(Alignment.TopCenter)
+            unreadFailures.firstOrNull()?.let { failure ->
+                FloatingNoticeCard(failureNotice(failure), "trade-notice", { runtime.accountRisk.acknowledge(failure) }, Modifier.align(Alignment.TopCenter)
                     .safeDrawingPadding().padding(start = 12.dp, end = 12.dp, top = 56.dp).widthIn(max = 420.dp), title = "操作提示")
             }
         }
@@ -273,9 +269,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         // The first unread failed flatten takes the notice's place whenever there is no other notice. A later notice only puts
         // it off, and an account switch, which clears the notice of the moment, leaves it: it goes when it is dismissed.
-        fun shownNotice() = notice ?: unreadFailures.firstOrNull()
+        fun shownNotice() = notice ?: unreadFailures.firstOrNull()?.let(::failureNotice)
         fun dismissNotice(current: TradingNotice) {
-            if (notice?.id == current.id) notice = null else unreadFailures.remove(current)
+            if (notice?.id == current.id) notice = null else unreadFailures.firstOrNull()?.let(runtime.accountRisk::acknowledge)
         }
         fun syncAccount() {
             if (busy || !market.connected) return
@@ -323,6 +319,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         if (order.lotsHundredths <= 0) "请输入有效的减仓数量"
                         else "减仓数量不能超过持仓的 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}；反手请先平仓"
                     }
+                    // Beside the orders already working against the position it could fill after them and open the other
+                    // side with no stop: the guard refuses that, so the form says it first. A stop order may go.
+                    orderRule.reductionRefusal(account, hedging, order)?.let { throw IllegalArgumentException(it) }
                 }
                 else -> {
                     require(instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true) { "请输入有效止损价 SL" }

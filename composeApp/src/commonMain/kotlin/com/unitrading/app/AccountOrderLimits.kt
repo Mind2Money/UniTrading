@@ -49,10 +49,10 @@ internal data class AccountOrderLimits(
     /**
      * Why [request], a new order or a working one as an edit leaves it, is not allowed; null when it is. [effect] is
      * what the action does to the account's exposure. A blocked symbol takes only what [ExposureEffect.harmless] lets
-     * through: an exit, or an order that reduces the position moved or made smaller. Over the cap nothing may raise the
-     * total, and an order placed or raised passes only as an exit, even where it leaves the total as it was, as a
-     * reversal can; any working order may still be moved or made smaller there. An exit never raises the total. [unit]
-     * only words the cap.
+     * through: an exit, a protective stop, or an order against the position moved or made smaller, whatever its size;
+     * it does not judge where a stop goes. Over the cap nothing may raise the total, and an order placed or raised passes
+     * only as an exit or a new protective stop, even where it leaves the total as it was, as a reversal can; any working
+     * order may still be moved or made smaller there. An exit never raises the total. [unit] only words the cap.
      */
     fun refusal(request: OrderRequest, effect: ExposureEffect, unit: LotCapUnit = LotCapUnit.LOTS): String? {
         val codes = listOfNotNull(request.symbol, request.sourceSymbol).map { it.uppercase() }
@@ -66,7 +66,7 @@ internal data class AccountOrderLimits(
         if (blocked != null && !effect.harmless) return if (effect.reduces) EXITS_COVER_POSITION else "该子账户禁止交易品种 $blocked。"
         val limit = maxLots ?: return null
         if (request.lotsHundredths <= 0) return "手数必须大于零。"
-        return if (effect.after > limit && (effect.after > effect.before || (effect.grows && !effect.exit))) {
+        return if (effect.after > limit && (effect.after > effect.before || (effect.grows && !effect.exit && !effect.protective))) {
             "超过子账户最大持仓 ${unit.format(limit)} ${unit.label}（按持仓和全部挂单成交后的最大持仓计）。"
         } else null
     }
