@@ -30,7 +30,10 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     private val saveMutex = Mutex()
     val theme = ThemeController(store)
     val tradingPreferences: TradingPreferencesController by lazy { TradingPreferencesController(store) }
-    /** Interval favourites and custom intervals; read lazily so startup only touches the theme and demo snapshots. */
+    /**
+     * Interval favourites and custom intervals; read lazily so startup only touches the theme and demo snapshots, and in
+     * the background the analytics cache it trims ([analyticsTrim]).
+     */
     val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
     /** Desktop panel sizes are independent of chart preferences and broker/account state. */
     val desktopLayout: DesktopLayoutController by lazy { DesktopLayoutController(store) }
@@ -46,6 +49,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val drawings: com.unitrading.chart.drawing.ChartDrawings by lazy { com.unitrading.chart.drawing.ChartDrawings(drawingLibrary) }
     /** Names the user gave logins and accounts on this device. */
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
+    internal val accountRisk by lazy { AccountRiskController(store) }
+    internal val analyticsCache by lazy { AnalyticsTradeCache(store) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */
     val livePnl: LivePnlController by lazy { LivePnlController(store, names = accountAliases.aliases) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->
@@ -58,6 +63,12 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     }
     val registry = BrokerRegistry(brokers + additionalPlugins)
     val savedLogins = SavedTradovateAccounts(registry, credentialStore, candleCacheStore = SnapshotCandleCacheStore(store))
+    /**
+     * Trims the trades cached for the analytics page as the runtime is created, in the background, whatever the start
+     * shows next: the license screen, the login page or a login that never updates the cache. Declared last, so the file
+     * is read after the reads above.
+     */
+    internal val analyticsTrim = analyticsCache.pruneInBackground()
 
     suspend fun run() {
         if (brokers.isEmpty()) return

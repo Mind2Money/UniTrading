@@ -5,6 +5,33 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun insertingCustomFavoriteSortsSecondsMinutesAndHours() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteSeconds":[3600,1,300,60]}""") }
+        assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.ofMinutes(3)))
+        assertEquals(listOf(1, 60, 180, 300, 3600), ChartPreferencesController(store).preferences.value.favorites.map { it.seconds })
+    }
+
+    @Test fun favoritesReadByLengthWhileTheFileKeepsTheOrderTheyWereStarredIn() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteSeconds":[3600,1,300,60]}""") }
+        fun favorites() = ChartPreferencesController(store).preferences.value.favorites.map { it.seconds }
+        fun saved() = store.read("chart-v1")!!.substringAfter("\"favoriteSeconds\":[").substringBefore("]")
+        assertEquals(listOf(1, 60, 300, 3600), favorites())
+        assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.ofMinutes(3)))
+        assertEquals("3600,1,300,60,180", saved(), "a new star is appended; the saved order is not rewritten by length")
+        assertEquals(listOf(1, 60, 180, 300, 3600), favorites())
+        assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.ofSeconds(1)))
+        assertEquals("3600,300,60,180", saved(), "taking a star away leaves the others where they were")
+        assertEquals(listOf(60, 180, 300, 3600), favorites())
+        // Minutes saved by an older version keep their order when they are first written again as seconds.
+        store.write("chart-v1", """{"favoriteMinutes":[240,5]}""")
+        assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.M1))
+        assertEquals("14400,300,60", saved())
+        assertEquals(listOf(60, 300, 14_400), favorites())
+        val given = ChartPreferences().withFavorites(listOf(Timeframe.ofMinutes(120), Timeframe.M1, Timeframe.ofSeconds(15)))
+        assertEquals(listOf(7_200, 60, 15), given.favoriteSeconds, "a list is saved as it is given")
+        assertEquals(listOf(15, 60, 7_200), given.favorites.map { it.seconds })
+    }
+
     @Test fun indicatorPaneSizesPersistAndLegacyPreferencesUseDefaultSizes() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
         val controller = ChartPreferencesController(store)
@@ -85,7 +112,7 @@ class ChartPreferencesTest {
         assertTrue(first.addCustom(Timeframe.ofSeconds(30)), "a preset is not added as a custom interval")
         assertTrue(first.setLastChart("atlas-demo", "EURUSD", Timeframe.ofSeconds(5)))
         val reopened = ChartPreferencesController(store).preferences.value
-        assertEquals(listOf(Timeframe.M5, Timeframe.ofMinutes(240), Timeframe.ofSeconds(30)), reopened.favorites)
+        assertEquals(listOf(Timeframe.ofSeconds(30), Timeframe.M5, Timeframe.ofMinutes(240)), reopened.favorites)
         assertEquals(listOf(Timeframe.ofMinutes(7), Timeframe.ofSeconds(45)), reopened.custom)
         assertEquals(Timeframe.ofSeconds(5), reopened.lastTimeframe)
         assertTrue(first.toggleFavorite(Timeframe.ofSeconds(30)))
@@ -124,9 +151,11 @@ class ChartPreferencesTest {
             override fun read(key: String): String? { reads += key; return null }
             override fun write(key: String, value: String) {}
         })
-        assertEquals(listOf("theme-v1"), reads)
+        // Besides the theme, only the analytics cache is read at start, in the background, to trim it.
+        runtime.analyticsTrim.join()
+        assertEquals(listOf("theme-v1", "analytics-trades-v1"), reads)
         val controller = runtime.chartPreferences
-        assertEquals(listOf("theme-v1", "chart-v1"), reads)
+        assertEquals(listOf("theme-v1", "analytics-trades-v1", "chart-v1"), reads)
         for (minutes in listOf(2, 3, 10, 30, 45, 120, 180, 240)) assertTrue(controller.toggleFavorite(Timeframe.ofMinutes(minutes)))
         assertEquals(ChartPreferences.MAX_FAVORITES, controller.preferences.value.favorites.size)
         assertFalse(controller.toggleFavorite(Timeframe.ofMinutes(360)))

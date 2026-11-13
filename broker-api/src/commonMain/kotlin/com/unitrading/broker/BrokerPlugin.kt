@@ -31,6 +31,8 @@ interface BrokerPlugin {
      * that opens one of them then only fetches the bars since. Never changes the chart or sends trade commands.
      */
     fun preloadHistory(series: List<Pair<String, Timeframe>>) {}
+    /** Refresh authoritative day P&L for one account when the adapter provides it. */
+    suspend fun refreshDailyPnl(accountId: String) {}
     suspend fun resynchronize() {}
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession

@@ -22,11 +22,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.unitrading.app.AccountBrackets
 import com.unitrading.broker.*
 
 /**
- * The order form of every layout: its fields scroll and the review button stays below them. The phone sheet shows the
- * order kind in its own header, so only the desktop ticket asks for [showKinds].
+ * The order form of every layout: its fields scroll and the review button stays below them. The phone sheet and dock
+ * show the order kind in their own header, so only the desktop ticket and the popup ask for [showKinds]. The dock
+ * passes [onDockAdvanced]: its form is denser, and the quantity slider, the reference SL / TP, the estimates and the
+ * entry summary wait behind "更多设置" until [dockAdvanced].
  */
 @Composable
 internal fun OrderForm(
@@ -45,6 +48,11 @@ internal fun OrderForm(
     skipConfirmation: Boolean = false,
     showKinds: Boolean = false,
     detailsOpen: Boolean = false,
+    dockAdvanced: Boolean = false,
+    onDockAdvanced: ((Boolean) -> Unit)? = null,
+    brackets: AccountBrackets = AccountBrackets(),
+    bracketOrder: OrderRequest? = null,
+    orderNotice: @Composable () -> Unit = {},
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -52,71 +60,106 @@ internal fun OrderForm(
     var details by remember(instrument.symbol) { mutableStateOf(detailsOpen) }
     val error = if (instrument.isContinuous && instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单"
         else if (preview == null) "请输入有效数量与价格" else preview.errors.firstOrNull()
+    val sizingRisk = brackets.sizingRisk
+    val docked = onDockAdvanced != null
     Column(modifier) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("order-fields")
-            .padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (instrument.isContinuous) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = colors.Accent, style = type.bodySmall)
+            .padding(horizontal = if (docked) 12.dp else 16.dp, vertical = if (docked) 2.dp else 8.dp),
+            verticalArrangement = Arrangement.spacedBy(if (docked) 4.dp else 8.dp)) {
+            if (instrument.isContinuous && !docked) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = colors.Accent, style = type.bodySmall)
             if (showKinds) OrderKindChoice(instrument, quote, capabilities, draft, onDraft, !busy, Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Side.SELL, Side.BUY).forEach { side ->
                     OrderSideButton(side, quote?.let { instrument.formatPrice(if (side == Side.SELL) it.bid else it.ask) } ?: "—",
                         selected = draft.side == side, enabled = !busy,
-                        modifier = Modifier.weight(1f).testTag("order-side-${side.name}")) { onDraft(draft.withSide(side, instrument, quote)) }
+                        modifier = Modifier.weight(1f).testTag("order-side-${side.name}"), dense = docked) { onDraft(draft.withSide(side, instrument, quote)) }
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // An account that sizes its orders types a quantity only for one against its position: a reduction, of no more than that position.
+            val reducible = capacity.reducible
+            if (sizingRisk == null || reducible != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val less = draft.steppedQuantity(instrument, false)
                 // Only a limit the server has given stops the plus button: the broker still checks every order.
-                val more = draft.steppedQuantity(instrument, true, capacity.maximum?.takeIf { it > 0 } ?: instrument.maxLotsHundredths)
+                val more = draft.steppedQuantity(instrument, true,
+                    listOfNotNull(capacity.maximum?.takeIf { it > 0 }, reducible).minOrNull() ?: instrument.maxLotsHundredths)
                 QuantityStep(false, !busy && less != null) { less?.let { onDraft(draft.copy(quantity = it)) } }
-                PriceInput("数量（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
+                PriceInput("${if (reducible != null) "减仓数量" else "数量"}（${instrument.quantityUnit}）", draft.quantity, { onDraft(draft.copy(quantity = it)) }, "order-quantity",
                     Modifier.weight(1f), enabled = !busy, integer = instrument.quantityDecimals == 0, centered = true)
                 QuantityStep(true, !busy && more != null) { more?.let { onDraft(draft.copy(quantity = it)) } }
             }
-            OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
+            if (!docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
             if (draft.kind != OrderKind.MARKET) PriceInput(if (draft.kind == OrderKind.LIMIT) "限价" else "突破触发价",
                 draft.entry, { onDraft(draft.copy(entry = it)) }, "order-entry", enabled = !busy)
+            if (reducible != null) {
+                Text("减仓单 · 最多 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}，按输入数量下单，不附加止损",
+                    Modifier.testTag("order-reduction"), color = colors.Accent, style = type.bodySmall)
+            } else if (sizingRisk != null) {
+                PriceInput("止损价 SL（可在图表拖动）", draft.stopLoss, { onDraft(draft.withProtectionPrice(true, it)) },
+                    "order-risk-sizing-sl", enabled = !busy)
+                val lots = bracketOrder?.lotsHundredths?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit}" } ?: "—"
+                Text("自动手数 $lots · 风险 ${money(sizingRisk)} ${instrument.currency}" + (capacity.sizedUnder?.let { " · 受${it}限制" } ?: ""),
+                    Modifier.testTag("order-risk-sized-quantity"), color = colors.Accent, style = type.bodySmall)
+            } else if (brackets.enabled) {
+                // A built order that came back without the prices the amounts set is one against the position: it goes as it is.
+                val reduction = bracketOrder != null && (!brackets.controls(true) || bracketOrder.stopLoss == null) &&
+                    (!brackets.controls(false) || bracketOrder.takeProfit == null)
+                val prices = listOfNotNull(
+                    "SL ${bracketOrder?.stopLoss?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(true) },
+                    "TP ${bracketOrder?.takeProfit?.let(instrument::formatPrice) ?: "—"}".takeIf { brackets.controls(false) },
+                )
+                Text(if (reduction) "减仓单 · 不附加子账户止损止盈" else "子账户自动保护 · ${prices.joinToString(" · ")}",
+                    Modifier.testTag("order-account-brackets"), color = colors.Accent, style = type.bodySmall)
+            }
+            // Stop loss and take profit belong to every order: the docked form shows them without unfolding anything.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OrderProtectionControl(true, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
-                OrderProtectionControl(false, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
+                for (stop in listOf(true, false)) {
+                    if (!brackets.controls(stop) && (!stop || sizingRisk == null)) OrderProtectionControl(stop, instrument, quote, draft, onDraft, !busy, Modifier.weight(1f))
+                }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton({ quote?.let { onDraft(draft.withReferenceProtection(instrument, it)) } },
-                    enabled = quote != null && !busy, modifier = Modifier.testTag("reference-protection")) { Text("设置参考 SL / TP") }
-                Spacer(Modifier.weight(1f))
-                TextButton({ onDraft(draft.clearProtection()) },
-                    enabled = !busy && (draft.stopLossEnabled || draft.takeProfitEnabled || draft.stopLoss.isNotBlank() || draft.takeProfit.isNotBlank()),
-                    modifier = Modifier.testTag("clear-protection")) { Text("清除") }
+            if (onDockAdvanced != null) TextButton({ onDockAdvanced(!dockAdvanced) }, modifier = Modifier.fillMaxWidth().testTag("order-more")) {
+                Text(if (dockAdvanced) "收起更多设置" else "更多设置")
             }
-            DividerLine()
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { details = !details }
-                .testTag("order-estimates-toggle"), verticalAlignment = Alignment.CenterVertically) {
-                Text("预估与合约信息", Modifier.weight(1f), style = type.titleSmall)
-                Icon(if (details) AppIcons.ExpandLess else AppIcons.ExpandMore, contentDescription = if (details) "收起" else "展开", tint = colors.Muted)
-            }
-            if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val currency = instrument.currency
-                EstimateRow("可下单上限 / 步长", "${capacity.maximum?.let(instrument::formatQuantity) ?: "未知"} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
-                EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
-                EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
-                EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
-                val risk = preview?.stopLossPnlMicros
-                val reward = preview?.takeProfitPnlMicros
-                EstimateRow("收益 / 风险", if (risk != null && reward != null && risk < 0 && reward > 0)
-                    formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—")
-                EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} $currency" } ?: "未知 / 服务器校验")
-                EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} $currency" } ?: "未知")
-                Text(if (draft.kind == OrderKind.MARKET) "按当前报价估算，成交价可能变化。" else "按当前报价估算；挂单不预占保证金，触发时重新校验资金与止损/止盈。",
-                    color = colors.Muted, style = type.bodySmall)
+            if (!docked || dockAdvanced) {
+                if (docked && sizingRisk == null) OrderQuantitySlider(instrument, draft, onDraft, enabled = !busy, capacity = capacity, onRefresh = onRefreshCapacity)
+                if (!brackets.enabled) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton({ quote?.let { onDraft(draft.withReferenceProtection(instrument, it)) } },
+                        enabled = quote != null && !busy, modifier = Modifier.testTag("reference-protection")) { Text("设置参考 SL / TP") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton({ onDraft(draft.clearProtection()) },
+                        enabled = !busy && (draft.stopLossEnabled || draft.takeProfitEnabled || draft.stopLoss.isNotBlank() || draft.takeProfit.isNotBlank()),
+                        modifier = Modifier.testTag("clear-protection")) { Text("清除") }
+                }
+                DividerLine()
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { details = !details }
+                    .testTag("order-estimates-toggle"), verticalAlignment = Alignment.CenterVertically) {
+                    Text("预估与合约信息", Modifier.weight(1f), style = type.titleSmall)
+                    Icon(if (details) AppIcons.ExpandLess else AppIcons.ExpandMore, contentDescription = if (details) "收起" else "展开", tint = colors.Muted)
+                }
+                if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val currency = instrument.currency
+                    EstimateRow("可下单上限 / 步长", "${capacity.maximum?.let(instrument::formatQuantity) ?: "未知"} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
+                    EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
+                    EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
+                    EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
+                    val risk = preview?.stopLossPnlMicros
+                    val reward = preview?.takeProfitPnlMicros
+                    EstimateRow("收益 / 风险", if (risk != null && reward != null && risk < 0 && reward > 0)
+                        formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—")
+                    EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} $currency" } ?: "未知 / 服务器校验")
+                    EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} $currency" } ?: "未知")
+                    Text(if (draft.kind == OrderKind.MARKET) "按当前报价估算，成交价可能变化。" else "按当前报价估算；挂单不预占保证金，触发时重新校验资金与止损/止盈。",
+                        color = colors.Muted, style = type.bodySmall)
+                }
             }
             preview?.warnings?.forEach { Text(it, color = colors.Muted, style = type.bodySmall) }
             preview?.errors?.drop(1)?.forEach { Text(it, color = colors.Loss, style = type.bodySmall) }
         }
+        orderNotice()
         DividerLine()
-        Column(Modifier.fillMaxWidth().testTag("order-actions").padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.fillMaxWidth().testTag("order-actions").padding(horizontal = 16.dp, vertical = if (docked) 2.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (error != null) Text(error, color = colors.Loss, style = type.bodySmall, modifier = Modifier.testTag("order-error"))
-            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("${draft.side.label()} · ${draft.kind.label()} · ${draft.quantity} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
+            else if (!docked || dockAdvanced) Row(Modifier.fillMaxWidth().testTag("order-summary"), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("${draft.side.label()} · ${draft.kind.label()} · ${if (sizingRisk == null) draft.quantity else bracketOrder?.lotsHundredths?.let(instrument::formatQuantity) ?: "—"} ${instrument.quantityUnit}", style = type.bodySmall, color = colors.Muted)
                 Text(preview?.entryPrice?.let(instrument::formatPrice) ?: "—", style = type.titleSmall)
             }
             val sideColor = actionFill(if (draft.side == Side.BUY) colors.Up else colors.Down)
@@ -139,14 +182,18 @@ internal fun OrderKindChoice(instrument: Instrument, quote: Quote?, capabilities
 
 /** Side with its live price: picks the order side and never submits by itself. */
 @Composable
-internal fun OrderSideButton(side: Side, price: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun OrderSideButton(side: Side, price: String, selected: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, dense: Boolean = false, onClick: () -> Unit) {
     val colors = TradingColors
     val color = if (side == Side.SELL) colors.Down else colors.Up
     val shape = MaterialTheme.shapes.medium
     Surface(modifier.clip(shape).selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
         shape = shape, color = color.copy(alpha = if (selected) .18f else .06f),
         border = BorderStroke(if (selected) 2.dp else 1.dp, color.copy(alpha = if (selected) 1f else .4f))) {
-        Column(Modifier.heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center) {
+        if (dense) Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(side.label(), color = if (side == Side.SELL) colors.DownText else colors.UpText, style = MaterialTheme.typography.labelLarge)
+            Text(price, color = colors.Ink, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else Column(Modifier.heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.Center) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(side.label(), color = if (side == Side.SELL) colors.DownText else colors.UpText, style = MaterialTheme.typography.labelLarge)
                 Text(if (side == Side.SELL) "BID" else "ASK", color = colors.Muted, style = MaterialTheme.typography.labelSmall)

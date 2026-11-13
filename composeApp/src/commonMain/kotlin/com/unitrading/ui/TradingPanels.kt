@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.unitrading.app.AccountBrackets
 import com.unitrading.broker.*
 import com.unitrading.chart.dateTime
 import com.unitrading.chart.resultLabel
@@ -70,7 +71,11 @@ internal fun BrokerAccountChooser(
     }
 }
 
-/** Desktop order column, and its dialog on windows too narrow to keep the column open. */
+/**
+ * Desktop order column, and its dialog on windows too narrow to keep the column open. The phone's popup order page is
+ * the same dialog: there the close button only hides it, [onChartAdjust] says so in words, [onDiscard] is the one
+ * control that drops the draft, and the header names the account ([accountName]) that the dialog dims behind it.
+ */
 @Composable
 internal fun OrderTicket(
     instrument: Instrument,
@@ -89,14 +94,26 @@ internal fun OrderTicket(
     onClose: (() -> Unit)? = null,
     closeLabel: String = "返回图表",
     closeTag: String = "close-order-dialog",
+    brackets: AccountBrackets = AccountBrackets(),
+    bracketOrder: OrderRequest? = null,
+    onChartAdjust: (() -> Unit)? = null,
+    orderNotice: @Composable () -> Unit = {},
+    onDiscard: (() -> Unit)? = null,
+    accountName: String? = null,
 ) {
     Column(modifier) {
-        PanelHeader("新建订单", subtitle = "${instrument.symbol} · ${instrument.currency} 结算") {
+        PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
             EnvironmentBadge(environment)
             if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
+        if (onChartAdjust != null || onDiscard != null) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            if (onChartAdjust != null) TextButton(onChartAdjust, Modifier.testTag("popup-adjust-on-chart"), enabled = !busy) { Text("到图表调整") }
+            Spacer(Modifier.weight(1f))
+            if (onDiscard != null) TextButton(onDiscard, Modifier.testTag("popup-discard-order"), enabled = !busy,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("取消订单") }
+        }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
-            skipConfirmation, showKinds = true, detailsOpen = true)
+            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice)
     }
 }
 
@@ -129,7 +146,6 @@ private class AccountFigures(account: AccountSnapshot, colors: TradingPalette) {
         Triple("可用保证金", if (account.equityKnown && account.marginKnown) money(account.freeMarginMicros) else "—", Color.Unspecified),
         Triple("保证金比例", level, Color.Unspecified),
     )
-    val entries = funds + others
 }
 
 /** Desktop status bar: every account figure on one line, scrolling sideways only when the window is too narrow. */
@@ -151,23 +167,46 @@ internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifie
     }
 }
 
-/** Phone account summary: all figures on one card, with nothing hidden behind sideways scrolling. */
+/** Account overview funds and drawdown, grouped for phone and desktop widths. */
 @Composable
-internal fun AccountSummary(account: AccountSnapshot, modifier: Modifier = Modifier, connected: Boolean = true) {
+internal fun AccountSummary(
+    account: AccountSnapshot, modifier: Modifier = Modifier, connected: Boolean = true, currency: String = "USD",
+) {
     val figures = AccountFigures(account, TradingColors)
-    Surface(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Metric("今日盈亏 USD（券商）", figures.daily, Modifier.weight(1f), figures.dailyColor, "daily-pnl-value")
-                Text(figures.dailySource, Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End)
-            }
-            figures.entries.chunked(3).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    row.forEach { (label, value, color) -> Metric(label, value, Modifier.weight(1f), color) }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(shape = MaterialTheme.shapes.large, color = TradingColors.Surface) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Metric(if (account.equityEstimated) "净值 $currency（估算）" else "净值 $currency",
+                        figures.funds[1].second, Modifier.weight(1f), valueTag = "overview-equity-$currency")
+                    Metric("余额 $currency", figures.funds[0].second, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Metric("今日盈亏（券商）", figures.daily, Modifier.weight(1f), figures.dailyColor, "daily-pnl-value")
+                    val floating = figures.others.first()
+                    Metric(floating.first, floating.second, Modifier.weight(1f), floating.third)
+                }
+                Text(figures.dailySource, Modifier.testTag("daily-pnl-source"),
+                    color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall)
+                DividerLine()
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val columns = if (maxWidth < 280.dp) 2 else 3
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        figures.others.drop(1).chunked(columns).forEach { row ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                row.forEach { (label, value, color) -> Metric(label, value, Modifier.weight(1f), color) }
+                                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
                 }
             }
-            DrawdownSummary(account.drawdown, connected)
+        }
+        Surface(shape = MaterialTheme.shapes.large, color = TradingColors.Surface) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("回撤与风险", style = MaterialTheme.typography.titleMedium)
+                DrawdownSummary(account.drawdown, connected)
+            }
         }
     }
 }

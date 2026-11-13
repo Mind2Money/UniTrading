@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -12,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -21,7 +24,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import com.unitrading.app.AccountBrackets
 import com.unitrading.app.AppUpdates
+import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingKeys
 import com.unitrading.app.TradingPreferences
 import com.unitrading.app.TradingRuntime
@@ -61,6 +66,10 @@ internal fun SettingsPage(
     val indicators by runtime.indicators.settings.collectAsState()
     val notificationsAvailable by runtime.livePnl.available.collectAsState()
     val paused by runtime.paused.collectAsState()
+    val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
+    val savedLogins by runtime.savedLogins.savedCount.collectAsState()
+    // A login this device does not keep loses its cached trades when it disconnects; a saved one comes back with them.
+    val loginSaved = remember(savedLogins, plugin) { runtime.savedLogins.saved(plugin.descriptor.id) }
     val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
     val account = plugin.accounts.firstOrNull { it.id == accountId }
     val names = LocalAccountAliases.current
@@ -68,6 +77,7 @@ internal fun SettingsPage(
     val accountName = account?.let { names.account(plugin.descriptor.id, it) }
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
+    var chooseOrderLayout by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -102,13 +112,18 @@ internal fun SettingsPage(
                     onSync, enabled = plugin.capabilities.resynchronize && market.connected && !busy)
                 SettingsRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", AppIcons.Add, "settings-connect", onConnect)
                 if (onConnectRithmic != null) SettingsRow("连接 Rithmic", "登录 Test / Paper / Live 系统", AppIcons.Add, "settings-connect-rithmic", onConnectRithmic)
-                if (!localDemo) SettingsRow("断开 $loginName", "断开当前连接，保留本机登录", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
+                if (!localDemo) SettingsRow("断开 $loginName", if (loginSaved) "断开当前连接，保留本机登录" else "断开当前连接；这个登录未保存，本机分析缓存一并清除", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 
             SettingsSection("交易") {
+                SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
+                    { chooseOrderLayout = true }, enabled = !busy)
+                // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
+                val riskRules by runtime.accountRisk.rules.collectAsState()
+                val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
                 ListItem(
                     headlineContent = { Text("跳过交易确认") },
-                    supportingContent = { Text("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。") },
+                    supportingContent = { Text(skipConfirmationSummary(brackets)) },
                     leadingContent = { Icon(AppIcons.Bolt, contentDescription = null) },
                     trailingContent = { Switch(tradingPreferences.skipConfirmation, onCheckedChange = null, enabled = !savingTradingPreferences) },
                     modifier = Modifier.toggleable(tradingPreferences.skipConfirmation, enabled = !savingTradingPreferences, role = Role.Switch,
@@ -118,7 +133,7 @@ internal fun SettingsPage(
                 )
                 ListItem(
                     headlineContent = { Text("键盘下单") },
-                    supportingContent = { Text(keyboardTradingSummary(tradingPreferences), Modifier.testTag("settings-keyboard-trading-summary")) },
+                    supportingContent = { Text(keyboardTradingSummary(tradingPreferences, brackets), Modifier.testTag("settings-keyboard-trading-summary")) },
                     leadingContent = { Icon(AppIcons.Keyboard, contentDescription = null) },
                     trailingContent = { Switch(tradingPreferences.keyboardTrading, onCheckedChange = null, enabled = !savingTradingPreferences) },
                     modifier = Modifier.toggleable(tradingPreferences.keyboardTrading, enabled = !savingTradingPreferences, role = Role.Switch,
@@ -148,6 +163,18 @@ internal fun SettingsPage(
                 }
             }
 
+            // The rules of the selected trading child, kept apart from the preferences that apply to every account.
+            val tradingChild = account?.takeUnless { it.readOnly }
+            if (riskUnreadable || tradingChild != null) SettingsSection("子账户风控") {
+                // An unreadable rule file pauses every account of every login, so the way out shows whichever account is selected.
+                AccountRiskRecovery(runtime.accountRisk, busy)
+                if (tradingChild != null) {
+                    AccountRiskSettings(runtime.accountRisk, plugin, tradingChild, busy)
+                    AccountOrderLimitSettings(runtime.accountRisk, plugin, tradingChild, busy)
+                    AccountBracketSettings(runtime.accountRisk, plugin, tradingChild, busy)
+                }
+            }
+
             SettingsSection("外观与图表") {
                 SettingsRow("外观与主题", "${theme.preset.label} · ${if (theme.colors.isEmpty()) "默认配色" else "自定义配色"}",
                     AppIcons.Palette, "open-theme", onTheme, navigates = true) {
@@ -165,7 +192,7 @@ internal fun SettingsPage(
             }
 
             if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
-                SavedLoginControls(runtime.savedLogins, grouped = true, onForgotten = onForgotten)
+                SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
             }
 
             if (localDemo) SettingsSection("本地模拟") {
@@ -177,12 +204,55 @@ internal fun SettingsPage(
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
+    if (chooseOrderLayout) AlertDialog(
+        onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
+        title = { Text("下单界面") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("适用于手机和紧凑窗口。", Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                // Three choices that each need a line of explanation: a list, where segmented buttons would cut the text.
+                OrderPanelLayout.entries.forEach { layout ->
+                    val selected = layout == tradingPreferences.orderPanelLayout
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.small)
+                        .selectable(selected, enabled = !savingTradingPreferences, role = Role.RadioButton) {
+                            preferenceScope.launch {
+                                if (runtime.tradingPreferences.setOrderPanelLayout(layout)) chooseOrderLayout = false
+                            }
+                        }.testTag("settings-order-layout-${layout.name}").padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RadioButton(selected, onClick = null, enabled = !savingTradingPreferences)
+                        Column(Modifier.weight(1f)) {
+                            Text(layout.label, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface)
+                            Text(layout.summary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                tradingPreferencesError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = { TextButton({ chooseOrderLayout = false }, Modifier.testTag("settings-order-layout-close"), enabled = !savingTradingPreferences) { Text("关闭") } },
+    )
 }
 
-/** What the keyboard trading switch does, with the chosen keys and whether a key press still asks before it trades. */
-internal fun keyboardTradingSummary(preferences: TradingPreferences): String {
+/**
+ * What skipping the confirmations does. It applies to every account, but a trading key only trades where the selected
+ * sub-account does not size its orders from a stop: under such [brackets] a key opens the order panel, confirmations or not.
+ */
+internal fun skipConfirmationSummary(brackets: AccountBrackets = AccountBrackets()): String =
+    "所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；" +
+        if (brackets.sizingRisk != null) "当前子账户按风险计算手数，开启键盘下单时按键只打开下单栏，不会直接下单。" else "开启键盘下单时按键即成交。"
+
+/**
+ * What the keyboard trading switch does on the selected sub-account, with the chosen keys and whether a key press
+ * still asks before it trades. Under [brackets] that size orders from a stop a key trades nothing: it opens the order
+ * panel on its side, where the stop is filled in. Cash amounts add their protection to what a key sends.
+ */
+internal fun keyboardTradingSummary(preferences: TradingPreferences, brackets: AccountBrackets = AccountBrackets()): String {
     val keys = preferences.tradingKeys
-    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，不带止损止盈。" +
+    if (brackets.sizingRisk != null) return "点一下图表后，按 ${keys.buy} 或 ${keys.sell} 打开下单栏并选好买入或卖出，不会直接下单：" +
+        "当前子账户按风险计算手数，要先填写止损价。在输入框里打字不会触发。"
+    return "点一下图表后，按 ${keys.buy} 市价买入、按 ${keys.sell} 市价卖出；在输入框里打字不会下单。数量取下单面板，" +
+        (if (brackets.enabled) "开仓单按当前子账户的金额设置自动附加止损止盈。" else "不带止损止盈。") +
         if (preferences.skipConfirmation) "已开启“跳过交易确认”，按键即成交。" else "按键后先弹确认框，Enter 确认，Esc 取消。"
 }
 

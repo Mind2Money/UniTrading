@@ -1,9 +1,11 @@
 package com.unitrading.app
 
 import com.unitrading.broker.Timeframe
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -52,11 +54,16 @@ data class ChartPreferences(
                 chart.symbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }
         }) { "图表窗口设置无效" }
     }
-    val favorites: List<Timeframe> get() = favoriteLengths.map(Timeframe::ofSeconds)
+    /** The starred intervals, shortest first. Nothing else orders them: the file keeps the order they were starred in. */
+    val favorites: List<Timeframe> get() = favoriteLengths.sorted().map(Timeframe::ofSeconds)
     val custom: List<Timeframe> get() = customLengths.map(Timeframe::ofSeconds)
     val lastTimeframe: Timeframe? get() = lastLength?.let(Timeframe::ofSeconds)
 
     fun withFavorites(value: List<Timeframe>) = copy(favoriteSeconds = value.map { it.seconds })
+    /** Stars [value], or takes its star away; the other starred intervals keep their saved order. */
+    fun withFavoriteToggled(value: Timeframe) = favoriteLengths.let { saved ->
+        copy(favoriteSeconds = if (value.seconds in saved) saved - value.seconds else saved + value.seconds)
+    }
     fun withCustom(value: List<Timeframe>) = copy(customSeconds = value.map { it.seconds })
     fun withLastTimeframe(value: Timeframe) = copy(lastTimeframeSeconds = value.seconds)
 
@@ -68,6 +75,7 @@ data class ChartPreferences(
 }
 
 class ChartPreferencesController(private val store: SnapshotStore) {
+    private val saveMutex = Mutex()
     val error = MutableStateFlow<String?>(null)
     val preferences = MutableStateFlow(try {
         store.read("chart-v1")?.let { Json.decodeFromString<ChartPreferences>(it).also(ChartPreferences::validate) } ?: ChartPreferences()
@@ -76,52 +84,59 @@ class ChartPreferencesController(private val store: SnapshotStore) {
         ChartPreferences()
     })
 
-    suspend fun apply(value: ChartPreferences): Boolean {
+    suspend fun apply(value: ChartPreferences): Boolean = saveMutex.withLock { persist(value) }
+
+    private suspend fun persist(value: ChartPreferences): Boolean {
         value.validate()
-        return try {
-            withContext(Dispatchers.Default) { store.write("chart-v1", Json.encodeToString(value)) }
-            preferences.value = value
-            error.value = null
-            true
-        } catch (cancel: CancellationException) { throw cancel }
-        catch (_: Exception) { error.value = "图表设置保存失败，请检查存储后重试。"; false }
+        return withContext(NonCancellable) {
+            try {
+                withContext(Dispatchers.Default) { store.write("chart-v1", Json.encodeToString(value)) }
+                preferences.value = value
+                error.value = null
+                true
+            } catch (_: Exception) {
+                error.value = "图表设置保存失败，请检查存储后重试。"
+                false
+            }
+        }
     }
 
-    suspend fun toggleFavorite(timeframe: Timeframe): Boolean {
+    suspend fun toggleFavorite(timeframe: Timeframe): Boolean = saveMutex.withLock {
+        val next = preferences.value.withFavoriteToggled(timeframe)
+        if (next.favorites.size > ChartPreferences.MAX_FAVORITES) { error.value = "收藏周期最多 ${ChartPreferences.MAX_FAVORITES} 个"; return@withLock false }
+        persist(next)
+    }
+
+    suspend fun addCustom(timeframe: Timeframe): Boolean = saveMutex.withLock {
         val current = preferences.value
-        val next = if (timeframe in current.favorites) current.favorites - timeframe else current.favorites + timeframe
-        if (next.size > ChartPreferences.MAX_FAVORITES) { error.value = "收藏周期最多 ${ChartPreferences.MAX_FAVORITES} 个"; return false }
-        return apply(current.withFavorites(next))
+        if (timeframe in current.custom || timeframe in Timeframe.presets) return@withLock true
+        persist(current.withCustom(current.custom + timeframe))
     }
 
-    suspend fun addCustom(timeframe: Timeframe): Boolean {
-        val current = preferences.value
-        if (timeframe in current.custom || timeframe in Timeframe.presets) return true
-        return apply(current.withCustom(current.custom + timeframe))
+    suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
+        preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
     }
 
-    suspend fun setLegendCollapsed(collapsed: Boolean): Boolean =
-        preferences.value.legendCollapsed == collapsed || apply(preferences.value.copy(legendCollapsed = collapsed))
-
-    suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean =
-        preferences.value.indicatorPaneFractions == fractions || apply(preferences.value.copy(indicatorPaneFractions = fractions))
+    suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean = saveMutex.withLock {
+        preferences.value.indicatorPaneFractions == fractions || persist(preferences.value.copy(indicatorPaneFractions = fractions))
+    }
 
     /**
      * Saves the chart windows open beside the main chart: each one's id, the symbol it shows at [broker] and its interval.
      * The symbols a chart showed at other brokers are kept.
      */
-    suspend fun setExtraCharts(broker: String, charts: List<Triple<String, String, Timeframe>>): Boolean {
+    suspend fun setExtraCharts(broker: String, charts: List<Triple<String, String, Timeframe>>): Boolean = saveMutex.withLock {
         val current = preferences.value
         val known = current.extraCharts.associateBy { it.id }
         val next = charts.map { (id, symbol, timeframe) -> SavedChart(id, known[id]?.symbols.orEmpty() + (broker to symbol), timeframe.seconds) }
-        return next == current.extraCharts || apply(current.copy(extraCharts = next))
+        next == current.extraCharts || persist(current.copy(extraCharts = next))
     }
 
     /** Saves the shown chart; a null [symbol] keeps the saved one, e.g. while it is still being restored. */
-    suspend fun setLastChart(broker: String, symbol: String?, timeframe: Timeframe): Boolean {
+    suspend fun setLastChart(broker: String, symbol: String?, timeframe: Timeframe): Boolean = saveMutex.withLock {
         val current = preferences.value
         val symbols = symbol?.let { current.lastSymbols + (broker to it) } ?: current.lastSymbols
-        if (symbols == current.lastSymbols && current.lastTimeframe == timeframe) return true
-        return apply(current.copy(lastSymbols = symbols).withLastTimeframe(timeframe))
+        if (symbols == current.lastSymbols && current.lastTimeframe == timeframe) return@withLock true
+        persist(current.copy(lastSymbols = symbols).withLastTimeframe(timeframe))
     }
 }

@@ -61,6 +61,9 @@ class RithmicBrokerTest {
         assertEquals(25_000_000_000, account.balanceMicros)
         assertTrue(account.balanceKnown)
         assertEquals(12_500_000, account.dailyPnl?.totalMicros)
+        // Day P&L comes without the trading day it belongs to, so the P&L lock is not offered here.
+        assertNull(account.dailyPnl?.tradingDay)
+        assertFalse(broker.capabilities.tradingDayPnl)
         assertEquals("H1", account.executions.single().id)
         assertEquals(Side.BUY, account.executions.single().side)
     }
@@ -295,6 +298,9 @@ class RithmicBrokerTest {
         assertFalse(session.state.value.positions.single().protectionEditable)
         val orders = session.state.value.orders.associateBy { it.id }
         assertTrue(listOf("S1", "S2", "T1").all { orders.getValue(it).standaloneEditable }, "the lone target is locked with the position too")
+        // The legs of one bracket name its entry's basket, and the server cancels the others when one fills: S1 and T1 are one
+        // group, S2 the only leg left of its own.
+        assertEquals(mapOf("S1" to "E1", "S2" to "E9", "T1" to "E1"), orders.mapValues { it.value.ocoGroup })
         assertFalse(broker.capabilities.modifyOrderQuantity)
         assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("S2", 550000, 100).errors, "a sell stop at the bid would trigger at once")
         assertFalse(session.previewOrderChange("S2", 548500, 200).valid, "the size stays")
@@ -441,6 +447,7 @@ class RithmicBrokerTest {
         val session = broker.openSession("ACC1")
         val order = session.state.value.orders.single()
         assertEquals(548500, order.request.stopLoss); assertEquals(550000, order.request.takeProfit); assertTrue(order.protectionEditable)
+        assertNull(order.ocoGroup, "an entry is no leg")
         assertTrue(session.previewOrderProtection("E2", 548000, 550000).valid)
         assertFalse(session.modifyOrderProtection("req-14", "E2", order.version, 548000, 550500).accepted)
         val result = session.modifyOrderProtection("req-15", "E2", order.version, 548000, 550000)
@@ -454,6 +461,27 @@ class RithmicBrokerTest {
         val target = session.modifyOrderProtection("req-16", "E2", session.state.value.orders.single().version, 548000, 550025)
         assertTrue(target.accepted, target.message)
         assertEquals(41, server.requests(Rt.REQUEST_UPDATE_TARGET_LEVEL).single().int(Rf.TARGET_TICKS))
+    }
+
+    /** The app's risk check moves a pending entry's stop and target with it on this broker, which is what the broker does. */
+    @Test fun aRepricedEntryTakesItsBracketAlongByItsTicks() = runTest {
+        val server = FakeRithmicServer().apply {
+            openOrders += limitEntry("E2", RithmicEnums.BUY, 1, 5490.0)
+            bracketStops["E2"] = 20L to 1L
+            bracketTargets["E2"] = 40L to 1L
+        }
+        val broker = ready(server)
+        assertTrue(broker.capabilities.bracketsFollowEntry)
+        val session = broker.openSession("ACC1")
+        val modify = session.modifyOrder("req-9", "E2", session.state.value.orders.single().version, 549100)
+        assertTrue(modify.accepted, modify.message)
+        assertEquals(5491.0, server.requests(Rt.REQUEST_MODIFY_ORDER).single().double(Rf.PRICE))
+        server.notifyOrder("E2", "modified") { double(Rf.PRICE, 5491.0) }
+        runCurrent()
+        val moved = session.state.value.orders.single().request
+        assertEquals(549100, moved.entryPrice)
+        assertEquals(548600, moved.stopLoss, "still 20 ticks under it")
+        assertEquals(550100, moved.takeProfit, "still 40 ticks over it")
     }
 
     /** Rithmic Test answers the front-month request with "no data"; the nearest unexpired contract found by product code stands in. */

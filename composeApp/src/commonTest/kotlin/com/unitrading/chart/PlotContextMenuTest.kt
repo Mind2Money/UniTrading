@@ -42,4 +42,14 @@ class PlotContextMenuTest {
         val lots = Instrument("EURUSD", "Euro", "Forex", 5, tickValueMicrosPerLot = 1_000_000)
         assertEquals("卖出限价 0.10 手 @ 1.08500", plotOrderLabel(lots, PlotOrder(Side.SELL, OrderKind.LIMIT), 10, 108_500))
     }
+
+    @Test fun theLabelSaysWhatTheAccountsBracketsDoToTheOrder() {
+        val futures = Instrument("TESTZ6", "Test", "Test", 2, 25, 1_250_000, quantityUnit = "张", quantityDecimals = 0)
+        val buy = PlotOrder(Side.BUY, OrderKind.LIMIT)
+        // With confirmations skipped this label is all that is shown before the order goes out with its protection.
+        assertEquals("买入限价 2 张 @ 5500.00 · 开仓自动附加 SL/TP", plotOrderLabel(futures, buy, 200, 550_000, attached = "SL/TP"))
+        assertEquals("买入限价 2 张 @ 5500.00 · 开仓自动附加 TP", plotOrderLabel(futures, buy, 200, 550_000, attached = "TP"))
+        // An account that sizes from a stop sends nothing from the menu: the item opens the order panel, where the stop sets the quantity.
+        assertEquals("买入限价 @ 5500.00 · 打开下单栏填写 SL", plotOrderLabel(futures, buy, 200, 550_000, sizing = true))
+    }
 }

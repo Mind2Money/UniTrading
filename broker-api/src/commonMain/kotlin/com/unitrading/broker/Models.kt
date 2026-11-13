@@ -140,6 +140,16 @@ data class BrokerCapabilities(
      * [addProtection].
      */
     val ocoProtection: Boolean = false,
+    /**
+     * The broker reports an account's day P&L together with its own trading day ([DailyPnl.tradingDay]). The P&L lock
+     * needs both: without the trading day it could neither trigger nor tell when the locked day has ended.
+     */
+    val tradingDayPnl: Boolean = false,
+    /**
+     * The broker keeps a pending entry's stop loss and take profit at the same distance from it when its price changes:
+     * moving the entry moves them too. Elsewhere they stay at the prices they had.
+     */
+    val bracketsFollowEntry: Boolean = false,
 ) {
     /** Whether an open position can take a stop loss or take profit it does not have yet. */
     val addPositionProtection: Boolean get() = addProtection || ocoProtection
@@ -215,7 +225,11 @@ data class PendingOrder(
     val editable: Boolean = true,
     val note: String? = null,
     val filledLotsHundredths: Long = 0,
-    /** Separate bracket orders holding an entry's request.stopLoss / takeProfit, where the broker keeps them apart. */
+    /**
+     * Separate bracket orders holding an entry's request.stopLoss / takeProfit, where the broker keeps them apart. While
+     * the entry has not filled, the orders they name wait for it: they cannot fill before it does, and then only take
+     * back what it added, so the app leaves them out of the account's exposure until then.
+     */
     val stopLossOrderId: String? = null,
     val takeProfitOrderId: String? = null,
     /** Whether an entry's stop loss and take profit can be moved before it fills. */
@@ -226,6 +240,12 @@ data class PendingOrder(
      * could not pair, or whose pairing keeps its position's protection locked.
      */
     val standaloneEditable: Boolean = false,
+    /**
+     * Orders that share it cancel each other once one fills (a bracket's stop and target), so at most one of them fills;
+     * null when the broker does not say. Where a bracket has several targets, a filled one takes its lots off the stop,
+     * so of one group no more fills than the larger of its stops' and its targets' lots.
+     */
+    val ocoGroup: String? = null,
 ) {
     val isProtection: Boolean get() = role == OrderRole.STOP_LOSS || role == OrderRole.TAKE_PROFIT
 }

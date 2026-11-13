@@ -34,7 +34,8 @@ class TradovateBroker(
         "Tradovate ${credentials.environment.wire.replaceFirstChar(Char::uppercaseChar)}", "服务器行情与净额期货账户", credentials.environment == TradovateEnvironment.DEMO,
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, ocoProtection = true)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, ocoProtection = true,
+        tradingDayPnl = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -63,6 +64,7 @@ class TradovateBroker(
     private var lastRequestMs: Long? = null
     private data class FinancialSnapshot(val values: JsonObject, val dailyPnl: DailyPnl?)
     private val financials = mutableMapOf<Long, FinancialSnapshot>()
+    private val balanceSlots = Semaphore(4)
     private var financialRevision = 0L
     private val fillFees = mutableMapOf<Long, Long?>()
     private var historyDetailsJob: Job? = null
@@ -725,22 +727,30 @@ class TradovateBroker(
         lock.withLock { rebuild() }
     }
 
-    private suspend fun refreshBalances() {
-        val slots = Semaphore(4)
-        coroutineScope { accounts.map { account -> launch { slots.withPermit {
-            val id = account.id.toLongOrNull() ?: return@withPermit
-            try {
-                val revision = lock.withLock { financialRevision }
-                val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", id) }).jsonObject
-                lock.withLock {
-                    if (revision == financialRevision) {
-                        financials[id] = FinancialSnapshot(snapshot, mapDailyPnl(snapshot, latestUsdCashBalance(id), now()))
-                        rebuild()
-                    }
+    private suspend fun refreshBalance(accountId: Long) = balanceSlots.withPermit {
+        try {
+            val revision = lock.withLock {
+                if (stopped || accountId !in authorizedAccounts) return@withPermit
+                financialRevision
+            }
+            val snapshot = rest("POST", "cashBalance/getcashbalancesnapshot", buildJsonObject { put("accountId", accountId) }).jsonObject
+            lock.withLock {
+                if (!stopped && revision == financialRevision && accountId in authorizedAccounts) {
+                    financials[accountId] = FinancialSnapshot(snapshot, mapDailyPnl(snapshot, latestUsdCashBalance(accountId), now()))
+                    rebuild()
                 }
-            } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
-        } } }.joinAll() }
+            }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Missing values stay unknown instead of becoming zero. */ }
+    }
+
+    private suspend fun refreshBalances() = coroutineScope {
+        accounts.mapNotNull { account -> account.id.toLongOrNull()?.let { id -> launch { refreshBalance(id) } } }.joinAll()
+    }
+
+    override suspend fun refreshDailyPnl(accountId: String) {
+        if (!market.value.connected || !market.value.tradingReady) return
+        accountId.toLongOrNull()?.let { refreshBalance(it) }
     }
 
     /** Caller holds lock; one worker coalesces entity updates and preserves known fees for unchanged fills. */
@@ -1404,7 +1414,8 @@ class TradovateBroker(
                     role = relation.role, positionId = if (protection != null && id in protection.confirmed) "$aid:$contract" else null, editable = editable, note = note,
                     filledLotsHundredths = checkedMultiply(classifier.filledQuantity(id), 100),
                     stopLossOrderId = stop?.toString(), takeProfitOrderId = target?.toString(),
-                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id), standaloneEditable = standalone)
+                    protectionEditable = relation.role == OrderRole.ENTRY && classifier.pendingBracketsEditable(id), standaloneEditable = standalone,
+                    ocoGroup = classifier.ocoGroup(id))
             }
             val fills = book.list("fill").filter { f -> f.bool("active") != false && orders.any { it.long("id") == f.long("orderId") } }.mapNotNull { f ->
                 val spec = contractSpecs[f.long("contractId")] ?: return@mapNotNull null

@@ -34,7 +34,7 @@ TradingScreen(runtime)
 | 接口 | 约定 |
 | --- | --- |
 | `descriptor` | 稳定 ID、名称、说明与模拟标识 |
-| `capabilities` | 支持的订单类型、保护价修改、挂单改价、对冲模式 |
+| `capabilities` | 支持的订单类型、保护价修改、挂单改价、对冲模式；`tradingDayPnl` 表示账户快照的当日盈亏（`DailyPnl`）带券商交易日，默认 false，只有它为 true 时应用才提供子账户的交易锁定，见[子账户风控](account-risk-lock.md) |
 | `instruments` | 本交易商品种与完整合约规格 |
 | `accounts` | 该插件所提供的账户，不跨交易商合并 |
 | `catalog: StateFlow<BrokerCatalog>` | 异步发布当前账户与品种目录；允许空列表，不生成本地替代数据 |
@@ -42,6 +42,7 @@ TradingScreen(runtime)
 | `market: StateFlow<MarketSnapshot>` | 报价、模拟/服务器时间、连接状态与递增 revision |
 | `history(symbol, timeframe)` | 时间升序 OHLC；各周期来自同源价格，不能重新随机生成 |
 | `preloadHistory(series)` | 按优先级给出要在后台读全并缓存的序列，每次调用替换上一份列表；不改变当前图表，不发交易指令。历史在本地生成的插件可为空实现，见 [K 线缓存](candle-cache.md#后台预读) |
+| `refreshDailyPnl(accountId)` | 重新获取一个账户的当日盈亏快照，默认空实现。设了交易锁定的子账户约每 20 秒调用一次（快照不到 20 秒时跳过，最多等 12 秒），未选中的子账户也会调用；Tradovate 用 `cashBalance/getcashbalancesnapshot`，与交易指令共用请求节流 |
 | `openSession(accountId)` | 返回独立会话；未知账户应拒绝 |
 | `state: StateFlow<AccountSnapshot>` | 余额、净值、保证金、仓位、挂单、已平仓历史、活动日志 |
 | `preview(request)` | 纯估算，不下单、不占用资金；返回错误与当前估值 |
@@ -50,6 +51,11 @@ TradingScreen(runtime)
 | `modifyProtection` | 包含仓位版本；本地 Demo 接受 `null` 移除保护。Tradovate 仅改一条已有保护价，拒绝增加/移除；接口当前没有单独表达这些细粒度能力 |
 | `previewOrderModification(orderId, entryPrice)` | 估算已有挂单的新入场价；不占用资金，不新增订单，满挂单容量时也允许修改原单 |
 | `modifyOrder(requestId, orderId, expectedVersion, entryPrice)` | 修改 Limit/Stop 入场价，保留类型/数量/SL/TP；Demo 为本地原子操作，远程需等待服务器回执，版本仅做客户端陈旧编辑检查 |
+
+挂单（`PendingOrder`）的两项字段影响[子账户风控](account-risk-lock.md)怎样计算持仓总量和减仓单：
+
+- `ocoGroup`：同属一组括号单的止损腿和止盈腿给同一个值，表示其中一条成交后券商撤掉其余（多目标括号把止损减量）；默认 null，表示券商没有说明。应用一组只按止损腿合计和止盈腿合计中较大的一个计，没有组的单按全部数量计。只有券商确实这样撤单时才能填，填错会少算可能反手的数量。Tradovate 填在 OCO 关联的两条腿和单层 ATM 的两条腿上，Rithmic 填同一入场单的子单（值为入场单的 basket id），本地模拟不填（止损止盈在持仓上）。
+- 入场单的 `stopLossOrderId` / `takeProfitOrderId`：指向挂在它上面的止损单和止盈单。入场单还没有任何成交时，应用不把这两张单计入持仓总量：它们要等入场成交才生效，之后也只平掉入场加上的仓位。所以只能填入场成交前不会成交的括号单。目前只有 Tradovate 填写（OSO 括号的子单，入场成交前为 Suspended）；Rithmic 不填，未成交入场单的括号按跳数档位记在入场单上，没有单独的单号。
 
 止损止盈的价格规则在 [ProtectionPrices.kt](../broker-api/src/commonMain/kotlin/com/unitrading/broker/ProtectionPrices.kt)，插件直接调用，不要各写一份。`entryProtectionError` 用于未成交订单：按订单方向与入场价比较，市价单要越过整个买卖价差。`positionProtectionError` 用于已有持仓：只校验改动的那条线，只和当前可平仓价比较，不看入场价，这样推保本和把止损推过入场价都不受影响。
 

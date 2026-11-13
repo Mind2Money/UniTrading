@@ -8,7 +8,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
 
-internal data class QuantityCapacityState(val maximum: Long? = null, val message: String? = null, val loading: Boolean = false)
+/**
+ * What bounds the quantity of the order being drafted. [maximum] is the server's limit with its [message], null while
+ * it is unknown. The other two belong to an account that sizes its orders from a loss amount, and reach every order
+ * form with the limit: [reducible] is set while the draft works against the position held, which makes it a reduction
+ * whose quantity is typed by hand, and is the lots it may take off; [sizedUnder] names the ceiling that cut the sized
+ * quantity, when one did.
+ */
+internal data class QuantityCapacityState(
+    val maximum: Long? = null, val message: String? = null, val loading: Boolean = false,
+    val reducible: Long? = null, val sizedUnder: String? = null,
+)
 
 /**
  * Cache then network: the last limit the server gave for this account, contract and side shows at once, and a check runs

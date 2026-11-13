@@ -3,6 +3,9 @@ package com.unitrading.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
@@ -17,6 +20,7 @@ import kotlin.time.Clock
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class AccountAnalyticsUiTest {
@@ -36,6 +40,21 @@ class AccountAnalyticsUiTest {
         onNodeWithTag("account-overview").assertIsDisplayed()
         onNodeWithTag("account-tab-2").performClick()
         onNodeWithTag("account-analytics").assertIsDisplayed()
+        onNodeWithTag("analytics-coverage").assertTextContains("已加载平仓记录", substring = true)
+    }
+    /** The cache holds what this device happened to synchronize, so the header names its first day and its limits, not a span of days. */
+    @Test fun headerSaysWhatTheFiguresCoverAndFromWhichDayTheCacheStarts() = runDesktopComposeUiTest(width = 400, height = 800) {
+        val since = LocalDateTime(2026, 10, 20, 23, 30).toInstant(TimeZone.of("America/Chicago")).toEpochMilliseconds()
+        var cachedSince by mutableStateOf<Long?>(since)
+        setContent { TradingTheme { AccountAnalyticsPage(AccountInfo("a", "Demo 50K"), emptyList(), Modifier.requiredSize(400.dp, 800.dp), cachedSinceMs = cachedSince) } }
+        onNodeWithTag("analytics-coverage").assertTextEquals("Demo 50K · 券商已同步记录 + 本机缓存（自 2026-10-20 起，仅含本机运行并选中该子账户时同步到的记录） · USD")
+        onNodeWithText("30 天", substring = true).assertDoesNotExist()
+        capture("account-analytics-cached-header")
+        // The day is the one of the zone the page groups trades by.
+        onNodeWithText("北京时间").performClick()
+        onNodeWithTag("analytics-coverage").assertTextContains("自 2026-10-21 起", substring = true)
+        runOnIdle { cachedSince = null }
+        onNodeWithTag("analytics-coverage").assertTextEquals("Demo 50K · 已加载平仓记录 · USD")
     }
     @Test fun phoneCalendarShowsActualDailyResultsAndNavigatesMonths() = runDesktopComposeUiTest(width = 400, height = 800) {
         val today = Clock.System.now().toLocalDateTime(TimeZone.of("America/Chicago")).date
@@ -73,5 +92,9 @@ class AccountAnalyticsUiTest {
         onNodeWithTag("interval-menu").performScrollTo().performClick()
         onNodeWithTag("interval-option-30s").performScrollTo().performClick()
         onNodeWithTag("interval-inline-30s").performScrollTo().assertTextContains("30s")
+        // The starred intervals stand by length although they were saved as 1m, 5m, 15s; the one shown without a star comes after them.
+        fun x(tag: String) = onNodeWithTag(tag).fetchSemanticsNode().positionInRoot.x
+        assertTrue(x("interval-inline-15s") < x("interval-inline-1") && x("interval-inline-1") < x("interval-inline-5"))
+        assertTrue(x("interval-inline-5") < x("interval-inline-30s"), "an interval without a star does not push the starred ones aside")
     }
 }

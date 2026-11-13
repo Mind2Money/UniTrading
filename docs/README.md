@@ -18,13 +18,16 @@
 - [插件接入](plugin-guide.md)：接口职责、数值单位、空注册表及动态注册。
 - [Material 3 界面规范](ui-material3.md)：配色角色、字阶、图标、共用组件、导航布局和审计结论；改界面前先读。
 - [主题、导航与图表](theme-navigation-chart.md)：Material 3 导航、自定义颜色、两轴缩放与平移。
-- [手机布局](mobile-layout.md)：参考 MT5 的图表优先布局，单行图表工具条，下单收进可折叠面板，资金行移至交易/账户页。
+- [手机布局](mobile-layout.md)：参考 MT5 的图表优先布局，单行图表工具条，资金和回撤在账户页总览，以及各次调整的验证记录。
+- [手机下单界面](mobile-order-sheet.md)：上滑面板、停靠下单栏和独立弹窗三种下单界面的状态、尺寸、收起与返回规则和验证范围。
 - [桌面布局](desktop-layout.md)：拖动分隔线调整各面板尺寸、本机记忆、窗口边界及重置操作。
 - [图表指标](indicators.md)：MA/EXPMA/BOLL 叠加线与 RSI/MACD/KDJ/ATR 副图，多指标叠加、参数与颜色自定义、本机保存。
 - [图表画图工具](chart-drawing.md)：TradingView 式左侧工具栏，趋势线、斐波那契、江恩、形态、测量、形状与注释，按品种保存。
 - [K 线缓存](candle-cache.md)：本地持久化、重启恢复、自选品种后台预读、按缺失区间分页补取与实时更新合并。
 - [实时盈亏通知](live-pnl-notifications.md)：Android Live Update / 常驻通知与 iOS 灵动岛 Live Activity 显示当前账户浮动盈亏，刷新规则、权限与边界。
 - [今日盈亏](daily-pnl.md)：直接使用券商当日总盈亏快照，标明交易日、更新时间和缺失数据。
+- [子账户风控](account-risk-lock.md)：交易锁定（按券商当日盈亏，可自动平仓、可冻结）、手数与品种限制、订单风控、平仓此子账户 / 全部子账户，以及只在本机生效的边界。
+- [账户分析](account-analytics.md)：账户页的总览、交易、分析三页，统计口径，本机平仓缓存及清除方式，账户别名。
 - [验证记录索引](verification.md)：当前摘要及首版本地 Demo 的历史证据。
 
 ## 历史设计与版本记录

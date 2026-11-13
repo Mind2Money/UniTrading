@@ -50,8 +50,10 @@ class RithmicBroker(
             RithmicEnvironment.PAPER -> BrokerEnvironment.RITHMIC_PAPER
             RithmicEnvironment.LIVE -> BrokerEnvironment.RITHMIC_LIVE
         })
+    // A pending entry's bracket is a distance in ticks, which a new entry price takes along.
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
-        addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true)
+        addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true,
+        bracketsFollowEntry = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments
@@ -1232,9 +1234,10 @@ class RithmicBroker(
                 }
                 val request = OrderRequest(order.symbol, side, kind, checkedMultiply(order.quantity, 100), entryPrice, stopLoss, takeProfit)
                 val prior = old?.orders?.firstOrNull { it.id == order.basketId }
+                // The legs of one bracket name its entry's basket: when one of them fills, the server cancels or cuts the others.
                 val candidate = PendingOrder(order.basketId, request, order.timeMs, 1, role, positionId, editable, note,
                     checkedMultiply(order.filled, 100), protectionEditable = role == OrderRole.ENTRY && editable && entryPrice != null && kind != OrderKind.MARKET,
-                    standaloneEditable = standalone)
+                    standaloneEditable = standalone, ocoGroup = order.originalBasketId.takeIf { role == OrderRole.STOP_LOSS || role == OrderRole.TAKE_PROFIT })
                 candidate.copy(version = if (prior?.copy(version = 1) == candidate) prior.version else (prior?.version ?: 0) + 1)
             }
             val executions = fills.values.filter { it.accountId == aid }.mapNotNull { fill ->

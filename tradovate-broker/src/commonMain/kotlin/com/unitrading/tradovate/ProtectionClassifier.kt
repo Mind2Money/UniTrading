@@ -52,6 +52,15 @@ internal class ProtectionClassifier(private val book: EntityBook, private val ac
     }
 
     fun relation(orderId: Long): OrderRelation = relations[orderId] ?: unresolved("订单不在当前有效账户范围")
+
+    /**
+     * The bracket a stop or target belongs to, where one of its legs filling cancels the other: an OCO pair, or the one
+     * bracket of an ATM strategy, which cancels the other leg itself. Two children of one parent are not linked by that
+     * alone, and an unresolved order belongs to none.
+     */
+    fun ocoGroup(orderId: Long): String? = relation(orderId).let { relation ->
+        relation.group?.takeIf { relation.role in setOf(OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT) && (it.startsWith("oco:") || it.startsWith("atm:")) }
+    }
     fun filledQuantity(orderId: Long): Long = filled[orderId] ?: 0
     fun remainingQuantity(orderId: Long): Long? {
         val total = book.orderVersion(orderId)?.long("orderQty") ?: return null

@@ -76,10 +76,11 @@ Rithmic 要求应用在接入生产系统（Rithmic 01、Paper Trading 及各 FC
 - 任一 plant 断开后自动重连最多三次，重新订阅行情与 K 线，不重放交易指令；服务器强制登出（并发会话超限）同样触发。
 - 日线只接受服务器 K 线，不用逐笔推进；分钟线回放一次最多 10,000 根，超出时只返回窗口内最早的 10,000 根，应用请求约四倍图表宽度的时间窗，不会超出。
 - 自选品种的当前周期和收藏周期在后台回放并缓存，打开图表时只回放缓存末根之后的部分，见 [K 线缓存](candle-cache.md#后台预读)。这条路径只在离线假服务器上验证过。
+- [子账户风控](account-risk-lock.md)的交易锁定在 Rithmic 登录上不可用：Rithmic 上报的当日盈亏不带交易日（`tradingDayPnl` 为 false），设置里这一行不能设置；旧文件留下的规则不生效，打开后只能停用。手数与品种限制和订单风控可以用；订单风控的金额止损止盈用在市价单上时，实际价位按上面第三条由成交价决定，下单确认框会显示 Rithmic 的这条提示。
 
 ## 账户风险度
 
-桌面底部资金栏和手机交易页显示当前账户的“可回撤额度”和“危险度”，算法与 BatchTradovate 相同。
+桌面底部资金栏和账户页“总览”的“回撤与风险”卡片显示当前账户的“可回撤额度”和“危险度”，算法与 BatchTradovate 相同。
 
 - **爆号线**是 Rithmic 上报的 `auto_liq_threshold_current_value`：登录时来自账户列表（303），之后由风控推送更新（订阅 3508，推送 356）。它对应 R | Trader 的 Auto Liquidate Threshold Value。系统不提供风控推送时登录不受影响，爆号线停在登录时的值。
 - `auto_liquidate_threshold` 的含义随规则变化：Minimum Account Balance 下是余额线本身，Trailing 和 End of Day Drawdown 类规则下是回撤距离。

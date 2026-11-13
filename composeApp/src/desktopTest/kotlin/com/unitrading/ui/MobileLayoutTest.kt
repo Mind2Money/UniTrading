@@ -14,10 +14,12 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.ChartPreferencesController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.geometry.Offset
 import com.unitrading.broker.OrderKind
+import com.unitrading.broker.OrderRequest
 import com.unitrading.broker.Side
 import com.unitrading.broker.Timeframe
 import com.unitrading.chart.IndicatorConfig
@@ -89,7 +91,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("chart-readout").assertExists()
         compose.onNodeWithTag("panel-positions").performClick()
         compose.onNodeWithTag("nav-4").assertIsSelected()
-        compose.onNodeWithText("余额 USD").assertExists()
+        compose.onNodeWithText("余额 USD").assertDoesNotExist()
         compose.onNodeWithTag("trade-terminal").assertExists()
     }
 
@@ -236,6 +238,38 @@ class MobileLayoutTest {
         assertNotNull(sent.stopLoss)
         compose.onNodeWithTag("minimized-order").assertDoesNotExist()
         compose.onNodeWithTag("trade-bar").assertExists()
+    }
+
+    @Test fun theSheetsCompactArrowSubmitsTheDraftAsItIsWhenPressed() = phoneTest { compactArrowSubmitsTheDraftAsItIs(null) }
+
+    @Test fun theDocksCompactArrowSubmitsTheDraftAsItIsWhenPressed() = phoneTest { compactArrowSubmitsTheDraftAsItIs(OrderPanelLayout.DOCKED) }
+
+    /**
+     * The minimized bar's arrow sends the draft as it stands when pressed: a short whose stop and target were switched on
+     * in the bar itself after it was minimized. [layout] is the order page, or null for the one a phone opens by default.
+     */
+    private fun compactArrowSubmitsTheDraftAsItIs(layout: OrderPanelLayout?) {
+        // An empty account that records what it is sent: only the order placed here can carry the prices asserted below.
+        val broker = OfflineOrderBroker()
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker))
+        if (layout != null) runBlocking { assertTrue(offline.tradingPreferences.setOrderPanelLayout(layout)) }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
+        compose.onNodeWithTag("open-order").performClick()
+        if (layout == null) compose.onNodeWithTag("order-sheet-handle", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("order-side-SELL").performClick()
+        compose.onNodeWithTag("minimize-order").performClick()
+        compose.onNodeWithTag("compact-sl").performClick().assertIsOn()
+        compose.onNodeWithTag("compact-tp").performClick().assertIsOn()
+        compose.onNodeWithTag("compact-submit-order").performClick()
+        // The reference protection of a short at an ask of 5500.25: 80 ticks above it and 160 below.
+        compose.onNodeWithText("5520.25").assertExists()
+        compose.onNodeWithText("5460.25").assertExists()
+        assertTrue(broker.placed.isEmpty())
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { broker.placed.isNotEmpty() }
+        assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.MARKET, 100, stopLoss = 552_025, takeProfit = 546_025), broker.placed.single())
     }
 
     @Test fun minimizedDraftKeepsChartEditsAndCloseStartsAFreshOrder() = phoneTest {

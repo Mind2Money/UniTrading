@@ -1,11 +1,13 @@
 package com.unitrading.chart
 
 import androidx.compose.ui.input.key.Key
+import com.unitrading.app.AccountBrackets
 import com.unitrading.app.TradingKeys
 import com.unitrading.app.TradingPreferences
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Side
 import com.unitrading.ui.keyboardTradingSummary
+import com.unitrading.ui.skipConfirmationSummary
 import kotlin.test.*
 
 /** Which keys trade under each pair of trading keys, and what the interface says about them. */
@@ -29,13 +31,47 @@ class TradingKeysTest {
         assertEquals("W 市价买入 · S 市价卖出 · 数量无效 · 按键后确认", tradingKeysHint(TradingKeys.LETTERS, live = true, futures, null, instant = false))
     }
 
+    @Test fun theLegendHintFollowsTheBracketsOfTheAccount() {
+        // Cash amounts add their protection to what a key sends, and no other step shows it when confirmations are skipped.
+        assertEquals("W 市价买入 · S 市价卖出 · 2 张 · 开仓自动附加 SL/TP · 按键即成交",
+            tradingKeysHint(TradingKeys.LETTERS, live = true, futures, 200, instant = true, attached = "SL/TP"))
+        // An account that sizes its orders from a stop has none to send from a key: the key opens the order panel.
+        val sizing = tradingKeysHint(TradingKeys.ARROWS, live = true, futures, null, instant = true, sizing = true)
+        assertEquals("↑ 买入 · ↓ 卖出 · 打开下单栏填写 SL，不直接下单", sizing)
+        assertFalse("市价" in sizing || "成交" in sizing)
+        assertEquals("键盘下单：点一下图表后 ↑ / ↓ 生效", tradingKeysHint(TradingKeys.ARROWS, live = false, futures, null, instant = true, sizing = true))
+    }
+
     @Test fun theSettingsSummaryFollowsTheChosenKeysAndTheConfirmationSetting() {
         val asking = keyboardTradingSummary(TradingPreferences(keyboardTrading = true))
         assertContains(asking, "按 W 市价买入、按 S 市价卖出")
         assertContains(asking, "按键后先弹确认框")
+        assertContains(asking, "不带止损止盈")
         val instant = keyboardTradingSummary(TradingPreferences(skipConfirmation = true, keyboardTrading = true, tradingKeys = TradingKeys.ARROWS))
         assertContains(instant, "按 ↑ 市价买入、按 ↓ 市价卖出")
         assertContains(instant, "按键即成交")
         assertFalse("确认框" in instant)
+    }
+
+    @Test fun theSettingsSummaryFollowsTheBracketsOfTheSelectedAccount() {
+        val instant = TradingPreferences(skipConfirmation = true, keyboardTrading = true)
+        val cash = keyboardTradingSummary(instant, AccountBrackets(loss = 100_000_000))
+        assertContains(cash, "按 W 市价买入、按 S 市价卖出")
+        assertContains(cash, "开仓单按当前子账户的金额设置自动附加止损止盈")
+        assertFalse("不带止损止盈" in cash)
+        // Under sizing a key trades nothing, whatever the confirmation setting: the summary may not promise a fill.
+        val sizing = keyboardTradingSummary(instant, AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 500))
+        assertContains(sizing, "按 W 或 S 打开下单栏并选好买入或卖出，不会直接下单")
+        assertFalse("按键即成交" in sizing || "市价" in sizing)
+    }
+
+    @Test fun theSkipConfirmationRowSaysWhatAKeyDoesOnTheSelectedAccount() {
+        val plain = "所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；开启键盘下单时按键即成交。"
+        assertEquals(plain, skipConfirmationSummary())
+        // Cash amounts only add protection to what a key sends, which still goes out at once.
+        assertEquals(plain, skipConfirmationSummary(AccountBrackets(loss = 100_000_000)))
+        val sizing = skipConfirmationSummary(AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 500))
+        assertEquals("所有账户：下单、平仓、撤单直接提交；图表拖动改单松手生效；当前子账户按风险计算手数，开启键盘下单时按键只打开下单栏，不会直接下单。", sizing)
+        assertFalse("按键即成交" in sizing)
     }
 }

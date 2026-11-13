@@ -73,6 +73,30 @@ class SavedTradovateAccountsTest {
         assertNull(store.value)
     }
 
+    /** What a disconnect asks before it deletes a login's cached trades: only a login the next start restores counts as saved. */
+    @Test fun onlyALoginKeptInTheCredentialStoreCountsAsSaved() = runTest {
+        val store = Store()
+        val accounts = managerWithRithmic(registry(), store)
+        val credentials = rithmic()
+        accounts.signInRithmic(credentials, remember = false) {}
+        assertFalse(accounts.saved(credentials.brokerId), "a Rithmic login without remember does not come back")
+        accounts.signInRithmic(credentials, remember = true) {}
+        assertTrue(accounts.saved(credentials.brokerId))
+        accounts.signIn(session()) {}
+        assertTrue(accounts.saved(session().brokerId))
+        assertFalse(accounts.saved("offline-orders"))
+        // The next start reads them back before it connects anything.
+        val reopened = managerWithRithmic(registry(), store) { throw RithmicRemoteException("7", "bad password") }
+        reopened.restore()
+        assertTrue(reopened.saved(credentials.brokerId) && reopened.saved(session().brokerId))
+        assertTrue(reopened.forgetAll())
+        assertFalse(reopened.saved(credentials.brokerId) || reopened.saved(session().brokerId))
+        // Without a credential store nothing outlives the run.
+        val unsaved = SavedTradovateAccounts(registry(), null, { now }) { s, _, _ -> plugin(s) }
+        unsaved.signIn(session()) {}
+        assertFalse(unsaved.saved(session().brokerId))
+    }
+
     @Test fun rithmicLoginFailureIsNotSavedAndARefusedRestoreKeepsOtherLogins() = runTest {
         val store = Store()
         val accounts = managerWithRithmic(registry(), store) { throw RithmicRemoteException("7", "bad password") }

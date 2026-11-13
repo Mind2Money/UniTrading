@@ -42,6 +42,7 @@ class CurrentAccountPinchUiTest {
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) { Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(runtime) } } }
         onNodeWithTag("nav-4").performClick()
         onNodeWithTag("overview-equity-USD").assertTextEquals("1000.00")
+        onNodeWithTag("overview-realized").assertTextEquals("+100.00")
         onNodeWithTag("account-tab-2").performClick()
         onNodeWithText("+100.00").assertExists()
         onNodeWithTag("quick-account-picker").performClick()
@@ -50,9 +51,11 @@ class CurrentAccountPinchUiTest {
         onNodeWithText("+100.00").assertDoesNotExist()
         onNodeWithTag("account-tab-0").performClick()
         onNodeWithTag("overview-equity-USD").assertTextEquals("2000.00")
+        onNodeWithTag("overview-realized").assertTextEquals("-50.00")
         onNodeWithTag("quick-account-picker").performClick()
         onNodeWithTag("quick-account-${children[0].id}").performClick()
         onNodeWithTag("overview-equity-USD").assertTextEquals("1000.00")
+        onNodeWithTag("overview-realized").assertTextEquals("+100.00")
     }
 
     @Test fun twoFingerZoomConsumesTheRemainingFingerAndNeverChangesOrders() = runDesktopComposeUiTest(width = 400, height = 800) {

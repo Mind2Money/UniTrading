@@ -9,6 +9,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import com.unitrading.app.AnalyticsTradeCache
 import com.unitrading.app.LicenseController
 import com.unitrading.app.CheckOnlyUpdateTarget
 import com.unitrading.app.ReleaseUpdater
@@ -65,7 +66,11 @@ fun main(args: Array<String>) {
 private fun desktopApplication(args: Array<String>) = application {
     val localDemo = "--local-demo" in args
     val runtime = remember {
-        if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
+        if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).also {
+            // The demo keeps its state in memory, so its runtime trims nothing on disk; the trades normal runs cached
+            // still leave the data folder after 30 days.
+            AnalyticsTradeCache(DesktopSnapshotStore()).pruneInBackground()
+        }
         else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
     }
     val updateTarget = remember { if (localDemo) null else UpdateLayout.locate(System.getProperty("jpackage.app-path"))?.let { DesktopUpdateTarget(it) } }

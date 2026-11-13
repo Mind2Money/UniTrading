@@ -41,6 +41,7 @@ import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -62,8 +63,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val enabled = runtime.tradingPreferences.preferences.map { it.tradeSounds }.stateIn(this)
         TradeSoundController(player, enabled = enabled).run(runtime.registry)
     }
+    // Automatic flattens that ended unconfirmed or were cut off, each kept until it is dismissed, whichever page shows
+    // meanwhile. The controller keeps them, so a screen built again (Android recreates it for dark mode, font size or
+    // language) still shows the unread ones.
+    val unreadFailures by runtime.accountRisk.unreadFailures.collectAsState()
+    LaunchedEffect(runtime) { runtime.accountRisk.monitor(runtime.registry) }
     val theme by runtime.theme.settings.collectAsState()
     val aliases by runtime.accountAliases.aliases.collectAsState()
+    /** The notice of [failure]. One shows at a time, so they share an id, below zero where no other notice has one. */
+    fun failureNotice(failure: FlattenFailure) = TradingNotice(-1, aliases.account(failure.login, failure.account) +
+        (if (failure.interrupted) " 自动平仓被中断，结果待核对" else " 自动平仓未完成") + "，请检查券商持仓和挂单。", NoticeTone.ATTENTION, persistent = true)
     CompositionLocalProvider(LocalAccountAliases provides aliases) {
     TradingTheme(theme) {
         val colors = TradingColors
@@ -90,12 +99,28 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         if (showRithmicConnection) RithmicConnectionDialog(runtime, ::selectBroker, { showRithmicConnection = false })
         val connectRithmic: (() -> Unit)? = if (RITHMIC_LOGIN_ENABLED) ({ showRithmicConnection = true }) else null
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+        // The pages in front of the trading screen have no notices of their own: an unread failure shows over them.
+        val failureOverlay: @Composable BoxScope.() -> Unit = {
+            unreadFailures.firstOrNull()?.let { failure ->
+                FloatingNoticeCard(failureNotice(failure), "trade-notice", { runtime.accountRisk.acknowledge(failure) }, Modifier.align(Alignment.TopCenter)
+                    .safeDrawingPadding().padding(start = 12.dp, end = 12.dp, top = 56.dp).widthIn(max = 420.dp), title = "操作提示")
+            }
+        }
         if (plugin == null) {
-            LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = connectRithmic)
+            Box(Modifier.fillMaxSize()) {
+                LoginWelcome(runtime, { showConnection = true }, { showTheme = true }, onLoginRithmic = connectRithmic)
+                failureOverlay()
+            }
             return@TradingTheme
         }
+        // A saved login comes back at the next start and the broker would not return its older trades again, so they stay
+        // cached; a login that is not saved (Rithmic without "remember") does not come back by itself, so they are deleted.
         fun disconnectCurrent() {
-            registry.unregister(plugin.descriptor.id)
+            val id = plugin.descriptor.id
+            val saved = runtime.savedLogins.saved(id)
+            registry.unregister(id)
+            // Unregistered first, so the screen's collector writes nothing more for it after the deletion.
+            if (!saved) loginScope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { runtime.analyticsCache.clear(id) } }
             selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "")
         }
         val catalog by key(plugin) { plugin.catalog.collectAsState() }
@@ -123,25 +148,46 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             OutlinedButton({ showConnection = true }, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Tradovate") }
                             connectRithmic?.let { OutlinedButton(it, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Rithmic") } }
                             TextButton({ disconnectCurrent() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("断开连接") }
-                            SavedLoginControls(runtime.savedLogins) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
+                            SavedLoginControls(runtime) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
                         }
                     }
                 }
+                Box(Modifier.fillMaxSize(), content = failureOverlay)
             }
             return@TradingTheme
         }
         var chosenAccountId by remember(plugin) { mutableStateOf(runtime.savedLogins.selectedAccount(plugin.descriptor.id) ?: catalog.accounts.first().id) }
         val accountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
         val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
-        val session = remember(plugin, accountId) { plugin.openSession(accountId) }
+        val session = remember(plugin, accountId) { runtime.accountRisk.guard(plugin, plugin.openSession(accountId)) }
         DisposableEffect(plugin, session) {
             runtime.livePnl.track(plugin, session)
             onDispose { runtime.livePnl.untrack(session) }
         }
         val account by key(session) { session.state.collectAsState() }
+        // What this device cached of the account's closed trades; the local demo keeps its whole history itself.
+        val cachedTrades = if (localDemo) emptyList() else {
+            val cached by runtime.analyticsCache.rows.collectAsState()
+            // The only writer of the cache. A login that was just disconnected or forgotten is not written back.
+            LaunchedEffect(session) {
+                session.state.map { it.trades }.distinctUntilChanged().collect { trades ->
+                    if (registry.plugins.any { it === plugin }) runtime.analyticsCache.update(plugin.descriptor.id, accountId, trades)
+                }
+            }
+            cached[plugin.descriptor.id]?.get(accountId).orEmpty()
+        }
+        val analyticsTrades = remember(cachedTrades, account.trades) { mergeAnalyticsTrades(cachedTrades, account.trades) }
         val loginName = aliases.login(plugin.descriptor)
         val accountName = aliases.account(plugin.descriptor.id, session.account)
         val market by key(plugin) { plugin.market.collectAsState() }
+        val riskRules by runtime.accountRisk.rules.collectAsState()
+        val riskRule = riskRules[plugin.descriptor.id]?.get(accountId)
+        val brackets = riskRule?.brackets ?: AccountBrackets()
+        val sizeByRisk = brackets.sizingRisk != null
+        // Resetting an unreadable rule file leaves the rules as empty as they were, so the notice follows the file's own state too.
+        val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
+        val riskMessage = key(riskUnreadable) { runtime.accountRisk.restriction(plugin, session) }
+        val riskTrigger = runtime.accountRisk.lockingTrigger(plugin, session)
         val paused by runtime.paused.collectAsState()
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
@@ -199,9 +245,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val orderFlowSupported = plugin.orderFlow != null
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
+        // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
+        // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
+        var advancedOrder by remember(runtime) { mutableStateOf(runtime.tradingPreferences.preferences.value.orderMoreSettings) }
+        var advancedChanges by remember(runtime) { mutableIntStateOf(0) }
         val orderOpen = orderPanelState == MobileOrderPanelState.EDITING
         val orderActive = orderPanelState != MobileOrderPanelState.CLOSED
         var busy by remember { mutableStateOf(false) }
+        var flattenReview by remember { mutableStateOf<FlattenReview?>(null) }
+        var flattenResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
+        var flattening by remember { mutableStateOf(false) }
         /** The window the user last worked in: null for the main window, else the key of a window that holds part of the workspace. */
         var activeWindow by remember { mutableStateOf<String?>(null) }
         val liveWindows = remember { mutableStateListOf<String>() }
@@ -213,6 +266,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val scope = rememberCoroutineScope()
         fun showNotice(message: String, attention: Boolean = false) {
             notice = TradingNotice(++nextNoticeId, message, if (attention) NoticeTone.ATTENTION else NoticeTone.INFO, persistent = attention)
+        }
+        // The first unread failed flatten takes the notice's place whenever there is no other notice. A later notice only puts
+        // it off, and an account switch, which clears the notice of the moment, leaves it: it goes when it is dismissed.
+        fun shownNotice() = notice ?: unreadFailures.firstOrNull()?.let(::failureNotice)
+        // Only the card of a failure takes that failure off. A receipt can be dismissed twice: the minimized sheet keeps its
+        // form composed, with a second card of the notice that times out beside the one over the chart.
+        fun dismissNotice(current: TradingNotice) {
+            if (notice?.id == current.id) notice = null
+            else unreadFailures.firstOrNull { failureNotice(it) == current }?.let(runtime.accountRisk::acknowledge)
         }
         fun syncAccount() {
             if (busy || !market.connected) return
@@ -236,11 +298,58 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         LaunchedEffect(plugin, preload) { plugin.preloadHistory(preload) }
         DisposableEffect(plugin) { onDispose { plugin.preloadHistory(emptyList()) } }
-        val request = draft.request(instrument)
-        val (capacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
+        val hedging = plugin.capabilities.hedging
+        val orderRule = riskRule ?: AccountRiskRule()
+        /**
+         * [order] as the account's cash brackets or its sizing make it at the quote [at], under the server's order limit
+         * [limit] when that is known. An order that only reduces the position held goes as it is: the guard uses the same rule.
+         */
+        fun bracketed(order: OrderRequest, at: Quote?, limit: Long?): OrderRequest =
+            orderRule.bracketed(order, instrument, session.account.currency, at, account, hedging, limit)
+        // Sizing gives way to a quantity typed by hand while the draft works against the position held: these are the lots it may take off.
+        val reducible = if (!sizeByRisk || hedging || executionSymbol == null) 0L else symbolExposure(account, executionSymbol).closable(draft.side)
+        val (serverCapacity, refreshCapacity) = rememberQuantityCapacity(runtime.orderCapacity, plugin.descriptor.id, session, instrument, draft, account,
             market.tradingReady, localDemo)
-        val preview = remember(session, instrument, request, market.revision, account, capacity) {
+        val orderInput = draft.copy(stopLossEnabled = draft.stopLossEnabled && !brackets.controls(true),
+            takeProfitEnabled = draft.takeProfitEnabled && !brackets.controls(false))
+        val builtOrder = runCatching {
+            val input = when {
+                !sizeByRisk -> orderInput.request(instrument)
+                // A reduction has no use for the stop that sizes an entry, and takes off no more than the position.
+                reducible > 0 -> orderInput.copy(stopLossEnabled = false).request(instrument)?.also { order ->
+                    // Only a quantity outside 1..reducible makes it an opening order, which needs the stop this branch leaves out.
+                    require(!orderRule.bracketsApply(account, hedging, order)) {
+                        if (order.lotsHundredths <= 0) "请输入有效的减仓数量"
+                        else "减仓数量不能超过持仓的 ${instrument.formatQuantity(reducible)} ${instrument.quantityUnit}；反手请先平仓"
+                    }
+                    // Beside the orders already working against the position it could fill after them and open the other
+                    // side with no stop: the guard refuses that, so the form says it first. A stop order may go.
+                    orderRule.reductionRefusal(account, hedging, order)?.let { throw IllegalArgumentException(it) }
+                }
+                else -> {
+                    require(instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true) { "请输入有效止损价 SL" }
+                    orderInput.copy(stopLossEnabled = true).request(instrument, quantityOverride = instrument.minLotsHundredths)
+                }
+            }
+            input?.let { bracketed(it, quote, serverCapacity.maximum) }
+        }
+        val request = builtOrder.getOrNull()
+        // Keep an editable chart draft even before SL sets a valid quantity. Only request can be submitted.
+        val chartDraft = request ?: if (sizeByRisk && reducible == 0L) orderInput.copy(
+            stopLossEnabled = instrument.parsePrice(orderInput.stopLoss)?.let { it > 0 } == true,
+            takeProfitEnabled = orderInput.takeProfitEnabled && instrument.parsePrice(orderInput.takeProfit)?.let { it > 0 } == true,
+        ).request(instrument, quantityOverride = 0L) else null
+        val bracketError = builtOrder.exceptionOrNull()?.message
+        // An order against the position goes without the account's brackets and the sizing stop; the minimized bar shows them off.
+        val reduction = request != null && brackets.enabled && !orderRule.bracketsApply(account, hedging, request)
+        // The order forms read every bound on the quantity from here: the server's limit, the position a reduction works
+        // against, and the ceiling that cut a sized quantity short.
+        val capacity = serverCapacity.copy(reducible = reducible.takeIf { it > 0 }, sizedUnder = request?.takeIf { sizeByRisk && reducible == 0L }?.let {
+            brackets.sizingLimit(it, instrument, quote, orderRule.lotRoom(account, hedging, it), serverCapacity.maximum)
+        })
+        val preview = remember(session, instrument, request, market.revision, account, capacity, bracketError) {
             request?.let(session::preview)?.withCapacity(request, capacity)
+                ?: bracketError?.let { OrderPreview(null, errors = listOf(it)) }
         }
         /**
          * The quantity limit [order] is checked against. The order panel's limit belongs to its own side; an order on the
@@ -368,7 +477,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 loginScope.launch { runtime.savedLogins.select(plugin.descriptor.id, value) }
             }
         }
-        fun changeDraft(value: OrderDraft) { draft = value; showDraft = true }
+        fun changeDraft(value: OrderDraft) {
+            // Side/kind changes may seed reference protection for a manual ticket. Sizing uses the user's SL.
+            draft = if (sizeByRisk && (value.side != draft.side || value.kind != draft.kind))
+                value.copy(stopLoss = draft.stopLoss, stopLossEnabled = draft.stopLossEnabled)
+            else value
+            showDraft = true
+        }
         fun perform(onAccepted: () -> Unit = {}, action: suspend () -> TradeResult) {
             if (busy) return
             busy = true
@@ -508,6 +623,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
                 val rail = compact && (maxWidth >= 600.dp || (maxWidth >= 480.dp && maxWidth > maxHeight))
                 val denseLandscape = compactShort && rail
+                val landscapeDock = rail && maxWidth > maxHeight
                 val tradeDockHeight = if (denseLandscape) 48.dp else MobileTradeBarHeight
                 val environment = plugin.descriptor.environment
                 val syncAction: (() -> Unit)? = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null
@@ -520,22 +636,68 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     showOrderFlow = false
                     mobileTab = tab
                 }
-                // The persistent order sheet shares the chart surface and never dims it.
+                // The order page of compact screens is the one chosen in the settings: the sheet over the chart, which shares
+                // the chart surface and never dims it, the dock measured alongside the chart, or a dialog.
                 val chartFirst = compact && mobileTab == 1 && !showOrderFlow
-                val panelOpen = chartFirst && orderOpen
+                val orderLayout = tradingPreferences.orderPanelLayout
+                val useOrderPopup = orderLayout == OrderPanelLayout.POPUP
+                // The sheet and the dock stay on the chart page for as long as an order is being prepared; the popup does not.
+                val orderOnChart = orderActive && !useOrderPopup
+                val popupVisible = chartFirst && useOrderPopup && orderOpen && confirmation !is Confirmation.Place
+                val panelOpen = popupVisible || chartFirst && orderOnChart && orderOpen
+                // The receipt inside the dock's and the popup's form; the sheet shows it above its form, as it always did.
+                val orderNotice: @Composable () -> Unit = {
+                    shownNotice()?.let { current ->
+                        Box(Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 2.dp)) {
+                            FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
+                        }
+                    }
+                }
                 fun closeOrder() {
                     focusManager.clearFocus()
                     orderPanelState = MobileOrderPanelState.CLOSED
+                    // The sheet clears the draft once it has slid away, so its form does not change while it leaves.
+                    if (orderLayout != OrderPanelLayout.SHEET) draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
                     showDraft = false
                     if (confirmation is Confirmation.Place) confirmation = null
+                }
+                fun currentPlaceOrder(order: OrderRequest): OrderRequest {
+                    if (!brackets.enabled || order.kind != OrderKind.MARKET) return order
+                    val refreshed = bracketed(order, plugin.market.value.quotes[order.symbol], capacityFor(order).maximum)
+                    // A live quote can reduce a reviewed size; it cannot authorize a larger order.
+                    return if (sizeByRisk) refreshed.copy(lotsHundredths = minOf(order.lotsHundredths, refreshed.lotsHundredths)) else refreshed
+                }
+                fun openOrderEditor() {
+                    when {
+                        compact -> orderPanelState = MobileOrderPanelState.EDITING
+                        !wide && !orderDetached() -> showOrder = true
+                        !runtime.desktopLayout.preferences.value.orderOpen -> {
+                            runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                            scope.launch { runtime.desktopLayout.save() }
+                        }
+                    }
+                }
+                fun placePreview(order: OrderRequest): OrderPreview {
+                    val checked = session.preview(order).withCapacity(order, capacityFor(order))
+                    // A market order was priced from the quote a moment ago, and the guard prices it once more as it goes out. Only a
+                    // resting entry has to meet the amounts as it stands; an order that just reduces the position has none to meet.
+                    if (!checked.valid || order.kind == OrderKind.MARKET || !orderRule.bracketsApply(account, hedging, order)) return checked
+                    val error = brackets.refusal(order, instrument, session.account.currency, checked.entryPrice)
+                    return if (error == null) checked else checked.copy(errors = listOf(error))
                 }
                 fun executeTrade(action: Confirmation) {
                     if (busy) return
                     when (action) {
                         is Confirmation.Place -> {
-                            val checked = session.preview(action.request).withCapacity(action.request, capacityFor(action.request))
+                            val order = try { currentPlaceOrder(action.request) }
+                            catch (error: IllegalArgumentException) {
+                                showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
+                                return
+                            }
+                            val checked = placePreview(order)
                             if (!checked.valid) { showNotice(checked.errors.firstOrNull() ?: "订单参数无效", attention = true); return }
-                            perform({ if (compact && !action.fromChart) closeOrder() }) { session.placeOrder(requestId(), action.request) }
+                            perform({ if (compact && !action.fromChart) closeOrder() }) { session.placeOrder(requestId(), order) }
                         }
                         is Confirmation.Close -> {
                             val current = session.state.value.positions.firstOrNull { it.id == action.position.id }
@@ -556,11 +718,25 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun reviewTrade(action: Confirmation) {
                     if (busy) return
+                    if (action is Confirmation.Place) {
+                        // The guard's own classification, asked before a confirmation opens: an exit passes a lock and the limits.
+                        runtime.accountRisk.refusal(plugin, session, RiskCheck.Place(action.request))?.let {
+                            showNotice(it, attention = true)
+                            return
+                        }
+                    }
                     if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
                     else confirmation = action
                 }
+                // The order pages get this function as a reference and today compare it by instance. References to one local
+                // function are equal whatever draft each captured, so a page that compared them by equality would submit the
+                // draft it first saw; read through these states, every reference submits the draft as it is when pressed.
+                val latestMobileRequest by rememberUpdatedState(request)
+                val latestMobilePreview by rememberUpdatedState(preview)
                 fun reviewMobileOrder() {
-                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && preview?.valid == true) request?.let { reviewTrade(Confirmation.Place(it)) }
+                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && latestMobilePreview?.valid == true) {
+                        latestMobileRequest?.let { reviewTrade(Confirmation.Place(it)) }
+                    }
                 }
                 /** A button on an order line: the same paths as the trade list, so confirmations and version checks apply. */
                 fun runLineAction(action: LineAction) {
@@ -573,27 +749,45 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         is LineAction.RemovePendingProtection -> action.order.request.let { r ->
                             editPendingProtection(action.order, r.stopLoss.takeUnless { action.stop }, r.takeProfit.takeIf { action.stop }, fromChart = true)
                         }
-                        is LineAction.RemoveDraftProtection -> changeDraft(draft.withProtectionEnabled(instrument, quote, action.stop, false))
+                        is LineAction.RemoveDraftProtection -> changeDraft(
+                            if (sizeByRisk && action.stop) draft.withProtectionPrice(true, "")
+                            else draft.withProtectionEnabled(instrument, quote, action.stop, false)
+                        )
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }
                 /**
                  * An order asked for on the chart: a limit or stop entry picked from its context menu at the clicked [price], or
-                 * a market order from the trading keys. It carries the order panel's quantity and no stop loss or take profit,
-                 * and goes through the same checks and confirmation as the panel's own order.
+                 * a market order from the trading keys. It uses the same quantity, account brackets and checks as the order panel.
                  */
                 fun orderFromChart(side: Side, kind: OrderKind, price: Long?, fromKeys: Boolean = false) {
-                    val order = OrderDraft(side, kind, draft.quantity, price?.let(instrument::formatPrice).orEmpty()).request(instrument)
+                    val entry = price?.let(instrument::formatPrice).orEmpty()
+                    if (sizeByRisk) {
+                        draft = OrderDraft(side, kind, draft.quantity, entry)
+                        showDraft = true
+                        openOrderEditor()
+                        return
+                    }
+                    val order = OrderDraft(side, kind, draft.quantity, entry).request(instrument)
                     if (order == null) {
                         showNotice(if (instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单" else "请先在下单面板输入有效数量", attention = true)
                         return
                     }
-                    reviewTrade(Confirmation.Place(order, fromChart = true, fromKeys = fromKeys))
+                    val protectedOrder = try { bracketed(order, quote, capacityFor(order).maximum) }
+                    catch (error: IllegalArgumentException) {
+                        showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
+                        return
+                    }
+                    reviewTrade(Confirmation.Place(protectedOrder, fromChart = true, fromKeys = fromKeys))
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
+                // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
+                    onBackCompleted = { if (!busy) closeOrder() })
                 val activate by rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
                 // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
                 // its own symbol and interval and becomes the active one at the first press inside it.
@@ -621,7 +815,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val draftShown = active && if (compact) orderActive else showDraft
                     // Draft lines take a drop at once; pending orders and positions wait for the confirmation dialogs.
                     val actions = ChartOrderActions(
-                        estimateDraft = session::preview,
+                        estimateDraft = { order ->
+                            try {
+                                val estimated = bracketed(order, quote, capacityFor(order).maximum)
+                                estimated to session.preview(estimated).withCapacity(estimated, capacityFor(estimated))
+                            } catch (error: IllegalArgumentException) {
+                                (if (sizeByRisk) order.copy(lotsHundredths = 0L) else order) to
+                                    OrderPreview(null, errors = listOf(error.message ?: "无法计算订单预览"))
+                            }
+                        },
+                        // A reduction on a sized account carries no stop, so its draft offers none to add either.
+                        draftStopManaged = brackets.controls(true) || reducible > 0,
+                        draftTargetManaged = brackets.controls(false),
                         onDraftEntry = { price -> onActive { changeDraft(draft.copy(entry = instrument.formatPrice(price))) } },
                         onDraftProtection = { stop, price ->
                             onActive { changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price))) }
@@ -639,13 +844,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         removeProtection = plugin.capabilities.removeProtection,
                         entryKinds = plugin.capabilities.orderKinds,
                         // A chart that is not the active one shows the quantity its symbol's order panel was left with.
-                        entryLots = shownInstrument.parseQuantity(if (active) draft.quantity else
+                        entryLots = if (sizeByRisk) request?.lotsHundredths.takeIf { active }
+                        else shownInstrument.parseQuantity(if (active) draft.quantity else
                             orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
                         onEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price) } },
                         estimateStandalone = { order, price -> session.previewOrderChange(order.id, price, order.request.lotsHundredths) },
                         onStandalone = { order, price -> changeAlone(order, price, order.request.lotsHundredths, fromChart = true) },
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
+                        stopRequiredForSizing = sizeByRisk,
+                        attachedProtection = listOfNotNull("SL".takeIf { brackets.controls(true) }, "TP".takeIf { brackets.controls(false) })
+                            .joinToString("/").ifEmpty { null },
                         onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
                     )
                     // Every chart has its own tools and selection; the drawings themselves are shared through the library.
@@ -661,7 +870,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     TradingChart(accountKey, shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
                         if (active) visiblePositions else account.positions.filter { it.symbol == shownExecution },
                         if (active) visibleTrades else account.trades.filter { it.symbol == shownExecution },
-                        selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, request.takeIf { draftShown }, preview.takeIf { draftShown },
+                        selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, chartDraft.takeIf { draftShown }, preview.takeIf { draftShown },
                         if (active) visibleOrders else account.orders.filter { it.request.symbol == shownExecution }, actions,
                         Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
                         instruments = watchInstruments, onSymbol = { value -> activateChart(chartId); chooseSymbol(value) }, intervals = intervals, connected = market.connected,
@@ -671,20 +880,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
                                 OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
                             changeDraft(base.withSide(side, instrument, quote))
-                            when {
-                                compact -> orderPanelState = MobileOrderPanelState.EDITING
-                                !wide && !orderDetached() -> showOrder = true
-                                // The form is what this button is for, so a folded order panel opens.
-                                !runtime.desktopLayout.preferences.value.orderOpen -> {
-                                    runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
-                                    scope.launch { runtime.desktopLayout.save() }
-                                }
-                            }
+                            openOrderEditor()
                         } },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOpen, drawings = drawings, views = runtime.chartViews, toolbarEnd = {
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (compact && orderFlowSupported) ActionIcon(AppIcons.TrendingUp, "订单流分析", "open-order-flow") {
                                         closeOrder(); showOrderFlow = true
@@ -707,8 +908,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
                             title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
                     }
-                    notice?.takeUnless { panelOpen }?.let { current ->
-                        FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                    shownNotice()?.takeUnless { panelOpen }?.let { current ->
+                        FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                     }
                     loginMessage?.let { message -> key(message) {
                         var dismissed by remember { mutableStateOf(false) }
@@ -719,13 +920,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // Everything a trade or a chart can ask for in a dialog; it opens in the window the user is working in.
                 val tradeDialogs: @Composable () -> Unit = {
                 if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
-                if (showOrder) {
-                    Dialog(onDismissRequest = { if (!busy) showOrder = false }) {
+                if (showOrder || popupVisible) {
+                    // The phone's popup closes the way the dock minimizes: by its close button, by back or by a tap beside
+                    // it, the draft stays on the chart and "下单" opens it again. Only "取消订单" drops it.
+                    val dismissOrder: () -> Unit = { if (popupVisible) orderPanelState = MobileOrderPanelState.MINIMIZED else if (!busy) showOrder = false }
+                    Dialog(onDismissRequest = dismissOrder) {
                         Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                             OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
-                                request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
-                            }, Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding(), environment = environment, capacity = capacity,
-                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation, onClose = { showOrder = false })
+                                if (popupVisible) reviewMobileOrder()
+                                else request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
+                            }, Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding().testTag("order-popup"), environment = environment, capacity = capacity,
+                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation, onClose = dismissOrder,
+                                brackets = brackets, bracketOrder = request,
+                                onChartAdjust = if (popupVisible) dismissOrder else null,
+                                orderNotice = if (popupVisible) orderNotice else ({}),
+                                onDiscard = if (popupVisible) ({ closeOrder() }) else null,
+                                accountName = accountName.takeIf { popupVisible })
                         }
                     }
                 }
@@ -740,7 +950,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     target == null || catalog.instruments.any { it.symbol == target }
                 }?.let { action ->
                     val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
-                    val livePreview = (action as? Confirmation.Place)?.let { session.preview(it.request).withCapacity(it.request, capacityFor(it.request)) }
+                    val placeOrder = (action as? Confirmation.Place)?.let { runCatching { currentPlaceOrder(it.request) } }
+                    val liveOrder = placeOrder?.getOrNull()
+                    val livePreview = liveOrder?.let(::placePreview) ?: placeOrder?.exceptionOrNull()?.let {
+                        OrderPreview(null, errors = listOf(it.message ?: "无法计算金额止损止盈"))
+                    }
                     val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
                     val confirmFocus = remember { FocusRequester() }
                     val confirmColor = when (action) {
@@ -750,18 +964,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
-                        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // On a phone held sideways the rows do not fit: they scroll, and the buttons stay below them.
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("$loginName / $accountName / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
                             when (action) {
                                 is Confirmation.Place -> {
-                                    val r = action.request
+                                    val r = liveOrder ?: action.request
                                     r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, style = MaterialTheme.typography.bodySmall) }
                                     Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", style = MaterialTheme.typography.titleSmall)
                                     EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
+                                    // Until a market order fills, its stop and target are estimates: the account's brackets are priced again
+                                    // from the quote as it is sent, and a broker that places them by distance moves them with the fill.
+                                    val estimated = if (r.kind == OrderKind.MARKET) "（预估）" else ""
+                                    EstimateRow("止损价$estimated", r.stopLoss?.let(instrument::formatPrice) ?: "未设置")
+                                    EstimateRow("止盈价$estimated", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
-                                    Text("提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。", style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    val bracketsApply = orderRule.bracketsApply(account, hedging, r)
+                                    Text(when {
+                                        sizeByRisk && bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"
+                                        bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价重算自动止损止盈，实际成交价可能与预估不同。"
+                                        brackets.enabled && !bracketsApply -> (if (sizeByRisk) "减仓单按输入的数量提交，不按风险计算手数。" else "减仓单不附加子账户止损止盈。") +
+                                            "提交时会按最新报价和账户状态重新校验。"
+                                        else -> "提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。"
+                                    },
+                                        style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
-                                    livePreview?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                                    // An error says why 确认 is disabled, so it comes before the broker's notes.
+                                    livePreview?.errors?.forEach { Text(it, Modifier.testTag("confirm-error"), color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                                    livePreview?.warnings?.forEach { Text(it, Modifier.testTag("confirm-warning"), color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${shortId(action.order.id)}。" +
@@ -781,6 +1011,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
                     )
                 }
+                flattenReview?.let { review ->
+                    FlattenConfirmation(review, onCancel = { flattenReview = null }) {
+                        if (!busy) {
+                            flattenReview = null
+                            busy = true
+                            flattening = true
+                            scope.launch {
+                                try {
+                                    flattenResults = runtime.accountRisk.flattenAccounts(registry, review.targets)
+                                    runtime.save()
+                                } finally {
+                                    flattening = false
+                                    busy = false
+                                }
+                            }
+                        }
+                    }
+                }
+                if (flattening) AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text("正在撤单和平仓") },
+                    text = { Text("等待券商逐项确认。") },
+                    confirmButton = {},
+                    properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+                )
+                flattenResults?.let { FlattenResults(it) { flattenResults = null } }
                 pendingEdit?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.order.request.symbol } }?.let { edit ->
                     val order = edit.order
                     val spec = catalog.instruments.first { it.symbol == order.request.symbol }
@@ -878,7 +1134,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     )
                 }
                 }
-                val dialogsOpen = showIndicators || showOrder || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null ||
+                val dialogsOpen = showIndicators || showOrder || popupVisible || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null ||
                     standaloneEdit != null
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
@@ -908,20 +1164,43 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     modifier = Modifier.testTag("account-tab-$index"))
                             }
                         }
+                        AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
                         when (accountTab) {
-                            0 -> AccountOverviewPage(plugin, session.account, account, market, { if (!busy) accountTab = 1 },
+                            0 -> AccountOverviewPage(plugin, session.account, account, analyticsTrades, market, { if (!busy) accountTab = 1 },
                                 Modifier.weight(1f).fillMaxWidth(), busy)
                             1 -> Column(Modifier.weight(1f).fillMaxWidth()) {
                                 PageTopBar("持仓与订单", accountName, actions = { barStatus() })
+                                // The same buttons as a position's own "平仓" below, for the whole child or every child.
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val closeColors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                    OutlinedButton(
+                                        onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
+                                        modifier = Modifier.weight(1f).testTag("flatten-selected-account"),
+                                        enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
+                                        colors = closeColors,
+                                    ) { Text("平仓此子账户") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            // View-only accounts and logins that cannot trade now are listed as skipped, not as targets.
+                                            val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                            if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                        },
+                                        modifier = Modifier.weight(1f).testTag("flatten-all-accounts"),
+                                        enabled = !busy, colors = closeColors,
+                                    ) { Text("平仓全部子账户") }
+                                }
                                 TradeTerminal(plugin, account, market, selectedPositionId, compact,
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null; mobileTab = 1; showOverview = false },
                                     onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; mobileTab = 1; showOverview = false },
                                     onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) },
                                     onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
-                                    header = { AccountSummary(account, connected = market.connected) })
+                                    modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) })
                             }
-                            else -> key(plugin, accountId) { AccountAnalyticsPage(session.account, account.trades, Modifier.weight(1f).fillMaxWidth(), name = accountName) }
+                            else -> key(plugin, accountId) {
+                                AccountAnalyticsPage(session.account, analyticsTrades, Modifier.weight(1f).fillMaxWidth(),
+                                    name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs })
+                            }
                         }
                     }
                 }
@@ -954,7 +1233,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         DividerLine()
                     }
                     if (compact) {
-                        val showAccountBar = !(chartFirst && orderActive) && !keyboardOpen
+                        val showAccountBar = !(chartFirst && orderOnChart) && (!keyboardOpen || popupVisible)
                         val accountBarHeight by animateDpAsState(
                             if (showAccountBar) { if (denseLandscape) 41.dp else 57.dp } else 0.dp, tween(180), label = "account-bar-height")
                         Box(Modifier.fillMaxWidth().height(accountBarHeight).clipToBounds()) {
@@ -973,7 +1252,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
                                 { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
-                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize") },
+                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request) },
                             terminal = { m ->
                                 TradeTerminal(plugin, account, market, selectedPositionId, false,
                                     onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
@@ -1005,45 +1284,83 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             4 -> accountHub(Modifier.weight(1f).fillMaxWidth())
                             0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, accountName) { barStatus() }
                             1 -> key(orderSession) {
-                                // The sheet keeps a full-height host while the chart dock changes continuously.
                                 val idleDock = if (rail) tradeDockHeight else tradeDockHeight + MobileNavigationHeight
-                                val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else idleDock,
-                                    animationSpec = tween(250), label = "chart-order-dock")
-                                MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
-                                    orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
-                                    Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
-                                    onHidden = {
-                                        if (orderPanelState == MobileOrderPanelState.CLOSED)
-                                            draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
-                                    },
-                                    content = {
-                                        notice?.let { current ->
-                                            Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
-                                                .padding(horizontal = 16.dp, vertical = 8.dp)) {
-                                                FloatingNoticeCard(current, "trade-notice", { if (notice?.id == current.id) notice = null }, title = "操作提示")
+                                // Below the chart while no order page takes that place: the order button, and the navigation unless it is a rail.
+                                val idleBar: @Composable () -> Unit = {
+                                    Box(Modifier.height(tradeDockHeight)) {
+                                        MobileTradeBar(account, onOpen = {
+                                            // A draft the popup left on the chart opens again as it is.
+                                            if (!orderActive) draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                            openOrderEditor()
+                                        }, onPositions = { accountTab = 1; mobileTab = 4 }, dense = denseLandscape,
+                                            onDailyPnl = { accountTab = 0; mobileTab = 4 }, resume = useOrderPopup && orderActive)
+                                    }
+                                    if (!rail) MobileNavigation(mobileTab, selectTab)
+                                }
+                                if (orderLayout == OrderPanelLayout.SHEET) {
+                                    // The sheet keeps a full-height host while the chart dock changes continuously.
+                                    val dockHeight by animateDpAsState(if (orderActive) MobileOrderPeekHeight else idleDock,
+                                        animationSpec = tween(250), label = "chart-order-dock")
+                                    MobileOrderSheet(instrument, quote, plugin.capabilities, draft, ::changeDraft,
+                                        orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder, preview?.valid == true && request != null,
+                                        Modifier.weight(1f).fillMaxWidth(), busy = busy, skipConfirmation = skipConfirmation,
+                                        onHidden = {
+                                            if (orderPanelState == MobileOrderPanelState.CLOSED)
+                                                draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                                        },
+                                        brackets = brackets, calculatedLots = request?.lotsHundredths, accountName = accountName,
+                                        reduction = reduction,
+                                        content = {
+                                            shownNotice()?.let { current ->
+                                                Box(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())
+                                                    .padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                                    FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
+                                                }
                                             }
-                                        }
-                                        OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                            ::reviewMobileOrder, Modifier.weight(1f),
-                                            environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation)
-                                    },
-                                    body = {
-                                        Column(Modifier.fillMaxSize()) {
-                                            chart(Modifier.weight(1f))
-                                            Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
-                                                androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
-                                                    Column(Modifier.fillMaxWidth().requiredHeight(idleDock)) {
-                                                        Box(Modifier.height(tradeDockHeight)) {
-                                                            MobileTradeBar(account, onOpen = {
-                                                                draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
-                                                                orderPanelState = MobileOrderPanelState.EDITING
-                                                            }, onPositions = { accountTab = 1; mobileTab = 4 }, dense = denseLandscape)
-                                                        }
-                                                        if (!rail) MobileNavigation(mobileTab, selectTab)
+                                            OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                                ::reviewMobileOrder, Modifier.weight(1f),
+                                                environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
+                                                brackets = brackets, bracketOrder = request)
+                                        },
+                                        body = {
+                                            Column(Modifier.fillMaxSize()) {
+                                                chart(Modifier.weight(1f))
+                                                Box(Modifier.fillMaxWidth().height(dockHeight).clipToBounds()) {
+                                                    androidx.compose.animation.AnimatedVisibility(!orderActive, enter = fadeIn(tween(180)), exit = fadeOut(tween(120))) {
+                                                        Column(Modifier.fillMaxWidth().requiredHeight(idleDock)) { idleBar() }
                                                     }
                                                 }
                                             }
-                                        }
+                                        })
+                                } else MobileOrderDockLayout(
+                                    Modifier.weight(1f).fillMaxWidth().then(if (orderOnChart && orderOpen) Modifier.imePadding() else Modifier),
+                                    editing = orderOnChart && orderOpen, landscape = landscapeDock,
+                                    keyboardOpen = keyboardOpen, advanced = advancedOrder,
+                                    bottomHeight = if (orderOnChart) MobileOrderDockPeekHeight else idleDock,
+                                    chart = { chart(Modifier.fillMaxSize()) },
+                                    dock = {
+                                        if (orderOnChart) {
+                                            MobileOrderDock(instrument, quote, plugin.capabilities, accountName, draft, ::changeDraft,
+                                                orderPanelState, { orderPanelState = it }, { closeOrder() }, ::reviewMobileOrder,
+                                                preview?.valid == true && request != null, busy, skipConfirmation, keyboardOpen, brackets = brackets, calculatedLots = request?.lotsHundredths,
+                                                reduction = reduction) {
+                                                OrderForm(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                                    ::reviewMobileOrder, Modifier.weight(1f),
+                                                    environment = environment, capacity = capacity, onRefreshCapacity = refreshCapacity,
+                                                    skipConfirmation = skipConfirmation, dockAdvanced = advancedOrder,
+                                                    onDockAdvanced = { open ->
+                                                        advancedOrder = open
+                                                        val change = ++advancedChanges
+                                                        scope.launch {
+                                                            if (!runtime.tradingPreferences.setOrderMoreSettings(open) && change == advancedChanges)
+                                                                advancedOrder = runtime.tradingPreferences.preferences.value.orderMoreSettings
+                                                        }
+                                                    },
+                                                    brackets = brackets, bracketOrder = request,
+                                                    // The minimized dock keeps its form; the notice shows above the chart meanwhile.
+                                                    orderNotice = if (orderOpen) orderNotice else ({}))
+                                            }
+                                        } else Column(Modifier.fillMaxSize()) { idleBar() }
                                     })
                             }
                             else -> if (showActivity) {

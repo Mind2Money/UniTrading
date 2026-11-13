@@ -36,9 +36,13 @@ private fun ratio(value: Double?, percent: Boolean = false): String = when {
     else -> formatFixed((value * 100).toLong(), 2) + if (percent) "%" else ""
 }
 
-/** Realized results of the trading child's loaded closed trades: totals, a P&L curve and a daily calendar. */
+/**
+ * Realized results of the trading child's loaded closed trades: totals, a P&L curve and a daily calendar.
+ * [cachedSinceMs] is the close time of the earliest trade this device has cached for the account, null when it has
+ * cached none. With it the header says that [trades] also hold cached records, from which day, and what the cache lacks.
+ */
 @Composable
-internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name) {
+internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name, cachedSinceMs: Long? = null) {
     var symbol by remember { mutableStateOf<String?>(null) }
     var zoneId by remember { mutableStateOf("America/Chicago") }
     val zone = remember(zoneId) { TimeZone.of(zoneId) }
@@ -64,7 +68,11 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("交易分析", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-            Text("$name · 已加载平仓记录 · $currency", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+            // The cache holds only what was synchronized on this device, so the header names its start instead of a fixed span.
+            val coverage = cachedSinceMs?.let {
+                "券商已同步记录 + 本机缓存（自 ${kotlin.time.Instant.fromEpochMilliseconds(it).toLocalDateTime(zone).date} 起，仅含本机运行并选中该子账户时同步到的记录）"
+            } ?: "已加载平仓记录"
+            Text("$name · $coverage · $currency", Modifier.testTag("analytics-coverage"), color = colors.Muted, style = MaterialTheme.typography.bodySmall)
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

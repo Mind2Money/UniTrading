@@ -48,17 +48,28 @@ internal fun plotOrders(price: Long, quote: Quote?, kinds: Set<OrderKind>): List
     ).filter { it.kind in kinds }
 }
 
-/** "买入限价 1 张 @ 5505.00"; the quantity is left out while the order panel holds none that parses. */
-internal fun plotOrderLabel(instrument: Instrument, order: PlotOrder, lotsHundredths: Long?, price: Long): String =
-    "${order.side.label()}${order.kind.label()} " + (lotsHundredths?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit} " } ?: "") +
-        "@ ${instrument.formatPrice(price)}"
+/**
+ * "买入限价 1 张 @ 5505.00"; the quantity is left out while the order panel holds none that parses. On an account that
+ * sizes its orders from a stop ([sizing]) the item only opens the order panel, where the stop sets the quantity, and
+ * says so. Otherwise it names the protection the account's cash amounts add ([attached]), which no other step shows
+ * when orders go out without a confirmation.
+ */
+internal fun plotOrderLabel(instrument: Instrument, order: PlotOrder, lotsHundredths: Long?, price: Long,
+    sizing: Boolean = false, attached: String? = null): String =
+    "${order.side.label()}${order.kind.label()} " + (lotsHundredths?.takeUnless { sizing }?.let { "${instrument.formatQuantity(it)} ${instrument.quantityUnit} " } ?: "") +
+        "@ ${instrument.formatPrice(price)}" + when {
+            sizing -> " · 打开下单栏填写 SL"
+            attached != null -> " · 开仓自动附加 $attached"
+            else -> ""
+        }
 
 /**
  * The plot's own context menu: a horizontal line at the clicked price when the chart has drawings ([onLine]), and the
  * entry orders of [menu]. [lotsHundredths] is the quantity an order would carry, shown in its label.
  */
 @Composable
-internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit) {
+internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit,
+    stopRequiredForSizing: Boolean = false, attached: String? = null) {
     val colors = TradingColors
     Box(Modifier.offset { IntOffset(menu.at.x.roundToInt(), menu.at.y.roundToInt()) }) {
         DropdownMenu(true, onDismiss, Modifier.widthIn(min = 200.dp)) {
@@ -70,7 +81,10 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
             if (onLine != null && menu.orders.isNotEmpty()) DividerLine(Modifier.padding(vertical = 4.dp))
             menu.orders.forEach { order ->
                 DropdownMenuItem(
-                    text = { Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price), color = if (order.side == Side.BUY) colors.UpText else colors.DownText) },
+                    text = {
+                        Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price, stopRequiredForSizing, attached),
+                            color = if (order.side == Side.BUY) colors.UpText else colors.DownText)
+                    },
                     onClick = { onDismiss(); onOrder(order) },
                     modifier = Modifier.testTag("plot-menu-${order.side.name}-${order.kind.name}"),
                 )

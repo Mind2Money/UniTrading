@@ -13,7 +13,7 @@ import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
-import kotlin.test.assertTrue
+import kotlin.test.assertEquals
 
 class DailyPnlUiTest {
     @get:Rule val compose = createComposeRule()
@@ -30,11 +30,11 @@ class DailyPnlUiTest {
         compose.onNodeWithTag("daily-pnl-source").assertTextEquals("等待券商数据")
     }
 
-    @Test fun phoneChartBarShowsDailyAndFloatingPnlSeparatelyAndLinksToTrading() {
+    @Test fun phoneChartBarShowsDailyAndFloatingPnlSeparatelyAndLinksToTheirPages() {
         val snapshot = AccountSnapshot("a", 25_000_000_000, equityMicros = 25_010_000_000, dailyPnl = DailyPnl(-12_500_000, updatedAtMs = 0))
-        var opened = false
+        var opened = ""
         compose.setContent { TradingTheme { Column(Modifier.requiredWidth(400.dp)) {
-            MobileTradeBar(snapshot, {}, { opened = true })
+            MobileTradeBar(snapshot, {}, { opened = "positions" }, onDailyPnl = { opened = "overview" })
             AccountSummary(snapshot)
         } } }
         compose.onNodeWithTag("panel-daily-pnl").assertTextContains("-12.50")
@@ -45,6 +45,8 @@ class DailyPnlUiTest {
         target.parentFile.mkdirs()
         ImageIO.write(compose.onRoot().captureToImage().toAwtImage(), "png", target)
         compose.onNodeWithTag("panel-daily-pnl").performClick()
-        assertTrue(opened)
+        assertEquals("overview", opened)
+        compose.onNodeWithTag("panel-positions").performClick()
+        assertEquals("positions", opened)
     }
 }

@@ -98,13 +98,17 @@ internal fun AccountContextBar(
     }
 }
 
-/** The trading child's equity and P&L, and the way to its positions and orders. */
+/**
+ * The trading child's funds, drawdown and the net result of its closed [trades], and the way to its positions and
+ * orders. [trades] is the list the analytics page counts (the broker's snapshot with the trades cached on this
+ * device), so both pages show the same total.
+ */
 @Composable
 internal fun AccountOverviewPage(
-    plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, market: MarketSnapshot,
+    plugin: BrokerPlugin, account: AccountInfo, snapshot: AccountSnapshot, trades: List<ClosedTrade>, market: MarketSnapshot,
     onOpenTrading: () -> Unit, modifier: Modifier = Modifier, busy: Boolean = false,
 ) {
-    val totals = remember(snapshot) { overviewTotals(snapshot) }
+    val totals = remember(snapshot, trades) { overviewTotals(snapshot.copy(trades = trades)) }
     val names = LocalAccountAliases.current
     val accountName = names.account(plugin.descriptor.id, account)
     val colors = TradingColors
@@ -125,42 +129,36 @@ internal fun AccountOverviewPage(
                 }
             }
             item(key = "summary") {
+                AccountSummary(snapshot, connected = market.connected, currency = account.currency)
+            }
+            // Every card has the summary's shape and inset, and a titled one its title in the style of "回撤与风险".
+            item(key = "history") {
                 Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
-                    Column(Modifier.padding(if (wide) 24.dp else 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("所选子账户 · ${account.currency}", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
-                        Text(totals.equityMicros?.let { money(it) } ?: "—", style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("overview-equity-${account.currency}"))
-                        Text(if (snapshot.equityEstimated) "账户总净值 · 含估算" else "账户总净值", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
-                        DividerLine()
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            OverviewMetric("账户浮动盈亏", totals.floatingMicros, Modifier.weight(1f))
-                            OverviewMetric("已加载历史净盈亏", totals.realizedMicros, Modifier.weight(1f))
-                        }
-                        if (totals.unknownClosed > 0) Text("${totals.unknownClosed} 笔历史净盈亏待确认，未计为零。", style = MaterialTheme.typography.bodySmall, color = colors.Caution)
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("已加载历史净盈亏", style = MaterialTheme.typography.titleMedium)
+                        Text(totals.realizedMicros?.let { money(it, true) } ?: "—", Modifier.testTag("overview-realized"),
+                            style = MaterialTheme.typography.titleSmall, color = colors.pnl(totals.realizedMicros), maxLines = 1)
+                        // As on the analytics page, the total adds up the known results and the note names the trades left out.
+                        // With none known there is no total, and nothing for the others to be counted beside.
+                        if (totals.unknownClosed > 0) Text("${if (totals.knownClosed > 0) "另有 " else ""}${totals.unknownClosed} 笔净盈亏待确认，未计入。",
+                            Modifier.testTag("overview-unknown-closed"),
+                            style = MaterialTheme.typography.bodySmall, color = colors.Caution)
                     }
                 }
             }
             item(key = "child") {
-                Surface(shape = MaterialTheme.shapes.medium, color = colors.Surface) {
+                Surface(shape = MaterialTheme.shapes.large, color = colors.Surface) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(accountName, style = MaterialTheme.typography.titleMedium)
                             if (accountName != account.name) Text(account.name, color = colors.Muted, style = MaterialTheme.typography.bodySmall)
-                            Text("持仓 ${snapshot.positions.size} · 挂单 ${snapshot.orders.size} · ${account.currency}", color = colors.Muted)
+                            Text("持仓 ${snapshot.positions.size} · 挂单 ${snapshot.orders.size} · ${account.currency}", color = colors.Muted,
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                         TextButton(onOpenTrading, enabled = !busy, modifier = Modifier.testTag("overview-open-${account.id}")) { Text("查看交易") }
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun OverviewMetric(label: String, value: Long?, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(label, color = TradingColors.Muted, style = MaterialTheme.typography.bodySmall)
-        Text(value?.let { money(it, true) } ?: "—", color = TradingColors.pnl(value), style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold)
     }
 }
