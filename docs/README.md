@@ -1,6 +1,6 @@
 # UniTrading 文档
 
-当前代码位于 `main`，应用版本为 1.5.0 / Android versionCode 11。Windows 与 Android 启动时先校验授权码，授权后显示登录页，并恢复仍有效的已保存 Tradovate 会话，默认不注册本地模拟券商。iOS 有工程入口，但尚未接入登录和凭据存储，交易流程暂不可用。
+当前代码位于 `main`，应用版本为 1.6.0 / Android versionCode 12。Windows 与 Android 启动时先校验授权码，授权后显示登录页，并恢复仍有效的已保存 Tradovate 会话，默认不注册本地模拟券商。iOS 有工程入口，但尚未接入登录和凭据存储，交易流程暂不可用。
 
 ## 当前实现与使用
 

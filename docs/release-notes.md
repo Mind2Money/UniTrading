@@ -1,6 +1,10 @@
 # Unreleased
 
+# v1.6.0
+
 ## 简体中文
+
+🎉 UniTrading 更新至 **v1.6.0**！新增子账户风控（交易锁定、手数与品种限制、订单风控、平仓此子账户和全部子账户）、手机的停靠下单栏和独立弹窗、图表长按菜单与市价下单、图表锁定和跟随现价的自动价格轴，以及入场后添加止损止盈和成交音效。
 
 🙏 **特别鸣谢**
 感谢 DC 群的 @XAU真爱粉 提交 [PR #3](https://github.com/Mind2Money/UniTrading/pull/3)：子账户风控（交易锁定、手数与品种限制、订单风控、平仓此子账户和全部子账户）、手机的停靠下单栏和独立弹窗、交易分析的本机平仓缓存，以及收藏周期按时长排序都来自这次贡献。
@@ -44,6 +48,11 @@
 
 📈 **图表**
 ✅ 工具栏上的收藏周期按时长从短到长排列，未收藏的当前周期排在最后
+✅ 图表空白处的菜单新增“买入市价”“卖出市价”两项，排在限价单、突破单前面，数量取下单面板，走与下单面板相同的校验、订单风控和确认；没有报价或交易商不支持市价单时不显示
+✅ 手机和触屏上长按图表打开与右键相同的菜单：按在绘图上打开绘图菜单，按在订单线或其标签上打开线上按钮的菜单，按在空白处打开画水平线和下单的菜单，并在按住的位置显示十字线。都不命中时（例如价格轴、指标副图）仍按原来显示十字线和数值提示
+⚠️ 长按菜单只在桌面测试中用模拟触摸验证过，没有在 Android 设备上试过；菜单下单没有在 Tradovate、Rithmic 账户上实际下单
+✅ 桌面图表可以加锁：点图表下方缩放按钮条最右边的锁，加锁后鼠标滚轮不再缩放，而是前后移动图表（向前滚看更早的 K 线，向后滚回到较新的 K 线），价格轴上的滚轮也不再缩放价格；拖动、按钮和双指缩放照常可用。锁定状态会记住，重启后照旧
+✅ 打开图表时价格轴不再拉得很大：图表停在最新 K 线时，自动价格轴以现价居中，高度按可见 K 线计算，持仓、止损止盈和挂单价位仍保留在图内，离现价较远的叠加指标（如 MA、BOLL）可能超出图外；现价离中线超过图高的四分之一才重新居中，不会每跳一下就晃动。以前手动拉过的价格轴只在回看历史的视图里恢复，停在最新 K 线的视图打开时改用自动价格轴；保存的价格轴与当前行情对不上（价格已远离、或单位不同）时也改用自动价格轴
 
 🔊 **成交音效**
 ✅ 「设置 → 交易」新增“成交音效”开关，默认开启，并写明这是搞笑功能：入场、止盈、止损成交时各播放一段搞笑音效
@@ -57,6 +66,8 @@
 ⚠️ 只经过离线测试，没有在 Tradovate、Rithmic 账户上实际下单。Rithmic 的 OCO 请求（模板 328）字段取自开源库 rithmic-rs，没有在真实服务器上发过；单独撤销 OCO 中的一条时，交易商是否同时撤销另一条也未核实，撤单后请看仓位上的保护是否还在
 
 ## English
+
+🎉 UniTrading is now **v1.6.0**! It adds sub-account risk controls (trading lock, lot and symbol limits, order risk, and flattening one account or all of them), the docked order bar and popup order page on phones, long-press menus and market orders on the chart, a chart lock and an automatic price axis that follows the current price, stops and targets added after entry, and fill sounds.
 
 🙏 **Special thanks**
 Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Money/UniTrading/pull/3): the sub-account risk controls (trading lock, lot and symbol limits, order risk, and flattening one account or all of them), the docked and popup phone order pages, the local cache of closed trades for analytics and the starred intervals sorted by length all come from it.
@@ -100,6 +111,11 @@ Thanks to @XAU真爱粉 from our Discord for [PR #3](https://github.com/Mind2Mon
 
 📈 **Charts**
 ✅ Starred intervals on the toolbar run from shortest to longest, with a current interval that is not starred at the end
+✅ The chart's menu on the empty plot has "buy market" and "sell market", above the limit and stop orders; they carry the order panel's quantity and go through the same checks, order risk and confirmation as the panel, and they are left out without a quote or on a broker without market orders
+✅ On phones and touch screens a long press on the chart opens the menu a right click does: on a drawing the drawing's menu, on an order line or its label the line's buttons, on the empty plot the horizontal line and the orders, with the crosshair at the finger. Where nothing opens (the price axis, an indicator pane) the press shows the crosshair and the values tooltip as before
+⚠️ The long-press menus were only checked with simulated touch in desktop tests, not on an Android device; orders from the menu have not been placed on a Tradovate or Rithmic account
+✅ The desktop chart can be locked with the lock at the right end of the zoom buttons below the chart. While it is locked the mouse wheel moves the chart through time instead of zooming (roll away from you for earlier bars, towards you for later ones), and the wheel over the price axis no longer zooms the prices; dragging, the buttons and pinch zoom work as before. The lock is remembered across restarts
+✅ A chart no longer opens with a stretched price axis: while it shows the newest bar, the automatic axis is centred on the current price and as tall as the visible bars need, with positions, stops, targets and orders still kept in view, while overlay indicators far from the price, such as MA or BOLL, may fall outside it. It only centres again once the price moves more than a quarter of the height from the middle, so it does not jump at every tick. A price axis set by hand now comes back only with a view of the past; a view on the newest bar opens on the automatic axis, and so does a saved axis that no longer fits the market (the price moved away, or other price units)
 
 🔊 **Fill sounds**
 ✅ Settings → Trading has a new "fill sounds" switch, on by default, and it says the sounds are a joke feature: a funny clip plays on an entry, take-profit or stop-loss fill

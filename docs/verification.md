@@ -1,6 +1,16 @@
 # 验证记录索引
 
-## 当前：1.5.0 / v1.5.0
+## 当前：1.6.0 / v1.6.0
+
+2026-11-13 发布前在 Windows 上核对 `abe48a1` 加版本号和文档改动（版本号、GeckoView 160、发布说明）。
+
+- 桌面回归 1250 项：broker-api 30、demo-broker 36、tradovate-broker 280、composeApp 790、rithmic-broker 114，0 失败，1 项跳过（`Pbkdf2JdkTest` 需要环境变量提供授权码）。`scripts/build-local.ps1` 关闭签名和 Telegram 执行，`rithmic-broker` 单独运行。
+- 脚本测试：`test_build_local.py` 24 项、`test_release_notes.py` 5 项、`test_release_discord.py` 17 项通过；Discord 公告用 `--dry-run` 预览，简体中文小节 12,989 字节（4,769 个 UTF-16 单元），超过单条消息，发的是节选（整条 6,944 字节）加完整说明附件，没有发送。
+- Android：两个 R8 release APK 构建通过（标准版 3.51 MiB；内置浏览器版 90.89 MiB，GeckoView 160.0.20261104181552）；没有运行模拟器设备测试。
+- Windows 包：`UniTrading.exe --version` 为 1.6.0，登录 host 自测 60 项通过。从仓库外目录启动后进程保持运行并显示主窗口「UniTrading · 交易终端」；这次检查没有连接任何账户。
+- 未验证：Android 真机上的长按菜单、停靠下单栏和独立弹窗的手势、键盘和系统返回，图表锁定与自动价格轴；真实 Tradovate 或 Rithmic 账户上的子账户风控、菜单市价单和入场后添加止损止盈；iOS；macOS 包的启动和登录。
+
+## 1.5.0 / v1.5.0
 
 2026-11-11 发布前在 Windows 上核对 `7291c85` 加版本号改动（版本号、GeckoView 160、发布说明）。
 

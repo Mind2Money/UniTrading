@@ -27,7 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - `RITHMIC_GATEWAY`: `wss://<host>.rithmic.com:443` (default: the Rithmic Test gateway)
  * - `RITHMIC_SYSTEM`: system name; without it the probe only prints the gateway's system list
  * - `RITHMIC_USER`, `RITHMIC_PASSWORD`
- * - `RITHMIC_APP_NAME`, `RITHMIC_APP_VERSION` (default: UniTrading / 1.5.0)
+ * - `RITHMIC_APP_NAME`, `RITHMIC_APP_VERSION` (default: UniTrading / 1.6.0)
  * - `RITHMIC_ENV`: `test`, `paper` or `live` (default: by gateway)
  * - `RITHMIC_PRODUCT`, `RITHMIC_EXCHANGE` (default: MES / CME); `RITHMIC_SYMBOL` skips the front-month lookup
  * - `RITHMIC_ACCOUNT`: account id to inspect (default: the first account listed)
