@@ -22,29 +22,40 @@ import kotlin.test.*
 
 /**
  * [standalone]: the unresolved orders change on their own, price and quantity, as Tradovate's do. [oco]: stops and targets are
- * added after entry as plain orders paired by OCO, as on Tradovate and Rithmic.
+ * added after entry as plain orders paired by OCO, as on Tradovate and Rithmic. [positionProtectionEditable] can lock grouped
+ * edits without dropping the recognized prices and ids; [standaloneStop] and [standaloneTarget] allow mixed per-leg permissions.
+ * [publishStandaloneChanges] opts new regressions into publishing the changed order, leaving the older fixtures unchanged.
  */
-private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: Boolean = false, standalone: Boolean = false, oco: Boolean = false) : BrokerPlugin {
+private class OfflineProtectionBroker(
+    unresolved: Boolean = false,
+    unprotected: Boolean = false,
+    standalone: Boolean = false,
+    oco: Boolean = false,
+    positionProtectionEditable: Boolean = !unresolved,
+    standaloneStop: Boolean = standalone,
+    standaloneTarget: Boolean = standalone,
+    private val publishStandaloneChanges: Boolean = false,
+) : BrokerPlugin {
     val spec = Instrument("TESTZ6", "Offline futures", "离线测试", 2, 25, 1_250_000, minLotsHundredths = 100,
         lotStepHundredths = 100, quantityUnit = "张", quantityDecimals = 0, estimatesIncludeFees = false)
     val time = 1_798_589_000_000L
     override val descriptor = BrokerDescriptor("offline-protection", "离线保护单测试", "Only synthetic fixtures", true, BrokerEnvironment.REMOTE_DEMO)
     override val capabilities = if (oco) BrokerCapabilities(hedging = false, addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true)
-        else BrokerCapabilities(hedging = false, modifyOrderQuantity = standalone)
+        else BrokerCapabilities(hedging = false, modifyOrderQuantity = standaloneStop || standaloneTarget)
     override val instruments = listOf(spec)
     override val accounts = listOf(AccountInfo("100", "离线测试账户"))
     override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
     override val market = MutableStateFlow(MarketSnapshot(mapOf(spec.symbol to Quote(550500, 550525, time)), time, connected = true))
     val position = Position("100:200", spec.symbol, Side.BUY, 100, 550000, time - 300000,
         stopLoss = if (unresolved || unprotected) null else 549000, takeProfit = if (unresolved || unprotected) null else 552000, marginMicros = 0,
-        protectionEditable = !unresolved, feesKnown = false, stopLossOrderId = if (unresolved || unprotected) null else "702", takeProfitOrderId = if (unresolved || unprotected) null else "701")
+        protectionEditable = positionProtectionEditable, feesKnown = false, stopLossOrderId = if (unresolved || unprotected) null else "702", takeProfitOrderId = if (unresolved || unprotected) null else "701")
     val orders = if (unprotected) emptyList() else listOf(
         PendingOrder("701", OrderRequest(spec.symbol, Side.SELL, OrderKind.LIMIT, 100, 552000), time,
-            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.TAKE_PROFIT, positionId = if (unresolved) null else position.id, editable = !unresolved,
-            standaloneEditable = standalone),
+            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.TAKE_PROFIT, positionId = if (unresolved) null else position.id, editable = !unresolved && positionProtectionEditable,
+            standaloneEditable = standaloneTarget),
         PendingOrder("702", OrderRequest(spec.symbol, Side.SELL, OrderKind.STOP, 100, 549000), time,
-            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.STOP_LOSS, positionId = if (unresolved) null else position.id, editable = !unresolved,
-            standaloneEditable = standalone),
+            role = if (unresolved) OrderRole.UNRESOLVED else OrderRole.STOP_LOSS, positionId = if (unresolved) null else position.id, editable = !unresolved && positionProtectionEditable,
+            standaloneEditable = standaloneStop),
     )
     val accountState = MutableStateFlow(AccountSnapshot("100", 25_000_000_000, positions = listOf(position), orders = orders))
     var entryCalls = 0
@@ -53,6 +64,8 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
     var lastProtection: Pair<Long?, Long?>? = null
     /** Every order changed on its own: id, price and quantity. */
     val changes = mutableListOf<Triple<String, Long, Long>>()
+    /** Read-only standalone previews, including those made before the pointer is released. */
+    val changePreviews = mutableListOf<Triple<String, Long, Long>>()
     override fun history(symbol: String, timeframe: Timeframe) = (0..100).map { i ->
         val close = 550000L + i % 5 * 25
         Candle(time - (100 - i) * timeframe.millis, close, close + 50, close - 50, close)
@@ -68,6 +81,7 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
         override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long): TradeResult { entryCalls++; return TradeResult(false, "offline") }
         /** A sell stop at or over the 5505.00 bid would trigger at once, a sell limit at or under it would fill. */
         override fun previewOrderChange(orderId: String, price: Long, lotsHundredths: Long): OrderPreview {
+            changePreviews += Triple(orderId, price, lotsHundredths)
             val order = state.value.orders.first { it.id == orderId }
             val crossed = if (order.request.kind == OrderKind.STOP) price >= 550500 else price <= 550500
             return if (crossed) OrderPreview(null, errors = listOf(CROSSED_ORDER_PRICE), marginKnown = false, feesKnown = false)
@@ -75,6 +89,10 @@ private class OfflineProtectionBroker(unresolved: Boolean = false, unprotected: 
         }
         override suspend fun changeOrder(requestId: String, orderId: String, expectedVersion: Long, price: Long, lotsHundredths: Long): TradeResult {
             changes += Triple(orderId, price, lotsHundredths)
+            if (publishStandaloneChanges) state.value = state.value.copy(orders = state.value.orders.map { order ->
+                if (order.id == orderId) order.copy(request = order.request.copy(entryPrice = price, lotsHundredths = lotsHundredths), version = order.version + 1)
+                else order
+            })
             return TradeResult(true, "离线订单已单独修改")
         }
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?): TradeResult {
@@ -311,6 +329,124 @@ class ProtectionUiTest {
         compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
         assertEquals(listOf(Triple("702", scale.price(from + 40f, broker.spec.tickSize), 100L)), broker.changes)
         compose.onNodeWithTag("standalone-order-dialog").assertDoesNotExist()
+    }
+
+    /** Keep both recognized lines on the selected position, but never offer an unsafe grouped edit. */
+    private fun selectLockedPosition(broker: OfflineProtectionBroker) {
+        assertFalse(broker.position.protectionEditable)
+        assertEquals(549000L, broker.position.stopLoss)
+        assertEquals(552000L, broker.position.takeProfit)
+        assertEquals("702", broker.position.stopLossOrderId)
+        assertEquals("701", broker.position.takeProfitOrderId)
+        compose.onNodeWithTag("trade-terminal").performScrollToKey("position-${broker.position.id}")
+        compose.onNodeWithTag("position-${broker.position.id}").performClick()
+        compose.onNodeWithTag("protect-position-${broker.position.id}").assertIsNotEnabled()
+    }
+
+    /** Stops before release so each test can distinguish a read-only preview from a submitted change. */
+    private fun startProtectionLineDrag(price: Long, dy: Float, tick: Long, mouse: Boolean): Long {
+        val state = chartState()
+        val scale = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(), 18f * .6f, state.getValue("plotBottom").toFloat())
+        val at = Offset(chart().fetchSemanticsNode().size.width * .55f, scale.y(price))
+        if (mouse) chart().performMouseInput { moveTo(at); press(); moveBy(Offset(0f, dy / 4)); moveBy(Offset(0f, dy * 3 / 4)) }
+        else chart().performTouchInput { down(at); moveBy(Offset(0f, dy / 4)); moveBy(Offset(0f, dy * 3 / 4)) }
+        compose.waitForIdle()
+        return scale.price(at.y + dy, tick)
+    }
+    private fun releaseProtectionLineDrag(mouse: Boolean) {
+        if (mouse) chart().performMouseInput { release() } else chart().performTouchInput { up() }
+        compose.waitForIdle()
+    }
+    private fun assertNoProtectionOrEntryFlow(broker: OfflineProtectionBroker) {
+        compose.onNodeWithTag("protection-dialog").assertDoesNotExist()
+        compose.onNodeWithTag("pending-entry-dialog").assertDoesNotExist()
+        compose.onNodeWithTag("pending-protection-dialog").assertDoesNotExist()
+        assertEquals(0, broker.protectionCalls)
+        assertEquals(0, broker.entryCalls)
+    }
+    private fun assertOnlyStandaloneOrderChanged(broker: OfflineProtectionBroker, id: String, price: Long) {
+        val original = broker.orders.single { it.id == id }
+        assertEquals(listOf(Triple(id, price, original.request.lotsHundredths)), broker.changes)
+        val updated = broker.accountState.value.orders.single { it.id == id }
+        assertEquals(original.copy(request = original.request.copy(entryPrice = price), version = original.version + 1), updated)
+        assertEquals(broker.orders.filterNot { it.id == id }, broker.accountState.value.orders.filterNot { it.id == id }, "The other leg is unchanged")
+        assertEquals(listOf(broker.position), broker.accountState.value.positions, "A standalone change does not rewrite the grouped position")
+        assertTrue(broker.changePreviews.isNotEmpty())
+        assertTrue(broker.changePreviews.all { it.first == id && it.third == original.request.lotsHundredths }, "Preview only the dragged id, keeping its quantity")
+        assertNoProtectionOrEntryFlow(broker)
+    }
+    private fun lockedProtectionLineUsesStandaloneConfirmation(id: String, dy: Float, mouse: Boolean) {
+        val broker = OfflineProtectionBroker(standalone = true, positionProtectionEditable = false, publishStandaloneChanges = true)
+        render(broker)
+        selectLockedPosition(broker)
+        val original = broker.orders.single { it.id == id }
+        val price = startProtectionLineDrag(original.request.entryPrice!!, dy, broker.spec.tickSize, mouse)
+        compose.onNodeWithTag("chart-readout").assertTextContains("单独改价预览 ${broker.spec.formatPrice(price)}", substring = true)
+        compose.onNodeWithTag("standalone-order-dialog").assertDoesNotExist()
+        assertTrue(broker.changes.isEmpty(), "Holding the drag only previews it")
+        assertEquals(broker.orders, broker.accountState.value.orders)
+        assertNoProtectionOrEntryFlow(broker)
+        releaseProtectionLineDrag(mouse)
+        compose.onNodeWithTag("standalone-order-dialog").assertExists()
+        compose.onNodeWithTag("standalone-price").assertTextContains(broker.spec.formatPrice(price))
+        compose.onNodeWithTag("standalone-quantity").assertTextContains("1")
+        compose.onNodeWithText("#${original.id}", substring = true).assertExists()
+        assertTrue(broker.changes.isEmpty(), "Dropping the line still requires confirmation")
+        assertEquals(broker.orders, broker.accountState.value.orders)
+        assertNoProtectionOrEntryFlow(broker)
+        compose.onNodeWithTag("confirm-standalone-order").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
+        compose.waitForIdle()
+        assertOnlyStandaloneOrderChanged(broker, id, price)
+    }
+
+    @Test fun aLockedPositionStopLineUsesStandaloneConfirmationWithTheMouse() =
+        lockedProtectionLineUsesStandaloneConfirmation("702", 40f, mouse = true)
+
+    @Test fun aLockedPositionTargetLineUsesStandaloneConfirmationWithTouch() =
+        lockedProtectionLineUsesStandaloneConfirmation("701", -25f, mouse = false)
+
+    private fun lockedProtectionLineSkipsOnlyItsOwnConfirmation(id: String, dy: Float, mouse: Boolean) {
+        val broker = OfflineProtectionBroker(standalone = true, positionProtectionEditable = false, publishStandaloneChanges = true)
+        render(broker, skipConfirmation = true)
+        selectLockedPosition(broker)
+        val price = startProtectionLineDrag(broker.orders.single { it.id == id }.request.entryPrice!!, dy, broker.spec.tickSize, mouse)
+        assertTrue(broker.changes.isEmpty(), "Skip confirmation does not send a drag before release")
+        assertEquals(broker.orders, broker.accountState.value.orders)
+        releaseProtectionLineDrag(mouse)
+        compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("standalone-order-dialog").assertDoesNotExist()
+        assertOnlyStandaloneOrderChanged(broker, id, price)
+    }
+
+    @Test fun aLockedPositionStopLineSkipsConfirmationForOnlyThatOrderWithTouch() =
+        lockedProtectionLineSkipsOnlyItsOwnConfirmation("702", 40f, mouse = false)
+
+    @Test fun aLockedPositionTargetLineSkipsConfirmationForOnlyThatOrderWithTheMouse() =
+        lockedProtectionLineSkipsOnlyItsOwnConfirmation("701", -25f, mouse = true)
+
+    /** Tradovate can report one plain editable leg beside a managed, non-editable leg; a group unlock is never inferred. */
+    @Test fun aLockedPositionWithMixedLegPermissionsOnlyDragsTheStandaloneLeg() {
+        val broker = OfflineProtectionBroker(positionProtectionEditable = false, standaloneStop = true, standaloneTarget = false,
+            publishStandaloneChanges = true)
+        render(broker, skipConfirmation = true)
+        selectLockedPosition(broker)
+        compose.onNodeWithTag("edit-order-702").assertIsEnabled()
+        compose.onNodeWithTag("edit-order-701").assertDoesNotExist()
+        startProtectionLineDrag(552000, -25f, broker.spec.tickSize, mouse = false)
+        releaseProtectionLineDrag(mouse = false)
+        compose.onNodeWithTag("standalone-order-dialog").assertDoesNotExist()
+        assertTrue(broker.changes.isEmpty(), "The managed target must stay read-only")
+        assertTrue(broker.changePreviews.isEmpty(), "A read-only leg must not enter a standalone preview")
+        assertEquals(broker.orders, broker.accountState.value.orders)
+        assertNoProtectionOrEntryFlow(broker)
+        // A denied line drag pans the chart, so read the current scale again for the allowed stop.
+        val price = startProtectionLineDrag(549000, 40f, broker.spec.tickSize, mouse = true)
+        releaseProtectionLineDrag(mouse = true)
+        compose.waitUntil(5_000) { broker.changes.isNotEmpty() }
+        compose.waitForIdle()
+        assertOnlyStandaloneOrderChanged(broker, "702", price)
     }
 
     @Test fun chartButtonsAskForTheSameConfirmationAsTheTradeList() {

@@ -1,5 +1,13 @@
 # Unreleased
 
+## 简体中文
+
+- 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
+
+## English
+
+- Fix stop and target lines that could not be dragged on the chart when their position's protection could not be edited together, even though the broker allowed each order to change on its own. Each order is still drawn once, and dragging changes only that order through the existing confirmation and risk checks; non-editable legs stay read-only.
+
 # v1.6.0
 
 ## 简体中文

@@ -151,13 +151,22 @@ internal fun orderLines(
         positions.filter { it.id == selectedPosition?.id || it.id == dragging }.forEach { p ->
             listOf(true to p.stopLoss, false to p.takeProfit).forEach { (stop, base) ->
                 if (p.id != selectedPosition?.id && base != null) return@forEach
-                val dragged = (moving as? EditableLine.Protection)?.takeIf { it.position.id == p.id && it.stop == stop } != null
-                val price = (if (dragged) drag?.price else base) ?: return@forEach
-                val pnl = estimatedExitPnl(instrument, p, price)
                 val order = orders.firstOrNull { it.id == if (stop) p.stopLossOrderId else p.takeProfitOrderId }
+                // This line also represents the broker order filtered out below. If the position cannot move its
+                // protection together, keep the order's standalone edit here instead of hiding its only drag route.
+                val standalone = order?.takeIf { !p.protectionEditable && it.standaloneEditable && it.request.kind != OrderKind.MARKET && it.request.entryPrice != null }
+                val edit = if (p.protectionEditable && base != null) EditableLine.Protection(p, stop, base) else standalone?.let(EditableLine::Standalone)
+                val dragged = when (moving) {
+                    is EditableLine.Protection -> moving.position.id == p.id && moving.stop == stop
+                    is EditableLine.Standalone -> moving.order.id == standalone?.id
+                    else -> false
+                }
+                val price = (if (dragged) drag?.price else standalone?.request?.entryPrice ?: base) ?: return@forEach
+                val quantity = standalone?.request?.lotsHundredths ?: p.lotsHundredths
+                val pnl = estimatedExitPnl(instrument, p, quantity, price)
                 val removal = order?.let(LineAction::CancelOrder) ?: LineAction.RemoveProtection(p, stop).takeIf { options.removeProtection && p.protectionEditable }
-                add(OrderLine(price, protectionCells(instrument, stop, pnl, !p.feesKnown, p.lotsHundredths, removal, order?.let { cancelHint(instrument, it) } ?: "移除${protectionName(stop)}"),
-                    protectionTone(stop), edit = if (p.protectionEditable && base != null) EditableLine.Protection(p, stop, base) else null, pnl = pnl, gross = !p.feesKnown, moving = dragged))
+                add(OrderLine(price, protectionCells(instrument, stop, pnl, !p.feesKnown, quantity, removal, order?.let { cancelHint(instrument, it) } ?: "移除${protectionName(stop)}"),
+                    protectionTone(stop), edit = edit, pnl = pnl, gross = !p.feesKnown, moving = dragged))
             }
         }
     }

@@ -108,12 +108,97 @@ class OrderLinesTest {
         val shown = orderLines(mes, listOf(position), position, bound, null, null, null, null, all)
         val line = shown.single { it.price == 5_490_000_000L }
         assertEquals(listOf("SL", "毛 -50.00 USD", "1"), line.texts())
+        assertEquals(EditableLine.Protection(position, true, 5_490_000_000), line.edit)
+        assertEquals(3, shown.size, "The position's stop and target each appear once")
         assertEquals(LineAction.CancelOrder(bound[1]), line.closeAction())
         // With the positions layer off the same stop is drawn from its order, still priced from the position's entry.
         val ordersOnly = orderLines(mes, listOf(position), position, bound, null, null, null, null, all.copy(showPositions = false))
         val stop = ordersOnly.single { it.price == 5_490_000_000L }
         assertEquals(listOf("SL", "毛 -50.00 USD", "1"), stop.texts())
         assertEquals(EditableLine.Protection(position, true, 5_490_000_000), stop.edit)
+    }
+
+    /** Rithmic's different-family legs: the position cannot move them as a pair, but each order can still move. */
+    @Test fun aLockedPositionsStandaloneProtectionStaysDraggableWithoutDuplicateLines() {
+        val position = bare.copy(stopLoss = 5_490_000_000, takeProfit = 5_510_000_000, stopLossOrderId = "702", takeProfitOrderId = "701", protectionEditable = false)
+        val bound = brackets.map { it.copy(positionId = position.id, standaloneEditable = true) }
+        for (options in listOf(all, all.copy(showOrders = false), all.copy(showPositions = false))) {
+            val shown = orderLines(mes, listOf(position), position, bound, null, null, null, null, options)
+            val protection = shown.filter { it.tone == LineTone.STOP || it.tone == LineTone.TARGET }
+            assertEquals(2, protection.size, "Each broker order is drawn once, whichever layer represents it")
+            assertEquals(bound.map { EditableLine.Standalone(it) }.toSet(), protection.map { it.edit }.toSet())
+            assertEquals(setOf(LineAction.CancelOrder(bound[0]), LineAction.CancelOrder(bound[1])), protection.map { it.closeAction() }.toSet())
+            assertEquals(listOf("SL", "毛 -50.00 USD", "1"), protection.single { it.tone == LineTone.STOP }.texts())
+            assertEquals(listOf("TP", "毛 +50.00 USD", "1"), protection.single { it.tone == LineTone.TARGET }.texts())
+            assertTrue(shown.flatMap { it.cells }.none { it.kind == CellKind.ADD_STOP || it.kind == CellKind.ADD_TARGET }, "A locked position does not gain protection-creation buttons")
+        }
+    }
+
+    @Test fun draggingARepresentedStandaloneLegMovesOnlyItsLineAndEstimate() {
+        val position = bare.copy(stopLoss = 5_490_000_000, takeProfit = 5_510_000_000, stopLossOrderId = "702", takeProfitOrderId = "701", protectionEditable = false)
+        val bound = brackets.map { it.copy(positionId = position.id, standaloneEditable = true) }
+        for (order in bound) {
+            val edit = EditableLine.Standalone(order)
+            val drag = LineDrag(edit, scale, edit.price - 1_000_000)
+            val shown = orderLines(mes, listOf(position), position, bound, null, null, null, drag, all)
+            assertEquals(3, shown.size, "The moving leg replaces its original line, not a second copy")
+            val moving = shown.single { it.moving }
+            assertEquals(edit, moving.edit)
+            assertEquals(drag.price, moving.price)
+            assertEquals(if (order.role == OrderRole.STOP_LOSS) -55_000_000L else 45_000_000L, moving.pnl)
+            val sibling = bound.single { it.id != order.id }
+            assertEquals(sibling.request.entryPrice, shown.single { it.edit == EditableLine.Standalone(sibling) }.price)
+            assertEquals(position.entryPrice, shown.first().price)
+            assertTrue(dragReadout(mes, drag, OrderPreview(drag.price), moving).startsWith("单独改价预览"))
+        }
+    }
+
+    /** Tradovate's processing sibling, and Rithmic's stop-limit leg, must not become editable with the working leg. */
+    @Test fun aLockedPositionsReadOnlyLegStaysReadOnlyBesideAStandaloneLeg() {
+        val position = bare.copy(stopLoss = 5_490_000_000, takeProfit = 5_510_000_000, stopLossOrderId = "702", takeProfitOrderId = "701", protectionEditable = false)
+        val bound = brackets.map { it.copy(positionId = position.id, standaloneEditable = it.role == OrderRole.TAKE_PROFIT) }
+        val shown = orderLines(mes, listOf(position), position, bound, null, null, null, null, all)
+        assertEquals(3, shown.size)
+        val stop = shown.single { it.tone == LineTone.STOP }
+        assertNull(stop.edit, "A leg the broker does not permit to change stays read-only")
+        assertEquals(LineAction.CancelOrder(bound[1]), stop.closeAction())
+        assertEquals(EditableLine.Standalone(bound[0]), shown.single { it.tone == LineTone.TARGET }.edit)
+        val noOrders = orderLines(mes, listOf(position), position, emptyList(), null, null, null, null, all)
+        assertTrue(noOrders.all { it.edit == null }, "No standalone route is invented without the broker's order")
+    }
+
+    @Test fun aUniqueTargetStaysDraggableBesideMultipleStopOrders() {
+        val position = bare.copy(takeProfit = 5_510_000_000, takeProfitOrderId = "701", protectionEditable = false)
+        val bound = (brackets + brackets[1].copy(id = "703", request = brackets[1].request.copy(entryPrice = 5_495_000_000)))
+            .map { it.copy(positionId = position.id, standaloneEditable = true) }
+        val shown = orderLines(mes, listOf(position), position, bound, null, null, null, null, all)
+        assertEquals(4, shown.size, "The position, two individual stops and one represented target")
+        assertEquals(bound.map { EditableLine.Standalone(it) }.toSet(), shown.mapNotNull { it.edit }.toSet())
+        assertEquals(2, shown.count { it.tone == LineTone.STOP })
+        assertEquals(1, shown.count { it.tone == LineTone.TARGET })
+    }
+
+    @Test fun aRepresentedStandaloneLegUsesItsOwnPriceAndQuantityInsteadOfTheWholePosition() {
+        val position = bare.copy(lotsHundredths = 300, stopLoss = 5_490_000_000, stopLossOrderId = "702", protectionEditable = false)
+        val stop = brackets[1].copy(positionId = position.id, standaloneEditable = true,
+            request = brackets[1].request.copy(entryPrice = 5_491_000_000))
+        for (options in listOf(all, all.copy(showPositions = false))) {
+            val shown = orderLines(mes, listOf(position), position, listOf(stop), null, null, null, null, options)
+            val line = shown.single { it.tone == LineTone.STOP }
+            assertEquals(EditableLine.Standalone(stop), line.edit)
+            assertEquals(5_491_000_000L, line.price)
+            assertEquals(-45_000_000L, line.pnl, "The one-contract leg, not the three-contract position")
+            assertEquals(listOf("SL", "毛 -45.00 USD", "1"), line.texts())
+        }
+    }
+
+    @Test fun aRepresentedStandaloneLegCannotDragAMarketOrMissingPriceOrder() {
+        val position = bare.copy(stopLoss = 5_490_000_000, stopLossOrderId = "702", protectionEditable = false)
+        for (request in listOf(brackets[1].request.copy(kind = OrderKind.MARKET), brackets[1].request.copy(entryPrice = null))) {
+            val order = brackets[1].copy(positionId = position.id, standaloneEditable = true, request = request)
+            val stop = orderLines(mes, listOf(position), position, listOf(order), null, null, null, null, all).single { it.tone == LineTone.STOP }
+            assertNull(stop.edit)
+        }
     }
 
     @Test fun positionLabelsShowLiveGrossPnlUsingTheLiquidationSideOfTheQuote() {
