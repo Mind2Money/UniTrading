@@ -44,6 +44,28 @@ class IndicatorUiTest {
         compose.onNodeWithTag("indicator-settings").assertExists()
     }
 
+    @Test fun independentLineWidthsAndPatternsSurviveSavingAndReopening() {
+        render()
+        openIndicators()
+        compose.onNodeWithTag("add-indicator-BOLL").performClick()
+        compose.onNodeWithTag("indicator-width-0-上轨").performScrollTo().performClick()
+        compose.onNodeWithTag("indicator-width-0-上轨-3").performClick()
+        compose.onNodeWithTag("indicator-pattern-0-上轨").performScrollTo().performClick()
+        compose.onNodeWithTag("indicator-pattern-0-上轨-DASHED").performClick()
+        compose.onNodeWithTag("indicator-pattern-0-下轨").performScrollTo().performClick()
+        compose.onNodeWithTag("indicator-pattern-0-下轨-DOTTED").performClick()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isNotEmpty() }
+        val result = IndicatorController(store).settings.value.indicators.single()
+        assertEquals(com.unitrading.chart.IndicatorLineStyle(3f, com.unitrading.chart.IndicatorLinePattern.DASHED), result.lineStyle("上轨"))
+        assertEquals(com.unitrading.chart.IndicatorLineStyle(1.4f, com.unitrading.chart.IndicatorLinePattern.DOTTED), result.lineStyle("下轨"))
+        assertEquals(com.unitrading.chart.IndicatorLineStyle(), result.lineStyle("中轨"))
+        openIndicators()
+        compose.onNodeWithTag("indicator-width-0-上轨").performScrollTo().assertTextContains("线宽 3")
+        compose.onNodeWithTag("indicator-pattern-0-上轨").performScrollTo().assertTextContains("虚线")
+        compose.onNodeWithTag("indicator-pattern-0-下轨").performScrollTo().assertTextContains("点线")
+    }
+
     /** Find repeated colour runs and gaps across the plot, tolerating subpixel antialiasing at .6 density. */
     private fun dashedGuideRow(pixels: PixelMap, expected: Color): Int {
         val left = pixels.width / 8

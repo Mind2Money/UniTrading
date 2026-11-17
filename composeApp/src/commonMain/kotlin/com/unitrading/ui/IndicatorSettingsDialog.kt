@@ -33,6 +33,7 @@ internal data class IndicatorDraft(
     val colors: Map<String, String>,
     val visible: Boolean = true,
     val referenceLevels: List<ReferenceLevelDraft> = emptyList(),
+    val lineStyles: Map<String, IndicatorLineStyle> = emptyMap(),
 ) {
     fun parse(spec: IndicatorParam): Double? {
         val text = params[spec.key]?.trim() ?: return null
@@ -51,7 +52,7 @@ internal data class IndicatorDraft(
         val guideColors = if (kind == IndicatorKind.RSI) referenceLevels.associate {
             formatParam(it.parse() ?: return null) to it.color.uppercase()
         } else emptyMap()
-        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels, guideColors)
+        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels, guideColors, lineStyles)
         return config.takeIf { runCatching { it.validate() }.isSuccess }
     }
     companion object {
@@ -61,6 +62,7 @@ internal data class IndicatorDraft(
             config.kind.lines.withIndex().filterNot { it.value.histogram }.associate { (index, line) -> line.name to config.color(index) },
             config.visible,
             if (config.kind == IndicatorKind.RSI) config.guides.map { ReferenceLevelDraft(formatParam(it), config.guideColor(it)) } else emptyList(),
+            config.lineStyles,
         )
         fun new(kind: IndicatorKind) = from(IndicatorConfig(Random.nextLong().toULong().toString(16), kind))
     }
@@ -98,7 +100,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
                         leadingIcon = { Icon(AppIcons.Add, contentDescription = kind.title, Modifier.size(AssistChipDefaults.IconSize)) })
                 }
             }
-            if (drafts.isEmpty()) EmptyState("尚未添加指标", "点击上方指标，可添加多个并分别设置参数和线条颜色。", icon = AppIcons.Tune)
+            if (drafts.isEmpty()) EmptyState("尚未添加指标", "点击上方指标，可添加多个并分别设置参数、线条颜色、线宽和线型。", icon = AppIcons.Tune)
             else ReorderableColumn(viewport, drafts, { it.id }, { it.kind.label }, { drafts = it }, spacing = 12.dp, heldShape = MaterialTheme.shapes.medium) { card ->
                 val index = card.index
                 IndicatorEditor(index, card.value, card.grip,
@@ -170,11 +172,15 @@ private fun IndicatorEditor(
                         isError = draft.parse(spec) == null, supportingText = { Text("${formatParam(spec.min)}–${formatParam(spec.max)}") })
                 }
             }
-            FlowRow(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                draft.kind.lines.filterNot { it.histogram }.forEach { line ->
+            draft.kind.lines.filterNot { it.histogram }.forEach { line ->
+                val lineStyle = draft.lineStyles[line.name] ?: IndicatorLineStyle()
+                FlowRow(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     ColorField("${line.name}颜色", draft.colors[line.name] ?: "", draft.colorValid(line.name), "选择${draft.kind.label}${line.name}颜色",
                         "indicator-color-$index-${line.name}", Modifier.width(156.dp), { onPickColor(line.name) },
                         { onChange(draft.copy(colors = draft.colors + (line.name to it.uppercase()))) })
+                    IndicatorStylePicker(index, line.name, lineStyle) { style ->
+                        onChange(draft.copy(lineStyles = draft.lineStyles + (line.name to style)))
+                    }
                 }
             }
             if (draft.kind == IndicatorKind.RSI) {
@@ -203,6 +209,34 @@ private fun IndicatorEditor(
             if (draft.kind == IndicatorKind.VOLUME) Text("柱体颜色跟随 K 线涨跌；无成交量数据时留空。", style = type.bodySmall, color = colors.Muted)
             if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", style = type.bodySmall, color = colors.Muted)
             if (config == null) Text("参数、颜色或参考值无效，请修改后保存。", style = type.bodySmall, color = scheme.error)
+        }
+    }
+}
+
+/** Choose each output line independently; histogram bars have no line style. */
+@Composable
+private fun IndicatorStylePicker(index: Int, line: String, style: IndicatorLineStyle, onChange: (IndicatorLineStyle) -> Unit) {
+    var widthOpen by remember(index, line) { mutableStateOf(false) }
+    var patternOpen by remember(index, line) { mutableStateOf(false) }
+    Box {
+        OutlinedButton({ widthOpen = true }, Modifier.testTag("indicator-width-$index-$line")) {
+            Text("线宽 ${if (style.width == 1.4f) "默认" else style.width.toInt().toString()}")
+        }
+        DropdownMenu(widthOpen, { widthOpen = false }) {
+            listOf(1f, 1.4f, 2f, 3f, 4f, 5f).forEach { width ->
+                DropdownMenuItem(text = { Text(if (width == 1.4f) "默认" else "${width.toInt()}") },
+                    onClick = { onChange(style.copy(width = width)); widthOpen = false },
+                    modifier = Modifier.testTag("indicator-width-$index-$line-${if (width == 1.4f) "default" else width.toInt()}"))
+            }
+        }
+    }
+    Box {
+        OutlinedButton({ patternOpen = true }, Modifier.testTag("indicator-pattern-$index-$line")) { Text(style.pattern.label) }
+        DropdownMenu(patternOpen, { patternOpen = false }) {
+            IndicatorLinePattern.entries.forEach { pattern ->
+                DropdownMenuItem(text = { Text(pattern.label) }, onClick = { onChange(style.copy(pattern = pattern)); patternOpen = false },
+                    modifier = Modifier.testTag("indicator-pattern-$index-$line-${pattern.name}"))
+            }
         }
     }
 }

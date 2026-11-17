@@ -3,11 +3,26 @@ package com.unitrading.app
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.DEFAULT_INDICATOR_GUIDE_COLOR
+import com.unitrading.chart.IndicatorLineStyle
+import com.unitrading.chart.IndicatorLinePattern
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 class IndicatorSettingsTest {
+    @Test fun lineStylesPersistPerSeriesAndOldSettingsKeepDefaults() = runTest {
+        val old = Json.decodeFromString<IndicatorSettings>("""{"indicators":[{"id":"b","kind":"BOLL"}]}""")
+        assertEquals(IndicatorLineStyle(), old.indicators.single().lineStyle("上轨"))
+        val styles = mapOf("上轨" to IndicatorLineStyle(3f, IndicatorLinePattern.DASHED), "下轨" to IndicatorLineStyle(2f, IndicatorLinePattern.DOTTED))
+        val store = MemorySnapshotStore()
+        assertTrue(IndicatorController(store).apply(IndicatorSettings(listOf(old.indicators.single().copy(lineStyles = styles)))))
+        val restored = IndicatorController(store).settings.value.indicators.single()
+        assertEquals(styles, restored.lineStyles)
+        assertEquals(IndicatorLineStyle(), restored.lineStyle("中轨"))
+        assertFailsWith<IllegalArgumentException> { restored.copy(lineStyles = mapOf("上轨" to IndicatorLineStyle(0f))).validate() }
+        assertFailsWith<IllegalArgumentException> { restored.copy(lineStyles = mapOf("错误" to IndicatorLineStyle())).validate() }
+        assertFailsWith<IllegalArgumentException> { IndicatorConfig("v", IndicatorKind.VOLUME, lineStyles = mapOf("成交量" to IndicatorLineStyle())).validate() }
+    }
     private val custom = IndicatorSettings(listOf(
         IndicatorConfig("1", IndicatorKind.EXPMA, mapOf("period" to 30.0), mapOf("EXPMA" to "#FF0000")),
         IndicatorConfig("2", IndicatorKind.BOLL, mapOf("period" to 20.0, "width" to 2.5)),

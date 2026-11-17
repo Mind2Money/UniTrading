@@ -76,7 +76,7 @@ fun parseHexColor(value: String?): Color? =
     value?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color(0xFF000000L or it) }
 
 /** Polyline through the non-NaN values of [range]; a gap restarts the line. */
-private fun DrawScope.drawSeriesLine(values: DoubleArray, range: IntRange, color: Color, x: (Int) -> Float, y: (Double) -> Float) {
+internal fun DrawScope.drawSeriesLine(values: DoubleArray, range: IntRange, color: Color, lineStyle: IndicatorLineStyle, x: (Int) -> Float, y: (Double) -> Float) {
     val path = Path()
     var open = false
     for (index in range) {
@@ -85,13 +85,19 @@ private fun DrawScope.drawSeriesLine(values: DoubleArray, range: IntRange, color
         if (v.isNaN() || !row.isFinite()) { open = false; continue }
         if (!open) { path.moveTo(x(index), row); open = true } else path.lineTo(x(index), row)
     }
-    drawPath(path, color, style = Stroke(1.4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    val width = lineStyle.width.dp.toPx()
+    val effect = when (lineStyle.pattern) {
+        IndicatorLinePattern.SOLID -> null
+        IndicatorLinePattern.DASHED -> PathEffect.dashPathEffect(floatArrayOf(maxOf(width * 4, 6.dp.toPx()), maxOf(width * 3, 4.dp.toPx())))
+        IndicatorLinePattern.DOTTED -> PathEffect.dashPathEffect(floatArrayOf(width, width * 3))
+    }
+    drawPath(path, color, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = effect))
 }
 
 /** Overlay lines share the candles' price scale; [x] maps an absolute candle index to its centre. */
 internal fun DrawScope.drawIndicatorOverlays(overlays: List<ComputedIndicator>, range: IntRange, scale: PriceScale, palette: TradingPalette, x: (Int) -> Float) {
     overlays.forEach { item ->
-        item.series.forEach { s -> drawSeriesLine(s.values, range, parseHexColor(s.color) ?: palette.Ink, x) { scale.yOf(it) } }
+        item.series.forEach { s -> drawSeriesLine(s.values, range, parseHexColor(s.color) ?: palette.Ink, item.config.lineStyle(s.line.name), x) { scale.yOf(it) } }
     }
 }
 
@@ -143,7 +149,7 @@ internal fun DrawScope.drawIndicatorPanes(
                         val barY = y(v)
                         drawRect(if (kind == IndicatorKind.VOLUME) { val bar = candles.getOrNull(index); if (bar != null && bar.close < bar.open) palette.Down else palette.Up } else if (v >= 0) palette.Up else palette.Down, Offset(x(index) - width / 2, minOf(barY, zero)), Size(width, maxOf(abs(barY - zero), 1f)))
                     }
-                } else drawSeriesLine(s.values, range, parseHexColor(s.color) ?: palette.Ink, x, ::y)
+                } else drawSeriesLine(s.values, range, parseHexColor(s.color) ?: palette.Ink, item.config.lineStyle(s.line.name), x, ::y)
             }
         }
         fun axisText(text: String, center: Float) {
