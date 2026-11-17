@@ -26,7 +26,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.parseFixed
-import com.unitrading.chart.dateTime
+import com.unitrading.chart.beijingDateTime
+import com.unitrading.chart.parseBeijingChartTime
 import com.unitrading.ui.ActionIcon
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.ColorPicker
@@ -36,7 +37,6 @@ import com.unitrading.ui.SegmentedChoice
 import com.unitrading.ui.TradingColors
 import com.unitrading.ui.colorHex
 import kotlin.math.roundToInt
-import kotlin.time.Instant
 
 private val HUES = listOf("#F23645", "#FF9800", "#FFEB3B", "#4CAF50", "#089981", "#00BCD4", "#2962FF", "#673AB7", "#9C27B0", "#E91E63")
 private val GRAYS = listOf("#FFFFFF", "#DBDBDB", "#B8B8B8", "#9C9C9C", "#808080", "#636363", "#4A4A4A", "#333333", "#1F1F1F", "#000000")
@@ -263,7 +263,7 @@ private fun LevelsEditor(title: String, levels: List<DrawingLevel>, tag: String,
     TextButton({ onChange(levels + DrawingLevel(levels.maxOf { it.value } + .5, "#2962FF")) }, Modifier.testTag("$tag-add")) { Text("添加层级") }
 }
 
-private fun parseTime(text: String): Long? = runCatching { Instant.parse(text.trim().replace(' ', 'T') + ":00Z").toEpochMilliseconds() }.getOrNull()
+private fun parseTime(text: String): Long? = parseBeijingChartTime(text)
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -365,7 +365,7 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                 "坐标" -> {
                     var invalid = false
                     d.points.take(24).forEachIndexed { index, point ->
-                        var timeText by remember(id, index) { mutableStateOf(dateTime(point.timeMs)) }
+                        var timeText by remember(id, index) { mutableStateOf(beijingDateTime(point.timeMs)) }
                         var priceText by remember(id, index) { mutableStateOf(instrument.formatPrice(point.price.roundToInt().toLong().coerceAtLeast(0))) }
                         val time = parseTime(timeText)
                         val price = parseFixed(priceText.trim(), instrument.priceDecimals)
@@ -374,7 +374,7 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                             OutlinedTextField(timeText, { text ->
                                 timeText = text
                                 parseTime(text)?.let { value -> change(d.copy(points = d.points.mapIndexed { i, old -> if (i == index) old.copy(timeMs = value) else old })) }
-                            }, Modifier.weight(1.6f).testTag("settings-point-time-$index"), label = { Text("点 ${index + 1} 时间 UTC") }, singleLine = true, isError = time == null)
+                            }, Modifier.weight(1.6f).testTag("settings-point-time-$index"), label = { Text("点 ${index + 1} 时间 北京") }, singleLine = true, isError = time == null)
                             OutlinedTextField(priceText, { text ->
                                 priceText = text
                                 parseFixed(text.trim(), instrument.priceDecimals)?.let { value -> change(d.copy(points = d.points.mapIndexed { i, old -> if (i == index) old.copy(price = value.toDouble()) else old })) }

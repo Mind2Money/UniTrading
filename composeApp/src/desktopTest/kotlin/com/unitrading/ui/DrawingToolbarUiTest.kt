@@ -82,6 +82,22 @@ class DrawingToolbarUiTest {
         assertTrue(drawings.drawings.isEmpty())
     }
 
+    @Test fun drawingCoordinatesUseBeijingTimeAndKeepUtcInstants() {
+        show()
+        compose.onNodeWithTag("drawing-group-TREND").performClick()
+        compose.waitForIdle()
+        clickChart(.3f, .6f)
+        clickChart(.6f, .3f)
+        val original = drawings.drawings.single().points.first().timeMs
+        compose.onNodeWithTag("drawing-bar-settings").performClick()
+        compose.onNodeWithTag("drawing-settings-tab-2").performClick()
+        compose.onNodeWithTag("settings-point-time-0").assertTextContains(com.unitrading.chart.beijingDateTime(original))
+        compose.onNodeWithTag("settings-point-time-0").performTextReplacement("2027-01-01 00:30")
+        compose.onNodeWithTag("drawing-settings-save").performClick()
+        compose.waitForIdle()
+        assertEquals(kotlin.time.Instant.parse("2026-12-31T16:30:00Z").toEpochMilliseconds(), drawings.drawings.single().points.first().timeMs)
+    }
+
     @Test fun settingsDialogEditsStyleAndCancelRestores() {
         show()
         compose.onNodeWithTag("drawing-group-TREND").performClick()

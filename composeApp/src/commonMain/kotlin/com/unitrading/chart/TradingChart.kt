@@ -50,6 +50,10 @@ import com.unitrading.broker.*
 import com.unitrading.chart.drawing.*
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.time.Clock
@@ -386,12 +390,12 @@ fun TradingChart(
                 DividerLine()
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · UTC / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
+                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else "北京时间"} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(dateTime(c.timeMs, timeframe.isSeconds), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                        Text(chartBarDateTime(c.timeMs, timeframe), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
                             (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
@@ -953,7 +957,7 @@ fun TradingChart(
                 Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
             selectedExecution?.let { fill ->
-                Text("选中成交 #${fill.id} · ${dateTime(fill.timeMs)} UTC · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
+                Text("选中成交 #${fill.id} · ${beijingDateTime(fill.timeMs)} 北京时间 · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
                     Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("selected-execution"), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -999,12 +1003,27 @@ class ChartChrome(
 fun dateTime(timeMs: Long, seconds: Boolean = false): String =
     Instant.fromEpochMilliseconds(timeMs).toString().take(if (seconds) 19 else 16).replace('T', ' ')
 
-/**
- * Crosshair time tag: date and minute for intraday bars, with the second for second intervals, and the date alone for
- * daily and longer bars; UTC like the axis.
- */
-fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String = when {
-    timeframe.seconds >= Timeframe.DAY -> dateTime(timeMs).take(10)
-    timeframe.isSeconds -> dateTime(timeMs, seconds = true)
-    else -> dateTime(timeMs)
+private val beijingChartZone = TimeZone.of("Asia/Shanghai")
+
+/** Format an absolute instant as Beijing local time; stored timestamps remain UTC instants. */
+fun beijingDateTime(timeMs: Long, seconds: Boolean = false): String {
+    val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(beijingChartZone)
+    fun two(value: Int) = value.toString().padStart(2, '0')
+    return "${local.date} ${two(local.hour)}:${two(local.minute)}" + if (seconds) ":${two(local.second)}" else ""
 }
+
+/** Daily-or-longer broker bars carry a trading date rather than an intraday instant. */
+fun chartBarDateTime(timeMs: Long, timeframe: Timeframe): String = when {
+    timeframe.seconds >= Timeframe.DAY -> dateTime(timeMs).take(10)
+    else -> beijingDateTime(timeMs, seconds = timeframe.isSeconds)
+}
+
+/** Parse a chart drawing coordinate typed as Beijing local time into the underlying UTC instant. */
+fun parseBeijingChartTime(text: String): Long? = runCatching {
+    val value = text.trim()
+    require(value.matches(Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}")))
+    LocalDateTime.parse(value.replace(' ', 'T') + ":00").toInstant(beijingChartZone).toEpochMilliseconds()
+}.getOrNull()
+
+/** Chart crosshair: Beijing time intraday, trading date for daily and longer bars. */
+fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String = chartBarDateTime(timeMs, timeframe)

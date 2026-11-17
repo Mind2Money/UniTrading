@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.Color
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Timeframe
 import com.unitrading.broker.formatFixed
-import com.unitrading.chart.dateTime
+import com.unitrading.chart.beijingDateTime
 import com.unitrading.chart.parseHexColor
 import kotlin.math.PI
 import kotlin.math.abs
@@ -108,7 +108,7 @@ internal fun formatSpan(milliseconds: Long): String {
     return listOfNotNull(days.takeIf { it > 0 }?.let { "${it}天" }, hours.takeIf { it > 0 }?.let { "${it}小时" }, rest.takeIf { it > 0 && days == 0L }?.let { "${it}分钟" }).joinToString(" ").ifEmpty { "0分钟" }
 }
 
-internal fun formatDate(timeMs: Long): String = dateTime(timeMs)
+internal fun formatDate(timeMs: Long): String = beijingDateTime(timeMs)
 
 internal fun mid(a: Offset, b: Offset) = Offset((a.x + b.x) / 2, (a.y + b.y) / 2)
 internal fun distance(a: Offset, b: Offset) = (a - b).getDistance()
