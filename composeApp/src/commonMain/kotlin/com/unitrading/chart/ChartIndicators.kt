@@ -35,8 +35,14 @@ internal class ComputedIndicator(val config: IndicatorConfig, val series: List<I
     val overlay: Boolean get() = config.kind.pane == IndicatorPane.OVERLAY
 }
 
-internal fun computeIndicators(configs: List<IndicatorConfig>, candles: List<Candle>): List<ComputedIndicator> =
-    configs.filter { it.visible }.map { ComputedIndicator(it, computeIndicator(it, candles)) }
+internal fun computeIndicators(configs: List<IndicatorConfig>, candles: List<Candle>, timeframe: com.unitrading.broker.Timeframe): List<ComputedIndicator> =
+    configs.filter { it.visible }.map { config ->
+        val values = computeIndicator(config, candles)
+        if (config.kind == IndicatorKind.VWAP && timeframe.seconds >= 86_400) {
+            values.forEach { it.values.fill(Double.NaN) }
+        }
+        ComputedIndicator(config, values)
+    }
 
 /** Pixel rows a pane plots values in: below its title row and above its bottom padding. */
 internal fun paneValueArea(paneTop: Float, paneHeight: Float, labelHeight: Float, labelPadding: Float): Pair<Float, Float> =
@@ -69,16 +75,15 @@ internal fun indicatorReadouts(items: List<ComputedIndicator>, index: Int, instr
 fun parseHexColor(value: String?): Color? =
     value?.removePrefix("#")?.takeIf { it.length == 6 }?.toLongOrNull(16)?.let { Color(0xFF000000L or it) }
 
-private fun PriceScale.yOf(value: Double): Float = bottom - ((value - low) / (high - low) * (bottom - top)).toFloat()
-
 /** Polyline through the non-NaN values of [range]; a gap restarts the line. */
 private fun DrawScope.drawSeriesLine(values: DoubleArray, range: IntRange, color: Color, x: (Int) -> Float, y: (Double) -> Float) {
     val path = Path()
     var open = false
     for (index in range) {
         val v = values.getOrNull(index) ?: break
-        if (v.isNaN()) { open = false; continue }
-        if (!open) { path.moveTo(x(index), y(v)); open = true } else path.lineTo(x(index), y(v))
+        val row = y(v)
+        if (v.isNaN() || !row.isFinite()) { open = false; continue }
+        if (!open) { path.moveTo(x(index), row); open = true } else path.lineTo(x(index), row)
     }
     drawPath(path, color, style = Stroke(1.4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
@@ -96,6 +101,7 @@ internal fun DrawScope.drawIndicatorOverlays(overlays: List<ComputedIndicator>, 
  */
 internal fun DrawScope.drawIndicatorPanes(
     panes: List<ComputedIndicator>,
+    candles: List<Candle>,
     range: IntRange,
     readoutIndex: Int,
     instrument: Instrument,
@@ -106,6 +112,7 @@ internal fun DrawScope.drawIndicatorPanes(
     textMeasurer: TextMeasurer,
     labelStyle: TextStyle,
     palette: TradingPalette,
+    axisLeft: Boolean = false,
     x: (Int) -> Float,
 ) {
     val labelPadding = 3.dp.toPx()
@@ -134,14 +141,14 @@ internal fun DrawScope.drawIndicatorPanes(
                         val v = s.values.getOrNull(index) ?: break
                         if (v.isNaN()) continue
                         val barY = y(v)
-                        drawRect(if (v >= 0) palette.Up else palette.Down, Offset(x(index) - width / 2, minOf(barY, zero)), Size(width, maxOf(abs(barY - zero), 1f)))
+                        drawRect(if (kind == IndicatorKind.VOLUME) { val bar = candles.getOrNull(index); if (bar != null && bar.close < bar.open) palette.Down else palette.Up } else if (v >= 0) palette.Up else palette.Down, Offset(x(index) - width / 2, minOf(barY, zero)), Size(width, maxOf(abs(barY - zero), 1f)))
                     }
                 } else drawSeriesLine(s.values, range, parseHexColor(s.color) ?: palette.Ink, x, ::y)
             }
         }
         fun axisText(text: String, center: Float) {
             val layout = textMeasurer.measure(text, labelStyle)
-            drawText(layout, topLeft = Offset(right + 8f, (center - layout.size.height / 2).coerceIn(paneTop, maxOf(paneTop, paneBottom - layout.size.height))))
+            drawText(layout, topLeft = Offset(if (axisLeft) (left - layout.size.width - 8f).coerceAtLeast(0f) else right + 8f, (center - layout.size.height / 2).coerceIn(paneTop, maxOf(paneTop, paneBottom - layout.size.height))))
         }
         axisText(formatIndicatorValue(kind, bounds.endInclusive, instrument), valueTop)
         axisText(formatIndicatorValue(kind, bounds.start, instrument), valueBottom)

@@ -42,7 +42,7 @@ final class ApplePlatform: NSObject, NativeLoginPresenter, NativeCredentialStora
     }
     func read() -> NativeStorageResult { keychain.read() }
     func write(value: String) -> NativeStorageResult { keychain.write(value) }
-    func clear() -> NativeStorageResult { keychain.clear() }
+    func clear_() -> NativeStorageResult { keychain.clear() }
 
     #if DEBUG
     func runUISelfTest(attempts: Int = 50) {
@@ -75,7 +75,7 @@ final class KeychainCredentialStorage: NSObject, NativeCredentialStorage {
     init(_ keychain: SessionKeychain) { self.keychain = keychain }
     func read() -> NativeStorageResult { keychain.read() }
     func write(value: String) -> NativeStorageResult { keychain.write(value) }
-    func clear() -> NativeStorageResult { keychain.clear() }
+    func clear_() -> NativeStorageResult { keychain.clear() }
 }
 
 final class SessionKeychain {

@@ -13,9 +13,12 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 /** Initial history depth and cache window: twice the largest indicator period (1000). */
 const val CHART_BARS = 2000
+private const val LATENCY_INTERVAL_MS = 30_000L
+private const val LATENCY_VALID_MS = 90_000L
 private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
 private const val REMOVE_BY_CANCEL = "这里不能移除止损/止盈；要去掉一条，请撤销它的挂单"
 /** How long adding the second protection line waits for the server to show the first one cancelled before giving up. */
@@ -82,7 +85,7 @@ class TradovateBroker(
     private val discardedCharts = mutableSetOf<String>()
     private val localEvents = mutableMapOf<String, List<ActivityEvent>>()
     private var quotes = emptyMap<String, Quote>()
-    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long)
+    private data class QuoteSides(val bid: Long?, val ask: Long?, val time: Long, val quoteTime: Long, val lastTrade: Long?, val settlement: Long?)
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
@@ -128,6 +131,10 @@ class TradovateBroker(
     private var problem = "正在连接 Tradovate"
     private val queuedEvents = mutableListOf<JsonObject>()
     private var maintenance: Job? = null
+    private var latencyJob: Job? = null
+    private val latencyProbeSuppressed = MutableStateFlow(false)
+    private var latencyMs: Long? = null
+    private var latencySampleAtMs: Long? = null
     private val watchJobs = mutableMapOf<Pair<String, Timeframe>, Job>()
     private var reconnectJob: Job? = null
     private var metadataJob: Job? = null
@@ -150,6 +157,9 @@ class TradovateBroker(
 
     suspend fun connect(onProgress: (String) -> Unit = {}) = withContext(scope.coroutineContext.minusKey(Job)) {
         check(!stopped)
+        latencyJob?.cancel()
+        latencyMs = null
+        latencySampleAtMs = null
         lock.withLock { connecting = true; publish() }
         continuousEvidence.load(now())
         if (credentials.expiresAtMs?.let { it - now() < 120_000 } == true) renewSession(followHosts = true)
@@ -197,13 +207,22 @@ class TradovateBroker(
             problem
         }
         onProgress(status)
-        watched.forEach(::startWatch)
+        startLatencyProbe(account)
+        watched.forEach { startWatch(it) }
         refreshQuoteWatch()
         startPreload()
         maintenance?.cancel()
         maintenance = scope.launch {
             while (isActive && !stopped) {
                 delay(1_000)
+                lock.withLock {
+                    val sampleTime = latencySampleAtMs
+                    if (sampleTime != null && now() - sampleTime !in 0..LATENCY_VALID_MS) {
+                        latencyMs = null
+                        latencySampleAtMs = null
+                        publish()
+                    }
+                }
                 if (quoteWatchJob?.isActive != true && lock.withLock { quoteWatchSymbols.any { symbol ->
                     quoteWatchJobs[symbol]?.isActive != true && continuousRoutes[symbol]?.let {
                         now() >= it.validUntil && (it.checkedAt == null || now() - it.checkedAt >= 60_000)
@@ -238,6 +257,41 @@ class TradovateBroker(
                         connected = false; marketReady = false; problem = "登录会话已失效，请重新打开官方登录页"; publish(); return@launch
                     }
                 }
+            }
+        }
+    }
+
+    /** A small read-only request on the account socket; never measures order execution. */
+    private fun startLatencyProbe(socket: TradovateSocket) {
+        latencyJob?.cancel()
+        if (latencyProbeSuppressed.value) return
+        latencyJob = scope.launch {
+            var delayMs = LATENCY_INTERVAL_MS
+            while (isActive && !stopped && accountSocket === socket && connected) {
+                val started = TimeSource.Monotonic.markNow()
+                var rateLimited = false
+                val measured = try {
+                    withTimeout(5_000) { socket.probeUser(credentials.userId) }
+                    started.elapsedNow().inWholeMilliseconds.coerceAtLeast(0)
+                } catch (_: TimeoutCancellationException) {
+                    null
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    rateLimited = error is TradovateRemoteException && error.status in setOf(423, 429)
+                    null
+                }
+                if (rateLimited) latencyProbeSuppressed.value = true
+                lock.withLock {
+                    if (accountSocket === socket && connected && !stopped) {
+                        latencyMs = measured
+                        latencySampleAtMs = measured?.let { now() }
+                        publish()
+                    }
+                }
+                if (rateLimited) return@launch
+                delayMs = if (measured != null) LATENCY_INTERVAL_MS else (delayMs * 2).coerceAtMost(300_000L)
+                delay(delayMs)
             }
         }
     }
@@ -388,7 +442,7 @@ class TradovateBroker(
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
         publish()
-        maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
+        latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
             val pendingQuotes = lock.withLock { quoteWatchJobs.values.toList().also { quoteWatchJobs.clear() } }
             pendingQuotes.forEach { it.cancel() }
@@ -863,7 +917,9 @@ class TradovateBroker(
         watched = next
         (previous - next.toSet()).forEach(::stopWatch)
         // The chart the user works on is asked for again on every call, as before; the others only when they are new.
-        next.forEachIndexed { index, one -> if (index == 0 || one !in previous) startWatch(one) }
+        next.forEachIndexed { index, one ->
+            if (index == 0 || one !in previous) startWatch(one, forceRefresh = index == 0 && previous.isNotEmpty() && previous.first() != one)
+        }
     }
 
     /** Ends the live chart of a series no window shows any more. */
@@ -880,7 +936,7 @@ class TradovateBroker(
         }
     }
 
-    private fun startWatch(series: Pair<String, Timeframe>) {
+    private fun startWatch(series: Pair<String, Timeframe>, forceRefresh: Boolean = false) {
         val (symbol, timeframe) = series
         watchJobs[series]?.cancel()
         watchJobs[series] = scope.launch {
@@ -905,7 +961,7 @@ class TradovateBroker(
                         if (watching == series && before != continuousRoutes[symbol]?.spec?.tradeSymbol) startWatch(series)
                     }
                     syncQuoteSubscriptions(socket)
-                    if (lock.withLock { charts.values.any { it.page.let { page -> page.series == series &&
+                    if (!forceRefresh && lock.withLock { charts.values.any { it.page.let { page -> page.series == series &&
                             !page.load.failed && (page.load.complete || now() - page.startedAt < 30_000) } } }) return@launch
                     // Serialize both cancellation and binding so rapid switches cannot orphan IDs.
                     withContext(NonCancellable) {
@@ -1263,17 +1319,22 @@ class TradovateBroker(
                 val entries = q["entries"] as? JsonObject ?: continue
                 val incomingBid = (entries["Bid"] as? JsonObject)?.priceValue("price")
                 val incomingAsk = (entries["Offer"] as? JsonObject)?.priceValue("price")
-                if (incomingBid == null && incomingAsk == null) continue
+                val incomingTrade = (entries["Trade"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 && it % spec.tickSize == 0L }
+                val incomingSettlement = (entries["SettlementPrice"] as? JsonObject)?.priceValue("price")?.takeIf { it > 0 }
+                if (incomingBid == null && incomingAsk == null && incomingTrade == null && incomingSettlement == null) continue
                 val time = q.str("timestamp")?.let(::timestamp) ?: continue
                 val previous = quoteSides[spec.symbol]
                 if (previous != null && previous.time > time) continue
                 if (listOfNotNull(incomingBid, incomingAsk).any { it <= 0 || it % spec.tickSize != 0L }) continue
-                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time)
+                // A trade or settlement update must not make old bid/ask prices appear fresh for order checks.
+                val quoteTime = if (incomingBid != null || incomingAsk != null) time else previous?.quoteTime ?: time
+                val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
+                    incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
                 quoteSides[spec.symbol] = next
                 val bid = next.bid ?: continue
                 val ask = next.ask ?: continue
                 if (ask < bid) continue
-                quotes = quotes + (spec.symbol to Quote(bid, ask, time))
+                quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
             }
         }
         if (frame.str("e") == "chart") data.array("charts").forEach(::chartEvent)
@@ -1470,7 +1531,8 @@ class TradovateBroker(
             else -> problem
         }
         mutableMarket.value = MarketSnapshot(quotes, now(), mutableMarket.value.revision + 1, connected,
-            statusMessage = message, tradingReady = connected && marketReady && !connecting && !synchronizing && !unresolved && !pending)
+            statusMessage = message, tradingReady = connected && marketReady && !connecting && !synchronizing && !unresolved && !pending,
+            connectionLatencyMs = latencyMs.takeIf { connected && !stopped && latencySampleAtMs?.let { now() - it in 0..LATENCY_VALID_MS } == true })
     }
     private fun fresh(quote: Quote?): Boolean = quote != null && now() - quote.timeMs in -5_000..15_000
     private suspend fun rest(method: String, path: String, body: JsonObject? = null): JsonElement = requestSlots.withPermit {

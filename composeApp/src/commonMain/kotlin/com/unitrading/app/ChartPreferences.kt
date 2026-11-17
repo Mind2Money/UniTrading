@@ -1,6 +1,7 @@
 package com.unitrading.app
 
 import com.unitrading.broker.Timeframe
+import com.unitrading.chart.PriceAxisSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.NonCancellable
@@ -38,6 +39,9 @@ data class ChartPreferences(
     val extraCharts: List<SavedChart> = emptyList(),
     /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
     val chartLocked: Boolean = false,
+    /** Whether historical fills and trade markers are shown on charts. */
+    val showHistory: Boolean = true,
+    val priceAxis: PriceAxisSettings = PriceAxisSettings(),
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -101,6 +105,23 @@ class ChartPreferencesController(private val store: SnapshotStore) {
                 false
             }
         }
+    }
+
+    /** Updated immediately, so a quick page switch cannot restore an older saved value. */
+    val historyVisible = MutableStateFlow(preferences.value.showHistory)
+
+    fun selectHistoryVisible(visible: Boolean) { historyVisible.value = visible }
+
+    val priceAxis = MutableStateFlow(preferences.value.priceAxis)
+    fun selectPriceAxis(value: PriceAxisSettings) { priceAxis.value = value }
+    suspend fun savePriceAxis(): Boolean = saveMutex.withLock {
+        val value = priceAxis.value
+        preferences.value.priceAxis == value || persist(preferences.value.copy(priceAxis = value))
+    }
+
+    suspend fun saveHistoryVisibility(): Boolean = saveMutex.withLock {
+        val visible = historyVisible.value
+        preferences.value.showHistory == visible || persist(preferences.value.copy(showHistory = visible))
     }
 
     suspend fun toggleFavorite(timeframe: Timeframe): Boolean = saveMutex.withLock {

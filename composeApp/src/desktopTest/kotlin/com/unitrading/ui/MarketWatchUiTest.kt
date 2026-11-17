@@ -43,7 +43,7 @@ class MarketWatchUiTest {
             order("tp", "XAUUSD", OrderRole.TAKE_PROFIT), order("pending", "XAUAUD", OrderRole.ENTRY),
             order("unknown", "DJ30", OrderRole.UNRESOLVED))))
     private val market = mutableStateOf(MarketSnapshot(quotes = mapOf(
-        "XAUUSD" to Quote(387996, 388008, 75082000), "XAUAUD" to Quote(552000, 552035, 75081000),
+        "XAUUSD" to Quote(387996, 388008, 75082000, lastTrade = 388000, settlement = 400000), "XAUAUD" to Quote(552000, 552035, 75081000),
         "Nikkei225" to Quote(6210950, 6212250, 75080000), "DJ30" to Quote(5181550, 5181650, 75080000))))
     private var chosen: String? = null
 
@@ -62,6 +62,17 @@ class MarketWatchUiTest {
     private fun capture(name: String) {
         val target = File(System.getenv("UNITRADING_MARKET_ARTIFACTS") ?: "../artifacts/market-watch", "$name.png"); target.parentFile.mkdirs()
         ImageIO.write(compose.onNodeWithTag("market-test-host").captureToImage().toAwtImage(), "png", target)
+    }
+
+    @Test fun dailyChangeUsesTradeAndSettlementAndHandlesMissingData() {
+        assertEquals("+2.00%" to 1, marketChangePercent(Quote(100, 102, 0, 102, 100)))
+        assertEquals("−2.00%" to -1, marketChangePercent(Quote(100, 102, 0, 98, 100)))
+        assertEquals("0.00%" to 0, marketChangePercent(Quote(100, 102, 0, 100, 100)))
+        assertEquals("—" to 0, marketChangePercent(Quote(100, 102, 0)))
+        assertEquals("—" to 0, marketChangePercent(Quote(100, 102, 0, 100, 0)))
+        render()
+        compose.onNodeWithTag("market-change-XAUUSD", useUnmergedTree = true).assertTextContains("−3.00%", substring = true)
+        compose.onNodeWithTag("market-change-XAUAUD", useUnmergedTree = true).assertTextContains("—", substring = true)
     }
 
     @Test fun accountMarkersRefreshAndRowsOpenChartsWithoutTrading() {

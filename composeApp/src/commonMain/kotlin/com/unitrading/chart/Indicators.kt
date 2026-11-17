@@ -4,6 +4,11 @@ import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.formatFixed
 import kotlinx.serialization.Serializable
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.plus
+import kotlin.time.Instant
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
@@ -48,13 +53,15 @@ enum class IndicatorKind(
         listOf(IndicatorLine("DIF"), IndicatorLine("DEA"), IndicatorLine("MACD", histogram = true))),
     KDJ("KDJ", "随机指标", IndicatorPane.SEPARATE, listOf(bars("period", "RSV 周期", 9.0), bars("k", "K 平滑", 3.0), bars("d", "D 平滑", 3.0)),
         listOf(IndicatorLine("K"), IndicatorLine("D"), IndicatorLine("J")), 0.0..100.0),
-    ATR("ATR", "平均真实波幅", IndicatorPane.SEPARATE, listOf(bars("period", "周期", 14.0)), listOf(IndicatorLine("ATR")));
+    ATR("ATR", "平均真实波幅", IndicatorPane.SEPARATE, listOf(bars("period", "周期", 14.0)), listOf(IndicatorLine("ATR"))),
+    VOLUME("VOL", "成交量", IndicatorPane.SEPARATE, emptyList(), listOf(IndicatorLine("成交量", histogram = true)), 0.0..0.0),
+    VWAP("VWAP", "当日成交量加权均价", IndicatorPane.OVERLAY, emptyList(), listOf(IndicatorLine("VWAP")));
 
     fun param(key: String): IndicatorParam = params.first { it.key == key }
     /** Dashed reference levels drawn in a separate pane. */
     val guides: List<Double> get() = when (this) { RSI -> listOf(30.0, 70.0); KDJ -> listOf(20.0, 80.0); MACD -> listOf(0.0); else -> emptyList() }
     /** Price-unit values are formatted with the instrument; oscillators keep two decimals. */
-    val priceUnits: Boolean get() = this != RSI && this != KDJ
+    val priceUnits: Boolean get() = this != RSI && this != KDJ && this != VOLUME
 }
 
 /** Default line colours by line index; a config overrides them per line with `#RRGGBB`. */
@@ -79,7 +86,7 @@ data class IndicatorConfig(
     val guides: List<Double> get() = referenceLevels ?: kind.guides
     fun guideColor(value: Double): String = referenceColors[formatParam(value)] ?: DEFAULT_INDICATOR_GUIDE_COLOR
     /** `EXPMA(20)`, `BOLL(20,2)`, `MACD(12,26,9)` */
-    val label: String get() = kind.label + "(" + kind.params.joinToString(",") { formatParam(param(it.key)) } + ")"
+    val label: String get() = if (kind.params.isEmpty()) kind.label else kind.label + "(" + kind.params.joinToString(",") { formatParam(param(it.key)) } + ")"
 
     fun validate() {
         require(id.isNotBlank()) { "指标缺少 ID" }
@@ -127,14 +134,45 @@ fun computeIndicator(config: IndicatorConfig, candles: List<Candle>): List<Indic
         IndicatorKind.MACD -> macd(closes, count("fast"), count("slow"), count("signal"))
         IndicatorKind.KDJ -> kdj(candles, count("period"), count("k"), count("d"))
         IndicatorKind.ATR -> listOf(atr(candles, count("period")))
+        IndicatorKind.VOLUME -> listOf(DoubleArray(candles.size) { candles[it].volume?.takeIf { v -> v >= 0 }?.toDouble() ?: Double.NaN })
+        IndicatorKind.VWAP -> listOf(currentSessionVwap(candles))
     }
     return lines.mapIndexed { index, values -> IndicatorSeries(config.kind.lines[index], values, config.color(index)) }
 }
 
 fun formatIndicatorValue(kind: IndicatorKind, value: Double, instrument: Instrument): String = when {
     value.isNaN() -> "—"
+    kind == IndicatorKind.VOLUME -> formatVolume(value.roundToLong())
     kind.priceUnits -> instrument.formatPrice(value.roundToLong())
     else -> formatFixed((value * 100).roundToLong(), 2)
+}
+
+/** The session is 18:00–17:00 New York time, excluding the 17:00–18:00 maintenance break.
+ * New York's daylight-saving rules convert that to 07:00–06:00 or 06:00–05:00 Beijing time.
+ * Only the latest loaded session is drawn. Bars use HLC3 and their actual reported volume. */
+internal fun currentSessionVwap(candles: List<Candle>): DoubleArray {
+    val result = DoubleArray(candles.size) { Double.NaN }
+    if (candles.isEmpty()) return result
+    val zone = TimeZone.of("America/New_York")
+    fun session(candle: Candle): kotlinx.datetime.LocalDate? {
+        val local = Instant.fromEpochMilliseconds(candle.timeMs).toLocalDateTime(zone)
+        if (local.hour == 17) return null
+        return if (local.hour >= 18) local.date.plus(1, DateTimeUnit.DAY) else local.date
+    }
+    val current = candles.asReversed().firstNotNullOfOrNull(::session) ?: return result
+    var total = 0.0
+    var weighted = 0.0
+    candles.forEachIndexed { i, bar ->
+        if (session(bar) == current) {
+            val volume = bar.volume?.takeIf { it > 0 }?.toDouble()
+            if (volume != null) {
+                weighted += (bar.high.toDouble() + bar.low.toDouble() + bar.close.toDouble()) / 3.0 * volume
+                total += volume
+                result[i] = weighted / total
+            }
+        }
+    }
+    return result
 }
 
 /** Vertical range of a separate pane over [range]: the kind's base range widened to the data, MACD kept symmetric, then padded. */

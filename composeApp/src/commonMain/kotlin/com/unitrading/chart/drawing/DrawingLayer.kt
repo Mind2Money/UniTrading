@@ -147,11 +147,11 @@ internal fun DrawScope.drawLayerDrawings(layer: DrawingLayer, measurer: androidx
 }
 
 /** Axis tags, outside the plot's clip. */
-internal fun DrawScope.drawLayerMarks(layer: DrawingLayer, labelStyle: TextStyle, measurer: androidx.compose.ui.text.TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float) {
+internal fun DrawScope.drawLayerMarks(layer: DrawingLayer, labelStyle: TextStyle, measurer: androidx.compose.ui.text.TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float, axisPrice: (Double) -> String) {
     val ctx = layer.ctx ?: return
     val frame = layer.frame ?: return
     drawFullHeightParts(frame, ctx.coords.plot, ctx.coords.chartBottom)
-    drawDrawingMarks(frame, ctx, labelStyle, measurer, axisLeft, axisRight, timeAxisTop)
+    drawDrawingMarks(frame, ctx, labelStyle, measurer, axisLeft, axisRight, timeAxisTop, axisPrice)
     if (layer.controller.cursor == ChartCursor.DOT && !layer.showsCrosshairLines) layer.hoverPoint?.let { drawCircle(ctx.ink, 3f * density, it) }
 }
 

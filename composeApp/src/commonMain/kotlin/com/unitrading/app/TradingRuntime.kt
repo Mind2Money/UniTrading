@@ -35,6 +35,9 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
      * the background the analytics cache it trims ([analyticsTrim]).
      */
     val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
+    val chartTemplates: ChartTemplateController by lazy { ChartTemplateController(store) }
+    /** A locked time cursor is shared between charts in this running workspace. */
+    val chartLockedTime = MutableStateFlow<Long?>(null)
     /** Desktop panel sizes are independent of chart preferences and broker/account state. */
     val desktopLayout: DesktopLayoutController by lazy { DesktopLayoutController(store) }
     val marketWatch: MarketWatchPreferences by lazy { MarketWatchPreferences(store) }

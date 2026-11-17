@@ -254,6 +254,7 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     private var lastClickDrawing: String? = null
     private var demoPoints: MutableList<Offset>? = null
     private var clipboard: Drawing? = null
+    val canPaste: Boolean get() = clipboard != null
     private val history get() = library.history(symbol)
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo

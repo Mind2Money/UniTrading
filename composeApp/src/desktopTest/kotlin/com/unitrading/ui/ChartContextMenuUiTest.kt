@@ -2,6 +2,7 @@ package com.unitrading.ui
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -56,6 +57,140 @@ class ChartContextMenuUiTest {
         compose.waitForIdle()
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
+
+    @Test fun desktopMenuCopiesPriceAndResetsTheView() {
+        render()
+        compose.onNodeWithTag("chart-zoom-in").performClick()
+        compose.waitForIdle()
+        assertTrue(chartState().getValue("bars").toDouble() < 80.0)
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-copy-price").performScrollTo().performClick()
+        val copied = java.awt.Toolkit.getDefaultToolkit().systemClipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor)
+        assertEquals("5490.00", copied)
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-reset").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(80.0, chartState().getValue("bars").toDouble())
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun orderTicketIsPrefilledButDoesNotSubmit() {
+        render(skipConfirmation = true)
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-open-order").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("order-entry").assertTextContains("5490.00")
+        assertTrue(broker.placed.isEmpty(), "opening the ticket never sends an order")
+    }
+
+    @Test fun lockedTimeSurvivesPointerExitAndCanBeUnlocked() {
+        render()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
+        compose.waitForIdle()
+        val locked = chartState().getValue("lockedTime")
+        assertNotEquals("none", locked)
+        chart().performMouseInput { exit() }
+        compose.waitForIdle()
+        assertEquals(locked, chartState().getValue("lockedTime"))
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals("none", chartState().getValue("lockedTime"))
+    }
+
+    @Test fun desktopMenuOpensDataTableAndObjectTree() {
+        render()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        compose.onNodeWithTag("chart-object-tree").assertExists()
+        compose.onNodeWithText("关闭").performClick()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-table").performScrollTo().performClick()
+        compose.onNodeWithTag("ohlc-table").assertExists()
+    }
+
+    @Test fun templateIsSavedAndReopened() {
+        render()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-templates").performScrollTo().performClick()
+        compose.onNodeWithTag("chart-template-name").performTextInput("daily")
+        compose.onNodeWithTag("chart-template-save").performClick()
+        compose.waitUntil(5_000) { runtime.chartTemplates.templates.value.any { it.name == "daily" } }
+        val savedAxis = runtime.chartTemplates.templates.value.single().axis
+        runBlocking {
+            runtime.chartPreferences.selectPriceAxis(savedAxis.copy(inverted = true))
+            assertTrue(runtime.chartPreferences.savePriceAxis())
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("chart-template-apply-daily").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.chartPreferences.priceAxis.value == savedAxis }
+        assertEquals("daily", runtime.chartTemplates.templates.value.single().name)
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun desktopMenuPastesACopiedDrawing() {
+        render()
+        compose.runOnIdle {
+            runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0))
+            runtime.drawings.copySelected()
+        }
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-paste-drawing").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(2, runtime.drawings.drawings.size)
+        assertNotEquals(runtime.drawings.drawings[0].id, runtime.drawings.drawings[1].id)
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun objectTreeHidesLocksAndRemovesDrawings() {
+        render()
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        fun treeItem(label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("chart-object-tree")))
+        treeItem("隐藏").performClick()
+        compose.waitForIdle()
+        assertTrue(runtime.drawings.drawings.single().hidden)
+        treeItem("锁定").performClick()
+        compose.waitForIdle()
+        assertTrue(runtime.drawings.drawings.single().locked)
+        treeItem("删除").assertIsNotEnabled()
+        treeItem("解锁").performClick()
+        treeItem("删除").performClick()
+        compose.waitForIdle()
+        assertTrue(runtime.drawings.drawings.isEmpty())
+    }
+
+    @Test fun menuRemovesTheConfiguredIndicators() {
+        render()
+        runBlocking { assertTrue(runtime.indicators.apply(com.unitrading.app.IndicatorSettings(listOf(com.unitrading.chart.IndicatorConfig("ma", com.unitrading.chart.IndicatorKind.MA))))) }
+        compose.waitForIdle()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-remove-indicators").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isEmpty() }
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun sellLimitShortcutRequiresKeyboardTradingAndUsesConfirmation() {
+        render()
+        val at = pointAt(551_000)
+        chart().performMouseInput { moveTo(at); press(); release() }
+        fun shortcut() = compose.onAllNodes(isRoot()).onLast().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.S) } }
+        }
+        shortcut()
+        compose.waitForIdle()
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        assertTrue(broker.placed.isEmpty())
+        runBlocking { assertTrue(runtime.tradingPreferences.setKeyboardTrading(true)) }
+        compose.waitForIdle()
+        chart().performMouseInput { moveTo(at); press(); release() }
+        shortcut()
+        compose.waitForIdle()
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty(), "the shortcut still follows confirmation")
+    }
 
     @Test fun theMenuOffersAMarketBuyAndSellWhereverItOpensAndTheyTakeNoPrice() {
         render()
