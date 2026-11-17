@@ -70,6 +70,14 @@ val indicatorPalette = listOf("#F5B942", "#7FD1AE", "#C98BFF", "#4FC3F7", "#FF8A
 const val DEFAULT_INDICATOR_GUIDE_COLOR = "#94A3B8"
 
 @Serializable
+enum class IndicatorLinePattern(val label: String) { SOLID("实线"), DASHED("虚线"), DOTTED("点线") }
+
+@Serializable
+data class IndicatorLineStyle(val width: Float = 1.4f, val pattern: IndicatorLinePattern = IndicatorLinePattern.SOLID) {
+    fun validate() { require(width.isFinite() && width in 1f..5f) { "线宽须在 1–5 之间" } }
+}
+
+@Serializable
 data class IndicatorConfig(
     val id: String,
     val kind: IndicatorKind,
@@ -80,9 +88,12 @@ data class IndicatorConfig(
     val referenceLevels: List<Double>? = null,
     /** RSI guide colours keyed by [formatParam]; missing entries retain the default guide colour. */
     val referenceColors: Map<String, String> = emptyMap(),
+    /** Output line styles keyed by line name; old settings retain the original appearance. */
+    val lineStyles: Map<String, IndicatorLineStyle> = emptyMap(),
 ) {
     fun param(key: String): Double = params[key] ?: kind.param(key).default
     fun color(line: Int): String = colors[kind.lines[line].name] ?: indicatorPalette[line % indicatorPalette.size]
+    fun lineStyle(line: String): IndicatorLineStyle = lineStyles[line] ?: IndicatorLineStyle()
     val guides: List<Double> get() = referenceLevels ?: kind.guides
     fun guideColor(value: Double): String = referenceColors[formatParam(value)] ?: DEFAULT_INDICATOR_GUIDE_COLOR
     /** `EXPMA(20)`, `BOLL(20,2)`, `MACD(12,26,9)` */
@@ -98,6 +109,10 @@ data class IndicatorConfig(
         colors.forEach { (line, value) ->
             require(kind.lines.any { it.name == line && !it.histogram }) { "${kind.label} 没有可配色的线 $line" }
             require(value.matches(Regex("#[0-9a-fA-F]{6}"))) { "颜色须为 #RRGGBB" }
+        }
+        lineStyles.forEach { (line, style) ->
+            require(kind.lines.any { it.name == line && !it.histogram }) { "${kind.label} 没有可设置的线 $line" }
+            style.validate()
         }
         referenceLevels?.let { levels ->
             require(kind == IndicatorKind.RSI) { "仅 RSI 支持自定义水平参考线" }
