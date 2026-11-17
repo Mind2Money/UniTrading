@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 图表时间轴、十字光标、K 线图例及绘图坐标使用北京时间；日线及以上继续显示交易日。
 - 新增成交量柱和当日 VWAP：北京时间冬令时 07:00 至次日 05:59、夏令时 06:00 至次日 04:59，自动切换并排除休市一小时；根据已加载的日内 K 线典型价和成交量近似计算。
 - 行情自选显示最新成交相对结算价的涨跌幅；缺少数据时显示占位。
 - 图表仅保留连接状态圆点；调整各平台价格轴设置按钮位置和点击区域。
@@ -12,6 +13,7 @@
 
 ## English
 
+- Display Beijing time in the chart axis, crosshair, candle legend and drawing coordinates; daily and longer bars retain their trading dates.
 - Add volume bars and current-session VWAP. The 18:00–17:00 New York session automatically follows daylight saving time and excludes the maintenance hour; VWAP approximates using loaded intraday OHLC and volume.
 - Display the latest trade's percentage change relative to the broker's settlement reference, or a placeholder when data is unavailable.
 - Keep the connection status dot on charts and improve the placement and hit target of the price-axis settings control.

@@ -10,13 +10,21 @@ class CrosshairTest {
     private val time = Instant.parse("2026-10-29T01:20:00Z").toEpochMilliseconds()
 
     @Test fun crosshairTimeShowsDateAndMinuteIntradayAndOnlyTheDateForDailyBars() {
-        assertEquals("2026-10-29 01:20", crosshairTimeLabel(time, Timeframe.M5))
-        assertEquals("2026-10-29 01:20", crosshairTimeLabel(time, Timeframe.ofMinutes(240)))
+        assertEquals("2026-10-29 09:20", crosshairTimeLabel(time, Timeframe.M5))
+        assertEquals("2026-10-29 09:20", crosshairTimeLabel(time, Timeframe.ofMinutes(240)))
         assertEquals("2026-10-29", crosshairTimeLabel(time, Timeframe.ofMinutes(1440)))
-        assertEquals("2026-10-29 01:20:00", crosshairTimeLabel(time, Timeframe.ofSeconds(5)), "second intervals show the second")
-        assertEquals("2026-10-29 01:20:45", crosshairTimeLabel(time + 45_250, Timeframe.ofSeconds(15)))
+        assertEquals("2026-10-29 09:20:00", crosshairTimeLabel(time, Timeframe.ofSeconds(5)), "second intervals show the second")
+        assertEquals("2026-10-29 09:20:45", crosshairTimeLabel(time + 45_250, Timeframe.ofSeconds(15)))
         assertEquals("2026-10-29 01:20", dateTime(time + 45_250))
         assertEquals("2026-10-29 01:20:45", dateTime(time + 45_250, seconds = true))
+    }
+
+    @Test fun chartDrawingCoordinateRoundTripsBeijingTime() {
+        val instant = Instant.parse("2026-12-31T16:30:00Z").toEpochMilliseconds()
+        assertEquals("2027-01-01 00:30", beijingDateTime(instant))
+        assertEquals(instant, parseBeijingChartTime("2027-01-01 00:30"))
+        assertNull(parseBeijingChartTime("2027-13-01 00:30"))
+        assertNull(parseBeijingChartTime("not a date"))
     }
 
     @Test fun paneValueFollowsThePaneScaleAndIgnoresRowsOutsideTheValueAreas() {
