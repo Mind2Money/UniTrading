@@ -135,7 +135,7 @@ internal fun DrawScope.drawFullHeightParts(frame: DrawingFrame, plot: Rect, char
 }
 
 /** Axis tags: every `always` mark, plus the anchors of the selected or just-placed drawing with a band between them. */
-internal fun DrawScope.drawDrawingMarks(frame: DrawingFrame, ctx: DrawingContext, labelStyle: TextStyle, measurer: TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float) {
+internal fun DrawScope.drawDrawingMarks(frame: DrawingFrame, ctx: DrawingContext, labelStyle: TextStyle, measurer: TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float, axisPrice: (Double) -> String) {
     val c = ctx.coords
     val pad = 3f * density
     val height = measurer.measure("0", labelStyle).size.height + pad * 2
@@ -157,7 +157,7 @@ internal fun DrawScope.drawDrawingMarks(frame: DrawingFrame, ctx: DrawingContext
         prices.forEach { mark ->
             val y = c.y(mark.price)
             if (y !in c.plot.top..c.plot.bottom) return@forEach
-            val text = measurer.measure(ctx.price(mark.price), labelStyle.copy(color = com.unitrading.ui.contentOn(mark.color)))
+            val text = measurer.measure(axisPrice(mark.price), labelStyle.copy(color = com.unitrading.ui.contentOn(mark.color)))
             drawRect(mark.color, Offset(axisLeft, y - height / 2), Size(axisRight - axisLeft, height))
             drawText(text, topLeft = Offset(axisLeft + pad, y - text.size.height / 2f))
         }

@@ -50,8 +50,8 @@ internal class DrawingCoordinates(
     fun xOfIndex(index: Double): Float = plot.left + ((index - start + .5) * step).toFloat()
     fun indexAt(x: Float): Double = (x - plot.left).toDouble() / step + start - .5
     fun x(timeMs: Long): Float = xOfIndex(index(timeMs))
-    fun y(price: Double): Float = (scale.bottom - (price - scale.low) / (scale.high - scale.low) * (scale.bottom - scale.top)).toFloat()
-    fun priceAt(y: Float): Double = scale.low + (scale.bottom - y).toDouble() / (scale.bottom - scale.top) * (scale.high - scale.low)
+    fun y(price: Double): Float = scale.yOf(price)
+    fun priceAt(y: Float): Double = scale.valueAt(y)
     fun offset(point: DrawingPoint): Offset = Offset(x(point.timeMs), y(point.price))
 
     /** The anchor under [position]; [snapToBar] centres it on the nearest bar, as every tool but the freehand ones does. */

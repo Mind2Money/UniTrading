@@ -19,6 +19,43 @@ class IndicatorsTest {
     }
     private fun closes(vararg values: Double) = values.map { Candle(0, it.toLong(), it.toLong(), it.toLong(), it.toLong()) }
 
+    @Test fun volumeAndVwapUseCurrentSessionAndActualVolume() {
+        // 2026-11-16 22:59 / 23:00 UTC straddles 18:00 New York (winter time).
+        val before = kotlin.time.Instant.parse("2026-11-16T22:59:00Z").toEpochMilliseconds()
+        val bars = listOf(
+            Candle(before, 100, 100, 100, 100, 9),
+            Candle(before + 60_000, 100, 110, 90, 100, 2),
+            Candle(before + 120_000, 120, 120, 120, 120, 3),
+            Candle(before + 180_000, 130, 130, 130, 130, null),
+        )
+        assertSeries(listOf(nan, 100.0, 112.0, nan), currentSessionVwap(bars))
+        assertSeries(listOf(9.0, 2.0, 3.0, nan), computeIndicator(IndicatorConfig("v", IndicatorKind.VOLUME), bars).single().values)
+        assertEquals("VWAP", IndicatorConfig("w", IndicatorKind.VWAP).label)
+    }
+
+    @Test fun vwapRespectsBeijingWinterAndSummerSessionsAndSkipsMaintenance() {
+        fun at(utc: String, price: Long, volume: Long = 1) =
+            Candle(kotlin.time.Instant.parse(utc).toEpochMilliseconds(), price, price, price, price, volume)
+        val winter = listOf(
+            at("2026-11-16T22:00:00Z", 900),  // 06:00 Beijing, maintenance
+            at("2026-11-16T22:59:00Z", 901),  // 06:59 Beijing, maintenance
+            at("2026-11-16T23:00:00Z", 100),  // 07:00 start
+            at("2026-11-17T21:59:00Z", 120),  // 05:59 next day
+            at("2026-11-17T22:00:00Z", 999),  // 06:00 maintenance
+            at("2026-11-17T22:59:00Z", 999),  // 06:59 maintenance
+        )
+        assertSeries(listOf(nan, nan, 100.0, 110.0, nan, nan), currentSessionVwap(winter))
+        val summer = listOf(
+            at("2026-06-01T21:59:00Z", 901),  // 05:59 Beijing, maintenance
+            at("2026-06-01T22:00:00Z", 100),  // 06:00 start
+            at("2026-06-02T20:59:00Z", 120),  // 04:59 next day
+            at("2026-06-02T21:00:00Z", 999),  // 05:00 maintenance
+            at("2026-06-02T21:59:00Z", 999),  // 05:59 maintenance
+        )
+        assertSeries(listOf(nan, 100.0, 110.0, nan, nan), currentSessionVwap(summer))
+        assertSeries(listOf(nan, nan, nan, nan, nan, 200.0), currentSessionVwap(summer + at("2026-06-02T22:00:00Z", 200)))
+    }
+
     @Test fun movingAveragesSeedFromTheFirstFullWindow() {
         val values = doubleArrayOf(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
         assertSeries(listOf(nan, nan, 2.0, 3.0, 4.0, 5.0), sma(values, 3))

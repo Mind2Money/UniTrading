@@ -141,6 +141,28 @@ class RemoteWorkbenchTest {
         compose.onNodeWithTag("quick-login-picker").performClick()
         compose.onNodeWithTag("quick-login-${plugin.descriptor.id}").performClick()
     }
+    @Test fun connectionStatusRemainsVisibleWithoutLatencyWhenDisconnected() {
+        val source = remote()
+        val feed = MutableStateFlow(MarketSnapshot(connected = true, tradingReady = true, connectionLatencyMs = 87))
+        val plugin = object : BrokerPlugin by source {
+            override val descriptor = source.descriptor.copy(id = "tradovate-demo-42", environment = BrokerEnvironment.REMOTE_DEMO)
+            override val market = feed
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.requiredSize(400.dp, 800.dp)) {
+                    TradingScreen(runtime)
+                }
+            }
+        }
+        compose.onNodeWithTag("connection-status").assertIsDisplayed()
+        compose.onNodeWithText("87 ms", substring = true).assertDoesNotExist()
+        compose.runOnIdle { feed.value = feed.value.copy(connected = false, tradingReady = false, connectionLatencyMs = null) }
+        compose.onNodeWithTag("connection-status").assertIsDisplayed()
+        compose.onNodeWithText("— ms", substring = true).assertDoesNotExist()
+    }
+
     @Test fun remoteEnvironmentAndIntegerContractsAreVisibleBeforeConfirmation() {
         render(remote())
         compose.onAllNodesWithText("Live 实盘").onFirst().assertExists()

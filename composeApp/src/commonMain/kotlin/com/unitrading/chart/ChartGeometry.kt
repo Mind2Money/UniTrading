@@ -5,24 +5,76 @@ import kotlin.math.roundToLong
 import kotlin.math.exp
 import kotlin.math.floor
 import kotlin.math.ceil
+import kotlin.math.ln
+import kotlinx.serialization.Serializable
 
 /** How much one wheel notch scales the visible range, as the exponent of e: about 13%. */
 private const val WHEEL_ZOOM = .12
 
+/** Body and wick remain within one bar slot; the gap stops growing once it reaches two dp. */
+internal data class CandleWidths(val body: Float, val wick: Float)
+internal fun candleWidths(slot: Float, density: Float): CandleWidths {
+    if (!slot.isFinite() || !density.isFinite() || slot <= 0f || density <= 0f) return CandleWidths(0f, 0f)
+    // At the supported minimum of two pixels per slot, leave at least one pixel clear.
+    val gap = if (slot >= 2f) minOf(maxOf(1f, minOf(slot * .28f, 2f * density)), slot - 1f) else slot * .28f
+    val body = slot - gap
+    val wick = minOf(body, maxOf(minOf(density, body), minOf(body * .12f, 2f * density)))
+    return CandleWidths(body, wick)
+}
+internal fun maxVisibleCandleCount(width: Float): Double =
+    if (!width.isFinite() || width <= 0f) 600.0 else floor(width / 2.0).coerceIn(12.0, 600.0)
+
 /** Rendering uses floating coordinates; account arithmetic remains integer-only. */
-data class PriceScale(val low: Double, val high: Double, val top: Float, val bottom: Float) {
+@Serializable
+enum class PriceScaleMode { REGULAR, PERCENT, INDEXED, LOGARITHMIC }
+
+@Serializable
+data class PriceAxisSettings(
+    val mode: PriceScaleMode = PriceScaleMode.REGULAR,
+    val inverted: Boolean = false,
+    val left: Boolean = false,
+    val chartOnly: Boolean = false,
+    val showLastPrice: Boolean = true,
+    val showPriceLine: Boolean = true,
+    val showBidAsk: Boolean = true,
+    val showCountdown: Boolean = true,
+    val lockRatio: Boolean = false,
+    val showPlus: Boolean = true,
+    val fitAllBars: Boolean = false,
+)
+
+data class PriceScale(val low: Double, val high: Double, val top: Float, val bottom: Float,
+    val logarithmic: Boolean = false, val inverted: Boolean = false) {
     init { require(high > low && bottom > top) }
-    fun y(price: Long): Float = bottom - ((price - low) / (high - low) * (bottom - top)).toFloat()
+    private fun transform(value: Double) = if (logarithmic) ln(value.coerceAtLeast(1e-10)) else value
+    private fun untransform(value: Double) = if (logarithmic) exp(value.coerceIn(-23.0, 36.0)) else value
+    fun y(price: Long): Float = yOf(price.toDouble())
+    fun yOf(value: Double): Float {
+        if (logarithmic && value <= 0) return Float.NaN
+        val part = (transform(value) - transform(low)) / (transform(high) - transform(low))
+        return if (inverted) top + (part * (bottom - top)).toFloat() else bottom - (part * (bottom - top)).toFloat()
+    }
+    fun valueAt(y: Float): Double {
+        val position = if (inverted) (y - top) / (bottom - top) else (bottom - y) / (bottom - top)
+        return untransform(transform(low) + position * (transform(high) - transform(low)))
+    }
     fun price(y: Float, tickSize: Long): Long {
         require(tickSize > 0)
-        val raw = low + (bottom - y.coerceIn(top, bottom)) / (bottom - top) * (high - low)
+        val raw = valueAt(y.coerceIn(top, bottom))
         return ((raw / tickSize).roundToLong() * tickSize).coerceAtLeast(tickSize)
     }
     fun pan(pixels: Float): PriceScale {
-        val shift = pixels / (bottom - top) * (high - low)
-        return copy(low = low + shift, high = high + shift)
+        val a = transform(low); val b = transform(high)
+        val shift = pixels / (bottom - top) * (b - a) * if (inverted) -1 else 1
+        return copy(low = untransform(a + shift), high = untransform(b + shift))
     }
     fun zoom(pixels: Float, minimumSpan: Double): PriceScale {
+        if (logarithmic) {
+            val a = transform(low); val b = transform(high)
+            val span = ((b - a) * exp(pixels / (bottom - top) * 3.0)).coerceIn(1e-8, 30.0)
+            val center = (a + b) / 2
+            return copy(low = untransform(center - span / 2), high = untransform(center + span / 2))
+        }
         val span = ((high - low) * exp(pixels / (bottom - top) * 3.0)).coerceIn(minimumSpan, 1e16)
         val center = (low + high) / 2
         return copy(low = center - span / 2, high = center + span / 2)
@@ -30,13 +82,25 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
     /** Keep the price under the fingers' previous centroid beneath their new centroid. */
     fun pinch(factor: Double, previousAnchor: Float, anchor: Float, minimumSpan: Double): PriceScale {
         if (!factor.isFinite() || factor <= 0.0) return this
-        val span = ((high - low) / factor).coerceIn(minimumSpan, 1e16)
-        val price = high - previousAnchor.coerceIn(0f, 1f) * (high - low)
-        val nextHigh = price + anchor.coerceIn(0f, 1f) * span
-        return copy(low = nextHigh - span, high = nextHigh)
+        val a = transform(low); val b = transform(high)
+        val span = ((b - a) / factor).coerceIn(if (logarithmic) 1e-8 else minimumSpan, if (logarithmic) 30.0 else 1e16)
+        val oldFraction = if (inverted) previousAnchor.coerceIn(0f, 1f) else 1f - previousAnchor.coerceIn(0f, 1f)
+        val nextFraction = if (inverted) anchor.coerceIn(0f, 1f) else 1f - anchor.coerceIn(0f, 1f)
+        val nextLow = a + oldFraction * (b - a) - nextFraction * span
+        return copy(low = untransform(nextLow), high = untransform(nextLow + span))
     }
     /** The wheel over the price axis: [ticks] are notches, positive when rolling towards the user, which zooms out. */
     fun zoomWheel(ticks: Float, minimumSpan: Double): PriceScale = zoom((ticks * WHEEL_ZOOM / 3.0).toFloat() * (bottom - top), minimumSpan)
+    /** Price-axis units per bar, accounting for plot shape; logarithmic charts use log-price units. */
+    fun barRatio(barCount: Double, width: Float): Double =
+        (transform(high) - transform(low)) * width.coerceAtLeast(1f) / ((bottom - top) * barCount.coerceAtLeast(1.0))
+
+    fun withBarRatio(ratio: Double, barCount: Double, width: Float): PriceScale {
+        if (!ratio.isFinite() || ratio <= 0.0) return this
+        val a = transform(low); val b = transform(high)
+        val span = (ratio * (bottom - top) * barCount.coerceAtLeast(1.0) / width.coerceAtLeast(1f)).coerceIn(1e-8, if (logarithmic) 30.0 else 1e16)
+        return copy(low = untransform((a + b - span) / 2), high = untransform((a + b + span) / 2))
+    }
     companion object {
         fun from(candles: List<Candle>, extras: List<Long>, top: Float, bottom: Float): PriceScale {
             val points = candles.flatMap { listOf(it.low, it.high) } + extras.filter { it > 0 }
@@ -85,6 +149,15 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
 
 /** Continuous bar coordinates preserve fractional movement and allow space after the latest bar. */
 data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
+    /** Cap zoom-out at two device pixels per slot so neighboring candles retain a visible gap. */
+    fun fitPixelWidth(width: Float, total: Int): ChartViewport {
+        if (!width.isFinite() || width <= 0f) return this
+        val limit = maxVisibleCandleCount(width)
+        if (count <= limit) return this
+        // Follow the newest edge when following; otherwise keep the center of the historical view.
+        val nextOffset = if (offset <= 0.0) offset else offset + (count - limit) / 2
+        return copy(count = limit, offset = nextOffset).bounded(total)
+    }
     fun start(total: Int) = total - offset - count
     fun range(total: Int): IntRange {
         if (total == 0) return IntRange.EMPTY
@@ -103,7 +176,7 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
     fun pan(pixels: Float, width: Float, total: Int): ChartViewport =
         copy(offset = offset + pixels / width.coerceAtLeast(1f) * count).bounded(total)
     fun zoom(pixels: Float, width: Float, total: Int): ChartViewport {
-        val next = (count * exp(-pixels / width.coerceAtLeast(1f) * 3.0)).coerceIn(12.0, 600.0)
+        val next = (count * exp(-pixels / width.coerceAtLeast(1f) * 3.0)).coerceIn(12.0, maxVisibleCandleCount(width))
         return copy(count = next, offset = offset + (count - next) / 2).bounded(total)
     }
     /**
@@ -111,15 +184,15 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
      * at [anchor] (0 the left edge, 1 the right) stays under the pointer, except on a chart following the newest bar, which
      * keeps its right edge. Zooming out of the past stops at the newest bar instead of opening empty space after it.
      */
-    fun zoomAt(ticks: Float, anchor: Float, total: Int): ChartViewport {
-        val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, 600.0)
+    fun zoomAt(ticks: Float, anchor: Float, total: Int, maxCount: Double = 600.0): ChartViewport {
+        val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, maxCount.coerceIn(12.0, 600.0))
         val moved = if (offset <= 0.0) offset else (offset + (1 - anchor) * (count - next)).coerceAtLeast(0.0)
         return copy(count = next, offset = moved).bounded(total)
     }
     /** Continuous pinch scaling and panning, anchored to the two-finger centroid. */
-    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, total: Int): ChartViewport {
+    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, total: Int, maxCount: Double = 600.0): ChartViewport {
         if (!factor.isFinite() || factor <= 0.0) return this
-        val next = (count / factor).coerceIn(12.0, 600.0)
+        val next = (count / factor).coerceIn(12.0, maxCount.coerceIn(12.0, 600.0))
         return copy(count = next, offset = offset + (1 - previousAnchor.coerceIn(0f, 1f)) * count -
             (1 - anchor.coerceIn(0f, 1f)) * next).bounded(total)
     }

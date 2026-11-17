@@ -5,6 +5,56 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class ChartGeometryTest {
+    @Test fun candleBodiesGrowWithTheirSlotsAndNeverOverlap() {
+        for (density in listOf(.6f, 1f, 2f, 3f)) {
+            var previous = 0f
+            for (slot in listOf(.1f, .5f, 1f, 2f, 4f, 8f, 16f, 32f, 64f, 128f, 512f)) {
+                val widths = candleWidths(slot, density)
+                assertTrue(widths.body > previous, "body must grow when its slot grows: $slot")
+                assertTrue(widths.body < slot, "neighbouring bodies must have a positive gap: $slot")
+                assertTrue(widths.wick > 0f && widths.wick <= widths.body, "wick remains inside the body slot")
+                assertTrue(slot - widths.body <= 2f * density + .0001f, "gap must not keep growing")
+                if (slot >= 2f) assertTrue(slot - widths.body >= .9999f, "leave a device pixel between slots")
+                previous = widths.body
+            }
+            assertEquals(2f * density, 128f - candleWidths(128f, density).body, .0001f)
+        }
+        assertEquals(CandleWidths(0f, 0f), candleWidths(0f, 1f))
+        assertEquals(CandleWidths(0f, 0f), candleWidths(Float.NaN, 1f))
+    }
+    @Test fun pixelWidthLimitKeepsLatestEdgeOrHistoricalCenter() {
+        val following = ChartViewport(count = 600.0, offset = 0.0).fitPixelWidth(300f, 1_000)
+        assertEquals(150.0, following.count)
+        assertEquals(0.0, following.offset)
+        val historic = ChartViewport(count = 600.0, offset = 100.0)
+        val limited = historic.fitPixelWidth(300f, 1_000)
+        assertEquals(historic.start(1_000) + historic.count / 2, limited.start(1_000) + limited.count / 2, .0001)
+        assertEquals(ChartViewport(), ChartViewport().fitPixelWidth(900f, 1_000))
+        assertEquals(12.0, ChartViewport(count = 80.0).fitPixelWidth(10f, 1_000).count)
+        val underPointer = ChartViewport(count = 100.0, offset = 200.0)
+        val limitedWheel = underPointer.zoomAt(100f, .25f, 1_000, maxVisibleCandleCount(300f))
+        assertEquals(150.0, limitedWheel.count)
+        assertEquals(underPointer.start(1_000) + .25 * underPointer.count, limitedWheel.start(1_000) + .25 * limitedWheel.count, .0001)
+    }
+    @Test fun invertedAndLogarithmicAxesRoundTripOrderPrices() {
+        for (log in listOf(false, true)) for (inverted in listOf(false, true)) {
+            val scale = PriceScale(100.0, 10_000.0, 20f, 620f, logarithmic = log, inverted = inverted)
+            for (price in listOf(100L, 250L, 1_000L, 7_500L, 10_000L)) {
+                assertEquals(price, scale.price(scale.y(price), 1), "log=$log inverted=$inverted price=$price")
+            }
+            assertTrue(if (inverted) scale.y(250) < scale.y(7_500) else scale.y(250) > scale.y(7_500))
+            val dragged = scale.pinch(1.5, .35f, .65f, 1.0)
+            assertTrue(abs(scale.price(20f + .35f * 600f, 1) - dragged.price(20f + .65f * 600f, 1)) <= 1)
+        }
+    }
+    @Test fun lockedRatioSurvivesTimeZoomAndResize() {
+        for (log in listOf(false, true)) {
+            val scale = PriceScale(1_000.0, 10_000.0, 0f, 400f, logarithmic = log)
+            val ratio = scale.barRatio(80.0, 800f)
+            val changed = scale.copy(bottom = 500f).withBarRatio(ratio, 40.0, 1000f)
+            assertEquals(ratio, changed.barRatio(40.0, 1000f), 1e-8)
+        }
+    }
     @Test fun pinchKeepsTimeAndPriceAnchoredAndHonorsLimits() {
         val original = ChartViewport(80.0, 100.0)
         val zoomed = original.pinch(2.0, .3f, .6f, 1000)

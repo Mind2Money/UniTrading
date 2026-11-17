@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -79,6 +80,18 @@ class ChartWindowsUiTest {
     private fun inChart(chart: String, tag: String) =
         compose.onNode(hasTestTag(tag) and hasAnyAncestor(hasTestTag(if (chart == MAIN_CHART) "desktop-chart" else "fake-window-chart-$chart")))
     private fun title(chart: String) = windows.open.getValue("chart-$chart").title
+    @Test fun lockedTimeIsSharedWithAnotherChartWindow() {
+        render()
+        newChart()
+        val main = inChart(MAIN_CHART, "trading-chart")
+        val size = main.fetchSemanticsNode().size
+        main.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .6f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
+        compose.waitForIdle()
+        val locked = assertNotNull(runtime.chartLockedTime.value)
+        val other = inChart("c1", "trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+        assertTrue(other.contains("lockedTime:$locked"), other)
+    }
     private fun pickSymbol(chart: String, symbol: String) {
         inChart(chart, "chart-symbol").performClick()
         compose.onNodeWithTag("symbol-option-$symbol").performClick()

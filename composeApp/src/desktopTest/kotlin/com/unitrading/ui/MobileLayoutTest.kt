@@ -18,6 +18,7 @@ import com.unitrading.app.OrderPanelLayout
 import com.unitrading.app.TradingRuntime
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
 import com.unitrading.broker.OrderKind
 import com.unitrading.broker.OrderRequest
 import com.unitrading.broker.Side
@@ -57,6 +58,23 @@ class MobileLayoutTest {
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
+
+    @Test fun historyToggleSurvivesLeavingAndReturningToChart() = phoneTest {
+        render()
+        compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
+        compose.onNodeWithTag("layer-2").performClick()
+        assertFalse(runtime.chartPreferences.historyVisible.value)
+        compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.Escape) }
+        for (tab in listOf("nav-4", "nav-0", "nav-3")) {
+            compose.onNodeWithTag(tab).performClick()
+            compose.onNodeWithTag("nav-1").performClick()
+            compose.onNodeWithTag("chart-layers").performScrollTo().performClick()
+            compose.onNode(hasTestTag("layer-2") and hasAnyDescendant(hasContentDescription("已显示")), useUnmergedTree = true).assertDoesNotExist()
+            compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.Escape) }
+        }
+        compose.waitUntil(timeoutMillis = 5_000) { !runtime.chartPreferences.preferences.value.showHistory }
+        assertFalse(ChartPreferencesController(store).historyVisible.value)
+    }
 
     @Test fun portraitChartFillsTheScreenAndTradingWaitsInTheCollapsedPanel() = phoneTest {
         render()

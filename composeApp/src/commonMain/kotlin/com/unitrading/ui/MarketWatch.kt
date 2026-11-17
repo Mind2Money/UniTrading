@@ -208,6 +208,18 @@ internal fun watchSubtitle(instrument: Instrument): String {
     }
 }
 
+/** Daily change uses the latest trade versus the settlement reference supplied by the broker. */
+internal fun marketChangePercent(quote: Quote?): Pair<String, Int> {
+    val trade = quote?.lastTrade ?: return "—" to 0
+    val settlement = quote.settlement?.takeIf { it > 0 } ?: return "—" to 0
+    val basisPoints = kotlin.math.round((trade.toDouble() / settlement.toDouble() - 1.0) * 10_000.0)
+    if (!basisPoints.isFinite() || kotlin.math.abs(basisPoints) > 999_999_999.0) return "—" to 0
+    val amount = basisPoints.toLong()
+    val magnitude = kotlin.math.abs(amount)
+    val sign = when { amount > 0 -> "+"; amount < 0 -> "−"; else -> "" }
+    return "$sign${magnitude / 100}.${(magnitude % 100).toString().padStart(2, '0')}%" to amount.compareTo(0L)
+}
+
 private data class ActivityMarker(val label: String, val count: Int, val color: Color)
 
 @Composable
@@ -238,6 +250,7 @@ internal fun MarketQuoteRow(
         else -> colors.Ink
     }
     val type = MaterialTheme.typography
+    val (dailyChange, dailyDirection) = marketChangePercent(if (connected) quote else null)
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("symbol-${instrument.symbol}")
         .background(if (selected) colors.Selection else Color.Transparent)
         .clickable(onClickLabel = "打开 ${instrument.symbol} 图表", onClick = onClick)
@@ -245,8 +258,12 @@ internal fun MarketQuoteRow(
         val stacked = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.15f
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val symbol: @Composable (Modifier) -> Unit = { m -> Column(m) {
-                Text(instrument.symbol, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(instrument.symbol, color = colors.Ink, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(watchSubtitle(instrument), color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("涨跌 $dailyChange", Modifier.testTag("market-change-${instrument.symbol}").semantics {
+                    contentDescription = "当日涨跌幅 $dailyChange，按最新成交与券商结算价计算"
+                }, color = when { dailyDirection > 0 -> colors.UpText; dailyDirection < 0 -> colors.DownText; else -> colors.Muted },
+                    style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } }
             val time = quote?.let { quoteTime(it.timeMs) } ?: "等待报价"
             val spread = "点差 ${quoteSpread(quote, instrument)} tick"

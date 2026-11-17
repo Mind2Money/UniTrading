@@ -199,6 +199,8 @@ private fun IndicatorEditor(
                 if (draft.referenceLevels.isEmpty()) Text("参考线已关闭。", style = type.bodySmall, color = colors.Muted)
                 TextButton({ onChange(draft.copy(referenceLevels = draft.referenceLevels + ReferenceLevelDraft())) }, Modifier.testTag("add-indicator-reference-$index")) { Text("添加参考线") }
             }
+            if (draft.kind == IndicatorKind.VWAP) Text("仅显示最新交易时段：北京时间冬令时 07:00 至次日 05:59，夏令时 06:00 至次日 04:59，自动切换；休市一小时不计入。按已加载的日内 K 线及成交量近似计算，日线及以上不显示。", style = type.bodySmall, color = colors.Muted)
+            if (draft.kind == IndicatorKind.VOLUME) Text("柱体颜色跟随 K 线涨跌；无成交量数据时留空。", style = type.bodySmall, color = colors.Muted)
             if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", style = type.bodySmall, color = colors.Muted)
             if (config == null) Text("参数、颜色或参考值无效，请修改后保存。", style = type.bodySmall, color = scheme.error)
         }

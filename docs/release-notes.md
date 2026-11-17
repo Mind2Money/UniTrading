@@ -2,9 +2,21 @@
 
 ## 简体中文
 
+- 新增成交量柱和当日 VWAP：北京时间冬令时 07:00 至次日 05:59、夏令时 06:00 至次日 04:59，自动切换并排除休市一小时；根据已加载的日内 K 线典型价和成交量近似计算。
+- 行情自选显示最新成交相对结算价的涨跌幅；缺少数据时显示占位。
+- 图表仅保留连接状态圆点；调整各平台价格轴设置按钮位置和点击区域。
+- 改进 K 线缩放、自动适应、价格轴菜单和桌面右键菜单；切换周期时刷新，并保存历史标记的显示状态。
+- 修复 iOS 凭据存储接口与 Swift 导出名称不匹配导致的编译问题。
+
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Add volume bars and current-session VWAP. The 18:00–17:00 New York session automatically follows daylight saving time and excludes the maintenance hour; VWAP approximates using loaded intraday OHLC and volume.
+- Display the latest trade's percentage change relative to the broker's settlement reference, or a placeholder when data is unavailable.
+- Keep the connection status dot on charts and improve the placement and hit target of the price-axis settings control.
+- Improve candle zoom, auto fit, price-axis and desktop context menus; refresh on timeframe changes and retain historical marker visibility.
+- Fix the Swift-exported iOS credential storage interface name.
 
 - Fix stop and target lines that could not be dragged on the chart when their position's protection could not be edited together, even though the broker allowed each order to change on its own. Each order is still drawn once, and dragging changes only that order through the existing confirmation and risk checks; non-editable legs stay read-only.
 

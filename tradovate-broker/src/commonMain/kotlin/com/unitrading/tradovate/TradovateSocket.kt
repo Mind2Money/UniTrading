@@ -54,14 +54,18 @@ internal class TradovateSocket(
         heartbeat = scope.launch { while (isActive) { delay(2_500); wire.send("[]") } }
     }
     suspend fun request(route: String, body: JsonObject): JsonObject = rawRequest(route, body.toString())
-    private suspend fun rawRequest(route: String, body: String): JsonObject {
+    suspend fun probeUser(userId: Long) { rawRequest("user/item", body = "", query = "id=$userId", rejectPenalty = true) }
+    private suspend fun rawRequest(route: String, body: String, query: String = "", rejectPenalty: Boolean = false): JsonObject {
         val waiter = CompletableDeferred<JsonObject>()
         val id = lock.withLock { ++sequence; pending[sequence] = waiter; sequence }
         return try {
-            wire.send("$route\n$id\n\n$body")
+            wire.send("$route\n$id\n$query\n$body")
             val frame = withTimeout(15_000) { waiter.await() }
             val status = frame.long("s")?.toInt() ?: 0
             val data = frame["d"] as? JsonObject ?: buildJsonObject {}
+            if (rejectPenalty && (data["p-ticket"] != null || data.bool("p-captcha") == true)) {
+                throw TradovateRemoteException(429, "券商请求受到限制")
+            }
             if (status !in 200..299 || data.str("errorCode") != null || data.str("errorText") != null) {
                 throw TradovateRemoteException(status, "Tradovate $route 被拒绝：${safeMessage(data.str("errorText") ?: data.str("errorCode") ?: status.toString())}")
             }

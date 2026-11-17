@@ -289,6 +289,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
         val skipConfirmation = tradingPreferences.skipConfirmation
         val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
+        val historyVisible by runtime.chartPreferences.historyVisible.collectAsState()
+        val priceAxis by runtime.chartPreferences.priceAxis.collectAsState()
+        val lockedCrosshairTime by runtime.chartLockedTime.collectAsState()
         val intervals = IntervalOptions(chartPreferences.favorites, chartPreferences.custom,
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
@@ -886,13 +889,38 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
+                            showHistory = historyVisible, onShowHistory = { visible ->
+                                runtime.chartPreferences.selectHistoryVisible(visible)
+                                scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
+                            },
+                            priceAxis = priceAxis, onPriceAxis = { value ->
+                                runtime.chartPreferences.selectPriceAxis(value)
+                                scope.launch { runtime.chartPreferences.savePriceAxis() }
+                            },
+                            lockedCrosshairTime = lockedCrosshairTime,
+                            onLockedCrosshairTime = { runtime.chartLockedTime.value = it },
+                            templates = runtime.chartTemplates,
+                            onApplyTemplate = { template -> scope.launch {
+                                if (runtime.indicators.apply(IndicatorSettings(template.indicators))) {
+                                    runtime.chartPreferences.selectPriceAxis(template.axis)
+                                    runtime.chartPreferences.savePriceAxis()
+                                }
+                            } },
+                            onIndicatorChanges = { configs -> scope.launch { runtime.indicators.apply(IndicatorSettings(configs)) } },
+                            allIndicators = indicatorSettings.indicators,
+                            keyboardTrading = tradingPreferences.keyboardTrading,
+                            onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
+                                changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
+                                showDraft = true
+                                openOrderEditor()
+                            } },
                             locked = chartPreferences.chartLocked && !chartCompact,
                             onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     if (compact && orderFlowSupported) ActionIcon(AppIcons.TrendingUp, "订单流分析", "open-order-flow") {
                                         closeOrder(); showOrderFlow = true
                                     }
-                                    barStatus()
+                                    if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 }
                             }))
                     }
@@ -1214,7 +1242,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             AppLogo(24.dp)
                             if (wide) Text("UniTrading", style = MaterialTheme.typography.titleMedium)
-                            if (wide) EnvironmentBadge(environment)
                             AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, Modifier.weight(1f), enabled = !busy,
                                 aliases = runtime.accountAliases)
                             TextButton({ showOverview = true }, Modifier.testTag("toggle-account-overview")) {
@@ -1222,7 +1249,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 Spacer(Modifier.width(6.dp))
                                 Text("账户总览")
                             }
-                            if (!localDemo) ConnectionStatusControl(market, compact = !wide, busy, syncAction)
+                            if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                             if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
                             ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
                             ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }

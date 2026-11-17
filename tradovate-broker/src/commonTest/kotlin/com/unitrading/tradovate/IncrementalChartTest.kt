@@ -108,6 +108,20 @@ class IncrementalChartTest {
 
     private fun lastRange(wire: Wire) = wire.charts.last().getValue("timeRange").jsonObject
 
+    @Test fun activatingAlreadyWatchedIntervalRefreshesItsSubscription() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        val five = "MESZ6" to Timeframe.M5
+        val one = "MESZ6" to Timeframe.M1
+        broker.watchAll(listOf(five, one)); runCurrent()
+        fun oneMinuteRequests() = wire.charts.count { it.getValue("chartDescription").jsonObject.long("elementSize") == 1L }
+        val before = oneMinuteRequests()
+        assertTrue(before > 0)
+        broker.watchAll(listOf(one, five)); runCurrent()
+        assertTrue(oneMinuteRequests() > before, "the newly active interval is resubscribed")
+        assertTrue(broker.history("MESZ6", Timeframe.M1).isNotEmpty())
+    }
+
     @Test fun switchesBackWithOnlyTheMissingTailAndRefreshesTheOpenBar() = runTest {
         val wire = Wire()
         val broker = ready(wire)

@@ -1,10 +1,38 @@
 package com.unitrading.app
 
 import com.unitrading.broker.Timeframe
+import com.unitrading.chart.PriceAxisSettings
+import com.unitrading.chart.PriceScaleMode
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun axisSettingsAreImmediateAndPersistWithOlderChartPreferences() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
+        val controller = ChartPreferencesController(store)
+        assertEquals(PriceAxisSettings(), controller.priceAxis.value)
+        val next = PriceAxisSettings(mode = PriceScaleMode.LOGARITHMIC, inverted = true, left = true, lockRatio = true, showCountdown = false)
+        controller.selectPriceAxis(next)
+        assertEquals(next, controller.priceAxis.value)
+        assertTrue(controller.savePriceAxis())
+        val reopened = ChartPreferencesController(store)
+        assertEquals(next, reopened.priceAxis.value)
+        assertEquals(listOf(Timeframe.M5, Timeframe.M15), reopened.preferences.value.favorites)
+    }
+    @Test fun historyVisibilityChangesImmediatelyAndSurvivesRestart() = runTest {
+        val store = MemorySnapshotStore()
+        val controller = ChartPreferencesController(store)
+        assertTrue(controller.historyVisible.value)
+        controller.selectHistoryVisible(false)
+        assertFalse(controller.historyVisible.value)
+        assertTrue(controller.saveHistoryVisibility())
+        assertFalse(ChartPreferencesController(store).historyVisible.value)
+        controller.selectHistoryVisible(true)
+        controller.selectHistoryVisible(false)
+        assertTrue(controller.saveHistoryVisibility())
+        assertFalse(ChartPreferencesController(store).historyVisible.value)
+    }
+
     @Test fun insertingCustomFavoriteSortsSecondsMinutesAndHours() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteSeconds":[3600,1,300,60]}""") }
         assertTrue(ChartPreferencesController(store).toggleFavorite(Timeframe.ofMinutes(3)))

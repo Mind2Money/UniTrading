@@ -83,6 +83,19 @@ class IndicatorUiTest {
         return bestRow
     }
 
+    @Test fun volumeAndVwapCanBeAddedAndSaved() {
+        render()
+        openIndicators()
+        compose.onNodeWithTag("add-indicator-VOLUME").performScrollTo().performClick()
+        compose.onNodeWithTag("add-indicator-VWAP").performScrollTo().performClick()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 2 }
+        assertEquals(listOf(com.unitrading.chart.IndicatorKind.VOLUME, com.unitrading.chart.IndicatorKind.VWAP),
+            runtime.indicators.settings.value.indicators.map { it.kind })
+        assertEquals("1", chartState()["panes"])
+        assertEquals("1", chartState()["overlays"])
+    }
+
     @Test fun draggingACardReordersTheIndicatorsAndSavingKeepsTheOrder() {
         render()
         openIndicators()

@@ -24,6 +24,8 @@ internal class MockTradovateWire : TradovateWire {
     val market = MockSocket(true)
     var failWrite = false
     var rejectWrite = false
+    var probeStatus = 200
+    var probePenalty = false
     var rejectMarket = false
     var capacityCheck: (JsonObject) -> JsonObject = { obj("""{"rejectReason":"Success"}""") }
     /** Runs on each accepted order write before its reply: the account events the server would send for it. */
@@ -81,13 +83,20 @@ internal class MockTradovateWire : TradovateWire {
         val queue = Channel<String>(Channel.UNLIMITED).apply { trySend("o") }
         val sent = mutableListOf<String>()
         val bodies = mutableMapOf<String, String>()
+        val queries = mutableMapOf<String, String>()
         override suspend fun send(text: String) {
             if (text == "[]") return
             val parts = text.split('\n')
             val route = parts[0]; val id = parts[1].toInt()
             sent.add(route)
+            queries[route] = parts.getOrElse(2) { "" }
             bodies[route] = text.substringAfter("\n\n")
+            if (route == "user/item" && probeStatus != 200) {
+                queue.send("""a[{"s":$probeStatus,"i":$id,"d":{}}]""")
+                return
+            }
             val data = when (route) {
+                "user/item" -> if (probePenalty) obj("""{"p-ticket":"test","p-time":3600,"errorText":"rate limited"}""") else obj("""{"id":42}""")
                 "user/syncrequest" -> {
                     val request = obj(bodies.getValue(route))
                     val types = request["entityTypes"] as? JsonArray
@@ -169,6 +178,57 @@ class TradovateTests {
         return broker to wire
     }
 
+    @Test fun latencyProbeMeasuresAccountSocketAndClearsOnDisconnect() = runTest {
+        val (broker, wire) = ready()
+        val sample = broker.market.value.connectionLatencyMs
+        assertNotNull(sample)
+        assertTrue(sample >= 0)
+        assertEquals("id=42", wire.account.queries["user/item"])
+        assertEquals(1, wire.account.sent.count { it == "user/item" })
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+
+        advanceTimeBy(30_001); runCurrent()
+        assertTrue(wire.account.sent.count { it == "user/item" } >= 2)
+        wire.account.queue.close()
+        runCurrent()
+        assertNull(broker.market.value.connectionLatencyMs)
+    }
+
+    @Test fun oldLatencyIsClearedAfterLongInactivity() = runTest {
+        var currentTime = TEST_TIME
+        val wire = MockTradovateWire()
+        val broker = TradovateBroker(session(), wire, backgroundScope, now = { currentTime })
+        broker.connect()
+        runCurrent()
+        assertNotNull(broker.market.value.connectionLatencyMs)
+
+        currentTime += 91_000
+        advanceTimeBy(1_001); runCurrent()
+        assertNull(broker.market.value.connectionLatencyMs)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun latencyProbeStopsOnRateLimitWithoutBlockingTradingState() = runTest {
+        val wire = MockTradovateWire().apply { probeStatus = 429 }
+        val (broker, _) = ready(wire)
+        assertNull(broker.market.value.connectionLatencyMs)
+        assertTrue(broker.market.value.tradingReady)
+        advanceTimeBy(120_000); runCurrent()
+        assertEquals(1, wire.account.sent.count { it == "user/item" })
+        assertTrue(broker.market.value.tradingReady)
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
+    @Test fun latencyProbeStopsOnPenaltyTicket() = runTest {
+        val wire = MockTradovateWire().apply { probePenalty = true }
+        val (broker, _) = ready(wire)
+        assertNull(broker.market.value.connectionLatencyMs)
+        assertTrue(broker.market.value.tradingReady)
+        advanceTimeBy(120_000); runCurrent()
+        assertEquals(1, wire.account.sent.count { it == "user/item" })
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
     @Test fun authorizedAccountsDoNotRequireOwnerIdToMatchLoginUser() = runTest {
         val wire = MockTradovateWire()
         wire.snapshot = JsonObject(wire.snapshot + ("accounts" to JsonArray(listOf(
@@ -247,9 +307,11 @@ class TradovateTests {
         runCurrent()
         assertEquals(5_500_250_000, broker.market.value.quotes.getValue("MESZ6").bid)
         assertEquals(5_500_250_000, broker.market.value.quotes.getValue("MESZ6").ask)
-        wire.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(TEST_TIME + 5000)}","entries":{"Trade":{"price":5501}}}]}}]""")
+        wire.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"${kotlin.time.Instant.fromEpochMilliseconds(TEST_TIME + 5000)}","entries":{"Trade":{"price":5501},"SettlementPrice":{"price":5400}}}]}}]""")
         runCurrent()
         assertEquals(updateTime, broker.market.value.quotes.getValue("MESZ6").timeMs)
+        assertEquals(5_501_000_000, broker.market.value.quotes.getValue("MESZ6").lastTrade)
+        assertEquals(5_400_000_000, broker.market.value.quotes.getValue("MESZ6").settlement)
     }
     @Test fun loginNeedsUsableExpiryEvenWithAnAccountId() {
         val accumulator = LoginAccumulator(TradovateEnvironment.DEMO)

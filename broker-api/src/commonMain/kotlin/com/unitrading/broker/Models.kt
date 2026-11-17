@@ -103,7 +103,11 @@ data class Instrument(
 }
 
 @Serializable
-data class Quote(val bid: Long, val ask: Long, val timeMs: Long)
+data class Quote(
+    val bid: Long, val ask: Long, val timeMs: Long,
+    /** Last trade and exchange settlement reference in the same price units; null when unavailable. */
+    val lastTrade: Long? = null, val settlement: Long? = null,
+)
 
 data class OrderCapacity(val maximumLotsHundredths: Long? = null, val message: String? = null)
 @Serializable
@@ -164,6 +168,8 @@ data class MarketSnapshot(
     val connected: Boolean = true,
     val statusMessage: String = "",
     val tradingReady: Boolean = true,
+    /** A recent account-connection round-trip time, unavailable when null. */
+    val connectionLatencyMs: Long? = null,
 )
 @Serializable
 data class OrderRequest(
