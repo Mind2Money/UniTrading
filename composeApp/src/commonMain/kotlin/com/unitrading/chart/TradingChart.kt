@@ -116,12 +116,24 @@ fun TradingChart(
     /** Locked, the wheel moves the chart back and forth through time instead of zooming it. */
     val locked = chrome.locked
     var previousCandles by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf(candles) }
-    var localShowHistory by remember { mutableStateOf(true) }
-    val showHistory = chrome.showHistory ?: localShowHistory
-    var showPositions by remember { mutableStateOf(true) }
-    var showOrders by remember { mutableStateOf(true) }
-    var showData by remember { mutableStateOf(false) }
-    LaunchedEffect(chrome.drawings?.hideTrading) { chrome.drawings?.hideTrading?.let { hide -> showPositions = !hide; showOrders = !hide } }
+    val localLayers = remember { ChartLayerState() }
+    val layerState = chrome.layerState ?: localLayers
+    var localShowHistory by layerState::showHistory
+    val showHistory = if (chrome.layerState != null) localShowHistory else chrome.showHistory ?: localShowHistory
+    var showPositions by layerState::showPositions
+    var showOrders by layerState::showOrders
+    var showData by layerState::showData
+    fun setHistory(visible: Boolean) {
+        if (chrome.layerState != null || chrome.showHistory == null) localShowHistory = visible
+        if (chrome.showHistory != null) chrome.onShowHistory(visible)
+    }
+    var previousHideTrading by remember(chrome.drawings) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(chrome.drawings?.hideTrading) {
+        chrome.drawings?.hideTrading?.let { hide ->
+            if (previousHideTrading != null || hide) { showPositions = !hide; showOrders = !hide }
+            previousHideTrading = hide
+        }
+    }
     var crosshair by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Int?>(null) }
     /** Pointer row of the crosshair; null after keyboard moves, which keep only the vertical line. */
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
@@ -366,7 +378,7 @@ fun TradingChart(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
         ChartToggle("挂单", showOrders) { showOrders = !showOrders },
         ChartToggle("历史", showHistory) {
-            if (chrome.showHistory == null) localShowHistory = !showHistory else chrome.onShowHistory(!showHistory)
+            setHistory(!showHistory)
         },
         ChartToggle("数据表", showData) { showData = !showData },
     ) + listOfNotNull(chrome.onDomToggle?.let { toggle -> ChartToggle("DOM 盘口", chrome.domVisible, toggle) })
@@ -380,12 +392,12 @@ fun TradingChart(
     Column(modifier.background(colors.Surface)) {
         if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
-        if (compact) {
+        if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
         }
         if (showData) {
-            if (!compact) {
+            if (!compact && !chrome.sharedToolbar) {
                 toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
@@ -403,7 +415,7 @@ fun TradingChart(
                 }
             }
         } else if (candles.isEmpty()) {
-            if (!compact) {
+            if (!compact && !chrome.sharedToolbar) {
                 toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
@@ -899,7 +911,7 @@ fun TradingChart(
                 val previous = if (bar == null) null else candles.getOrNull(range.first + readoutIndex - 1)
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!compact) toolbar(Modifier)
+                    if (!compact && !chrome.sharedToolbar) toolbar(Modifier)
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
@@ -950,7 +962,7 @@ fun TradingChart(
                         if (template.axis.fitAllBars) { manualScale = null; ratio[0] = Double.NaN }
                     }, { showTemplates = false })
                 if (showChartSettings) ChartSettingsDialog(axis, showHistory, chrome.onPriceAxis,
-                    { visible -> if (chrome.showHistory == null) localShowHistory = visible else chrome.onShowHistory(visible) },
+                    { visible -> setHistory(visible) },
                     { chrome.onPriceAxis(axis.copy(fitAllBars = true)); manualScale = null; ratio[0] = Double.NaN }, onIndicators,
                     { showChartSettings = false })
             }
@@ -975,6 +987,14 @@ fun TradingChart(
  * order panel is open). Grouped in one parameter because at 32 parameters D8 emitted a TradingChart that ART's verifier
  * rejected (VerifyError on Android); [ChartOrderActions] groups the order-line callbacks for the same reason.
  */
+@androidx.compose.runtime.Stable
+class ChartLayerState(initialHistory: Boolean = true) {
+    var showPositions by mutableStateOf(true)
+    var showOrders by mutableStateOf(true)
+    var showHistory by mutableStateOf(initialHistory)
+    var showData by mutableStateOf(false)
+}
+
 class ChartChrome(
     val compact: Boolean = false,
     val legendCollapsed: Boolean = false,
@@ -1004,6 +1024,8 @@ class ChartChrome(
     val keyboardTrading: Boolean = false,
     val domVisible: Boolean = false,
     val onDomToggle: (() -> Unit)? = null,
+    val sharedToolbar: Boolean = false,
+    val layerState: ChartLayerState? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

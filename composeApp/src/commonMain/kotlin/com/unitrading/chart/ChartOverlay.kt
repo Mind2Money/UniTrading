@@ -108,19 +108,21 @@ internal fun ChartToolbar(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     trailing: @Composable () -> Unit = {},
+    additionalControls: @Composable () -> Unit = {},
 ) {
     val controls: @Composable () -> Unit = {
         SymbolChip(instrument, instruments, onSymbol)
         IntervalControl(timeframe, onTimeframe, intervals)
         indicators?.let { IndicatorChip(it, compact) }
         LayerMenu(layers, compact)
+        additionalControls()
     }
     if (compact) Row(modifier.height(48.dp).padding(start = 8.dp, end = 4.dp).testTag("chart-toolbar"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) { controls() }
         trailing()
-    } else FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) { controls() }
+    } else FlowRow(modifier.testTag("chart-toolbar"), horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) { controls() }
 }
 
 /** Chart control chip; it stays legible when it floats over the candles. */

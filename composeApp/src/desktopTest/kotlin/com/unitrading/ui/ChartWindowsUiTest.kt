@@ -129,11 +129,22 @@ class ChartWindowsUiTest {
         }
         compose.waitForIdle()
         assertTrue(compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().size.width > beforeWidth)
-        inside("split1", "chart-symbol").performClick()
-        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.onAllNodesWithTag("chart-toolbar").assertCountEquals(1)
+        compose.onAllNodesWithTag("drawing-toolbar").assertCountEquals(1)
+        val otherPlot = inside("split1", "trading-chart")
+        val otherSize = otherPlot.fetchSemanticsNode().size
+        otherPlot.performMouseInput { moveTo(Offset(otherSize.width * .7f, otherSize.height * .8f)); press(); release() }
         compose.waitForIdle()
-        inside("main", "chart-symbol").assertTextContains("TESTZ6", substring = true)
-        inside("split1", "chart-symbol").assertTextContains("OTHRZ6", substring = true)
+        compose.onNodeWithTag("chart-symbol").performClick()
+        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.onNodeWithTag("interval-inline-15").performClick()
+        compose.onNodeWithTag("chart-symbol").assertTextContains("OTHRZ6", substring = true)
+        assertTrue(broker.watched.last().contains("OTHRZ6" to m15))
+        compose.onNodeWithTag("chart-indicators").performClick()
+        compose.onNodeWithTag("add-indicator-MA").performClick()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicatorsForChart("split1").settings.value.indicators.size == 1 }
+        assertTrue(runtime.indicatorsForChart(MAIN_CHART).settings.value.indicators.isEmpty())
         compose.onNodeWithTag("review-order").performClick()
         confirmOrder(1)
         assertEquals("OTHRZ6", broker.placed.last().symbol)
@@ -142,6 +153,8 @@ class ChartWindowsUiTest {
         val size = plot.fetchSemanticsNode().size
         plot.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .8f)); press(); release() }
         compose.waitForIdle()
+        compose.onNodeWithTag("chart-symbol").assertTextContains("TESTZ6", substring = true)
+        assertTrue(broker.watched.last().contains("TESTZ6" to m5))
         compose.onNodeWithTag("review-order").performClick()
         confirmOrder(2)
         assertEquals("TESTZ6", broker.placed.last().symbol)

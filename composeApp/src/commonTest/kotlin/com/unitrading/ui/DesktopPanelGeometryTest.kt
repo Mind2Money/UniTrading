@@ -51,6 +51,16 @@ class DesktopPanelGeometryTest {
         }
     }
 
+    @Test fun domFitsWithOtherPanelsAndRestoresItsPreferredWidth() {
+        val preferred = DesktopLayoutPreferences(domWidth = 340f)
+        val large = desktopPanelGeometry(1800f, 900f, true, preferred, domOpen = true)
+        assertEquals(340f, large.dom.value)
+        val narrow = desktopPanelGeometry(1240f, 900f, true, preferred, domOpen = true)
+        assertTrue(narrow.dom.value in narrow.dom.min..narrow.dom.max)
+        assertTrue(1240f - PANEL_RAIL - 3 * PANEL_DIVIDER - narrow.dom.value - narrow.sidebar.value - narrow.order.value >= 320f)
+        assertEquals(0f, desktopPanelGeometry(1800f, 900f, true, preferred).dom.value)
+    }
+
     @Test fun oversizedPreferencesKeepTheChartAndMarketUsable() {
         val huge = DesktopLayoutPreferences(4000f, 4000f, 4000f)
         for ((width, wide) in listOf(900f to false, 1240f to true, 1600f to true)) {

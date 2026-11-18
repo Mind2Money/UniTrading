@@ -34,6 +34,9 @@ import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import com.unitrading.chart.ChartLayerState
+import com.unitrading.chart.ChartToggle
+import com.unitrading.chart.ChartToolbar
 import com.unitrading.chart.ChartChrome
 import com.unitrading.chart.ChartOrderActions
 import com.unitrading.chart.IntervalOptions
@@ -829,7 +832,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // instrument of the previous one would show a wrong chart for a frame and drop its view.
                 val workingChart = activeChart
                 val shownCharts = parkedCharts + (workingChart to ChartSlot(workingChart, symbol, timeframe))
-                val chartView: @Composable (String, Modifier) -> Unit = { chartId, m ->
+                val layerStates = remember(plugin) { mutableMapOf<String, ChartLayerState>() }
+                fun layersFor(id: String) = layerStates.getOrPut(id) { ChartLayerState(historyVisible) }
+                val chartView: @Composable (String, Modifier, Boolean) -> Unit = { chartId, m, shared ->
                     val active = chartId == workingChart
                     val parked = shownCharts[chartId]
                     val shownInstrument = if (active) instrument else parked?.let { slot -> catalog.instruments.firstOrNull { it.symbol == slot.symbol } }
@@ -903,7 +908,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val chartCompact = compact || maxWidth < 600.dp
                     val chartShort = chartCompact && maxHeight < 550.dp
                     Row(Modifier.fillMaxSize()) {
-                    if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
+                    if (!shared && (!chartCompact || drawings.toolbarOpen)) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
                     TradingChart(accountKey, shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
                         if (active) visiblePositions else account.positions.filter { it.symbol == shownExecution },
                         if (active) visibleTrades else account.trades.filter { it.symbol == shownExecution },
@@ -923,10 +928,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
-                            showHistory = historyVisible, onShowHistory = { visible ->
+                            showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
+                            sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
@@ -960,12 +966,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 }
                             }))
-                    if (active && showDom && !chartCompact) {
-                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
-                            Modifier.width(300.dp).fillMaxHeight()) { showDom = false }
+
                     }
-                    }
-                    if (active && showDom && chartCompact) {
+                    if (!desktop && active && showDom) {
                         DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
                             Modifier.align(Alignment.CenterEnd).padding(top = 48.dp, bottom = 8.dp, end = 4.dp)
                                 .fillMaxHeight(.83f).fillMaxWidth(.74f).widthIn(max = 320.dp)) { showDom = false }
@@ -974,8 +977,40 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 val chart: @Composable (Modifier) -> Unit = { m ->
-                    if (!splitAvailable) chartView(MAIN_CHART, m)
-                    else ChartSplitWorkspace(splitLayout, workingChart, ::selectSplitLayout, chartView, m)
+                    if (!splitAvailable) chartView(MAIN_CHART, m, false)
+                    else {
+                        val currentLayers = layersFor(workingChart)
+                        val indicatorController = runtime.indicatorsForChart(workingChart)
+                        val indicatorSettings by indicatorController.settings.collectAsState()
+                        val currentDrawings = runtime.drawingsForChart(workingChart)
+                        Column(m) {
+                            ChartToolbar(instrument, watchInstruments.ifEmpty { listOf(instrument) }, ::chooseSymbol,
+                                timeframe, { timeframe = it }, intervals,
+                                listOf(
+                                    ChartToggle("仓位", currentLayers.showPositions) { currentLayers.showPositions = !currentLayers.showPositions },
+                                    ChartToggle("挂单", currentLayers.showOrders) { currentLayers.showOrders = !currentLayers.showOrders },
+                                    ChartToggle("历史", currentLayers.showHistory) {
+                                        currentLayers.showHistory = !currentLayers.showHistory
+                                        if (workingChart == MAIN_CHART) {
+                                            runtime.chartPreferences.selectHistoryVisible(currentLayers.showHistory)
+                                            scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
+                                        }
+                                    },
+                                    ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
+                                ) + listOfNotNull(if (domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
+                                ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
+                                    indicatorSettings.indicators.any { it.visible }) { indicatorChartId = workingChart; showIndicators = true },
+                                Modifier.fillMaxWidth().padding(horizontal = 4.dp), compact = compact,
+                                additionalControls = { ChartLayoutMenu(splitLayout, ::selectSplitLayout) })
+                            DividerLine()
+                            Row(Modifier.weight(1f).fillMaxWidth()) {
+                                com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
+                                    { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                                ChartSplitWorkspace(splitLayout, workingChart, { id, cellModifier -> chartView(id, cellModifier, true) },
+                                    Modifier.weight(1f).fillMaxHeight())
+                            }
+                        }
+                    }
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
@@ -1339,6 +1374,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     modifier = m, onProtectOrder = { editPendingProtection(it) })
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
+                            dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
+                                account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
+                            domOpen = showDom, onDomOpenChange = { showDom = it },
                             orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
                             windowMenuExtra = { close ->
                                 DividerLine(Modifier.padding(vertical = 4.dp))
@@ -1353,7 +1391,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val window = chartWindowKey(id)
                             chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
-                                onClose = { closeChart(id) }) { WindowSurface(window, windowOverlay) { chartView(id, Modifier.fillMaxSize()) } }
+                                onClose = { closeChart(id) }) { WindowSurface(window, windowOverlay) { chartView(id, Modifier.fillMaxSize(), false) } }
                         } }
                     } else if (showOrderFlow) {
                         OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }

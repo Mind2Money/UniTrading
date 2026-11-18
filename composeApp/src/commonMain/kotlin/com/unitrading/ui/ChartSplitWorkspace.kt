@@ -41,19 +41,23 @@ private fun ChartSplitPane(
     val density = LocalDensity.current
     BoxWithConstraints(modifier) {
         val sizePx = (if (horizontal) constraints.maxWidth else constraints.maxHeight).toFloat()
-        val usable = (sizePx - with(density) { 12.dp.toPx() }).coerceAtLeast(1f)
+        val usable = (sizePx - with(density) { 8.dp.toPx() }).coerceAtLeast(1f)
         val divider = Modifier.testTag("chart-divider-$id")
-            .background(MaterialTheme.colorScheme.outlineVariant)
+            .background(MaterialTheme.colorScheme.surface)
             .draggable(rememberDraggableState { delta -> ratio = (ratio + delta / usable).coerceIn(.2f, .8f); ratios[id] = ratio },
                 if (horizontal) Orientation.Horizontal else Orientation.Vertical)
             .semantics { contentDescription = "拖动调整图表大小" }
         if (horizontal) Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(ratio).fillMaxHeight()) { first() }
-            Box(divider.width(12.dp).fillMaxHeight())
+            Box(divider.width(8.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+            }
             Box(Modifier.weight(1f - ratio).fillMaxHeight()) { second() }
         } else Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(ratio).fillMaxWidth()) { first() }
-            Box(divider.height(12.dp).fillMaxWidth())
+            Box(divider.height(8.dp).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant))
+            }
             Box(Modifier.weight(1f - ratio).fillMaxWidth()) { second() }
         }
     }
@@ -81,40 +85,39 @@ private fun LayoutIcon(layout: ChartSplitLayout, color: Color, modifier: Modifie
 }
 
 @Composable
+internal fun ChartLayoutMenu(layout: ChartSplitLayout, onLayout: (ChartSplitLayout) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    Box {
+        TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("chart-layout-menu")) {
+            LayoutIcon(layout, colors.primary)
+            Spacer(Modifier.width(6.dp))
+            Text("布局")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ChartSplitLayout.entries.forEach { option ->
+                DropdownMenuItem(text = { Text(option.label) },
+                    onClick = { expanded = false; onLayout(option) },
+                    leadingIcon = { LayoutIcon(option, if (option == layout) colors.primary else colors.onSurfaceVariant) },
+                    trailingIcon = { if (option == layout) Text("✓", color = colors.primary) },
+                    modifier = Modifier.testTag("chart-layout-${option.name}"))
+            }
+        }
+    }
+}
+
+@Composable
 internal fun ChartSplitWorkspace(
     layout: ChartSplitLayout,
     activeChart: String,
-    onLayout: (ChartSplitLayout) -> Unit,
     chart: @Composable (String, Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val ratios = remember { mutableMapOf<String, Float>() }
     Column(modifier.testTag("split-workspace")) {
-        Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("chart-layout-menu")) {
-                    LayoutIcon(layout, colors.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("图表布局 · ${layout.label}")
-                }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    ChartSplitLayout.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.label) },
-                            onClick = { expanded = false; onLayout(option) },
-                            leadingIcon = { LayoutIcon(option, if (option == layout) colors.primary else colors.onSurfaceVariant) },
-                            trailingIcon = { if (option == layout) Text("✓", color = colors.primary) },
-                            modifier = Modifier.testTag("chart-layout-${option.name}"),
-                        )
-                    }
-                }
-            }
-            if (layout != ChartSplitLayout.SINGLE) Text("点击图表切换下单品种", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-        }
         @Composable fun cell(id: String, cellModifier: Modifier) {
-            Box(cellModifier.padding(1.dp).border(if (id == activeChart && layout.count > 1) 2.dp else 1.dp,
+            Box(cellModifier.border(1.dp,
                 if (id == activeChart && layout.count > 1) colors.primary else colors.outlineVariant).clipToBounds()
                 .testTag("split-cell-$id")) {
                 chart(id, Modifier.fillMaxSize())

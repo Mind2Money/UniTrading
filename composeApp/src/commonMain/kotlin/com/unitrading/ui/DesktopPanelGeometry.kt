@@ -25,10 +25,11 @@ internal data class DesktopPanelGeometry(
     val sidebar: PanelDimension,
     val order: PanelDimension,
     val terminal: PanelDimension,
+    val dom: PanelDimension,
 )
 
 /** Sizes for the panels of a [width] by [height] workspace; a folded panel takes no width, so the chart gets its space. */
-internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false): DesktopPanelGeometry {
+internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false, domOpen: Boolean = false): DesktopPanelGeometry {
     fun dimension(value: Float, minimum: Float, maximum: Float): PanelDimension {
         val max = maximum.coerceAtLeast(0f)
         val min = minimum.coerceAtMost(max)
@@ -38,13 +39,17 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
     val orderOpen = wide && preferred.orderOpen
     // Each half still fits the compact chart controls or a price column plus one footprint column.
     val chartMinimum = if (orderFlowOpen) 488f else CHART_MIN_WIDTH
-    val room = width - PANEL_RAIL - PANEL_DIVIDER * listOf(preferred.marketOpen, orderOpen).count { it } - chartMinimum
+    val dividerCount = listOf(preferred.marketOpen, orderOpen, domOpen).count { it }
+    val totalRoom = width - PANEL_RAIL - PANEL_DIVIDER * dividerCount - chartMinimum
+    val domRoom = totalRoom - (if (preferred.marketOpen) 280f else 0f) - (if (orderOpen) 260f else 0f)
+    val dom = if (domOpen) dimension(preferred.domWidth, 220f, minOf(520f, domRoom)) else closed
+    val room = totalRoom - dom.value
     val sidebar = if (preferred.marketOpen) dimension(preferred.sidebarWidth, 280f, minOf(520f, room - if (orderOpen) 260f else 0f)) else closed
     val order = if (orderOpen) dimension(preferred.orderWidth, 260f, minOf(560f, room - sidebar.value)) else closed
     val availableHeight = (height - PANEL_DIVIDER).coerceAtLeast(0f)
     val terminalMin = minOf(128f, availableHeight * .35f)
     return DesktopPanelGeometry(
         if (preferred.marketOpen) sidebar.copy(max = minOf(sidebar.max, room - order.value).coerceAtLeast(sidebar.min)) else closed, order,
-        dimension(preferred.terminalHeight, terminalMin, minOf(1000f, maxOf(terminalMin, availableHeight - 240f))),
+        dimension(preferred.terminalHeight, terminalMin, minOf(1000f, maxOf(terminalMin, availableHeight - 240f))), dom,
     )
 }

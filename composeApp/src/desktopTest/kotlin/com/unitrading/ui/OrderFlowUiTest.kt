@@ -145,6 +145,37 @@ class OrderFlowUiTest {
         onNodeWithTag("dom-panel").assertDoesNotExist()
     }
 
+    @Test fun desktopDomFollowsSelectedChartAndRejectsOldContractData() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val sourceBroker = OfflineOrderBroker()
+        val feed = MutableStateFlow(OrderFlowSnapshot(symbol = "TESTZ6", bids = listOf(DepthLevel(550000, 7)),
+            asks = listOf(DepthLevel(550025, 8)), bestBid = DepthLevel(550000, 7), bestAsk = DepthLevel(550025, 8),
+            depthStatus = DepthStatus.AVAILABLE, connected = true))
+        val watched = mutableListOf<String?>()
+        val broker = object : BrokerPlugin by sourceBroker {
+            override val orderFlow = feed
+            override fun watchOrderFlow(symbol: String?) { watched += symbol }
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layout-menu").performClick()
+        onNodeWithTag("chart-layout-TWO_COLUMNS").performClick()
+        onNodeWithTag("rail-dom").performClick()
+        onNodeWithTag("desktop-dom").assertIsDisplayed()
+        onNodeWithTag("dom-prices").assertExists()
+        val plot = onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("chart-view-split1")))
+        val size = plot.fetchSemanticsNode().size
+        plot.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .8f)); press(); release() }
+        onNodeWithTag("chart-symbol").performClick()
+        onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        waitUntil(timeoutMillis = 5_000L) { watched.lastOrNull() == "OTHRZ6" }
+        onNodeWithTag("dom-prices").assertDoesNotExist()
+        onNode(hasText("OTHRZ6") and hasAnyAncestor(hasTestTag("dom-panel")), useUnmergedTree = true).assertExists()
+        runOnIdle { feed.value = feed.value.copy(symbol = "OTHRZ6") }
+        onNodeWithTag("dom-prices").assertExists()
+    }
+
     @Test fun domSitsBesideDesktopChart() = runDesktopComposeUiTest(width = 1440, height = 900) {
         val spec = source.instruments.first()
         val broker = plugin(MutableStateFlow(snapshot(spec)))
@@ -155,6 +186,9 @@ class OrderFlowUiTest {
         onNodeWithTag("chart-layers").performClick()
         onNodeWithText("DOM 盘口").performClick()
         onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("desktop-dom").assertIsDisplayed()
+        onNodeWithTag("desktop-sidebar").assertIsDisplayed()
+        onNodeWithTag("resize-dom").assertExists()
         onNodeWithTag("dom-prices").assertIsDisplayed()
         capture("dom-desktop-chart")
     }

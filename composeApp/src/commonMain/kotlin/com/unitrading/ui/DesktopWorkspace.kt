@@ -66,6 +66,9 @@ internal fun DesktopWorkspace(
     terminal: @Composable (Modifier) -> Unit,
     terminalSummary: String = "",
     orderFlow: (@Composable (Modifier) -> Unit)? = null,
+    dom: (@Composable (Modifier, minimize: () -> Unit) -> Unit)? = null,
+    domOpen: Boolean = false,
+    onDomOpenChange: (Boolean) -> Unit = {},
     orderFlowOpen: Boolean = false,
     onOrderFlowOpenChange: (Boolean) -> Unit = {},
     windowOverlay: @Composable (window: String) -> Unit = {},
@@ -82,6 +85,7 @@ internal fun DesktopWorkspace(
     val detached = if (host == null) emptySet() else preferred.detached
     fun setDetached(panel: WorkspacePanel, value: Boolean) { controller.setDetached(panel, value); save() }
     val flowOpen = orderFlow != null && orderFlowOpen
+    val domInline = dom != null && domOpen && WorkspacePanel.DOM !in detached
     val flowInline = flowOpen && WorkspacePanel.ORDER_FLOW !in detached
     val chartInline = WorkspacePanel.CHART !in detached
     val terminalInline = WorkspacePanel.TERMINAL !in detached
@@ -95,7 +99,7 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline)
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     // With the chart in its own window and no order flow beside it, the trade list takes the chart's room.
@@ -139,6 +143,14 @@ internal fun DesktopWorkspace(
                         onReset = { controller.update(preferred.copy(orderWidth = defaults.orderWidth)); save() })
                     order(Modifier.width(layout.order.value.dp).fillMaxHeight().testTag("desktop-order")) { setOpen(DesktopPanel.ORDER, false) }
                 }
+                if (domInline) {
+                    PanelResizeHandle("DOM 栏宽度", "resize-dom", horizontal = true, dimension = layout.dom, direction = -1f,
+                        onChange = { controller.update(preferred.copy(domWidth = it)) }, onFinish = ::save,
+                        onReset = { controller.update(preferred.copy(domWidth = defaults.domWidth)); save() })
+                    Box(Modifier.width(layout.dom.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-dom")) {
+                        dom?.invoke(Modifier.fillMaxSize()) { onDomOpenChange(false) }
+                    }
+                }
                 if (sidebarInline) {
                     PanelResizeHandle("行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
                         onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
@@ -153,6 +165,7 @@ internal fun DesktopWorkspace(
                     header = { Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium) }) {
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                     RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
+                    if (dom != null) RailToggle(AppIcons.Candlestick, "DOM", "rail-dom", domOpen) { onDomOpenChange(!domOpen) }
                     // The ticket only fits beside a wide chart, but its own window has room at any width.
                     if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
@@ -160,7 +173,7 @@ internal fun DesktopWorkspace(
                         onOrderFlowOpenChange(!flowOpen)
                     }
                     }
-                    if (host != null) WindowMenu(detached, WorkspacePanel.entries.filter { it != WorkspacePanel.ORDER_FLOW || orderFlow != null },
+                    if (host != null) WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
                         { panel -> setDetached(panel, panel !in detached) }, windowMenuExtra)
                 }
             }
@@ -185,6 +198,7 @@ internal fun DesktopWorkspace(
                     terminal(Modifier.weight(1f).fillMaxWidth())
                 }
             }
+            if (WorkspacePanel.DOM in detached && domOpen) window(WorkspacePanel.DOM, 380, 640) { dom?.invoke(Modifier.fillMaxSize()) { onDomOpenChange(false) } }
             if (WorkspacePanel.ORDER_FLOW in detached && flowOpen) window(WorkspacePanel.ORDER_FLOW, 760, 680) { orderFlow?.invoke(Modifier.fillMaxSize()) }
         }
     }
