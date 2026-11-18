@@ -75,6 +75,7 @@ internal fun DesktopWorkspace(
     windowMenuExtra: @Composable (close: () -> Unit) -> Unit = {},
     analytics: (@Composable (Modifier, close: () -> Unit) -> Unit)? = null,
     onNewChartWindow: (() -> Unit)? = null,
+    newChartWindowEnabled: Boolean = true,
     onOpenSettings: (() -> Unit)? = null,
     onResetLayout: (() -> Unit)? = null,
 ) {
@@ -181,12 +182,12 @@ internal fun DesktopWorkspace(
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.TrendingUp, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (host != null && onNewChartWindow != null)
-                        RailToggle(AppIcons.Add, "新建窗口", "rail-new-chart", false, onNewChartWindow)
+                        RailToggle(AppIcons.Add, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
                     if (host != null && onNewChartWindow != null)
                         WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
                             { panel -> setDetached(panel, panel !in detached) }, {}, "面板")
                     if (onOpenSettings != null)
-                        RailToggle(AppIcons.Settings, "设置", "open-settings", false, onOpenSettings)
+                        RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
                         onOrderFlowOpenChange(!flowOpen)
                     }
@@ -194,7 +195,7 @@ internal fun DesktopWorkspace(
                     if (host != null && onNewChartWindow == null) WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
                         { panel -> setDetached(panel, panel !in detached) }, windowMenuExtra)
                     if (onResetLayout != null)
-                        RailToggle(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout", false, onResetLayout)
+                        RailToggle(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout", false, onToggle = onResetLayout)
                 }
             }
         }
@@ -271,13 +272,13 @@ private fun TerminalBar(summary: String, open: Boolean, onToggle: () -> Unit) {
 
 /** A native rail destination whose pill marks an open panel. Several panels can stay open, so each also reports as a toggle. */
 @Composable
-private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, onToggle: () -> Unit) {
+private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
     Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
         NavigationRailItem(open, onToggle, { Icon(icon, contentDescription = null) },
             Modifier.testTag(tag).semantics {
                 toggleableState = if (open) ToggleableState.On else ToggleableState.Off
                 stateDescription = if (open) "已展开" else "已收起"
-            }, label = { Text(name, maxLines = 1) }, alwaysShowLabel = true)
+            }, enabled = enabled, label = { Text(name, maxLines = 1) }, alwaysShowLabel = true)
     }
 }
 

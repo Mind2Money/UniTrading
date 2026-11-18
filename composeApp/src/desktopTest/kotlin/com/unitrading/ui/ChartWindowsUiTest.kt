@@ -77,7 +77,9 @@ class ChartWindowsUiTest {
     }
     /** A node of the chart window [chart]; the main chart is the one in the workspace. */
     private fun inChart(chart: String, tag: String) =
-        compose.onNode(hasTestTag(tag) and hasAnyAncestor(hasTestTag(if (chart == MAIN_CHART) "desktop-chart" else "fake-window-chart-$chart")))
+        compose.onNode(hasTestTag(tag) and hasAnyAncestor(hasTestTag(
+            if (chart != MAIN_CHART) "fake-window-chart-$chart"
+            else if (tag == "chart-symbol" || tag.startsWith("interval-")) "app-toolbar" else "desktop-chart")))
     private fun title(chart: String) = windows.open.getValue("chart-$chart").title
     @Test fun lockedTimeIsSharedWithAnotherChartWindow() {
         render()
@@ -204,11 +206,12 @@ class ChartWindowsUiTest {
         pickSymbol("c1", "OTHRZ6")
         assertEquals("UniTrading · 图表 · OTHRZ6 · 15分钟", title("c1"))
         inChart("c1", "chart-symbol").assertTextContains("OTHRZ6", substring = true)
-        inChart(MAIN_CHART, "chart-symbol").assertTextContains("TESTZ6", substring = true)
         assertEquals(listOf("OTHRZ6" to m15, "TESTZ6" to m5), broker.watched.last())
         awaitSaved { it.extraCharts == listOf(SavedChart("c1", mapOf(id to "OTHRZ6"), m15.seconds)) && it.lastSymbols[id] == "TESTZ6" && it.lastTimeframe == m5 }
 
         // The main chart changes on its own as well, and a second window starts from the chart being worked on.
+        press(MAIN_CHART)
+        inChart(MAIN_CHART, "chart-symbol").assertTextContains("TESTZ6", substring = true)
         inChart(MAIN_CHART, "interval-inline-60").performClick()
         compose.waitForIdle()
         assertEquals(listOf("TESTZ6" to Timeframe.H1, "OTHRZ6" to m15), broker.watched.last())
@@ -304,8 +307,7 @@ class ChartWindowsUiTest {
         render()
         repeat(ChartPreferences.MAX_EXTRA_CHARTS) { newChart() }
         assertEquals(ChartPreferences.MAX_EXTRA_CHARTS, windows.open.size)
-        compose.onNodeWithTag("rail-windows").performClick()
-        compose.onNodeWithTag("window-menu-new-chart").assertIsNotEnabled()
+        compose.onNodeWithTag("rail-new-chart").performScrollTo().assertIsNotEnabled()
     }
 
     @Test fun aPlatformWithoutWindowsShowsOnlyTheMainChart() {
