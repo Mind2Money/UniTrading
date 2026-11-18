@@ -89,9 +89,12 @@ class ContinuousContractUiTest {
         compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
         compose.onNodeWithTag("position-current").performClick()
         compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
+        // The separate flatten controls leave fewer rows in view, so scroll the lazy list just as a user would.
         // A contract no continuous series trades any more has only its dated chart.
+        compose.onNodeWithTag("trade-terminal").performScrollToIndex(2)
         compose.onNodeWithTag("position-old").performClick()
         compose.runOnIdle { assertEquals(old.symbol, chartSymbol) }
+        compose.onNodeWithTag("trade-terminal").performScrollToIndex(1)
         compose.onNodeWithTag("position-current").performClick()
         compose.runOnIdle { assertEquals("@TEST", chartSymbol) }
     }
