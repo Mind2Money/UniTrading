@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 桌面和平板图表将账户选择、周期、指标、图层与布局合并为单行工具栏，工具较多时可横向滚动；手机版保留原有布局。
 - 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
 - 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
@@ -22,6 +23,7 @@
 
 ## English
 
+- Combine the desktop and tablet account selectors and chart controls in a single scrollable toolbar, retaining the phone layout.
 - Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.
 - Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.

@@ -637,6 +637,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val desktop = maxWidth >= 900.dp && maxHeight >= 600.dp
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
+                // Use the touch layout only on tablet-sized screens, never on a landscape phone.
+                val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
                 // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
                 val chartWindowsShown = desktop && panelWindows
                 val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
@@ -665,6 +667,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // The order page of compact screens is the one chosen in the settings: the sheet over the chart, which shares
                 // the chart surface and never dims it, the dock measured alongside the chart, or a dialog.
                 val chartFirst = compact && mobileTab == 1 && !showOrderFlow
+                val unifiedChartBar = desktop || (tablet && chartFirst)
                 val orderLayout = tradingPreferences.orderPanelLayout
                 val useOrderPopup = orderLayout == OrderPanelLayout.POPUP
                 // The sheet and the dock stay on the chart page for as long as an order is being prepared; the popup does not.
@@ -976,33 +979,41 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     }
                 }
+                // The bar always follows the selected chart; each pane retains independent settings.
+                val sharedChartBar: @Composable (Modifier, Boolean) -> Unit = { modifier, singleLine ->
+                    val currentLayers = layersFor(workingChart)
+                    val indicatorController = runtime.indicatorsForChart(workingChart)
+                    val indicatorSettings by indicatorController.settings.collectAsState()
+                    ChartToolbar(instrument, watchInstruments.ifEmpty { listOf(instrument) }, ::chooseSymbol,
+                        timeframe, { timeframe = it }, intervals,
+                        listOf(
+                            ChartToggle("仓位", currentLayers.showPositions) { currentLayers.showPositions = !currentLayers.showPositions },
+                            ChartToggle("挂单", currentLayers.showOrders) { currentLayers.showOrders = !currentLayers.showOrders },
+                            ChartToggle("历史", currentLayers.showHistory) {
+                                currentLayers.showHistory = !currentLayers.showHistory
+                                if (workingChart == MAIN_CHART) {
+                                    runtime.chartPreferences.selectHistoryVisible(currentLayers.showHistory)
+                                    scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
+                                }
+                            },
+                            ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
+                        ) + listOfNotNull(if (domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
+                        ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
+                            indicatorSettings.indicators.any { it.visible }) { indicatorChartId = workingChart; showIndicators = true },
+                        modifier, compact = compact && !singleLine,
+                        additionalControls = { ChartLayoutMenu(splitLayout, ::selectSplitLayout) }, singleRow = singleLine)
+                }
                 val chart: @Composable (Modifier) -> Unit = { m ->
                     if (!splitAvailable) chartView(MAIN_CHART, m, false)
                     else {
-                        val currentLayers = layersFor(workingChart)
                         val indicatorController = runtime.indicatorsForChart(workingChart)
                         val indicatorSettings by indicatorController.settings.collectAsState()
                         val currentDrawings = runtime.drawingsForChart(workingChart)
                         Column(m) {
-                            ChartToolbar(instrument, watchInstruments.ifEmpty { listOf(instrument) }, ::chooseSymbol,
-                                timeframe, { timeframe = it }, intervals,
-                                listOf(
-                                    ChartToggle("仓位", currentLayers.showPositions) { currentLayers.showPositions = !currentLayers.showPositions },
-                                    ChartToggle("挂单", currentLayers.showOrders) { currentLayers.showOrders = !currentLayers.showOrders },
-                                    ChartToggle("历史", currentLayers.showHistory) {
-                                        currentLayers.showHistory = !currentLayers.showHistory
-                                        if (workingChart == MAIN_CHART) {
-                                            runtime.chartPreferences.selectHistoryVisible(currentLayers.showHistory)
-                                            scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
-                                        }
-                                    },
-                                    ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
-                                ) + listOfNotNull(if (domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
-                                ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
-                                    indicatorSettings.indicators.any { it.visible }) { indicatorChartId = workingChart; showIndicators = true },
-                                Modifier.fillMaxWidth().padding(horizontal = 4.dp), compact = compact,
-                                additionalControls = { ChartLayoutMenu(splitLayout, ::selectSplitLayout) })
-                            DividerLine()
+                            if (!unifiedChartBar) {
+                                sharedChartBar(Modifier.fillMaxWidth().padding(horizontal = 4.dp), false)
+                                DividerLine()
+                            }
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
                                     { scope.launch { indicatorController.apply(IndicatorSettings()) } })
@@ -1321,31 +1332,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    if (desktop) {
-                        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).background(colors.Surface).testTag("app-toolbar").padding(start = 16.dp, end = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AppLogo(24.dp)
-                            if (wide) Text("UniTrading", style = MaterialTheme.typography.titleMedium)
-                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount, Modifier.weight(1f), enabled = !busy,
+                    if (unifiedChartBar) {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).background(colors.Surface)
+                            .testTag("app-toolbar").padding(start = 6.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (desktop) AppLogo(22.dp)
+                            sharedChartBar(Modifier.weight(1f), true)
+                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                Modifier.width(if (maxWidth >= 1200.dp) 320.dp else 240.dp), enabled = !busy,
                                 aliases = runtime.accountAliases)
-                            TextButton({ showOverview = true }, Modifier.testTag("toggle-account-overview")) {
-                                Icon(AppIcons.AccountCircle, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("账户总览")
-                            }
-                            if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
-                            if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause, if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
-                            ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") { showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() } }
-                            ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
-                            if (!wide) Button({
-                                showDraft = true
-                                if (!orderDetached()) showOrder = true
-                                else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
-                            }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
+                            if (desktop) {
+                                ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
+                                if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
+                                if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause,
+                                    if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
+                                ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") {
+                                    showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
+                                }
+                                ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
+                                if (!wide) Button({
+                                    showDraft = true
+                                    if (!orderDetached()) showOrder = true
+                                    else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
+                                }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
+                            } else if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                         }
                         DividerLine()
                     }
-                    if (compact) {
+                    if (compact && !unifiedChartBar) {
                         val showAccountBar = !(chartFirst && orderOnChart) && (!keyboardOpen || popupVisible)
                         val accountBarHeight by animateDpAsState(
                             if (showAccountBar) { if (denseLandscape) 41.dp else 57.dp } else 0.dp, tween(180), label = "account-bar-height")

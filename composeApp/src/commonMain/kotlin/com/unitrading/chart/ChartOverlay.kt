@@ -109,6 +109,7 @@ internal fun ChartToolbar(
     compact: Boolean = false,
     trailing: @Composable () -> Unit = {},
     additionalControls: @Composable () -> Unit = {},
+    singleRow: Boolean = false,
 ) {
     val controls: @Composable () -> Unit = {
         SymbolChip(instrument, instruments, onSymbol)
@@ -117,7 +118,7 @@ internal fun ChartToolbar(
         LayerMenu(layers, compact)
         additionalControls()
     }
-    if (compact) Row(modifier.height(48.dp).padding(start = 8.dp, end = 4.dp).testTag("chart-toolbar"),
+    if (compact || singleRow) Row(modifier.height(48.dp).padding(start = 8.dp, end = 4.dp).testTag("chart-toolbar"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) { controls() }
