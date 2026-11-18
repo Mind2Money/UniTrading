@@ -1434,7 +1434,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     DividerLine()
                                     key(plugin, accountId) {
                                         AccountAnalyticsPage(session.account, analyticsTrades, Modifier.weight(1f).fillMaxWidth(),
-                                            name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs })
+                                            name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs }, showHeading = false)
                                     }
                                 }
                             } } else null,
