@@ -13,7 +13,8 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalTestApi::class)
 class WindowsTitleBarUiTest {
     @Test fun windowButtonsMinimizeMaximizeRestoreAndRequestClose() = runDesktopComposeUiTest(width = 1100, height = 700) {
-        val frame = ComposeWindow()
+        lateinit var frame: ComposeWindow
+        runOnIdle { frame = ComposeWindow() }
         val scope = object : FrameWindowScope { override val window: ComposeWindow = frame }
         val state = WindowState()
         val closed = mutableStateOf(false)
@@ -27,6 +28,6 @@ class WindowsTitleBarUiTest {
             assertEquals(WindowPlacement.Floating, state.placement)
             onNodeWithTag("window-close").performClick()
             assertTrue(closed.value)
-        } finally { frame.dispose() }
+        } finally { runOnIdle { frame.dispose() } }
     }
 }

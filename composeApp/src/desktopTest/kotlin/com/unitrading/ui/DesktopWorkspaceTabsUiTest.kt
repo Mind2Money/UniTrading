@@ -16,6 +16,9 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.window.FrameWindowScope
+import androidx.compose.ui.window.WindowState
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import kotlinx.coroutines.runBlocking
@@ -163,27 +166,35 @@ class DesktopWorkspaceTabsUiTest {
 
     @Test fun windowsFrameHostsLiveTabsWithoutASecondToolbar() {
         val slot = DesktopTitleBarSlot()
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP,
-            LocalPanelWindowHost provides windows, LocalDesktopTitleBarSlot provides slot) {
-            Column(Modifier.requiredSize(1500.dp, 1000.dp)) {
-                Row(Modifier.height(40.dp).fillMaxWidth().testTag("actual-window-title-bar")) {
-                    Text("UniTrading · 交易终端")
-                    Box(Modifier.weight(1f).fillMaxHeight()) { slot.content?.invoke() }
+        lateinit var frame: ComposeWindow
+        compose.runOnIdle { frame = ComposeWindow() }
+        val windowScope = object : FrameWindowScope { override val window: ComposeWindow = frame }
+        val windowState = WindowState()
+        broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, q) ->
+            q.copy(lastTrade = 550000, settlement = 555000)
+        })
+        try {
+            compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+                LocalPanelWindowHost provides windows, LocalDesktopTitleBarSlot provides slot) {
+                Column(Modifier.requiredSize(1500.dp, 1000.dp)) {
+                    TradingTheme { with(windowScope) { WindowsTitleBar(slot, windowState, "UniTrading · 交易终端") { } } }
+                    Box(Modifier.weight(1f).fillMaxWidth()) { TradingScreen(runtime) }
                 }
-                Box(Modifier.weight(1f).fillMaxWidth()) { TradingScreen(runtime) }
-            }
-        } }
-        compose.waitForIdle()
-        compose.onNodeWithTag("desktop-title-toolbar").assertDoesNotExist()
-        compose.onNode(hasTestTag("workspace-tab-main") and hasAnyAncestor(hasTestTag("actual-window-title-bar"))).assertExists()
-        compose.onNodeWithTag("chart-new-workspace").performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNode(hasTestTag("workspace-tab-c1") and hasAnyAncestor(hasTestTag("actual-window-title-bar"))).assertExists()
-        val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
-        val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
-        assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
-        val out = File("../artifacts/desktop-tabs/windows-title-tabs.png").also { it.parentFile.mkdirs() }
-        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+            } }
+            compose.waitForIdle()
+            compose.onNode(hasTestTag("workspace-tab-main") and hasAnyAncestor(hasTestTag("desktop-title-toolbar"))).assertExists()
+            compose.onNodeWithTag("chart-new-workspace").performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasTestTag("workspace-tab-c1") and hasAnyAncestor(hasTestTag("desktop-title-toolbar"))).assertExists()
+            compose.onNodeWithTag("window-minimize").assertExists()
+            compose.onNodeWithTag("window-maximize").assertExists()
+            compose.onNodeWithTag("window-close").assertExists()
+            val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+            val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+            assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
+            val out = File("../artifacts/desktop-tabs/windows-title-tabs.png").also { it.parentFile.mkdirs() }
+            ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+        } finally { compose.runOnIdle { frame.dispose() } }
     }
 
     @Test fun detachedTabCanBeDraggedBackOnlyOverTheMainTabStrip() {
