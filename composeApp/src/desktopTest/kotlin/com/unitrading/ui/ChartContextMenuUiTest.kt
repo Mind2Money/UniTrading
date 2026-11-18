@@ -117,6 +117,7 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         compose.onNodeWithTag("plot-paste-drawing").assertDoesNotExist()
         compose.onNodeWithTag("plot-reset").performClick()
+        val size = chart().fetchSemanticsNode().size
         chart().performMouseInput { click(Offset(size.width * .7f, size.height * .7f)) }
         chart().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.V) } }
         compose.waitForIdle()
