@@ -224,6 +224,8 @@ internal fun terminalOrders(account: AccountSnapshot): TerminalOrders {
     return TerminalOrders(onPosition.groupBy { it.positionId!! }, onEntry.groupBy({ it.first }, { it.second }), account.orders - placed)
 }
 
+internal enum class TerminalSection { POSITIONS, ORDERS, EXECUTIONS, CLOSED_TRADES }
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TradeTerminal(
@@ -242,6 +244,8 @@ internal fun TradeTerminal(
     modifier: Modifier = Modifier,
     onProtectOrder: (PendingOrder) -> Unit = {},
     header: (@Composable () -> Unit)? = null,
+    section: TerminalSection? = null,
+    historyTrades: List<ClosedTrade> = account.trades,
 ) {
     var expandedTrades by remember(plugin.descriptor.id, account.accountId) { mutableStateOf(emptySet<String>()) }
     val instruments = plugin.instruments.associateBy { it.symbol }
@@ -253,6 +257,7 @@ internal fun TradeTerminal(
     Box(modifier.background(colors.Surface)) {
         LazyColumn(Modifier.fillMaxSize().testTag("trade-terminal"), state = listState) {
             if (header != null) item(key = "header", contentType = "header") { header() }
+            if (section == null || section == TerminalSection.POSITIONS) {
             item(key = "section-positions", contentType = "section") { TerminalSectionHeader("持仓", account.positions.size, "terminal-section-positions") }
             if (account.positions.isEmpty()) item(key = "empty-positions") { EmptyState("暂无持仓", "选择品种，在订单面板检查当前环境和账户后提交。", icon = AppIcons.Candlestick) }
             items(account.positions, key = { "position-${it.id}" }, contentType = { "position" }) { p ->
@@ -291,6 +296,8 @@ internal fun TradeTerminal(
                 }
                 DividerLine()
             }
+            }
+            if (section == null || section == TerminalSection.ORDERS) {
             item(key = "section-orders", contentType = "section") { TerminalSectionHeader("挂单", orderGroups.rows.size, "terminal-section-orders") }
             if (orderGroups.rows.isEmpty()) item(key = "empty-orders") { EmptyState("暂无挂单", "选择限价或突破订单；资金会在触发时重新校验。", icon = AppIcons.ReceiptLong) }
             items(orderGroups.rows, key = { "order-${it.id}" }, contentType = { "order" }) { order ->
@@ -335,9 +342,28 @@ internal fun TradeTerminal(
                 }
                 DividerLine()
             }
-            item(key = "section-history", contentType = "section") { TerminalSectionHeader("历史", account.trades.size, "terminal-section-history") }
-            if (account.trades.isEmpty()) item(key = "empty-history") { EmptyState("暂无已配对交易", "完成配对后可在这里展开入场和出场明细。", icon = AppIcons.History) }
-            items(account.trades.asReversed(), key = { "trade-${it.id}" }, contentType = { "trade" }) { t ->
+            }
+            if (section == TerminalSection.EXECUTIONS) {
+                item(key = "section-executions", contentType = "section") { TerminalSectionHeader("成交", account.executions.size, "terminal-section-executions") }
+                if (account.executions.isEmpty()) item(key = "empty-executions") { EmptyState("暂无成交", "券商同步的成交记录会显示在这里。", icon = AppIcons.History) }
+                items(account.executions.sortedWith(compareByDescending<Execution> { it.timeMs }.thenBy { it.id }), key = { "execution-${it.id}" }) { fill ->
+                    val spec = instruments[fill.symbol]
+                    Row(Modifier.fillMaxWidth().testTag("terminal-execution-${fill.id}").padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        StatusBadge(fill.side.label(), if (fill.side == Side.BUY) colors.UpText else colors.DownText)
+                        Column(Modifier.weight(1f)) {
+                            Text(fill.symbol, style = type.titleSmall)
+                            Text(dateTime(fill.timeMs), color = colors.Muted, style = type.bodySmall)
+                        }
+                        Text(spec?.let { "${it.formatQuantity(fill.lotsHundredths)} ${it.quantityUnit} · ${it.formatPrice(fill.price)}" } ?: "合约规格暂不可用", style = type.bodySmall)
+                    }
+                    DividerLine()
+                }
+            }
+            if (section == null || section == TerminalSection.CLOSED_TRADES) {
+            item(key = "section-history", contentType = "section") { TerminalSectionHeader(if (section == null) "历史" else "平仓记录", historyTrades.size, "terminal-section-history") }
+            if (historyTrades.isEmpty()) item(key = "empty-history") { EmptyState("暂无已配对交易", "完成配对后可在这里展开入场和出场明细。", icon = AppIcons.History) }
+            items(historyTrades.asReversed(), key = { "trade-${it.id}" }, contentType = { "trade" }) { t ->
                 val instrument = instruments[t.symbol] ?: run { EmptyState(t.symbol, missing); return@items }
                 val expanded = t.id in expandedTrades
                 Row(Modifier.fillMaxWidth().testTag("paired-trade-${t.id}")
@@ -375,6 +401,7 @@ internal fun TradeTerminal(
                     }
                 }
                 DividerLine()
+            }
             }
         }
     }

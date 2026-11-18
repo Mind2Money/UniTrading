@@ -2,6 +2,7 @@ package com.unitrading.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
@@ -41,6 +42,22 @@ class TradeListUiTest {
     )
     private var selectedTrade: ClosedTrade? = null
     private var cancelled: PendingOrder? = null
+
+    @Test fun desktopSectionsDistinguishBrokerFillsAndCachedClosedTrades() {
+        val chosen = mutableStateOf(TerminalSection.EXECUTIONS)
+        val fill = Execution("fill-1", spec.symbol, Side.BUY, 10, 110000, at, "order-1")
+        val cached = trade.copy(id = "cached-closed")
+        compose.setContent { TradingTheme {
+            TradeTerminal(plugin, account.copy(executions = listOf(fill)), plugin.market.value, null, false,
+                {}, {}, {}, {}, {}, {}, false, Modifier.requiredSize(800.dp, 500.dp),
+                section = chosen.value, historyTrades = listOf(cached))
+        } }
+        compose.onNodeWithTag("terminal-execution-fill-1").assertIsDisplayed()
+        compose.onNodeWithTag("paired-trade-cached-closed").assertDoesNotExist()
+        compose.runOnIdle { chosen.value = TerminalSection.CLOSED_TRADES }
+        compose.onNodeWithTag("paired-trade-cached-closed").assertIsDisplayed()
+        compose.onNodeWithTag("terminal-execution-fill-1").assertDoesNotExist()
+    }
 
     private fun renderTerminal(snapshot: AccountSnapshot = account, width: Int = 400, height: Int = 740, fontScale: Float = 1f) {
         compose.setContent {

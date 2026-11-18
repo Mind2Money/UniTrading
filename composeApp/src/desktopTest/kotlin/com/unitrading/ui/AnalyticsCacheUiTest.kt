@@ -53,7 +53,7 @@ class AnalyticsCacheUiTest {
         }
     }
     private fun render(runtime: TradingRuntime) =
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.IOS) { TradingScreen(runtime) } }
 
     /** Trades cached by an earlier run for the saved login. */
     private fun seed(runtime: TradingRuntime) {

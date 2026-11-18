@@ -73,6 +73,7 @@ internal fun DesktopWorkspace(
     onOrderFlowOpenChange: (Boolean) -> Unit = {},
     windowOverlay: @Composable (window: String) -> Unit = {},
     windowMenuExtra: @Composable (close: () -> Unit) -> Unit = {},
+    analytics: (@Composable (Modifier, close: () -> Unit) -> Unit)? = null,
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -90,7 +91,9 @@ internal fun DesktopWorkspace(
     val chartInline = WorkspacePanel.CHART !in detached
     val terminalInline = WorkspacePanel.TERMINAL !in detached
     val orderInline = wide && preferred.orderOpen && WorkspacePanel.ORDER !in detached
-    val sidebarInline = preferred.marketOpen && WorkspacePanel.MARKET !in detached
+    var analyticsOpen by remember { mutableStateOf(false) }
+    val showAnalytics = analytics != null && analyticsOpen
+    val sidebarInline = showAnalytics || (preferred.marketOpen && WorkspacePanel.MARKET !in detached)
     Column(modifier.testTag("desktop-workspace")) {
         error?.let { message ->
             Row(Modifier.fillMaxWidth().background(TradingColors.Raised).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -99,7 +102,7 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline)
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline, showAnalytics)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     // With the chart in its own window and no order flow beside it, the trade list takes the chart's room.
@@ -152,11 +155,12 @@ internal fun DesktopWorkspace(
                     }
                 }
                 if (sidebarInline) {
-                    PanelResizeHandle("行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
-                        onChange = { controller.update(preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
-                        onReset = { controller.update(preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
+                    PanelResizeHandle(if (showAnalytics) "分析栏宽度" else "行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
+                        onChange = { controller.update(if (showAnalytics) preferred.copy(analyticsWidth = it) else preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
+                        onReset = { controller.update(if (showAnalytics) preferred.copy(analyticsWidth = defaults.analyticsWidth) else preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
                     Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-sidebar")) {
-                        market(Modifier.fillMaxSize().testTag("desktop-market")) { setOpen(DesktopPanel.MARKET, false) }
+                        if (showAnalytics) analytics?.invoke(Modifier.fillMaxSize().testTag("desktop-analytics")) { analyticsOpen = false }
+                        else market(Modifier.fillMaxSize().testTag("desktop-market")) { setOpen(DesktopPanel.MARKET, false) }
                     }
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -164,11 +168,15 @@ internal fun DesktopWorkspace(
                     windowInsets = WindowInsets(0, 0, 0, 0),
                     header = { Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium) }) {
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen) { setOpen(DesktopPanel.MARKET, !preferred.marketOpen) }
+                    RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen && !showAnalytics) {
+                        if (showAnalytics) { analyticsOpen = false; setOpen(DesktopPanel.MARKET, true) }
+                        else setOpen(DesktopPanel.MARKET, !preferred.marketOpen)
+                    }
                     if (dom != null) RailToggle(AppIcons.Candlestick, "DOM", "rail-dom", domOpen) { onDomOpenChange(!domOpen) }
                     // The ticket only fits beside a wide chart, but its own window has room at any width.
                     if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
+                    if (analytics != null) RailToggle(AppIcons.TrendingUp, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
                         onOrderFlowOpenChange(!flowOpen)
                     }
