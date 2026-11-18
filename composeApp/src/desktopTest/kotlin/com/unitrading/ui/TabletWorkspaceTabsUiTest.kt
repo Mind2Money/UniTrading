@@ -34,13 +34,23 @@ class TabletWorkspaceTabsUiTest {
             val current = runtime
             key(current) { Box(Modifier.requiredSize(1440.dp, 900.dp)) { TradingScreen(current) } }
         } }
+        runOnIdle {
+            val first = broker.market.value.quotes.getValue("TESTZ6").copy(lastTrade = 550000, settlement = 555000)
+            val second = broker.market.value.quotes.getValue("OTHRZ6").copy(lastTrade = 551000, settlement = 550000)
+            broker.market.value = broker.market.value.copy(quotes = mapOf("TESTZ6" to first, "OTHRZ6" to second), revision = 1)
+        }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
+        onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("5,500.00")
+        onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-main").assertDoesNotExist()
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()
         onNodeWithTag("chart-symbol").performClick()
         onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("5,510.00")
+        onNodeWithTag("workspace-change-c1", useUnmergedTree = true).assertTextContains("+0.18%", substring = true)
+        waitUntil(timeoutMillis = 5_000) { broker.quoteWatches.lastOrNull()?.containsAll(listOf("TESTZ6", "OTHRZ6")) == true }
         onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
         onNodeWithTag("chart-layout-TWO_COLUMNS").performClick()
         onNodeWithTag("split-cell-c1s1").assertExists()
