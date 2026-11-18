@@ -86,6 +86,22 @@ class TabletWorkspaceTabsUiTest {
         ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
     }
 
+    @Test fun portraitAndroidTabletAlsoSwitchesWorkspacesWithoutDetaching() = runDesktopComposeUiTest(width = 800, height = 1200) {
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(800.dp, 1200.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
+        onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").assertDoesNotExist()
+        onNodeWithTag("workspace-tab-main").performClick()
+        onNodeWithTag("workspace-tab-c1").performClick()
+        onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
+        onNodeWithTag("chart-layout-TWO_COLUMNS").performClick()
+        onNodeWithTag("split-cell-c1s1").assertExists()
+    }
+
     @Test fun ipadTabletHasTabsAndNoDetachButton() = runDesktopComposeUiTest(width = 1024, height = 768) {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.IOS) {
