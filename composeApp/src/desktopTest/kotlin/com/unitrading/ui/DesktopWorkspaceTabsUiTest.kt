@@ -108,9 +108,12 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("confirm-reset-desktop-layout").performClick()
         assertEquals(320f, runtime.desktopLayout.preferences.value.sidebarWidth)
         compose.onNodeWithTag("workspace-tab-c1").assertExists()
-        val header = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+        val header = compose.onNodeWithTag("desktop-title-toolbar").fetchSemanticsNode().boundsInRoot
+        val tabs = compose.onNodeWithTag("chart-workspace-tabs").fetchSemanticsNode().boundsInRoot
         val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         assertTrue(accounts.top >= header.top && accounts.bottom <= header.bottom + 1f)
+        assertTrue(tabs.left > header.left && tabs.right <= accounts.left)
+        assertTrue(accounts.width <= 360f * .6f + 1f)
     }
     @Test fun foldedTradeBarKeepsAccountPickersAndMenusWorking() {
         render(); addTab()

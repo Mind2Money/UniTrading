@@ -205,8 +205,8 @@ internal fun DrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemo
             CheckRow("始终删除锁定的绘图", "drawing-remove-locked", drawings.removeLockedToo) { drawings.removeLockedToo = !drawings.removeLockedToo }
         }
         DividerLine(Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-        ToolbarButton(AppIcons.Undo, "撤销", "drawing-undo", false, { if (drawings.canUndo) drawings.undo() })
-        ToolbarButton(AppIcons.Redo, "重做", "drawing-redo", false, { if (drawings.canRedo) drawings.redo() })
+        ToolbarButton(AppIcons.Undo, "撤销", "drawing-undo", false, { drawings.requestUndo() })
+        ToolbarButton(AppIcons.Redo, "重做", "drawing-redo", false, { drawings.requestRedo() })
     }
 }
 

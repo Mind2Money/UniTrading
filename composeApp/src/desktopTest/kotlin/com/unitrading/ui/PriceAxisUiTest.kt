@@ -38,6 +38,18 @@ class PriceAxisUiTest {
         compose.onNodeWithText("✓  自动适应屏幕").assertExists()
     }
 
+    @Test fun labelsAndLinesShareOneMenuAndStillControlTheirSettings() {
+        runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+        compose.onNodeWithTag("price-axis-menu-button").performClick()
+        compose.onNodeWithText("标签与线条", substring = true).performClick()
+        compose.onNodeWithText("最新价格标签", substring = true).assertExists()
+        compose.onNodeWithText("K 线倒计时", substring = true).assertExists()
+        compose.onNodeWithText("最新价格线", substring = true).assertExists().performClick()
+        compose.onNodeWithText("卖价线", substring = true).assertExists()
+        assertFalse(runtime.chartPreferences.priceAxis.value.showPriceLine)
+    }
+
     @Test fun menuChangesAxisWhileOrderMenuStillUsesAbsolutePrice() {
         runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }

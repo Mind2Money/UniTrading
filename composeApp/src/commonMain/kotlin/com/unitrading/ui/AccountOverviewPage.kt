@@ -28,7 +28,7 @@ internal fun AccountContextBar(
     onBroker: (String) -> Unit, onAccount: (String) -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true, dense: Boolean = false,
     aliases: AccountAliasesController? = null,
-    emphasize: Boolean = false,
+    emphasize: Boolean = false, inline: Boolean = false,
 ) {
     val brokers by registry.state.collectAsState()
     val catalog by key(plugin) { plugin.catalog.collectAsState() }
@@ -47,7 +47,12 @@ internal fun AccountContextBar(
         Box(Modifier.weight(1f)) {
             TextButton({ loginMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-login-picker"), enabled = enabled,
                 shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                if (inline) {
+                    Text("登录", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+                    Spacer(Modifier.width(4.dp))
+                    Text(names.login(plugin.descriptor), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                } else Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
                     if (!dense || emphasize) Text("登录账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
                     Text(names.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal)
@@ -79,7 +84,13 @@ internal fun AccountContextBar(
         Box(Modifier.weight(1f)) {
             TextButton({ childMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-account-picker"), enabled = enabled && catalog.accounts.isNotEmpty(),
                 shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                if (inline) {
+                    Text("子账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+                    Spacer(Modifier.width(4.dp))
+                    Text(catalog.accounts.firstOrNull { it.id == accountId }?.let { names.account(plugin.descriptor.id, it) } ?: "选择子账户",
+                        Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                } else Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
                     if (!dense || emphasize) Text("交易子账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
                     Text(catalog.accounts.firstOrNull { it.id == accountId }?.let { names.account(plugin.descriptor.id, it) } ?: "选择子账户", maxLines = 1,
                         overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,

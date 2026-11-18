@@ -40,9 +40,12 @@ fun tradeStatistics(trades: List<ClosedTrade>): TradeStatistics {
         drawdown.takeIf { pnl.isNotEmpty() })
 }
 
-/** Sunday-first calendar; exact six weeks, including visible adjacent-month cells. */
+/** Sunday-first weeks, including only adjacent days needed to complete the displayed month. */
 fun calendarDates(month: LocalDate): List<LocalDate> {
     val first = LocalDate(month.year, month.month, 1)
-    val start = first.minus(first.dayOfWeek.isoDayNumber % 7, DateTimeUnit.DAY)
-    return List(42) { start.plus(it, DateTimeUnit.DAY) }
+    val last = first.plus(1, DateTimeUnit.MONTH).minus(1, DateTimeUnit.DAY)
+    val leadingDays = first.dayOfWeek.isoDayNumber % 7
+    val start = first.minus(leadingDays, DateTimeUnit.DAY)
+    val cells = ((leadingDays + last.day + 6) / 7) * 7
+    return List(cells) { start.plus(it, DateTimeUnit.DAY) }
 }

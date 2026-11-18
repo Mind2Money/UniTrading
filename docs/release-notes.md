@@ -2,7 +2,9 @@
 
 ## 简体中文
 
-- 桌面交易区收起时仍显示两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
+- 收紧桌面账户选择和窗口标签栏；指标与绘图撤销合并到图表工具栏及快捷键，精简价格轴与图层菜单，并对齐分析日历。
+
+- 桌面顶栏保留两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
 
 - 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
 
@@ -13,8 +15,8 @@
 - 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
 - 多图共用顶部和左侧绘图工具栏，操作当前子图；缩小可拖动的分隔线，Windows 的 DOM 移到独立侧栏并跟随当前品种。
 - 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。桌面布局及分隔比例可保存恢复；平板布局暂不恢复。
-- 图表右键菜单新增移除绘图及撤销指标、绘图更改的操作；仅影响当前子图，撤销历史保留至应用关闭。
-- 新增只读 DOM 盘口面板，从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
+- 图表右键菜单支持移除指标和绘图，通过左侧工具栏或 Ctrl+Z 撤销；仅影响当前子图。
+- 新增只读 DOM 盘口面板，桌面从右侧栏打开，手机从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
 - 当已确认的实际合约有新成交而连续合约图表停滞或明显落后时，自动限频重订阅连续图表；不根据报价拼造 K 线或重发订单。实时券商连接仍需验证，数据源本身的延迟无法由此消除。
 - 指标的每条线可分别设置线宽、实线、虚线或点线；柱状图仍按原方式显示。
 - 图表时间轴、十字光标、K 线图例及绘图坐标使用北京时间；日线及以上继续显示交易日。
@@ -28,7 +30,9 @@
 
 ## English
 
-- Keep account selectors visible in the collapsed desktop trading bar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
+- Compact desktop account selectors and workspace tabs, combine chart undo for drawings and indicators, streamline menus, and align the analytics calendar.
+
+- Keep account selectors in the desktop header, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
 
 - Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
 
@@ -39,8 +43,8 @@
 - Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.
 - Share chart and drawing toolbars across split charts, scope controls to the selected pane, reduce divider spacing, and dock the Windows DOM in a resizable side panel following the selected instrument.
 - Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Desktop layouts and divider sizes can be restored; tablet layouts are not yet persisted.
-- Add chart context-menu actions to remove drawings and undo indicator or drawing changes for the selected chart; undo history lasts until the app closes.
-- Add a read-only DOM panel in chart layers; live depth depends on Tradovate market-data permissions.
+- Add chart context-menu actions to remove drawings and indicators; use the shared undo toolbar or Ctrl+Z for the selected chart.
+- Add a read-only DOM panel from the desktop side rail or phone chart layers; live depth depends on Tradovate market-data permissions.
 - Rate-limit automatic resubscription when a verified dated contract trades but its continuous chart stalls or falls substantially behind. The app does not synthesize bars from quotes or replay orders; live broker verification remains outstanding and upstream delays can still occur.
 - Configure width and solid, dashed or dotted style separately for each indicator line; histogram bars are unchanged.
 - Display Beijing time in the chart axis, crosshair, candle legend and drawing coordinates; daily and longer bars retain their trading dates.

@@ -38,7 +38,10 @@ class AccountAnalyticsTest {
     }
     @Test fun calendarsHandleLeapYearsAndYearBoundaries() {
         val feb = calendarDates(LocalDate(2024, 2, 1))
-        assertEquals(42, feb.size); assertEquals(DayOfWeek.SUNDAY, feb.first().dayOfWeek)
+        assertEquals(35, feb.size); assertEquals(DayOfWeek.SUNDAY, feb.first().dayOfWeek)
+        assertEquals(35, calendarDates(LocalDate(2026, 11, 1)).size)
+        assertEquals(42, calendarDates(LocalDate(2026, 8, 1)).size)
+        assertEquals(28, calendarDates(LocalDate(2026, 2, 1)).size)
         assertEquals(29, feb.count { it.month == Month.FEBRUARY })
         assertTrue(calendarDates(LocalDate(2026, 1, 1)).first().year == 2025)
     }

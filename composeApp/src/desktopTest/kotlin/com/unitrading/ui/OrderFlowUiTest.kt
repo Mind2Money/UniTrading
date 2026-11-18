@@ -184,7 +184,9 @@ class OrderFlowUiTest {
             Box(Modifier.requiredSize(1440.dp, 900.dp)) { TradingScreen(runtime) }
         } }
         onNodeWithTag("chart-layers").performClick()
-        onNodeWithText("DOM 盘口").performClick()
+        onNodeWithText("DOM 盘口").assertDoesNotExist()
+        onNodeWithTag("chart-layers").performClick()
+        onNodeWithTag("rail-dom").performClick()
         onNodeWithTag("dom-panel").assertIsDisplayed()
         onNodeWithTag("desktop-dom").assertIsDisplayed()
         onNodeWithTag("desktop-sidebar").assertIsDisplayed()

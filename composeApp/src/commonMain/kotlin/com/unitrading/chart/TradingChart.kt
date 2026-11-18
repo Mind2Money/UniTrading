@@ -905,10 +905,8 @@ fun TradingChart(
                             showTable = { showData = true }, showObjects = chrome.drawings?.let { { showObjectTree = true } },
                             showTemplates = chrome.templates?.let { { showTemplates = true } },
                             removeIndicators = chrome.onIndicatorChanges?.let { change -> { change(emptyList()) } }, indicatorCount = (chrome.allIndicators ?: indicators).size,
-                            undoIndicators = chrome.onUndoIndicators,
                             removeDrawings = chrome.drawings?.let { drawings -> { drawings.removeAllDrawings() } },
                             drawingCount = chrome.drawings?.drawingCount() ?: 0,
-                            undoDrawings = chrome.drawings?.takeIf { it.canUndo }?.let { drawings -> { drawings.undo() } },
                             keyboardTrading = chrome.keyboardTrading,
                             settings = { showChartSettings = true },
                         ))
@@ -1024,7 +1022,6 @@ class ChartChrome(
     val templates: com.unitrading.app.ChartTemplateController? = null,
     val onApplyTemplate: ((com.unitrading.app.ChartTemplate) -> Unit)? = null,
     val onIndicatorChanges: ((List<IndicatorConfig>) -> Unit)? = null,
-    val onUndoIndicators: (() -> Unit)? = null,
     val allIndicators: List<IndicatorConfig>? = null,
     val onOpenOrderAt: ((Long) -> Unit)? = null,
     val keyboardTrading: Boolean = false,

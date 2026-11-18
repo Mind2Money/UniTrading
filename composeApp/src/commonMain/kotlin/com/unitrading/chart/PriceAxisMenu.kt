@@ -4,7 +4,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.dp
 
 /** The price-axis menu is shared by touch and desktop and never changes broker-side prices. */
 @Composable
@@ -19,7 +21,7 @@ internal fun PriceAxisMenu(
     onChange: (PriceAxisSettings) -> Unit,
     onAuto: () -> Unit,
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, shape = RoundedCornerShape(8.dp)) {
         fun mark(selected: Boolean, label: String) = (if (selected) "✓  " else "     ") + label
         if (page == 0) {
             DropdownMenuItem(text = { Text(mark(automatic, "自动适应屏幕")) }, onClick = onAuto)
@@ -33,18 +35,15 @@ internal fun PriceAxisMenu(
             }
             HorizontalDivider()
             DropdownMenuItem(text = { Text(if (settings.left) "价格轴移到右侧" else "价格轴移到左侧") }, onClick = { onChange(settings.copy(left = !settings.left)); onDismiss() })
-            DropdownMenuItem(text = { Text("标签  ›") }, onClick = { onPage(1) })
-            DropdownMenuItem(text = { Text("线条  ›") }, onClick = { onPage(2) })
+            DropdownMenuItem(text = { Text("标签与线条  ›") }, onClick = { onPage(1) })
             DropdownMenuItem(text = { Text(mark(settings.showPlus, "+ 价格操作按钮")) }, onClick = { onChange(settings.copy(showPlus = !settings.showPlus)) })
         } else {
             DropdownMenuItem(text = { Text("‹  返回") }, onClick = { onPage(0) })
-            if (page == 1) {
-                DropdownMenuItem(text = { Text(mark(settings.showLastPrice, "最新价格标签")) }, onClick = { onChange(settings.copy(showLastPrice = !settings.showLastPrice)) })
-                DropdownMenuItem(text = { Text(mark(settings.showCountdown, "K 线倒计时")) }, onClick = { onChange(settings.copy(showCountdown = !settings.showCountdown)) })
-            } else {
-                DropdownMenuItem(text = { Text(mark(settings.showPriceLine, "最新价格线")) }, onClick = { onChange(settings.copy(showPriceLine = !settings.showPriceLine)) })
-                DropdownMenuItem(text = { Text(mark(settings.showBidAsk, "卖价线")) }, onClick = { onChange(settings.copy(showBidAsk = !settings.showBidAsk)) })
-            }
+            DropdownMenuItem(text = { Text(mark(settings.showLastPrice, "最新价格标签")) }, onClick = { onChange(settings.copy(showLastPrice = !settings.showLastPrice)) })
+            DropdownMenuItem(text = { Text(mark(settings.showCountdown, "K 线倒计时")) }, onClick = { onChange(settings.copy(showCountdown = !settings.showCountdown)) })
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text(mark(settings.showPriceLine, "最新价格线")) }, onClick = { onChange(settings.copy(showPriceLine = !settings.showPriceLine)) })
+            DropdownMenuItem(text = { Text(mark(settings.showBidAsk, "卖价线")) }, onClick = { onChange(settings.copy(showBidAsk = !settings.showBidAsk)) })
         }
     }
 }

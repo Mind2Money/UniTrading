@@ -51,7 +51,8 @@ class AccountAnalyticsUiTest {
         onNodeWithText("30 天", substring = true).assertDoesNotExist()
         capture("account-analytics-cached-header")
         // The day is the one of the zone the page groups trades by.
-        onNodeWithText("北京时间").performClick()
+        onNodeWithText("北京时间").assertDoesNotExist()
+        onNodeWithText("UTC").performClick()
         onNodeWithTag("analytics-coverage").assertTextContains("自 2026-10-21 起", substring = true)
         runOnIdle { cachedSince = null }
         onNodeWithTag("analytics-coverage").assertTextEquals("Demo 50K · 已加载平仓记录 · USD")
