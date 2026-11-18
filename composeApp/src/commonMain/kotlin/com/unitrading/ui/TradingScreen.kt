@@ -241,11 +241,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 put(id, mutableStateMapOf<String, Float>().apply { putAll(savedChart.workspaceRatios[id].orEmpty()) })
             }
         } }
-        var detachedWorkspaces by remember(plugin) {
-            mutableStateOf(savedChart.detachedWorkspaces.intersect(savedChart.extraCharts.map { it.id }.toSet() + MAIN_CHART))
+        val canDetachWorkspaces = LocalChartPlatform.current == ChartPlatform.DESKTOP && LocalPanelWindowHost.current != null
+        var detachedWorkspaces by remember(plugin, canDetachWorkspaces) {
+            mutableStateOf(if (canDetachWorkspaces) savedChart.detachedWorkspaces.intersect(savedChart.extraCharts.map { it.id }.toSet() + MAIN_CHART) else emptySet())
         }
         var selectedWorkspace by remember(plugin) {
-            val available = (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).filterNot { it in savedChart.detachedWorkspaces }
+            val available = (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).filterNot { it in detachedWorkspaces }
             mutableStateOf(savedChart.selectedWorkspace.takeIf { it in available } ?: available.firstOrNull() ?: MAIN_CHART)
         }
         val workspaceSelected = remember(plugin) { mutableStateMapOf<String, String>().apply {
@@ -276,7 +277,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         val chartSymbols = visibleParkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
         // Every visible tab needs its own live last trade, even while another workspace is selected.
-        if (LocalChartPlatform.current == ChartPlatform.DESKTOP && LocalPanelWindowHost.current != null) {
+        var tabletWorkspaceTabsVisible by remember { mutableStateOf(false) }
+        if ((LocalChartPlatform.current == ChartPlatform.DESKTOP && LocalPanelWindowHost.current != null) || tabletWorkspaceTabsVisible) {
             (listOf(MAIN_CHART) + chartOrder).forEach { workspace ->
                 val selected = workspaceSelected[workspace] ?: workspace
                 val tabSymbol = if (selected == activeChart) restoring ?: symbol else parkedCharts[selected]?.symbol
@@ -775,9 +777,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // Use the touch layout only on tablet-sized screens, never on a landscape phone.
                 val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
-                // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
-                val chartWindowsShown = desktop && panelWindows
+                val tabletWorkspaces = tablet
+                SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
+                val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
                 val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
+                LaunchedEffect(chartWindowsShown) {
+                    if (chartWindowsShown) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
+                }
                 LaunchedEffect(chartWindowsShown, splitAvailable, activeChart) {
                     val workspace = workspaceOf(activeChart)
                     val visibleSplit = splitAvailable && workspace == MAIN_CHART &&
@@ -1144,7 +1150,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
-                            if (nativeDesktop && panelWindows) ChartNewWorkspaceButton(onClick = {
+                            if (chartWindowsShown) ChartNewWorkspaceButton(onClick = {
                                 activateChart(target); openChart()
                             }, enabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
@@ -1175,7 +1181,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 val chart: @Composable (Modifier) -> Unit = { m ->
                     if (!splitAvailable) chartView(MAIN_CHART, m, false)
-                    else workspaceView(if (nativeDesktop) selectedWorkspace else MAIN_CHART, m, false)
+                    else workspaceView(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, m, false)
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
@@ -1484,7 +1490,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 val titleBarSlot = LocalDesktopTitleBarSlot.current
-                val tabs = if (nativeDesktop && panelWindows) workspaceOrder
+                val tabs = if (chartWindowsShown) workspaceOrder
                     .filterNot { it in detachedWorkspaces }.map { id ->
                         val tabChart = chartSlot(workspaceSelected[id] ?: id)
                         val tabSymbol = tabChart?.symbol ?: "图表"
@@ -1492,7 +1498,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                     } else emptyList()
                 val latestTitleTabs = rememberUpdatedState<@Composable () -> Unit>({
-                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces, Modifier.fillMaxWidth())
+                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
+                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces)
                 })
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
@@ -1515,12 +1522,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                         DividerLine()
                     }
+                    if (tabletWorkspaces && (desktop || chartFirst)) {
+                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface)
+                            .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            AppLogo(22.dp)
+                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
+                        }
+                        DividerLine()
+                    }
                     if (unifiedChartBar) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).background(colors.Surface)
                             .testTag("app-toolbar").padding(start = 6.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically) {
-                            if (desktop && !nativeDesktop) AppLogo(22.dp)
-                            sharedChartBar(if (nativeDesktop) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
+                            if (desktop && !nativeDesktop && !tabletWorkspaces) AppLogo(22.dp)
+                            sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
                             if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
@@ -1628,7 +1644,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                 }
                             } } else null,
-                            onNewChartWindow = if (nativeDesktop) ({ openChart() }) else null,
+                            onNewChartWindow = if (nativeDesktop || tabletWorkspaces) ({ openChart() }) else null,
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (nativeDesktop) ({ showResetLayout = true }) else null,
