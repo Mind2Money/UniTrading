@@ -158,6 +158,12 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("plot-reset").performClick()
         compose.onNodeWithTag("drawing-undo").performClick()
         compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 1 }
+        compose.onNodeWithTag("drawing-redo").performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isEmpty() }
+        val size = chart().fetchSemanticsNode().size
+        chart().performMouseInput { click(Offset(size.width * .7f, size.height * .7f)) }
+        chart().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.Z) } }
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 1 }
         assertTrue(broker.placed.isEmpty())
     }
 
