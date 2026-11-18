@@ -36,7 +36,7 @@ class TabletWorkspaceTabsUiTest {
         } }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
-        waitUntil(10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-main").assertDoesNotExist()
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()
         onNodeWithTag("chart-symbol").performClick()
@@ -65,7 +65,7 @@ class TabletWorkspaceTabsUiTest {
         assertTrue(runBlocking { runtime.desktopWorkspaceSaver!!.invoke() })
         assertEquals(listOf("c1", "main"), runtime.chartPreferences.preferences.value.workspaceOrder)
         runOnIdle { runtime = newRuntime() }
-        waitUntil(10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         assertTrue(onNodeWithTag("workspace-tab-c1").fetchSemanticsNode().boundsInRoot.left <
             onNodeWithTag("workspace-tab-main").fetchSemanticsNode().boundsInRoot.left)
         onNodeWithTag("workspace-tab-c1").performClick()
@@ -82,7 +82,7 @@ class TabletWorkspaceTabsUiTest {
             Box(Modifier.requiredSize(1024.dp, 768.dp)) { TradingScreen(runtime) }
         } }
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
-        waitUntil(10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()
         onNodeWithTag("workspace-tab-main").performClick()
         onNodeWithTag("workspace-tab-c1").performClick()
