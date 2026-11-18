@@ -74,6 +74,9 @@ internal fun DesktopWorkspace(
     windowOverlay: @Composable (window: String) -> Unit = {},
     windowMenuExtra: @Composable (close: () -> Unit) -> Unit = {},
     analytics: (@Composable (Modifier, close: () -> Unit) -> Unit)? = null,
+    onNewChartWindow: (() -> Unit)? = null,
+    onOpenSettings: (() -> Unit)? = null,
+    onResetLayout: (() -> Unit)? = null,
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -177,12 +180,21 @@ internal fun DesktopWorkspace(
                     if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.TrendingUp, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
+                    if (host != null && onNewChartWindow != null)
+                        RailToggle(AppIcons.Add, "新建窗口", "rail-new-chart", false, onNewChartWindow)
+                    if (host != null && onNewChartWindow != null)
+                        WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
+                            { panel -> setDetached(panel, panel !in detached) }, {}, "面板")
+                    if (onOpenSettings != null)
+                        RailToggle(AppIcons.Settings, "设置", "open-settings", false, onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
                         onOrderFlowOpenChange(!flowOpen)
                     }
                     }
-                    if (host != null) WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
+                    if (host != null && onNewChartWindow == null) WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
                         { panel -> setDetached(panel, panel !in detached) }, windowMenuExtra)
+                    if (onResetLayout != null)
+                        RailToggle(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout", false, onResetLayout)
                 }
             }
         }
@@ -230,12 +242,12 @@ private fun DetachedBar(panel: WorkspacePanel, onDock: () -> Unit) {
 
 /** The rail's last entry: which panels are in windows of their own. The menu stays open, so several can be moved in a row. */
 @Composable
-private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePanel>, onToggle: (WorkspacePanel) -> Unit, extra: @Composable (close: () -> Unit) -> Unit) {
+private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePanel>, onToggle: (WorkspacePanel) -> Unit, extra: @Composable (close: () -> Unit) -> Unit, label: String = "窗口") {
     var expanded by remember { mutableStateOf(false) }
     Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("rail-windows-item"), contentAlignment = Alignment.Center) {
         NavigationRailItem(detached.isNotEmpty(), { expanded = true }, { Icon(AppIcons.OpenInNew, contentDescription = null) },
             Modifier.testTag("rail-windows").semantics { stateDescription = if (detached.isEmpty()) "没有独立窗口" else "${detached.size} 个面板在独立窗口中" },
-            label = { Text("窗口", maxLines = 1) }, alwaysShowLabel = true)
+            label = { Text(label, maxLines = 1) }, alwaysShowLabel = true)
         DropdownMenu(expanded, { expanded = false }, Modifier.widthIn(min = 200.dp)) {
             Text("在独立窗口中显示", Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp), style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
             panels.forEach { panel ->

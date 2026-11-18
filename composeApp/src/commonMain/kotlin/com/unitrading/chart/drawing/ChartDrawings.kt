@@ -282,6 +282,24 @@ class ChartDrawings internal constructor(
         loadImages(drawings)
     }
 
+    /** Copy the selected symbol to a new chart without linking later edits between charts. */
+    suspend fun copySymbolFrom(source: ChartDrawings, symbol: String) {
+        val copy = source.library.lists[symbol].orEmpty().toList()
+        // Image data lives in each chart's own store and must travel with its drawing.
+        kotlinx.coroutines.withContext(Dispatchers.Default) {
+            copy.mapNotNull { it.imageId }.distinct().forEach { id ->
+                val data = source.store.read(IMAGE_KEY_PREFIX + id)
+                    ?: error("绘图图片尚未保存，请稍后重试")
+                store.write(IMAGE_KEY_PREFIX + id, data)
+            }
+        }
+        library.lists[symbol] = copy
+        hideDrawings = source.hideDrawings
+        hideIndicators = source.hideIndicators
+        library.save()
+        if (this.symbol == symbol) loadImages(copy)
+    }
+
     /** Records [next] as the symbol's list; `before` goes on the undo stack. */
     private fun commit(next: List<Drawing>, before: List<Drawing> = drawings) {
         history.record(before)
