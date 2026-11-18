@@ -65,6 +65,7 @@ internal fun DesktopWorkspace(
     order: @Composable (Modifier, minimize: () -> Unit) -> Unit,
     terminal: @Composable (Modifier) -> Unit,
     terminalSummary: String = "",
+    terminalHeader: @Composable RowScope.() -> Unit = {},
     orderFlow: (@Composable (Modifier) -> Unit)? = null,
     dom: (@Composable (Modifier, minimize: () -> Unit) -> Unit)? = null,
     domOpen: Boolean = false,
@@ -133,7 +134,7 @@ internal fun DesktopWorkspace(
                             onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
                             onReset = { controller.update(preferred.copy(terminalHeight = defaults.terminalHeight)); save() })
                         Column((if (chartArea) Modifier.height(layout.terminal.value.dp) else Modifier.weight(1f)).fillMaxWidth().testTag("desktop-terminal")) {
-                            TerminalBar(terminalSummary, open = true) { setOpen(DesktopPanel.TERMINAL, false) }
+                            TerminalBar(terminalSummary, open = true, extra = terminalHeader) { setOpen(DesktopPanel.TERMINAL, false) }
                             terminal(Modifier.weight(1f).fillMaxWidth())
                         }
                     } else {
@@ -183,9 +184,6 @@ internal fun DesktopWorkspace(
                     if (analytics != null) RailToggle(AppIcons.TrendingUp, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (host != null && onNewChartWindow != null)
                         RailToggle(AppIcons.Add, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
-                    if (host != null && onNewChartWindow != null)
-                        WindowMenu(detached, WorkspacePanel.entries.filter { (it != WorkspacePanel.ORDER_FLOW || orderFlow != null) && (it != WorkspacePanel.DOM || dom != null) },
-                            { panel -> setDetached(panel, panel !in detached) }, {}, "面板")
                     if (onOpenSettings != null)
                         RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
@@ -264,8 +262,9 @@ private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePane
 
 /** The trade list's title bar. [summary] keeps the counts in view while the list is folded down to this bar. */
 @Composable
-private fun TerminalBar(summary: String, open: Boolean, onToggle: () -> Unit) {
+private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowScope.() -> Unit = {}, onToggle: () -> Unit) {
     PanelHeader("交易", Modifier.background(TradingColors.Surface).testTag("desktop-terminal-bar"), summary.ifBlank { null }) {
+        if (open) extra()
         ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)
     }
 }

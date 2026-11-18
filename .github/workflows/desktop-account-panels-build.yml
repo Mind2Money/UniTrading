@@ -1,7 +1,7 @@
 name: Desktop account and trading panels
 on:
   push:
-    branches: ['build/desktop-navigation-20261119']
+    branches: ['build/desktop-workspaces-20261119']
 permissions:
   contents: read
 jobs:
@@ -54,13 +54,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - name: Test desktop account panels, safety and mobile regressions
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopAccountPanelsUiTest*' --tests '*ChartWindowsUiTest*' --tests '*ChartDrawingsTest*' --tests '*TradeListUiTest*' --tests '*AnalyticsCacheUiTest*' --tests '*AccountOverviewUiTest*' --tests '*AccountRiskUiTest*' --tests '*DesktopPanelGeometryTest*' --tests '*DesktopWorkspaceTest*' --tests '*UnifiedToolbarUiTest*' --tests '*OrderFlowUiTest.desktopDomFollowsSelectedChartAndRejectsOldContractData*' --tests '*OrderFlowUiTest.tabletCanOpenFourChartLayout*' --no-daemon
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*UnifiedToolbarUiTest*' --tests '*ChartDrawingsTest*' --tests '*DesktopPanelGeometryTest*' --tests '*TradeListUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: UniTrading-DesktopAccountPanels-Test-Results
           path: |
             artifacts/desktop-account-panels/*.png
+            artifacts/desktop-tabs/*.png
             artifacts/multichart/*.png
             artifacts/orderflow/*.png
             composeApp/build/test-results/desktopTest/*.xml

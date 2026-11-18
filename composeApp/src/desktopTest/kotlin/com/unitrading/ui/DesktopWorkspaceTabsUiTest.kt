@@ -1,0 +1,117 @@
+package com.unitrading.ui
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.TradingRuntime
+import kotlinx.coroutines.runBlocking
+import org.junit.Rule
+import org.junit.Test
+import java.io.File
+import javax.imageio.ImageIO
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+@OptIn(ExperimentalTestApi::class)
+class DesktopWorkspaceTabsUiTest {
+    @get:Rule val compose = createComposeRule()
+    private val store = MemorySnapshotStore()
+    private val broker = OfflineOrderBroker()
+    private var runtime by mutableStateOf(newRuntime())
+    private var windows by mutableStateOf(FakePanelWindows())
+    private fun newRuntime() = TradingRuntime(store, listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+    private fun render() {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP) {
+            val current = runtime; val host = windows
+            key(current, host) { CompositionLocalProvider(LocalPanelWindowHost provides host) {
+                Box(Modifier.requiredSize(1500.dp, 1000.dp)) { TradingScreen(current) }
+            } }
+        } }
+        compose.waitForIdle()
+    }
+    private fun addTab(tag: String = "chart-new-workspace") {
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+    }
+    private fun layout(name: String) {
+        compose.onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
+        compose.onNodeWithTag("chart-layout-$name").performClick()
+        compose.waitForIdle()
+    }
+    @Test fun tabsKeepIndependentLayoutsCanDetachAndRestoreOnRestart() {
+        render()
+        compose.onNodeWithTag("rail-windows").assertDoesNotExist()
+        compose.onNodeWithTag("rail-new-chart").assertExists()
+        addTab()
+        assertEquals(2, runtime.desktopWorkspaceCount.value)
+        layout("TWO_COLUMNS")
+        compose.onNodeWithTag("split-cell-c1s1").assertExists()
+        val other = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("split-cell-c1s1")))
+        val size = other.fetchSemanticsNode().size
+        other.performMouseInput { moveTo(Offset(size.width * .65f, size.height * .65f)); press(); release() }
+        compose.onNodeWithTag("chart-symbol").performClick()
+        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("workspace-tab-main").performClick()
+        compose.onNodeWithTag("split-cell-c1s1").assertDoesNotExist()
+        compose.onNodeWithTag("chart-symbol").assertTextContains("TESTZ6", substring = true)
+        compose.onNodeWithTag("workspace-tab-c1").performClick()
+        compose.onNodeWithTag("split-cell-c1s1").assertExists()
+        compose.onNodeWithTag("chart-symbol").assertTextContains("OTHRZ6", substring = true)
+        // The tab's detach button is also a keyboard-accessible alternative to dragging it out.
+        compose.onNodeWithTag("detach-workspace-c1").performClick()
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        compose.onNodeWithTag("fake-window-chart-c1").assertExists()
+        compose.onNodeWithTag("split-cell-c1s1").assertExists()
+        val detachedToolbar = compose.onNode(hasTestTag("chart-layout-menu") and hasAnyAncestor(hasTestTag("fake-window-chart-c1")))
+        detachedToolbar.performClick()
+        compose.onNodeWithTag("chart-layout-THREE_LEFT").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("split-cell-c1s2").assertExists()
+        assertTrue(runBlocking { runtime.desktopWorkspaceSaver!!.invoke() })
+        compose.runOnIdle { windows = FakePanelWindows(); runtime = newRuntime() }
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        compose.onNodeWithTag("split-cell-c1s2").assertExists()
+        compose.onNodeWithTag("dock-workspace-c1").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("workspace-tab-c1").assertExists()
+        compose.onNodeWithTag("split-cell-c1s2").assertExists()
+        val out = File("../artifacts/desktop-tabs/workspaces.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+    }
+    @Test fun rightNewWindowRemainsAndResetNeedsConfirmation() {
+        render()
+        addTab("rail-new-chart")
+        compose.runOnIdle { runtime.desktopLayout.update(runtime.desktopLayout.preferences.value.copy(sidebarWidth = 410f)) }
+        compose.onNodeWithTag("reset-desktop-layout").performClick()
+        compose.onNodeWithTag("cancel-reset-desktop-layout").performClick()
+        assertEquals(410f, runtime.desktopLayout.preferences.value.sidebarWidth)
+        compose.onNodeWithTag("reset-desktop-layout").performClick()
+        compose.onNodeWithTag("confirm-reset-desktop-layout").performClick()
+        assertEquals(320f, runtime.desktopLayout.preferences.value.sidebarWidth)
+        compose.onNodeWithTag("workspace-tab-c1").assertExists()
+        val header = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+        val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+        assertTrue(accounts.top >= header.top && accounts.bottom <= header.bottom + 1f)
+    }
+    @Test fun tabCanBeDraggedOutToASeparateWindow() {
+        render(); addTab()
+        compose.onNodeWithTag("workspace-tab-c1").performTouchInput { swipe(center, center + Offset(0f, 80f)) }
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        compose.onNodeWithTag("fake-window-chart-c1").assertExists()
+    }
+}
