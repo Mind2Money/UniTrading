@@ -87,7 +87,7 @@ internal fun WorkspaceTabStrip(
     tabs: List<WorkspaceTabData>, selected: String,
     onSelect: (String) -> Unit, onDetach: (String) -> Unit, onClose: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier, canDetach: Boolean = true, touchSized: Boolean = false,
 ) {
     val detach by rememberUpdatedState(onDetach)
     val reorder by rememberUpdatedState(onReorder)
@@ -131,12 +131,12 @@ internal fun WorkspaceTabStrip(
                 index in target until held.from -> held.widths[held.from] + spacing
                 else -> 0f
             }
-            Row(Modifier.height(32.dp).widthIn(min = 150.dp, max = 300.dp)
+            Row(Modifier.height(if (touchSized) 42.dp else 32.dp).widthIn(min = 150.dp, max = 300.dp)
                 .onGloballyPositioned { placements[tab.id] = it }.zIndex(if (mine != null) 1f else 0f)
                 .graphicsLayer { translationX = shift; if (mine != null) shadowElevation = 5.dp.toPx() }
                 .clip(shape).background(if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
                 .border(1.dp, if (active || mine != null) colors.primary.copy(alpha = .6f) else colors.outlineVariant, shape)
-                .pointerInput(tab.id) {
+                .pointerInput(tab.id, canDetach) {
                     detectDragGestures(onDragStart = { position ->
                         val ids = currentTabs.map { it.id }
                         val rows = ids.mapNotNull { placements[it] }
@@ -146,7 +146,7 @@ internal fun WorkspaceTabStrip(
                         val finished = drag?.takeIf { it.id == tab.id }
                         drag = null
                         if (finished != null && finished.ids == currentTabs.map { it.id }) {
-                            if (finished.detaching(threshold)) detach(tab.id)
+                            if (finished.detaching(threshold)) { if (canDetach) detach(tab.id) }
                             else {
                                 val to = finished.target(scroll.value, threshold)
                                 if (to != finished.from) reorder(finished.ids.toMutableList().apply { add(to, removeAt(finished.from)) })
@@ -179,10 +179,10 @@ internal fun WorkspaceTabStrip(
                 Text(arrow + tab.change, Modifier.widthIn(max = 70.dp).testTag("workspace-change-${tab.id}"), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium,
                     color = when { tab.direction > 0 -> palette.UpText; tab.direction < 0 -> palette.DownText; else -> palette.Muted })
-                IconButton({ onDetach(tab.id) }, Modifier.size(25.dp).testTag("detach-workspace-${tab.id}")) {
+                if (canDetach) IconButton({ onDetach(tab.id) }, Modifier.size(25.dp).testTag("detach-workspace-${tab.id}")) {
                     Icon(AppIcons.OpenInNew, "拖出图表布局", Modifier.size(15.dp))
                 }
-                if (tab.id != "main") IconButton({ onClose(tab.id) }, Modifier.size(25.dp).testTag("close-workspace-${tab.id}")) {
+                if (tab.id != "main") IconButton({ onClose(tab.id) }, Modifier.size(if (touchSized) 40.dp else 25.dp).testTag("close-workspace-${tab.id}")) {
                     Icon(AppIcons.Close, "关闭图表布局", Modifier.size(15.dp))
                 }
             }
