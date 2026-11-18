@@ -12,6 +12,8 @@ import com.unitrading.app.WindowBounds
  * settled, and [onClose] is the user closing the window.
  */
 internal interface PanelWindowHost {
+    /** True when the global pointer was released over the main window's tab strip. */
+    fun canDockAtPointer(): Boolean = false
     @Composable
     fun Window(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit, onClose: () -> Unit, content: @Composable () -> Unit)
 }

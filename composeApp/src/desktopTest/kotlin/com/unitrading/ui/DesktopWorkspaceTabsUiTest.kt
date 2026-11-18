@@ -112,6 +112,45 @@ class DesktopWorkspaceTabsUiTest {
         val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         assertTrue(accounts.top >= header.top && accounts.bottom <= header.bottom + 1f)
     }
+    @Test fun foldedTradeBarKeepsAccountPickersAndMenusWorking() {
+        render()
+        compose.onNodeWithTag("desktop-terminal-toggle").performClick()
+        compose.onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
+        val out = File("../artifacts/desktop-tabs/folded-accounts.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+        compose.onNodeWithTag("quick-login-picker").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").assertExists().performClick()
+        compose.onNodeWithTag("quick-account-picker").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("quick-account-${broker.accounts.first().id}").assertExists().performClick()
+        compose.onNodeWithTag("desktop-terminal-toggle").performClick()
+        compose.onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
+    }
+    @Test fun detachedTabCanBeDraggedBackOnlyOverTheMainTabStrip() {
+        render(); addTab()
+        compose.onNodeWithTag("detach-workspace-c1").performClick()
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        compose.runOnIdle { windows.dockAllowed = false }
+        compose.onNodeWithTag("drag-workspace-c1").performTouchInput { swipe(center, center + Offset(0f, -60f)) }
+        compose.onNodeWithTag("fake-window-chart-c1").assertExists()
+        compose.runOnIdle { windows.dockAllowed = true }
+        compose.onNodeWithTag("drag-workspace-c1").performTouchInput { swipe(center, center + Offset(0f, -60f)) }
+        compose.waitUntil(10_000) { "chart-c1" !in windows.open }
+        compose.onNodeWithTag("workspace-tab-c1").assertExists()
+    }
+    @Test fun desktopPlotMenuKeepsTradingAndRemovesRequestedEntries() {
+        render()
+        val plot = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("desktop-chart")))
+        val size = plot.fetchSemanticsNode().size
+        plot.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .65f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-reset").assertExists()
+        compose.onNodeWithTag("plot-open-order").assertExists()
+        compose.onNodeWithTag("plot-objects").assertExists()
+        compose.onNodeWithTag("plot-copy-price").assertDoesNotExist()
+        compose.onNodeWithTag("plot-paste-drawing").assertDoesNotExist()
+        compose.onNodeWithTag("plot-menu-horizontal-line").assertDoesNotExist()
+        compose.onNodeWithTag("plot-time-lock").assertDoesNotExist()
+        compose.onNodeWithTag("plot-table").assertDoesNotExist()
+    }
     @Test fun tabCanBeDraggedOutToASeparateWindow() {
         render(); addTab()
         compose.onNodeWithTag("workspace-tab-c1").performTouchInput { swipe(center, center + Offset(0f, 80f)) }

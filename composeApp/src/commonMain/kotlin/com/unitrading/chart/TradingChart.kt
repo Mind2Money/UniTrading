@@ -471,7 +471,7 @@ fun TradingChart(
                         }
                         .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
                         .semantics {
-                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；" + (if (locked) "图表已锁定，滚轮前后移动图表；" else "滚轮缩放时间，在右侧价格轴上滚动缩放价格；") + "上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键或长按打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键或长按可在该价位画水平线、下市价单，或挂限价单、突破单。" +
+                            contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；" + (if (locked) "图表已锁定，滚轮前后移动图表；" else "滚轮缩放时间，在右侧价格轴上滚动缩放价格；") + "上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键或长按打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键或长按可下市价单，或挂限价单、突破单。" +
                                 (actions.tradingKeys?.let {
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"

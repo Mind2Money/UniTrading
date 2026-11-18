@@ -5,6 +5,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -15,6 +17,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
@@ -28,6 +31,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -1120,9 +1124,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
-                            if (nativeDesktop && panelWindows) ActionIcon(AppIcons.Add, "新建图表布局", "chart-new-workspace") {
+                            if (nativeDesktop && panelWindows) ChartNewWorkspaceButton(onClick = {
                                 activateChart(target); openChart()
-                            }
+                            }, enabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                         }, singleRow = singleLine)
                 }
@@ -1462,24 +1466,35 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     if (nativeDesktop && desktop && panelWindows) {
-                        Row(Modifier.fillMaxWidth().height(38.dp).background(colors.Surface).horizontalScroll(rememberScrollState())
-                            .testTag("chart-workspace-tabs"), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().height(42.dp).background(colors.Surface).horizontalScroll(rememberScrollState())
+                            .testTag("chart-workspace-tabs").padding(horizontal = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             (listOf(MAIN_CHART) + chartOrder).filterNot { it in detachedWorkspaces }.forEach { id -> key(id) {
                                 val selected = selectedWorkspace == id
                                 val chart = chartSlot(workspaceSelected[id] ?: id)
                                 var dragY by remember(id) { mutableFloatStateOf(0f) }
-                                Row(Modifier.height(36.dp).widthIn(min = 130.dp, max = 210.dp)
-                                    .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else colors.Surface)
+                                val tabShape = RoundedCornerShape(8.dp)
+                                val tabColors = MaterialTheme.colorScheme
+                                Row(Modifier.height(32.dp).widthIn(min = 132.dp, max = 205.dp)
+                                    .clip(tabShape)
+                                    .background(if (selected) tabColors.secondaryContainer else tabColors.surfaceContainerHigh)
+                                    .border(1.dp, if (selected) tabColors.primary.copy(alpha = .45f) else tabColors.outlineVariant, tabShape)
                                     .pointerInput(id, detachedWorkspaces, chartOrder) {
                                         detectDragGestures(onDragStart = { dragY = 0f }, onDragEnd = {
                                             if (kotlin.math.abs(dragY) > 35.dp.toPx()) detachWorkspace(id)
                                         }) { change, amount -> dragY += amount.y; change.consume() }
                                     }.clickable { selectWorkspace(id) }.testTag("workspace-tab-$id")
-                                    .padding(start = 10.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    .padding(start = 10.dp, end = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(chart?.symbol ?: "图表", Modifier.weight(1f), maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
-                                    ActionIcon(AppIcons.OpenInNew, "拖出图表布局", "detach-workspace-$id") { detachWorkspace(id) }
-                                    if (id != MAIN_CHART) ActionIcon(AppIcons.Close, "关闭图表布局", "close-workspace-$id") { closeChart(id) }
+                                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                        color = if (selected) tabColors.onSecondaryContainer else tabColors.onSurfaceVariant)
+                                    IconButton({ detachWorkspace(id) }, Modifier.size(27.dp).testTag("detach-workspace-$id")) {
+                                        Icon(AppIcons.OpenInNew, "拖出图表布局", Modifier.size(16.dp))
+                                    }
+                                    if (id != MAIN_CHART) IconButton({ closeChart(id) }, Modifier.size(27.dp).testTag("close-workspace-$id")) {
+                                        Icon(AppIcons.Close, "关闭图表布局", Modifier.size(16.dp))
+                                    }
                                 }
                             } }
                         }
@@ -1616,7 +1631,20 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 WindowSurface(window, windowOverlay) {
                                     Column(Modifier.fillMaxSize()) {
                                         Row(Modifier.fillMaxWidth().background(colors.Surface), verticalAlignment = Alignment.CenterVertically) {
-                                            Text(slot?.symbol.orEmpty(), Modifier.weight(1f).padding(start = 12.dp), maxLines = 1)
+                                            var dragged by remember(id) { mutableStateOf(false) }
+                                            Row(Modifier.weight(1f).heightIn(min = 42.dp).testTag("drag-workspace-$id")
+                                                .pointerInput(id, chartWindows) {
+                                                    detectDragGestures(onDragStart = { dragged = false }, onDragEnd = {
+                                                        if (dragged && chartWindows.canDockAtPointer()) dockWorkspace(id)
+                                                        dragged = false
+                                                    }, onDragCancel = { dragged = false }) { change, _ -> dragged = true; change.consume() }
+                                                }.padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(AppIcons.DragIndicator, null, Modifier.size(18.dp), tint = colors.Muted)
+                                                Spacer(Modifier.width(5.dp))
+                                                Text(slot?.symbol.orEmpty(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                                Spacer(Modifier.width(10.dp))
+                                                Text("拖动到主窗口标签栏", style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1)
+                                            }
                                             TextButton({ dockWorkspace(id) }, Modifier.testTag("dock-workspace-$id")) { Text("收回标签") }
                                         }
                                         workspaceView(id, Modifier.weight(1f).fillMaxWidth(), true)

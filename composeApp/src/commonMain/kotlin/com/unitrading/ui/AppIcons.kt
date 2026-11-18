@@ -39,6 +39,11 @@ internal object AppIcons {
     }
 
     val Add by lazy { icon("Add", paths = arrayOf("M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")) }
+    /** Order ticket, depth ladder, performance bars and a new window use distinct silhouettes. */
+    val OrderEntry by lazy { icon("OrderEntry", paths = arrayOf("M5 3h14v18H5V3zm2 2v14h10V5H7zm2 2h6v2H9V7zm0 4h6v2H9v-2zm0 4h3v2H9v-2z")) }
+    val OrderBook by lazy { icon("OrderBook", paths = arrayOf("M3 5h8v2H3V5zm10 0h8v2h-8V5zM3 11h8v2H3v-2zm10 0h8v2h-8v-2zM3 17h8v2H3v-2zm10 0h8v2h-8v-2z")) }
+    val Analytics by lazy { icon("Analytics", paths = arrayOf("M4 19h16v2H2V3h2v16zm2-7h3v5H6v-5zm5-5h3v10h-3V7zm5-3h3v13h-3V4z")) }
+    val AddWindow by lazy { icon("AddWindow", paths = arrayOf("M3 4h18v6h-2V6H5v12h7v2H3V4zm2 3h14v2H5V7zm12 4h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z")) }
     val Remove by lazy { icon("Remove", paths = arrayOf("M19 13H5v-2h14v2z")) }
     val Close by lazy { icon("Close", paths = arrayOf("M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41z")) }
     val Check by lazy { icon("Check", paths = arrayOf("M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41 -1.41L9 16.17z")) }
