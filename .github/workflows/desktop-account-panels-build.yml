@@ -54,7 +54,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - name: Test desktop account panels, safety and mobile regressions
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*UnifiedToolbarUiTest*' --tests '*ChartDrawingsTest*' --tests '*DesktopPanelGeometryTest*' --tests '*TradeListUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest*' --tests '*ChartContextMenuUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*UnifiedToolbarUiTest*' --tests '*ChartDrawingsTest*' --tests '*DesktopPanelGeometryTest*' --tests '*TradeListUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

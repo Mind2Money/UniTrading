@@ -113,11 +113,14 @@ class DesktopWorkspaceTabsUiTest {
         assertTrue(accounts.top >= header.top && accounts.bottom <= header.bottom + 1f)
     }
     @Test fun foldedTradeBarKeepsAccountPickersAndMenusWorking() {
-        render()
+        render(); addTab()
         compose.onNodeWithTag("desktop-terminal-toggle").performClick()
         compose.onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
         val out = File("../artifacts/desktop-tabs/folded-accounts.png").also { it.parentFile.mkdirs() }
         ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+        compose.runOnIdle { runBlocking { runtime.theme.apply(com.unitrading.app.ThemeSettings(com.unitrading.app.ThemePreset.LIGHT)) } }
+        compose.waitForIdle()
+        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", File(out.parentFile, "folded-accounts-light.png"))
         compose.onNodeWithTag("quick-login-picker").assertIsDisplayed().performClick()
         compose.onNodeWithTag("quick-login-${broker.descriptor.id}").assertExists().performClick()
         compose.onNodeWithTag("quick-account-picker").assertIsDisplayed().performClick()

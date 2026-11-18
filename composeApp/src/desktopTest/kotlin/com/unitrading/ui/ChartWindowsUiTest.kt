@@ -86,8 +86,7 @@ class ChartWindowsUiTest {
         newChart()
         val main = inChart(MAIN_CHART, "trading-chart")
         val size = main.fetchSemanticsNode().size
-        main.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .6f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
-        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
+        compose.runOnIdle { runtime.chartLockedTime.value = broker.time }
         compose.waitForIdle()
         val locked = assertNotNull(runtime.chartLockedTime.value)
         val other = inChart("c1", "trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]

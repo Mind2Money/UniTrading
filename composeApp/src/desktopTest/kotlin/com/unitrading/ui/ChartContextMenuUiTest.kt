@@ -58,16 +58,13 @@ class ChartContextMenuUiTest {
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
 
-    @Test fun desktopMenuCopiesPriceAndResetsTheView() {
+    @Test fun desktopMenuOmitsCopyPriceAndResetsTheView() {
         render()
         compose.onNodeWithTag("chart-zoom-in").performClick()
         compose.waitForIdle()
         assertTrue(chartState().getValue("bars").toDouble() < 80.0)
         rightClick(549_000)
-        compose.onNodeWithTag("plot-copy-price").performScrollTo().performClick()
-        val copied = java.awt.Toolkit.getDefaultToolkit().systemClipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor)
-        assertEquals("5490.00", copied)
-        rightClick(549_000)
+        compose.onNodeWithTag("plot-copy-price").assertDoesNotExist()
         compose.onNodeWithTag("plot-reset").performScrollTo().performClick()
         compose.waitForIdle()
         assertEquals(80.0, chartState().getValue("bars").toDouble())
@@ -83,31 +80,13 @@ class ChartContextMenuUiTest {
         assertTrue(broker.placed.isEmpty(), "opening the ticket never sends an order")
     }
 
-    @Test fun lockedTimeSurvivesPointerExitAndCanBeUnlocked() {
+    @Test fun desktopMenuOmitsTimeLockAndTableButKeepsObjectTree() {
         render()
         rightClick(549_000)
-        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
-        compose.waitForIdle()
-        val locked = chartState().getValue("lockedTime")
-        assertNotEquals("none", locked)
-        chart().performMouseInput { exit() }
-        compose.waitForIdle()
-        assertEquals(locked, chartState().getValue("lockedTime"))
-        rightClick(549_000)
-        compose.onNodeWithTag("plot-time-lock").performScrollTo().performClick()
-        compose.waitForIdle()
-        assertEquals("none", chartState().getValue("lockedTime"))
-    }
-
-    @Test fun desktopMenuOpensDataTableAndObjectTree() {
-        render()
-        rightClick(549_000)
+        compose.onNodeWithTag("plot-time-lock").assertDoesNotExist()
+        compose.onNodeWithTag("plot-table").assertDoesNotExist()
         compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
         compose.onNodeWithTag("chart-object-tree").assertExists()
-        compose.onNodeWithText("关闭").performClick()
-        rightClick(549_000)
-        compose.onNodeWithTag("plot-table").performScrollTo().performClick()
-        compose.onNodeWithTag("ohlc-table").assertExists()
     }
 
     @Test fun templateIsSavedAndReopened() {
@@ -129,14 +108,17 @@ class ChartContextMenuUiTest {
         assertTrue(broker.placed.isEmpty())
     }
 
-    @Test fun desktopMenuPastesACopiedDrawing() {
+    @Test fun desktopMenuOmitsPasteButKeyboardPasteStillWorks() {
         render()
         compose.runOnIdle {
             runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0))
             runtime.drawings.copySelected()
         }
         rightClick(549_000)
-        compose.onNodeWithTag("plot-paste-drawing").performScrollTo().performClick()
+        compose.onNodeWithTag("plot-paste-drawing").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").performClick()
+        chart().performMouseInput { click(Offset(size.width * .7f, size.height * .7f)) }
+        chart().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.V) } }
         compose.waitForIdle()
         assertEquals(2, runtime.drawings.drawings.size)
         assertNotEquals(runtime.drawings.drawings[0].id, runtime.drawings.drawings[1].id)
@@ -227,7 +209,7 @@ class ChartContextMenuUiTest {
         item("SELL-MARKET").assertExists()
     }
 
-    @Test fun aLongPressOpensTheSameMenuAsARightClick() {
+    @Test fun aLongPressKeepsTheTouchMenu() {
         render(skipConfirmation = true)
         longPress(549_000)
         item("horizontal-line").assertTextContains("在 5490.00 画水平线")
@@ -252,8 +234,7 @@ class ChartContextMenuUiTest {
 
     @Test fun aLongPressOnADrawingOpensTheDrawingsMenu() {
         render()
-        rightClick(551_000)
-        item("horizontal-line").performClick()
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 551_000.0)) }
         compose.waitForIdle()
         // Unselected, as a fresh press on a phone finds it.
         compose.runOnIdle { runtime.drawings.escape() }
@@ -265,9 +246,9 @@ class ChartContextMenuUiTest {
         item("horizontal-line").assertDoesNotExist()
     }
 
-    @Test fun theMenuDrawsAHorizontalLineAtThePriceUnderThePointer() {
+    @Test fun theTouchMenuDrawsAHorizontalLineAtThePriceUnderThePointer() {
         render()
-        rightClick(551_000)
+        longPress(551_000)
         item("horizontal-line").assertTextContains("在 5510.00 画水平线").performClick()
         compose.waitForIdle()
         val line = runtime.drawings.drawings.single()
@@ -339,12 +320,13 @@ class ChartContextMenuUiTest {
         assertTrue(broker.placed.isEmpty())
     }
 
-    @Test fun withoutAQuoteTheMenuKeepsOnlyTheHorizontalLine() {
+    @Test fun withoutAQuoteTheDesktopMenuKeepsChartActions() {
         render()
         compose.runOnIdle { broker.market.value = broker.market.value.copy(quotes = emptyMap(), revision = 1) }
         compose.waitForIdle()
         rightClick(549_000)
-        item("horizontal-line").assertExists()
+        item("horizontal-line").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").assertExists()
         for (name in listOf("BUY-LIMIT", "SELL-LIMIT", "BUY-STOP", "SELL-STOP")) item(name).assertDoesNotExist()
     }
 }
