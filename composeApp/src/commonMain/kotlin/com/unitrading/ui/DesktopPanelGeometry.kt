@@ -52,6 +52,7 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
     val terminalMin = minOf(128f, availableHeight * .35f)
     return DesktopPanelGeometry(
         if (preferred.marketOpen) sidebar.copy(max = minOf(sidebar.max, room - order.value).coerceAtLeast(sidebar.min)) else closed, order,
-        dimension(preferred.terminalHeight, terminalMin, minOf(1000f, maxOf(terminalMin, availableHeight - 240f))), dom,
+        // Leave enough chart height for the compact order-flow controls and a complete price row.
+        dimension(preferred.terminalHeight, terminalMin, minOf(1000f, maxOf(terminalMin, availableHeight - 320f))), dom,
     )
 }
