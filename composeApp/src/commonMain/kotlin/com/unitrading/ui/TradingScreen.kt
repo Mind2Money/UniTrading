@@ -1459,6 +1459,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                             } } else null,
                             onNewChartWindow = if (nativeDesktop) ::openChart else null,
+                            newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (nativeDesktop) ({
                                 showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
