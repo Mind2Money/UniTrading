@@ -62,14 +62,14 @@ class OrderFlowUiTest {
 
     private fun ComposeUiTest.assertMaterialRailItems(items: List<Pair<String, String>>) {
         val rail = bounds("desktop-panel-rail")
-        var previousBottom = rail.top
+        var previousTag: String? = null
         items.forEach { (tag, label) ->
-            onNodeWithTag("$tag-item").assertIsDisplayed()
+            onNodeWithTag("$tag-item").performScrollTo().assertIsDisplayed()
             val item = bounds("$tag-item")
             assertTrue(item.height >= 80f, "$label has room for its native toggle and permanent label")
-            assertTrue(item.top >= previousBottom, "Rail entries do not overlap")
+            previousTag?.let { assertTrue(item.top >= bounds("$it-item").bottom, "Rail entries do not overlap") }
             assertTrue(item.left >= rail.left && item.right <= rail.right + 1f)
-            previousBottom = item.bottom
+            previousTag = tag
             onNode(hasText(label) and hasAnyAncestor(hasTestTag("$tag-item")), useUnmergedTree = true).assertIsDisplayed()
             onNodeWithTag(tag).assertIsDisplayed()
             val button = bounds(tag)
