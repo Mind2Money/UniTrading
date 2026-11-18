@@ -35,6 +35,20 @@ class AppearanceUiTest {
     // system accessibility service stays contended for ~15 s after the test APKs are installed.
     private val uiTimeoutMs = 60_000L
     private fun idle() { instrumentation.waitForIdleSync(); automation.waitForIdle(300, 5000) }
+
+    @Test fun tabletUnifiedToolbarScreenshot() {
+        check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.DARK)) }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.setContent { TradingScreen(runtime) } }
+            awaitNode("拖动图表平移", description = true)
+            tap("布局")
+            tap("双图 · 左右")
+            idle()
+            screenshot("tablet-unified-toolbar")
+        }
+    }
     private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
