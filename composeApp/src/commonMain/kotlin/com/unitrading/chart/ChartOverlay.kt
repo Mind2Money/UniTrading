@@ -156,7 +156,7 @@ private fun LayerMenu(layers: List<ChartToggle>, compact: Boolean) {
             layers.forEachIndexed { index, layer ->
                 DropdownMenuItem(
                     text = { Text(layer.label, color = if (layer.active) colors.Ink else colors.Muted) },
-                    onClick = layer.onToggle,
+                    onClick = { layer.onToggle(); if (layer.label == "DOM 盘口") expanded = false },
                     trailingIcon = { if (layer.active) Icon(AppIcons.Check, contentDescription = "已显示", tint = colors.Accent) },
                     modifier = Modifier.testTag("layer-$index"),
                 )

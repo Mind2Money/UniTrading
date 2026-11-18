@@ -10,9 +10,9 @@ private const val CONTINUOUS_TIME = 1_798_589_000_000L
 private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 
 class ContinuousContractsTest {
-    private class Wire(val delegate: MockTradovateWire = MockTradovateWire()) : TradovateWire by delegate {
+    private class Wire(val delegate: MockTradovateWire = MockTradovateWire(), val root: String = "MES") : TradovateWire by delegate {
         var clock = CONTINUOUS_TIME
-        var leader = "MESZ6"
+        var leader = "${root}Z6"
         var failMapping = false
         var missingVolume = false
         var emptySymbols = emptySet<String>()
@@ -36,12 +36,16 @@ class ContinuousContractsTest {
         private var channelId = 1000
         val dailyRequests = mutableListOf<JsonObject>()
         val maturities get() = listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
-        val contracts get() = listOf(json("""{"id":200,"name":"MESZ6","contractMaturityId":300}"""),
-            json("""{"id":201,"name":"MESH7","contractMaturityId":301}"""))
+        val contracts get() = listOf(json("""{"id":200,"name":"${root}Z6","contractMaturityId":300}"""),
+            json("""{"id":201,"name":"${root}H7","contractMaturityId":301}"""))
         val sessions get() = sessionRows ?: listOf(300L, 301L).flatMap { id -> (28..31).map { day ->
             json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30Z","openTime":"2026-12-${day-1}T23:00Z","closeTime":"2026-12-${day}T23:29Z","endTime":"2026-12-${day}T23:00Z"}""")
         } }
-        init { delegate.snapshot = JsonObject(delegate.snapshot + mapOf("contractMaturities" to JsonArray(maturities), "contracts" to JsonArray(contracts))) }
+        init {
+            val extras = mutableMapOf<String, JsonElement>("contractMaturities" to JsonArray(maturities), "contracts" to JsonArray(contracts))
+            if (root != "MES") extras["products"] = JsonArray(listOf(json("""{"id":400,"name":"$root","description":"Micro Crude Oil","currencyId":1,"productType":"Futures","tickSize":0.01,"valuePerPoint":100}""")))
+            delegate.snapshot = JsonObject(delegate.snapshot + extras)
+        }
         override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement = when {
             path.startsWith("contractMaturity/deps") -> {
                 mappingRequests++
@@ -196,7 +200,7 @@ class ContinuousContractsTest {
     private suspend fun TestScope.ready(wire: Wire, cache: CandleCacheStore? = null): TradovateBroker {
         val broker = broker(wire, cache)
         broker.connect()
-        broker.watch("@MES", Timeframe.M5)
+        broker.watch("@${wire.root}", Timeframe.M5)
         advanceTimeBy(5_000)
         runCurrent()
         return broker
@@ -217,6 +221,74 @@ class ContinuousContractsTest {
         assertTrue(session.preview(request()).valid)
         assertTrue(session.placeOrder("continuous", request()).accepted)
         assertEquals("MESZ6", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
+    }
+
+    @Test fun stalledContinuousChartRecoversOnFreshTradeWithoutSynthesizingCandles() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        val original = broker.history("@MES", Timeframe.M5)
+        val requests = wire.delegate.market.sent.count { it == "md/getChart" }
+        wire.clock += 31_000
+        wire.delegate.market.quote(time = wire.clock) // Bid/ask changes do not prove trades occurred.
+        runCurrent()
+        assertEquals(requests, wire.delegate.market.sent.count { it == "md/getChart" })
+
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
+        runCurrent()
+        assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > requests)
+        assertEquals(original, broker.history("@MES", Timeframe.M5), "Trade ticks must never be inserted into continuous history")
+        assertEquals("@MES", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
+        val afterRetry = wire.delegate.market.sent.count { it == "md/getChart" }
+        wire.clock += 31_000
+        val again = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$again","entries":{"Trade":{"price":5500.75}}}]}}]""")
+        runCurrent()
+        assertEquals(afterRetry, wire.delegate.market.sent.count { it == "md/getChart" }, "Retries are rate-limited")
+    }
+
+    @Test fun mclContinuousRefreshKeepsMclz6AsItsExecutionContract() = runTest {
+        val wire = Wire(root = "MCL")
+        val broker = ready(wire)
+        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        val before = wire.delegate.market.sent.count { it == "md/getChart" }
+        wire.clock += 31_000
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
+        runCurrent()
+        assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > before)
+        assertEquals("@MCL", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
+        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
+    }
+
+    @Test fun liveContinuousChartIsNotRestartedWhileItsOwnBarsArrive() = runTest {
+        val wire = Wire()
+        val broker = ready(wire)
+        val before = wire.delegate.market.sent.count { it == "md/getChart" }
+        wire.clock += 25_000
+        val bar = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$bar","open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+        runCurrent()
+        wire.clock += 10_000
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
+        runCurrent()
+        assertEquals(before, wire.delegate.market.sent.count { it == "md/getChart" })
+        assertTrue(broker.history("@MES", Timeframe.M5).isNotEmpty())
+    }
+
+    @Test fun oldContinuousBarsCanBeDetectedEvenIfPacketsKeepArriving() = runTest {
+        val wire = Wire()
+        ready(wire)
+        val requests = wire.delegate.market.sent.count { it == "md/getChart" }
+        val old = kotlin.time.Instant.fromEpochMilliseconds(wire.clock - 11 * 60_000).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$old","open":5500,"high":5501,"low":5499.75,"close":5500.25}]}]}}]""")
+        runCurrent()
+        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
+        runCurrent()
+        assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > requests)
     }
 
     @Test fun continuousDailyChartIsSeparateFromCompletedDailyVolumeRequests() = runTest {

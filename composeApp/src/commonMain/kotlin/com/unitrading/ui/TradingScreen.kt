@@ -210,6 +210,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
          * [parkedCharts] with its own symbol and interval until a press makes it the active one, when the two trade places.
          */
         var activeChart by remember(plugin) { mutableStateOf(MAIN_CHART) }
+        var indicatorChartId by remember(plugin) { mutableStateOf(MAIN_CHART) }
+        var splitLayout by remember(plugin) { mutableStateOf(ChartSplitLayout.SINGLE) }
         var parkedCharts by remember(plugin) {
             mutableStateOf(savedChart.extraCharts.associate { it.id to ChartSlot(it.id, it.symbols[plugin.descriptor.id] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds)) })
         }
@@ -220,7 +222,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
         // Keep loading and verifying the saved list while mobile navigation shows another page. A chart window's symbol is
         // loaded, verified and quoted the same way, so its chart is complete before it is the one being worked on.
-        val chartSymbols = parkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
+        val visibleParkedCharts = parkedCharts.filterKeys { id ->
+            !id.startsWith("split") || (id.removePrefix("split").toIntOrNull()?.let { it in 1 until splitLayout.count } == true)
+        }
+        val chartSymbols = visibleParkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
         LaunchedEffect(plugin, watchSymbols, chartSymbols) { plugin.watchQuotes(watchSymbols + chartSymbols) }
         DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
         val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
@@ -242,8 +247,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showSettings by remember { mutableStateOf(false) }
         var showActivity by remember(accountKey) { mutableStateOf(false) }
         var showOrder by remember { mutableStateOf(false) }
-        val orderFlowSupported = plugin.orderFlow != null
+        val domSupported = plugin.orderFlow != null
+        val orderFlowSupported = domSupported && plugin.descriptor.environment !in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE)
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
+        var showDom by remember(plugin) { mutableStateOf(false) }
         var orderPanelState by orderSession.panelState
         // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
         // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
@@ -361,16 +368,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         fun capacityFor(order: OrderRequest): QuantityCapacityState = if (localDemo || order.side == draft.side) capacity else
             runtime.orderCapacity.entries.value[OrderCapacityCache.key(plugin.descriptor.id, session.account.id, order.symbol, order.side)]
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
-        val indicatorSettings by runtime.indicators.settings.collectAsState()
         val visiblePositions = account.positions.filter { it.symbol == executionSymbol }
         val visibleTrades = account.trades.filter { it.symbol == executionSymbol }
         val visibleOrders = account.orders.filter { it.request.symbol == executionSymbol }
 
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
-        val parkedSeries = parkedCharts.values.map { it.symbol to it.timeframe }
+        val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
         LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
-        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow) { plugin.watchOrderFlow(symbol.takeIf { showOrderFlow }) }
+        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow, showDom, mobileTab) {
+            plugin.watchOrderFlow(symbol.takeIf { showOrderFlow || showDom })
+        }
         DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
             if (previousExecutionSymbol != executionSymbol) {
@@ -455,6 +463,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
             parkedCharts = parkedCharts + (id to ChartSlot(id, restoring ?: chosenSymbol, timeframe))
             chartOrder = chartOrder + id
+        }
+        fun selectSplitLayout(layout: ChartSplitLayout) {
+            val ids = (1 until layout.count).map { "split$it" }
+            if (activeChart != MAIN_CHART && activeChart !in ids) activateChart(MAIN_CHART)
+            val missing = ids.filter { it != activeChart && it !in parkedCharts }
+            parkedCharts = parkedCharts + missing.associateWith { ChartSlot(it, restoring ?: chosenSymbol, timeframe) }
+            splitLayout = layout
         }
         /** Closes a chart window for good; the main chart takes over when it was the one being worked on. */
         fun closeChart(id: String) {
@@ -621,7 +636,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
                 val chartWindowsShown = desktop && panelWindows
-                LaunchedEffect(chartWindowsShown, activeChart) { if (!chartWindowsShown) activateChart(MAIN_CHART) }
+                val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
+                LaunchedEffect(chartWindowsShown, splitAvailable, splitLayout, activeChart) {
+                    val visibleSplit = splitAvailable && activeChart.startsWith("split") &&
+                        activeChart.removePrefix("split").toIntOrNull()?.let { it in 1 until splitLayout.count } == true
+                    if (!chartWindowsShown && !visibleSplit) activateChart(MAIN_CHART)
+                }
                 val compactShort = compact && maxHeight < 550.dp
                 // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
                 val rail = compact && (maxWidth >= 600.dp || (maxWidth >= 480.dp && maxWidth > maxHeight))
@@ -635,7 +655,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (localDemo) Spacer(Modifier.width(12.dp)) else ConnectionStatusControl(market, compact = true, busy, syncAction)
                 }
                 val selectTab: (Int) -> Unit = { tab ->
-                    if (mobileTab != tab) showActivity = false
+                    if (mobileTab != tab) { showActivity = false; showDom = false }
                     showOrderFlow = false
                     mobileTab = tab
                 }
@@ -693,6 +713,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (busy) return
                     when (action) {
                         is Confirmation.Place -> {
+                            if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
+                                showNotice("当前图表品种已变更或尚未加载，请重新检查订单", attention = true)
+                                return
+                            }
                             val order = try { currentPlaceOrder(action.request) }
                             catch (error: IllegalArgumentException) {
                                 showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
@@ -722,6 +746,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 fun reviewTrade(action: Confirmation) {
                     if (busy) return
                     if (action is Confirmation.Place) {
+                        if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
+                            showNotice("当前图表品种已变更或尚未加载，请重新检查订单", attention = true)
+                            return
+                        }
                         // The guard's own classification, asked before a confirmation opens: an exit passes a lock and the limits.
                         runtime.accountRisk.refusal(plugin, session, RiskCheck.Place(action.request))?.let {
                             showNotice(it, attention = true)
@@ -787,6 +815,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && showDom, onBackCompleted = { showDom = false })
                 // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
@@ -836,12 +866,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         },
                         editPending = plugin.capabilities.modifyPendingOrders,
                         estimatePending = session::previewOrderModification,
-                        onPendingEntry = { order, price -> editPending(order, price, fromChart = true) },
+                        onPendingEntry = { order, price -> onActive { editPending(order, price, fromChart = true) } },
                         editPendingProtection = plugin.capabilities.modifyPendingProtection,
                         estimatePendingProtection = session::previewOrderProtection,
-                        onPendingProtection = { order, sl, tp -> editPendingProtection(order, sl, tp, fromChart = true) },
-                        onProtection = { p, sl, tp -> editProtection(p, sl, tp, fromChart = true) },
-                        onLineAction = { runLineAction(it) },
+                        onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
+                        onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
+                        onLineAction = { action -> onActive { runLineAction(action) } },
                         addProtection = plugin.capabilities.addProtection,
                         addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
@@ -852,7 +882,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
                         onEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price) } },
                         estimateStandalone = { order, price -> session.previewOrderChange(order.id, price, order.request.lotsHundredths) },
-                        onStandalone = { order, price -> changeAlone(order, price, order.request.lotsHundredths, fromChart = true) },
+                        onStandalone = { order, price -> onActive { changeAlone(order, price, order.request.lotsHundredths, fromChart = true) } },
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
                         stopRequiredForSizing = sizeByRisk,
@@ -861,21 +891,25 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
                     )
                     // Every chart has its own tools and selection; the drawings themselves are shared through the library.
-                    val drawings = if (chartId == MAIN_CHART) runtime.drawings else remember(chartId) { com.unitrading.chart.drawing.ChartDrawings(runtime.drawingLibrary) }
+                    val drawings = runtime.drawingsForChart(chartId)
+                    val indicatorController = runtime.indicatorsForChart(chartId)
+                    val chartIndicatorSettings by indicatorController.settings.collectAsState()
+                    val canUndoIndicators by indicatorController.canUndo.collectAsState()
                     BoxWithConstraints(m.pointerInput(chartId) {
                         // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
                         awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate(chartId) } }
                     }.testTag("chart-view-$chartId")) {
-                    val chartCompact = compact || (showOrderFlow && maxWidth < 600.dp)
+                    // Split cells can be narrower than the desktop window that contains them.
+                    val chartCompact = compact || maxWidth < 600.dp
                     val chartShort = chartCompact && maxHeight < 550.dp
                     Row(Modifier.fillMaxSize()) {
-                    if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { runtime.indicators.apply(com.unitrading.app.IndicatorSettings()) } })
+                    if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
                     TradingChart(accountKey, shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
                         if (active) visiblePositions else account.positions.filter { it.symbol == shownExecution },
                         if (active) visibleTrades else account.trades.filter { it.symbol == shownExecution },
                         selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, chartDraft.takeIf { draftShown }, preview.takeIf { draftShown },
                         if (active) visibleOrders else account.orders.filter { it.request.symbol == shownExecution }, actions,
-                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators, onIndicators = { showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
+                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else chartIndicatorSettings.indicators, onIndicators = { activateChart(chartId); indicatorChartId = chartId; showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
                         instruments = watchInstruments, onSymbol = { value -> activateChart(chartId); chooseSymbol(value) }, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
@@ -901,19 +935,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             onLockedCrosshairTime = { runtime.chartLockedTime.value = it },
                             templates = runtime.chartTemplates,
                             onApplyTemplate = { template -> scope.launch {
-                                if (runtime.indicators.apply(IndicatorSettings(template.indicators))) {
+                                if (indicatorController.apply(IndicatorSettings(template.indicators))) {
                                     runtime.chartPreferences.selectPriceAxis(template.axis)
                                     runtime.chartPreferences.savePriceAxis()
                                 }
                             } },
-                            onIndicatorChanges = { configs -> scope.launch { runtime.indicators.apply(IndicatorSettings(configs)) } },
-                            allIndicators = indicatorSettings.indicators,
+                            onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
+                            onUndoIndicators = if (canUndoIndicators) ({ scope.launch { indicatorController.undo() }; Unit }) else null,
+                            allIndicators = chartIndicatorSettings.indicators,
                             keyboardTrading = tradingPreferences.keyboardTrading,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
                                 changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
                                 showDraft = true
                                 openOrderEditor()
                             } },
+                            domVisible = active && showDom,
+                            onDomToggle = if (active && domSupported) ({ showDom = !showDom }) else null,
                             locked = chartPreferences.chartLocked && !chartCompact,
                             onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -923,11 +960,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 }
                             }))
+                    if (active && showDom && !chartCompact) {
+                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
+                            Modifier.width(300.dp).fillMaxHeight()) { showDom = false }
+                    }
+                    }
+                    if (active && showDom && chartCompact) {
+                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
+                            Modifier.align(Alignment.CenterEnd).padding(top = 48.dp, bottom = 8.dp, end = 4.dp)
+                                .fillMaxHeight(.83f).fillMaxWidth(.74f).widthIn(max = 320.dp)) { showDom = false }
                     }
                     }
                     }
                 }
-                val chart: @Composable (Modifier) -> Unit = { m -> chartView(MAIN_CHART, m) }
+                val chart: @Composable (Modifier) -> Unit = { m ->
+                    if (!splitAvailable) chartView(MAIN_CHART, m)
+                    else ChartSplitWorkspace(splitLayout, workingChart, ::selectSplitLayout, chartView, m)
+                }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
                 Column(Modifier.align(if (end) Alignment.TopEnd else Alignment.TopCenter)
@@ -949,7 +998,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 // Everything a trade or a chart can ask for in a dialog; it opens in the window the user is working in.
                 val tradeDialogs: @Composable () -> Unit = {
-                if (showIndicators) IndicatorSettingsDialog(runtime.indicators) { showIndicators = false }
+                if (showIndicators) key(indicatorChartId) { IndicatorSettingsDialog(runtime.indicatorsForChart(indicatorChartId)) { showIndicators = false } }
                 if (showOrder || popupVisible) {
                     // The phone's popup closes the way the dock minimizes: by its close button, by back or by a tap beside
                     // it, the draft stays on the chart and "下单" opens it again. Only "取消订单" drops it.
@@ -1396,7 +1445,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { indicatorChartId = activeChart; showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
@@ -1425,7 +1474,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { showIndicators = true },
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { indicatorChartId = activeChart; showIndicators = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)

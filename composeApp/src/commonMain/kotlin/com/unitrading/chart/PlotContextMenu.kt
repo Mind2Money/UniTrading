@@ -44,6 +44,10 @@ internal class PlotMenuActions(
     val showTemplates: (() -> Unit)?,
     val removeIndicators: (() -> Unit)?,
     val indicatorCount: Int,
+    val undoIndicators: (() -> Unit)?,
+    val removeDrawings: (() -> Unit)?,
+    val drawingCount: Int,
+    val undoDrawings: (() -> Unit)?,
     val keyboardTrading: Boolean,
     val settings: () -> Unit,
 )
@@ -140,6 +144,12 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                 DividerLine()
                 DropdownMenuItem(text = { Text("移除 ${desktopActions.indicatorCount} 个指标") }, enabled = desktopActions.removeIndicators != null && desktopActions.indicatorCount > 0,
                     onClick = { onDismiss(); desktopActions.removeIndicators?.invoke() }, modifier = Modifier.testTag("plot-remove-indicators"))
+                DropdownMenuItem(text = { Text("撤销指标更改") }, enabled = desktopActions.undoIndicators != null,
+                    onClick = { onDismiss(); desktopActions.undoIndicators?.invoke() }, modifier = Modifier.testTag("plot-undo-indicators"))
+                DropdownMenuItem(text = { Text("移除 ${desktopActions.drawingCount} 个绘图") }, enabled = desktopActions.removeDrawings != null && desktopActions.drawingCount > 0,
+                    onClick = { onDismiss(); desktopActions.removeDrawings?.invoke() }, modifier = Modifier.testTag("plot-remove-drawings"))
+                DropdownMenuItem(text = { Text("撤销绘图更改") }, enabled = desktopActions.undoDrawings != null,
+                    onClick = { onDismiss(); desktopActions.undoDrawings?.invoke() }, modifier = Modifier.testTag("plot-undo-drawings"))
                 DividerLine()
                 DropdownMenuItem(text = { Text("图表设置…") }, onClick = { onDismiss(); desktopActions.settings() }, modifier = Modifier.testTag("plot-settings"))
             }

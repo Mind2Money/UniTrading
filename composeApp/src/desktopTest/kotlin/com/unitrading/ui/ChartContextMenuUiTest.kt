@@ -169,6 +169,23 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         compose.onNodeWithTag("plot-remove-indicators").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isEmpty() }
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-undo-indicators").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 1 }
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun menuRemovesAndRestoresDrawings() {
+        render()
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-remove-drawings").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(0, runtime.drawings.drawingCount())
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-undo-drawings").performScrollTo().performClick()
+        compose.waitForIdle()
+        assertEquals(1, runtime.drawings.drawingCount())
         assertTrue(broker.placed.isEmpty())
     }
 
