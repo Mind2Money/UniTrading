@@ -1592,7 +1592,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             terminalHeader = {
                                 if (nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                     Modifier.fillMaxWidth(.68f).widthIn(max = 480.dp).testTag("desktop-trade-accounts"),
-                                    enabled = !busy, dense = true, aliases = runtime.accountAliases)
+                                    enabled = !busy, dense = true, aliases = runtime.accountAliases, emphasize = true)
                             },
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
