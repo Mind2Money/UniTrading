@@ -639,6 +639,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 // Use the touch layout only on tablet-sized screens, never on a landscape phone.
                 val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
+                val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
                 val chartWindowsShown = desktop && panelWindows
                 val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
@@ -1339,7 +1340,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (desktop) AppLogo(22.dp)
                             sharedChartBar(Modifier.weight(1f), true)
                             AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                Modifier.width(if (maxWidth >= 1200.dp) 320.dp else 240.dp), enabled = !busy,
+                                Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
                             if (desktop) {
                                 ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
