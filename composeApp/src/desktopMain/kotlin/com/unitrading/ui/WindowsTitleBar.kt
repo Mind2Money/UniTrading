@@ -28,7 +28,7 @@ internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: Windo
             Row(Modifier.height(40.dp).padding(start = 7.dp, end = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                 AppLogo(20.dp)
                 Spacer(Modifier.width(6.dp))
-                Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium, color = colors.onSurface, maxLines = 1)
             }
         }
         val tabs = slot.content
