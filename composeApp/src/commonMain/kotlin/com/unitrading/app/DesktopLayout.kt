@@ -21,7 +21,7 @@ enum class DesktopPanel { MARKET, ORDER, TERMINAL }
 /** Every part of the desktop workspace; each can leave the main window for a window of its own. */
 @Serializable
 enum class WorkspacePanel(val title: String) {
-    CHART("图表"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流")
+    CHART("图表"), MARKET("行情"), ORDER("下单"), TERMINAL("交易"), ORDER_FLOW("订单流"), DOM("DOM 盘口")
 }
 
 /** Where a window of the app sits on the desktop and how large it is, in dp. */
@@ -45,9 +45,10 @@ data class DesktopLayoutPreferences(
     val detached: Set<WorkspacePanel> = emptySet(),
     /** Last bounds of each window other than the main one, by its key: a panel's name, or a chart window's id. */
     val windows: Map<String, WindowBounds> = emptyMap(),
+    val domWidth: Float = 300f,
 ) {
     fun validate() {
-        require(listOf(sidebarWidth, orderWidth, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
+        require(listOf(sidebarWidth, domWidth, orderWidth, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
             "面板尺寸超出范围"
         }
         require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {
