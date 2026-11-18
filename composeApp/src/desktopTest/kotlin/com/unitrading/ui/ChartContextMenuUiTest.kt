@@ -153,7 +153,10 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("plot-remove-indicators").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.isEmpty() }
         rightClick(549_000)
-        compose.onNodeWithTag("plot-undo-indicators").performScrollTo().performClick()
+        compose.onNodeWithTag("plot-undo-indicators").assertDoesNotExist()
+        compose.onNodeWithTag("plot-undo-drawings").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").performClick()
+        compose.onNodeWithTag("drawing-undo").performClick()
         compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 1 }
         assertTrue(broker.placed.isEmpty())
     }
@@ -165,9 +168,10 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("plot-remove-drawings").performScrollTo().performClick()
         compose.waitForIdle()
         assertEquals(0, runtime.drawings.drawingCount())
-        rightClick(549_000)
-        compose.onNodeWithTag("plot-undo-drawings").performScrollTo().performClick()
-        compose.waitForIdle()
+        val size = chart().fetchSemanticsNode().size
+        chart().performMouseInput { click(Offset(size.width * .7f, size.height * .7f)) }
+        chart().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.Z) } }
+        compose.waitUntil(5_000) { runtime.drawings.drawingCount() == 1 }
         assertEquals(1, runtime.drawings.drawingCount())
         assertTrue(broker.placed.isEmpty())
     }

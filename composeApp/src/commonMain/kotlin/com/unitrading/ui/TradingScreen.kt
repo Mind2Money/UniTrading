@@ -1017,8 +1017,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     // Every chart has its own tools and selection; the drawings themselves are shared through the library.
                     val drawings = runtime.drawingsForChart(chartId)
                     val indicatorController = runtime.indicatorsForChart(chartId)
+                    runtime.undoForChart(chartId, scope)
                     val chartIndicatorSettings by indicatorController.settings.collectAsState()
-                    val canUndoIndicators by indicatorController.canUndo.collectAsState()
                     BoxWithConstraints(m.pointerInput(chartId) {
                         // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
                         awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate(chartId) } }
@@ -1066,7 +1066,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                             } },
                             onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
-                            onUndoIndicators = if (canUndoIndicators) ({ scope.launch { indicatorController.undo() }; Unit }) else null,
                             allIndicators = chartIndicatorSettings.indicators,
                             keyboardTrading = tradingPreferences.keyboardTrading,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
@@ -1075,7 +1074,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 openOrderEditor()
                             } },
                             domVisible = active && showDom,
-                            onDomToggle = if (active && domSupported) ({ showDom = !showDom }) else null,
+                            onDomToggle = if (!desktop && active && domSupported) ({ showDom = !showDom }) else null,
                             locked = chartPreferences.chartLocked && !chartCompact,
                             onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1119,7 +1118,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                             },
                             ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
-                        ) + listOfNotNull(if (domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
+                        ) + listOfNotNull(if (!desktop && domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
                         ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
@@ -1135,6 +1134,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val indicatorController = runtime.indicatorsForChart(selected)
                     val indicatorSettings by indicatorController.settings.collectAsState()
                     val currentDrawings = runtime.drawingsForChart(selected)
+                    runtime.undoForChart(selected, scope)
                     Column(m) {
                         if (ownToolbar || !unifiedChartBar) {
                             sharedChartBar(workspace, Modifier.fillMaxWidth().padding(horizontal = 4.dp), ownToolbar)
@@ -1465,11 +1465,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    if (nativeDesktop && desktop && panelWindows) {
-                        Row(Modifier.fillMaxWidth().height(42.dp).background(colors.Surface).horizontalScroll(rememberScrollState())
-                            .testTag("chart-workspace-tabs").padding(horizontal = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            (listOf(MAIN_CHART) + chartOrder).filterNot { it in detachedWorkspaces }.forEach { id -> key(id) {
+                    if (nativeDesktop && desktop) {
+                        Row(Modifier.fillMaxWidth().height(44.dp).background(colors.Surface)
+                            .testTag("desktop-title-toolbar").padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            AppLogo(22.dp)
+                            Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            Row(Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())
+                                .testTag("chart-workspace-tabs"), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            if (panelWindows) (listOf(MAIN_CHART) + chartOrder).filterNot { it in detachedWorkspaces }.forEach { id -> key(id) {
                                 val selected = selectedWorkspace == id
                                 val chart = chartSlot(workspaceSelected[id] ?: id)
                                 var dragY by remember(id) { mutableFloatStateOf(0f) }
@@ -1497,6 +1502,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                 }
                             } }
+                            }
+                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                Modifier.width(360.dp).testTag("desktop-trade-accounts"), enabled = !busy,
+                                dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true)
                         }
                         DividerLine()
                     }
@@ -1504,7 +1513,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).background(colors.Surface)
                             .testTag("app-toolbar").padding(start = 6.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically) {
-                            if (desktop) AppLogo(22.dp)
+                            if (desktop && !nativeDesktop) AppLogo(22.dp)
                             sharedChartBar(if (nativeDesktop) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
                             if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
@@ -1589,11 +1598,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
                                 }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
-                            terminalHeader = {
-                                if (nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.fillMaxWidth(.68f).widthIn(max = 480.dp).testTag("desktop-trade-accounts"),
-                                    enabled = !busy, dense = true, aliases = runtime.accountAliases, emphasize = true)
-                            },
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
@@ -1749,7 +1753,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.weight(1f).fillMaxWidth())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { indicatorChartId = activeChart; showIndicators = true },
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
@@ -1778,7 +1782,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ActivityLogPage("$loginName · $accountName", account.events,
                                     onBack = { showActivity = false }, modifier = Modifier.fillMaxSize())
                             } else SettingsPage(runtime, plugin, accountId, market, busy,
-                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true }, onIndicators = { indicatorChartId = activeChart; showIndicators = true },
+                                ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)

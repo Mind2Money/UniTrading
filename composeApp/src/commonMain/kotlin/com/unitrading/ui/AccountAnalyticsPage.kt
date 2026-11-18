@@ -78,8 +78,8 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 AnalyticsChoices(listOf<String?>(null) + symbols, effectiveSymbol, { it ?: "全部合约" }) { symbol = it; selectedDay = null }
-                AnalyticsChoices(listOf("America/Chicago", "Asia/Shanghai", "UTC"), zoneId,
-                    { when (it) { "America/Chicago" -> "芝加哥"; "Asia/Shanghai" -> "北京时间"; else -> "UTC" } }) { zoneId = it; selectedDay = null }
+                AnalyticsChoices(listOf("America/Chicago", "UTC"), zoneId,
+                    { if (it == "America/Chicago") "芝加哥" else "UTC" }) { zoneId = it; selectedDay = null }
                 Text("按所选时区的平仓自然日归类，非交易所结算日。分批平仓按券商返回的平仓记录计数。", color = colors.Muted, style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -152,8 +152,8 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
                             val dayStats = tradeStatistics(entries)
                             val tint = if (dayStats.unknown > 0) colors.Caution else colors.pnl(dayStats.netMicros)
                             Column(Modifier.weight(1f).height(calendarCellHeight)
-                                .background(if (entries.isEmpty()) colors.Surface else tint.copy(alpha = .10f), MaterialTheme.shapes.small)
-                                .border(1.dp, if (selectedDay == date) colors.Accent else if (entries.isEmpty()) colors.Border else tint.copy(alpha = .5f), MaterialTheme.shapes.small)
+                                .background(if (!inMonth) colors.Border.copy(alpha = .18f) else if (entries.isEmpty()) colors.Surface else tint.copy(alpha = .10f), MaterialTheme.shapes.small)
+                                .border(1.dp, if (!inMonth) colors.Border.copy(alpha = .45f) else if (selectedDay == date) colors.Accent else if (entries.isEmpty()) colors.Border else tint.copy(alpha = .5f), MaterialTheme.shapes.small)
                                 .clickable(enabled = inMonth) { selectedDay = date }
                                 .testTag("calendar-day-$date")
                                 .semantics { contentDescription = "$date，${dayStats.netMicros?.let { money(it, true) } ?: "暂无已知盈亏"}，${entries.size}笔" }

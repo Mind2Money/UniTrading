@@ -43,7 +43,6 @@ internal fun SettingsPage(
     onBroker: (String) -> Unit,
     onAccount: (String) -> Unit,
     onTheme: () -> Unit,
-    onIndicators: () -> Unit,
     onActivity: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
@@ -63,7 +62,6 @@ internal fun SettingsPage(
     val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
     val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
     val preferenceScope = rememberCoroutineScope()
-    val indicators by runtime.indicators.settings.collectAsState()
     val notificationsAvailable by runtime.livePnl.available.collectAsState()
     val paused by runtime.paused.collectAsState()
     val riskUnreadable by runtime.accountRisk.storageUnreadable.collectAsState()
@@ -182,7 +180,6 @@ internal fun SettingsPage(
                         listOf(colors.Accent, colors.Up, colors.Down).forEach { Box(Modifier.size(12.dp).background(it, CircleShape)) }
                     }
                 }
-                SettingsRow("图表指标", "${indicators.indicators.size} 个指标 · 参数与线条颜色", AppIcons.Tune, "settings-indicators", onIndicators, navigates = true)
             }
 
             if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }

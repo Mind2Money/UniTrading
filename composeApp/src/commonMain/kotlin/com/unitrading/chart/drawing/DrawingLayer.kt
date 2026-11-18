@@ -239,8 +239,8 @@ private fun handleKey(event: KeyEvent, layer: DrawingLayer): Boolean {
     val ctx = layer.ctx
     val command = event.isCtrlPressed || event.isMetaPressed
     if (command) return when (event.key) {
-        Key.Z -> { if (event.isShiftPressed) controller.redo() else controller.undo(); true }
-        Key.Y -> { controller.redo(); true }
+        Key.Z -> { if (event.isShiftPressed) controller.requestRedo() else controller.requestUndo(); true }
+        Key.Y -> { controller.requestRedo(); true }
         Key.C -> { controller.copySelected(); false }
         Key.V -> { controller.paste(); false }
         else -> false

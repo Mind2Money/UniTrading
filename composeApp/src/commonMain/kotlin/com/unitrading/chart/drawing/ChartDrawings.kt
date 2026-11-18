@@ -288,6 +288,14 @@ class ChartDrawings internal constructor(
     private val history get() = library.history(symbol)
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo
+    internal var onRecorded: (() -> Unit)? = null
+    internal var onSymbolChanged: (() -> Unit)? = null
+    internal var onUndoRequested: (() -> Unit)? = null
+    internal var onRedoRequested: (() -> Unit)? = null
+
+    /** The toolbar and keyboard use the chart's combined drawing/indicator history when attached. */
+    fun requestUndo() { onUndoRequested?.invoke() ?: undo() }
+    fun requestRedo() { onRedoRequested?.invoke() ?: redo() }
 
     private fun cancelPlacement() {
         draft = null
@@ -301,6 +309,7 @@ class ChartDrawings internal constructor(
         if (value == symbol) return
         cancelPlacement()
         symbol = value
+        onSymbolChanged?.invoke()
         selectedId = null
         hoveredId = null
         measured = null
@@ -333,6 +342,7 @@ class ChartDrawings internal constructor(
         history.record(before)
         drawings = next
         persist()
+        onRecorded?.invoke()
     }
 
     private fun persist() { library.save() }

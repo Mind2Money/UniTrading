@@ -56,6 +56,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     // Each chart has separate indicator settings and a separate drawing library, including when symbols match.
     private val chartIndicatorControllers = mutableMapOf<String, IndicatorController>()
     private val chartDrawingControllers = mutableMapOf<String, com.unitrading.chart.drawing.ChartDrawings>()
+    private val chartUndoControllers = mutableMapOf<String, ChartUndoCoordinator>()
     private fun chartStore(id: String): SnapshotStore {
         val safeId = id.encodeToByteArray().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
         return object : SnapshotStore {
@@ -70,6 +71,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
         chartDrawingControllers.getOrPut(id) {
             com.unitrading.chart.drawing.ChartDrawings(com.unitrading.chart.drawing.DrawingLibrary(chartStore(id)), drawingLibrary)
         }
+    internal fun undoForChart(id: String, scope: kotlinx.coroutines.CoroutineScope): ChartUndoCoordinator =
+        chartUndoControllers.getOrPut(id) { ChartUndoCoordinator(indicatorsForChart(id), drawingsForChart(id), scope) }.also { it.scope = scope }
     suspend fun flushChartDrawings(): Boolean {
         if (!drawings.flush()) return false
         return chartDrawingControllers.values.all { it.flush() }

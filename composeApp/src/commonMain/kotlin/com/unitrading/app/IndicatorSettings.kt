@@ -23,7 +23,10 @@ data class IndicatorSettings(val indicators: List<IndicatorConfig> = emptyList()
 class IndicatorController(private val store: SnapshotStore) {
     private val mutex = Mutex()
     private val history = ArrayDeque<IndicatorSettings>()
+    private val redoHistory = ArrayDeque<IndicatorSettings>()
+    internal var onRecorded: (() -> Unit)? = null
     val canUndo = MutableStateFlow(false)
+    val canRedo = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
     val settings = MutableStateFlow(try {
         store.read("indicators-v1")?.let { Json.decodeFromString<IndicatorSettings>(it).also(IndicatorSettings::validate) } ?: IndicatorSettings()
@@ -41,7 +44,10 @@ class IndicatorController(private val store: SnapshotStore) {
             settings.value = value
             history.addLast(before)
             if (history.size > 100) history.removeFirst()
+            redoHistory.clear()
             canUndo.value = true
+            canRedo.value = false
+            onRecorded?.invoke()
             error.value = null
             true
         } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
@@ -52,9 +58,26 @@ class IndicatorController(private val store: SnapshotStore) {
         val previous = history.lastOrNull() ?: return@withLock false
         try {
             withContext(Dispatchers.Default) { store.write("indicators-v1", Json.encodeToString(previous)) }
+            redoHistory.addLast(settings.value)
             settings.value = previous
             history.removeLast()
             canUndo.value = history.isNotEmpty()
+            canRedo.value = true
+            error.value = null
+            true
+        } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+        catch (_: Exception) { error.value = "指标恢复失败，请检查存储后重试。"; false }
+    }
+
+    suspend fun redo(): Boolean = mutex.withLock {
+        val next = redoHistory.lastOrNull() ?: return@withLock false
+        try {
+            withContext(Dispatchers.Default) { store.write("indicators-v1", Json.encodeToString(next)) }
+            history.addLast(settings.value)
+            settings.value = next
+            redoHistory.removeLast()
+            canUndo.value = true
+            canRedo.value = redoHistory.isNotEmpty()
             error.value = null
             true
         } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
