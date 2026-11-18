@@ -239,9 +239,7 @@ class ChartContextMenuUiTest {
         compose.waitForIdle()
         // Unselected, as a fresh press on a phone finds it.
         compose.runOnIdle { runtime.drawings.escape() }
-        // The mouse that drew the line leaves, so the finger is the only pointer.
-        chart().performMouseInput { exit() }
-        compose.waitForIdle()
+        // No mouse event was sent: the finger is the only pointer.
         longPress(551_000)
         compose.onNodeWithTag("drawing-menu-settings").assertExists()
         item("horizontal-line").assertDoesNotExist()
