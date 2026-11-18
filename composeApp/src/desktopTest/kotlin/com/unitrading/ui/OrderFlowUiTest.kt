@@ -317,7 +317,7 @@ class OrderFlowUiTest {
         val preferred = runtime.desktopLayout.preferences.value
         val originalSidebar = bounds("desktop-sidebar")
         val terminalHeight = bounds("desktop-terminal").height
-        onNodeWithTag("rail-order-flow").performClick()
+        onNodeWithTag("rail-order-flow").performScrollTo().performClick()
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
         onNodeWithTag("desktop-sidebar").assertIsDisplayed()
         onNodeWithTag("desktop-order").assertDoesNotExist()
