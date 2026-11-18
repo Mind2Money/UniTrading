@@ -87,7 +87,7 @@ jobs:
             adb shell wm density 160
             ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.AppearanceUiTest#tabletUnifiedToolbarScreenshot --no-daemon
             mkdir -p artifacts/tablet-emulator
-            adb pull /sdcard/Android/data/com.unitrading.demo.credentialtest/files/tablet-unified-toolbar.png artifacts/tablet-emulator/tablet-android.png
+            adb pull /sdcard/Download/tablet-unified-toolbar.png artifacts/tablet-emulator/tablet-android.png
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

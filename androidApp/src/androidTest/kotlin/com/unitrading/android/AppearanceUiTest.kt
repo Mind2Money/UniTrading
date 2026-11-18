@@ -14,6 +14,7 @@ import androidx.activity.SystemBarStyle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.DesktopPanel
 import com.unitrading.app.ProductionLicenseKeys
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.ThemePreset
@@ -39,6 +40,9 @@ class AppearanceUiTest {
     @Test fun tabletUnifiedToolbarScreenshot() {
         check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        runtime.desktopLayout.setOpen(DesktopPanel.ORDER, false)
+        runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+        runtime.desktopLayout.setOpen(DesktopPanel.TERMINAL, false)
         runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.DARK)) }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> activity.setContent { TradingScreen(runtime) } }
@@ -46,7 +50,10 @@ class AppearanceUiTest {
             tap("布局")
             tap("双图 · 左右")
             idle()
-            screenshot("tablet-unified-toolbar")
+            // Gradle uninstalls the test app after the test, so preserve the real emulator frame outside its app folder.
+            automation.executeShellCommand("screencap -p /sdcard/Download/tablet-unified-toolbar.png").use { descriptor ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+            }
         }
     }
     private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {

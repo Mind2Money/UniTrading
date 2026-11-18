@@ -10,6 +10,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.DesktopPanel
 import com.unitrading.app.TradingRuntime
 import java.io.File
 import javax.imageio.ImageIO
@@ -21,6 +22,9 @@ class UnifiedToolbarUiTest {
     private fun screenshotTest(width: Int, height: Int, platform: ChartPlatform, name: String) =
         runDesktopComposeUiTest(width = width, height = height) {
             val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+            runtime.desktopLayout.setOpen(DesktopPanel.ORDER, false)
+            runtime.desktopLayout.setOpen(DesktopPanel.TERMINAL, false)
+            if (platform != ChartPlatform.DESKTOP) runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
             setContent {
                 CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides platform) {
                     Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
