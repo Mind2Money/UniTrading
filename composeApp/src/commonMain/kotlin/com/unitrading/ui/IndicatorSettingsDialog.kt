@@ -91,7 +91,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
         scope.launch { busy = true; try { if (settings != null && controller.apply(settings)) onDismiss() } finally { busy = false } }
     }, onDismiss, "indicator-settings", "indicators-cancel", "indicators-save", dismissEnabled = !busy) {
         Column(Modifier.weight(1f).then(viewport.scrolling).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("保存后对所有品种和周期生效。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
+            Text("设置仅应用于当前图表，切换该图表的品种或周期后继续保留。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
             Text("添加指标", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IndicatorKind.entries.forEach { kind ->
@@ -174,9 +174,9 @@ private fun IndicatorEditor(
             }
             draft.kind.lines.filterNot { it.histogram }.forEach { line ->
                 val lineStyle = draft.lineStyles[line.name] ?: IndicatorLineStyle()
-                FlowRow(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.fillMaxWidth().padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     ColorField("${line.name}颜色", draft.colors[line.name] ?: "", draft.colorValid(line.name), "选择${draft.kind.label}${line.name}颜色",
-                        "indicator-color-$index-${line.name}", Modifier.width(156.dp), { onPickColor(line.name) },
+                        "indicator-color-$index-${line.name}", Modifier.fillMaxWidth(), { onPickColor(line.name) },
                         { onChange(draft.copy(colors = draft.colors + (line.name to it.uppercase()))) })
                     IndicatorStylePicker(index, line.name, lineStyle) { style ->
                         onChange(draft.copy(lineStyles = draft.lineStyles + (line.name to style)))
@@ -218,24 +218,31 @@ private fun IndicatorEditor(
 private fun IndicatorStylePicker(index: Int, line: String, style: IndicatorLineStyle, onChange: (IndicatorLineStyle) -> Unit) {
     var widthOpen by remember(index, line) { mutableStateOf(false) }
     var patternOpen by remember(index, line) { mutableStateOf(false) }
-    Box {
-        OutlinedButton({ widthOpen = true }, Modifier.testTag("indicator-width-$index-$line")) {
-            Text("线宽 ${if (style.width == 1.4f) "默认" else style.width.toInt().toString()}")
-        }
-        DropdownMenu(widthOpen, { widthOpen = false }) {
-            listOf(1f, 1.4f, 2f, 3f, 4f, 5f).forEach { width ->
-                DropdownMenuItem(text = { Text(if (width == 1.4f) "默认" else "${width.toInt()}") },
-                    onClick = { onChange(style.copy(width = width)); widthOpen = false },
-                    modifier = Modifier.testTag("indicator-width-$index-$line-${if (width == 1.4f) "default" else width.toInt()}"))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.weight(1f)) {
+            OutlinedButton({ widthOpen = true }, Modifier.fillMaxWidth().height(48.dp).testTag("indicator-width-$index-$line"),
+                shape = MaterialTheme.shapes.small, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("线宽 ${if (style.width == 1.4f) "默认" else style.width.toInt().toString()}", maxLines = 1)
+            }
+            DropdownMenu(widthOpen, { widthOpen = false }) {
+                listOf(1f, 1.4f, 2f, 3f, 4f, 5f).forEach { width ->
+                    DropdownMenuItem(text = { Text(if (width == 1.4f) "默认" else "${width.toInt()}") },
+                        onClick = { onChange(style.copy(width = width)); widthOpen = false },
+                        modifier = Modifier.testTag("indicator-width-$index-$line-${if (width == 1.4f) "default" else width.toInt()}"))
+                }
             }
         }
-    }
-    Box {
-        OutlinedButton({ patternOpen = true }, Modifier.testTag("indicator-pattern-$index-$line")) { Text(style.pattern.label) }
-        DropdownMenu(patternOpen, { patternOpen = false }) {
-            IndicatorLinePattern.entries.forEach { pattern ->
-                DropdownMenuItem(text = { Text(pattern.label) }, onClick = { onChange(style.copy(pattern = pattern)); patternOpen = false },
-                    modifier = Modifier.testTag("indicator-pattern-$index-$line-${pattern.name}"))
+        Box(Modifier.weight(1f)) {
+            OutlinedButton({ patternOpen = true }, Modifier.fillMaxWidth().height(48.dp).testTag("indicator-pattern-$index-$line"),
+                shape = MaterialTheme.shapes.small, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("线型 ", maxLines = 1)
+                Text(style.pattern.label, maxLines = 1)
+            }
+            DropdownMenu(patternOpen, { patternOpen = false }) {
+                IndicatorLinePattern.entries.forEach { pattern ->
+                    DropdownMenuItem(text = { Text(pattern.label) }, onClick = { onChange(style.copy(pattern = pattern)); patternOpen = false },
+                        modifier = Modifier.testTag("indicator-pattern-$index-$line-${pattern.name}"))
+                }
             }
         }
     }

@@ -116,6 +116,49 @@ class OrderFlowUiTest {
     @Test fun tabletCanReachAllTools() = panelTest(768, 1024, "tablet")
     @Test fun desktopCanReachAllTools() = panelTest(1000, 800, "desktop")
 
+    @Test fun tabletCanOpenFourChartLayout() = runDesktopComposeUiTest(width = 800, height = 1000) {
+        val broker = plugin(MutableStateFlow(snapshot(source.instruments.first())))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(800.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layout-menu").performClick()
+        onNodeWithTag("chart-layout-FOUR_GRID").performClick()
+        onAllNodesWithTag("trading-chart").assertCountEquals(4)
+    }
+
+    @Test fun domIsOpenedFromChartLayersAndClosingItStopsTheSubscription() = runDesktopComposeUiTest(width = 412, height = 860) {
+        val spec = source.instruments.first()
+        val watched = mutableListOf<String?>()
+        val broker = plugin(MutableStateFlow(snapshot(spec))) { watched += it }
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(412.dp, 860.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layers").performScrollTo().performClick()
+        onNodeWithText("DOM 盘口").performClick()
+        onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("dom-prices").assertIsDisplayed()
+        capture("dom-mobile-chart")
+        onNodeWithTag("close-dom").performClick()
+        waitUntil(timeoutMillis = 5_000L) { watched.lastOrNull() == null }
+        onNodeWithTag("dom-panel").assertDoesNotExist()
+    }
+
+    @Test fun domSitsBesideDesktopChart() = runDesktopComposeUiTest(width = 1440, height = 900) {
+        val spec = source.instruments.first()
+        val broker = plugin(MutableStateFlow(snapshot(spec)))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1440.dp, 900.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-layers").performClick()
+        onNodeWithText("DOM 盘口").performClick()
+        onNodeWithTag("dom-panel").assertIsDisplayed()
+        onNodeWithTag("dom-prices").assertIsDisplayed()
+        capture("dom-desktop-chart")
+    }
+
     @Test fun closingAnalysisAndLeavingMobileChartStopTheSubscription() = runDesktopComposeUiTest(width = 412, height = 860) {
         val spec = source.instruments.first()
         val watched = mutableListOf<String?>()

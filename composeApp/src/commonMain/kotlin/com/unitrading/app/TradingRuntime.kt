@@ -50,6 +50,21 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val chartViews: com.unitrading.chart.ChartViewMemory by lazy { com.unitrading.chart.ChartViewMemory(store) }
     /** The drawings of the main window's chart; every other chart window has a controller of its own on the same library. */
     val drawings: com.unitrading.chart.drawing.ChartDrawings by lazy { com.unitrading.chart.drawing.ChartDrawings(drawingLibrary) }
+    // Each chart has separate indicator settings and a separate drawing library, including when symbols match.
+    private val chartIndicatorControllers = mutableMapOf<String, IndicatorController>()
+    private val chartDrawingControllers = mutableMapOf<String, com.unitrading.chart.drawing.ChartDrawings>()
+    private fun chartStore(id: String): SnapshotStore {
+        val safeId = id.encodeToByteArray().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        return object : SnapshotStore {
+            private fun scoped(key: String) = "chart-$safeId-$key"
+            override fun read(key: String) = store.read(scoped(key))
+            override fun write(key: String, value: String) = store.write(scoped(key), value)
+        }
+    }
+    fun indicatorsForChart(id: String): IndicatorController = if (id == "main") indicators else
+        chartIndicatorControllers.getOrPut(id) { IndicatorController(chartStore(id)) }
+    fun drawingsForChart(id: String): com.unitrading.chart.drawing.ChartDrawings = if (id == "main") drawings else
+        chartDrawingControllers.getOrPut(id) { com.unitrading.chart.drawing.ChartDrawings(chartStore(id)) }
     /** Names the user gave logins and accounts on this device. */
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
     internal val accountRisk by lazy { AccountRiskController(store) }

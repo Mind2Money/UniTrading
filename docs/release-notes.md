@@ -2,6 +2,10 @@
 
 ## 简体中文
 
+- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。布局及分隔比例目前不会在重启后恢复。
+- 图表右键菜单新增移除绘图及撤销指标、绘图更改的操作；仅影响当前子图，撤销历史保留至应用关闭。
+- 新增只读 DOM 盘口面板，从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
+- 当已确认的实际合约有新成交而连续合约图表停滞或明显落后时，自动限频重订阅连续图表；不根据报价拼造 K 线或重发订单。实时券商连接仍需验证，数据源本身的延迟无法由此消除。
 - 指标的每条线可分别设置线宽、实线、虚线或点线；柱状图仍按原方式显示。
 - 图表时间轴、十字光标、K 线图例及绘图坐标使用北京时间；日线及以上继续显示交易日。
 - 新增成交量柱和当日 VWAP：北京时间冬令时 07:00 至次日 05:59、夏令时 06:00 至次日 04:59，自动切换并排除休市一小时；根据已加载的日内 K 线典型价和成交量近似计算。
@@ -14,6 +18,10 @@
 
 ## English
 
+- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Layout and divider sizes do not yet persist across restarts.
+- Add chart context-menu actions to remove drawings and undo indicator or drawing changes for the selected chart; undo history lasts until the app closes.
+- Add a read-only DOM panel in chart layers; live depth depends on Tradovate market-data permissions.
+- Rate-limit automatic resubscription when a verified dated contract trades but its continuous chart stalls or falls substantially behind. The app does not synthesize bars from quotes or replay orders; live broker verification remains outstanding and upstream delays can still occur.
 - Configure width and solid, dashed or dotted style separately for each indicator line; histogram bars are unchanged.
 - Display Beijing time in the chart axis, crosshair, candle legend and drawing coordinates; daily and longer bars retain their trading dates.
 - Add volume bars and current-session VWAP. The 18:00–17:00 New York session automatically follows daylight saving time and excludes the maintenance hour; VWAP approximates using loaded intraday OHLC and volume.

@@ -112,6 +112,50 @@ class ChartWindowsUiTest {
         compose.waitForIdle()
     }
 
+    @Test fun splitChartsUseTheSelectedChartForOrdersAndKeepTheirOwnSymbols() {
+        render()
+        fun select(layout: String) {
+            compose.onNodeWithTag("chart-layout-menu").performClick()
+            compose.onNodeWithTag("chart-layout-$layout").performClick()
+            compose.waitForIdle()
+        }
+        fun inside(id: String, tag: String) = compose.onNode(
+            hasTestTag(tag) and hasAnyAncestor(hasTestTag("chart-view-$id")))
+        select("TWO_COLUMNS")
+        compose.onAllNodesWithTag("trading-chart").assertCountEquals(2)
+        val beforeWidth = compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().size.width
+        compose.onNodeWithTag("chart-divider-two-columns").performTouchInput {
+            down(center); moveBy(Offset(25f, 0f)); moveBy(Offset(35f, 0f)); up()
+        }
+        compose.waitForIdle()
+        assertTrue(compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().size.width > beforeWidth)
+        inside("split1", "chart-symbol").performClick()
+        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.waitForIdle()
+        inside("main", "chart-symbol").assertTextContains("TESTZ6", substring = true)
+        inside("split1", "chart-symbol").assertTextContains("OTHRZ6", substring = true)
+        compose.onNodeWithTag("review-order").performClick()
+        confirmOrder(1)
+        assertEquals("OTHRZ6", broker.placed.last().symbol)
+
+        val plot = inside("main", "trading-chart")
+        val size = plot.fetchSemanticsNode().size
+        plot.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .8f)); press(); release() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("review-order").performClick()
+        confirmOrder(2)
+        assertEquals("TESTZ6", broker.placed.last().symbol)
+        for ((layout, count) in listOf("TWO_ROWS" to 2, "THREE_LEFT" to 3, "THREE_TOP" to 3,
+            "FOUR_GRID" to 4, "THREE_RIGHT" to 3, "SINGLE" to 1)) {
+            select(layout)
+            compose.onAllNodesWithTag("trading-chart").assertCountEquals(count)
+            if (layout == "FOUR_GRID") {
+                val folder = File("../artifacts/multichart").also { it.mkdirs() }
+                ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", File(folder, "desktop-four-charts.png"))
+            }
+        }
+    }
+
     @Test fun aNewChartWindowOpensOnTheWorkingChartAndKeepsASymbolAndIntervalOfItsOwn() {
         render()
         compose.onAllNodesWithTag("trading-chart").assertCountEquals(1)

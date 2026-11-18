@@ -308,7 +308,8 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     internal fun preview(value: Drawing) = replace(value)
     fun select(id: String?) { selectedId = id; menuAt = null }
     fun remove(id: String) {
-        drawings.firstOrNull { it.id == id }?.imageId?.let(::dropImage)
+        if (drawings.none { it.id == id }) return
+        // Keep image data while this drawing can be restored by undo.
         if (selectedId == id) selectedId = null
         if (hoveredId == id) hoveredId = null
         menuAt = null
@@ -372,12 +373,11 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     /** Removes the symbol's drawings; locked ones only with the "always remove locked" option. */
     fun removeAllDrawings() {
         val kept = if (removeLockedToo) emptyList() else drawings.filter { it.locked }
+        if (kept == drawings) return
         selectedId = null
-        drawings.filter { it !in kept }.mapNotNull { it.imageId }.forEach(::dropImage)
+        // Image bytes must remain available to the undo history.
         commit(kept)
     }
-
-    private fun dropImage(id: String) { images.remove(id); saveScope.launch { runCatching { store.write(IMAGE_KEY_PREFIX + id, "") } } }
 
     val hiddenCount: Int get() = drawings.count { it.hidden }
     fun showHidden() { commit(drawings.map { it.copy(hidden = false) }) }

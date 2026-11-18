@@ -47,6 +47,14 @@ class TradovateBroker(
     override val market: StateFlow<MarketSnapshot> = mutableMarket.asStateFlow()
     private val tradeEvents = MutableSharedFlow<TradeFill>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     override val tradeFills = tradeEvents.asSharedFlow()
+    private val mutableOrderFlow = MutableStateFlow(OrderFlowSnapshot())
+    override val orderFlow: StateFlow<OrderFlowSnapshot> = mutableOrderFlow.asStateFlow()
+    private val domSyncLock = Mutex()
+    private var requestedDom: String? = null
+    private var domRevision = 0L
+    private var activeDom: String? = null
+    private var subscribedDom: String? = null
+    private var domTimeMs: Long? = null
     private val tradeFillTracker = TradeFillTracker()
     private var accountFlows = emptyMap<String, MutableStateFlow<AccountSnapshot>>()
     private var incompleteAccounts = emptySet<String>()
@@ -102,6 +110,10 @@ class TradovateBroker(
         val liveOnly: Boolean, val historyOnly: Boolean, var ended: Boolean = false)
     private data class ChartChannel(val wireId: JsonPrimitive, val page: ChartPage, val historical: Boolean, val shared: Boolean)
     private val charts = mutableMapOf<String, ChartChannel>()
+    // Arrival times, not candle timestamps: the latter stay fixed throughout the bar.
+    private val continuousChartProgress = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val continuousChartLiveBar = mutableMapOf<Pair<String, Timeframe>, Long>()
+    private val continuousChartRetryAfter = mutableMapOf<Pair<String, Timeframe>, Long>()
     /** Series read whole in the background so that their charts open from the cache, most wanted first. */
     private val preloadTargets = MutableStateFlow<List<Pair<String, Timeframe>>>(emptyList())
     private val preloadWake = Channel<Unit>(Channel.CONFLATED)
@@ -216,6 +228,11 @@ class TradovateBroker(
             while (isActive && !stopped) {
                 delay(1_000)
                 lock.withLock {
+                    if (domTimeMs?.let { now() - it !in -5_000..15_000 } == true) {
+                        domTimeMs = null
+                        mutableOrderFlow.value = OrderFlowSnapshot(symbol = activeDom, connected = marketReady,
+                            statusMessage = "盘口数据已过期，等待更新")
+                    }
                     val sampleTime = latencySampleAtMs
                     if (sampleTime != null && now() - sampleTime !in 0..LATENCY_VALID_MS) {
                         latencyMs = null
@@ -396,14 +413,20 @@ class TradovateBroker(
     private suspend fun connectMarket() {
         // Web sessions use their account token on the selected market-data gateway too.
         val token = credentials.accessToken
-        lock.withLock { quoteSides.clear(); quotes = emptyMap() }
+        lock.withLock {
+            quoteSides.clear(); quotes = emptyMap(); activeDom = null; subscribedDom = null; domTimeMs = null
+            mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情重连，等待深度订阅")
+        }
         try {
             val socket = TradovateSocket(wire.socket(credentials.hosts.marketUrl), scope, ::marketEvent) {
-                marketReady = false; problem = "行情已断开，交易已暂停"; publish(); scheduleReconnect()
+                marketReady = false; problem = "行情已断开，交易已暂停"; publish()
+                mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
+                scheduleReconnect()
             }
             marketSocket = socket
             socket.authorize(token)
             lock.withLock { marketReady = true; problem = "已连接 · 服务器行情 · 净额持仓"; publish() }
+            if (requestedDom != null) scope.launch { syncDom() }
         } catch (_: TimeoutCancellationException) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权超时，账户登录状态仍保留"; publish() } }
         catch (cancel: CancellationException) { throw cancel }
         catch (e: Exception) { lock.withLock { marketReady = false; problem = "账户已连接；行情授权/连接失败：${safeMessage(e.message ?: "请检查行情订阅")}"; publish() } }
@@ -428,7 +451,7 @@ class TradovateBroker(
                     cancelledChartIds.clear()
                     pendingChartCancellations.clear()
                     accountSocket?.close(); marketSocket?.close(); marketReady = false
-                    charts.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
+                    charts.clear(); continuousChartProgress.clear(); continuousChartLiveBar.clear(); continuousChartRetryAfter.clear(); preloadCharts.clear(); subscribedQuotes.clear(); discardedCharts.clear(); earlyCharts.clear()
                     volumeCharts.values.forEach { it.result.completeExceptionally(IllegalStateException("行情已重连")) }; volumeCharts.clear()
                     connect()
                     return@launch
@@ -441,6 +464,7 @@ class TradovateBroker(
     override fun disconnect() {
         stopped = true
         connected = false; marketReady = false; problem = "已断开"
+        mutableOrderFlow.value = OrderFlowSnapshot(statusMessage = "行情已断开，深度已清空")
         publish()
         latencyJob?.cancel(); maintenance?.cancel(); quoteWatchJob?.cancel(); continuousJob?.cancel(); reconnectJob?.cancel(); watchJobs.values.toList().forEach { it.cancel() }; metadataJob?.cancel(); balanceJob?.cancel(); recoveryJob?.cancel(); historyDetailsJob?.cancel()
         scope.launch {
@@ -928,9 +952,10 @@ class TradovateBroker(
         chartBackfillJobs.remove(series)?.cancel()
         scope.launch {
             chartWatchLock.withLock {
-                val socket = marketSocket ?: return@launch
                 // Asked for again while this waited: the new watch owns the series' charts.
                 if (stopped || series in watched) return@launch
+                lock.withLock { continuousChartProgress.remove(series); continuousChartLiveBar.remove(series); continuousChartRetryAfter.remove(series) }
+                val socket = marketSocket ?: return@launch
                 withContext(NonCancellable) { cancelCharts(socket, series = series) }
             }
         }
@@ -1027,6 +1052,10 @@ class TradovateBroker(
             throw error
         }
         lock.withLock {
+            if (!page.historyOnly && page.series.first in continuousRoutes) {
+                continuousChartProgress[page.series] = now()
+                continuousChartLiveBar.remove(page.series)
+            }
             if (overflow != earlyChartOverflow) page.load.accept(emptyList(), historical = true, endOfHistory = false, validPacket = false)
             for (field in listOf("historicalId", "realtimeId")) {
                 val id = response[field] as? JsonPrimitive ?: continue
@@ -1311,6 +1340,52 @@ class TradovateBroker(
         }
     }
 
+    override fun watchOrderFlow(symbol: String?) {
+        if (stopped) return
+        if (requestedDom != symbol) { requestedDom = symbol; domRevision++ }
+        scope.launch { syncDom() }
+    }
+
+    /** DOM is read-only and independently subscribed. A denied depth request must not suspend trading. */
+    private suspend fun syncDom() = domSyncLock.withLock {
+        val request = requestedDom
+        val revision = domRevision
+        val socket = marketSocket
+        val target = lock.withLock {
+            if (!marketReady || socket == null) null
+            else request?.let { name -> instruments.firstOrNull { it.symbol == name }?.executionSymbol }
+                ?.takeIf { symbol -> contractSpecs.values.any { it.symbol == symbol } }
+        }
+        if (socket != marketSocket || request != requestedDom || revision != domRevision) return@withLock
+        if (target != null && target == subscribedDom && activeDom == target) return@withLock
+        val old = lock.withLock {
+            val previous = subscribedDom
+            activeDom = null; subscribedDom = null; domTimeMs = null
+            mutableOrderFlow.value = OrderFlowSnapshot(symbol = target, connected = marketReady && target != null,
+                statusMessage = when { request == null -> "未订阅盘口"; target == null -> "等待连接或交易合约确认"; else -> "正在订阅实时盘口" })
+            previous
+        }
+        if (old != null && socket != null) try {
+            socket.request("md/unsubscribeDOM", buildJsonObject { put("symbol", old) })
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { /* Old-symbol events are ignored after activeDom is cleared. */ }
+        if (target == null || socket == null || socket != marketSocket || revision != domRevision || !marketReady) return@withLock
+        lock.withLock { activeDom = target }
+        try {
+            val result = socket.request("md/subscribeDOM", buildJsonObject { put("symbol", target) })
+            val mode = result.str("mode")
+            require(mode == null || mode == "RealTime") { "行情模式不可用" }
+            lock.withLock { if (socket == marketSocket && activeDom == target) subscribedDom = target }
+        } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { lock.withLock {
+            if (socket == marketSocket && activeDom == target) {
+                activeDom = null; domTimeMs = null
+                mutableOrderFlow.value = OrderFlowSnapshot(symbol = target, depthStatus = DepthStatus.UNAVAILABLE,
+                    statusMessage = "无法订阅深度，请检查券商 Level 2 行情权限")
+            }
+        } }
+    }
+
     private suspend fun marketEvent(frame: JsonObject) = lock.withLock {
         val data = frame["d"] as? JsonObject ?: return@withLock
         if (frame.str("e") == "md") {
@@ -1331,11 +1406,33 @@ class TradovateBroker(
                 val next = QuoteSides(incomingBid ?: previous?.bid, incomingAsk ?: previous?.ask, time, quoteTime,
                     incomingTrade ?: previous?.lastTrade, incomingSettlement ?: previous?.settlement)
                 quoteSides[spec.symbol] = next
+                // A fresh trade on the verified execution contract is evidence of market activity, not a replacement
+                // for a continuous candle. Recover only a stalled subscription; never synthesize bars from quotes.
+                if (incomingTrade != null && now() - time in -5_000..5_000) recoverStalledContinuousCharts(spec.symbol, time)
                 val bid = next.bid ?: continue
                 val ask = next.ask ?: continue
                 if (ask < bid) continue
                 quotes = quotes + (spec.symbol to Quote(bid, ask, quoteTime, next.lastTrade, next.settlement))
             }
+        }
+        if (frame.str("e") == "md") for (dom in data.array("doms")) {
+            val spec = contractSpecs[dom.long("contractId")] ?: continue
+            val requestedExecution = requestedDom?.let { name -> instruments.firstOrNull { it.symbol == name }?.executionSymbol }
+            if (!marketReady || spec.symbol != activeDom || spec.symbol != requestedExecution) continue
+            val packetTime = dom.str("timestamp")?.let(::timestamp)
+            if (packetTime != null && domTimeMs?.let { packetTime < it } == true) continue
+            val book = parseTradovateDom(dom, spec)
+            if (book == null || now() - book.timeMs !in -5_000..15_000) {
+                domTimeMs = null
+                mutableOrderFlow.value = OrderFlowSnapshot(symbol = spec.symbol, connected = true,
+                    statusMessage = "盘口数据不完整或已过期，等待新快照")
+                continue
+            }
+            if (domTimeMs?.let { book.timeMs < it } == true) continue
+            domTimeMs = book.timeMs
+            mutableOrderFlow.value = OrderFlowSnapshot(symbol = spec.symbol, bids = book.bids, asks = book.asks,
+                bestBid = book.bids.firstOrNull(), bestAsk = book.asks.firstOrNull(), depthStatus = DepthStatus.AVAILABLE,
+                connected = true, statusMessage = "实时盘口 · 只读")
         }
         if (frame.str("e") == "chart") data.array("charts").forEach(::chartEvent)
         rebuild()
@@ -1372,6 +1469,10 @@ class TradovateBroker(
         val endOfHistory = !page.liveOnly && !page.ended && chart.bool("eoh") == true
         val historical = page.historyOnly || endOfHistory ||
             if (channel.shared) chart.str("s") == "db" || (chart.str("s") !in listOf("", "s") && !page.ended) else channel.historical
+        if (!historical && chart.str("s") != "db" && incoming.isNotEmpty() && incoming.size == chart.array("bars").size && key.first in continuousRoutes) {
+            continuousChartProgress[key] = now()
+            incoming.maxOfOrNull(Candle::timeMs)?.let { newest -> continuousChartLiveBar[key] = maxOf(continuousChartLiveBar[key] ?: newest, newest) }
+        }
         page.load.accept(incoming, historical, endOfHistory, incoming.size == chart.array("bars").size, countForBackfill = !page.liveOnly)
         val bars = page.load.candles
         // A cached chart still reading the bars it lacks would draw the live bar right after its stale last one.
@@ -1388,6 +1489,27 @@ class TradovateBroker(
             page.ended = true
             if (page.load.failed) problem = "历史补取未接上缓存，已保留原缓存；可重新选择品种或周期重试"
             if (page.historyOnly || !page.liveOnly && page.load.nextPageBefore != null) continueChartHistory(page)
+        }
+    }
+
+    /** Called under [lock] when the confirmed dated contract has a fresh trade. */
+    private fun recoverStalledContinuousCharts(contract: String, tradeTime: Long) {
+        val current = now()
+        watched.forEach { series ->
+            val route = continuousRoutes[series.first] ?: return@forEach
+            if (route.spec.tradeSymbol != contract || route.checkedAt == null || current !in route.checkedAt until route.validUntil) return@forEach
+            if (charts.values.none { it.page.series == series && !it.page.historyOnly }) return@forEach
+            val last = continuousChartProgress[series] ?: return@forEach
+            // Bar timestamps name the beginning of an interval, not the receipt time. Allow two full intervals and
+            // at least 30 seconds; daily sessions use exchange calendars and are deliberately excluded from this test.
+            val behind = !series.second.isDaily && continuousChartLiveBar[series]?.let { bar ->
+                tradeTime - bar >= maxOf(30_000L, series.second.millis * 2)
+            } == true
+            if ((current - last < 30_000 && !behind) || current < (continuousChartRetryAfter[series] ?: 0L)) return@forEach
+            if (watchJobs[series]?.isActive == true || chartBackfillJobs[series]?.isActive == true) return@forEach
+            continuousChartRetryAfter[series] = current + 60_000
+            continuousChartProgress[series] = current
+            startWatch(series, forceRefresh = true)
         }
     }
 
