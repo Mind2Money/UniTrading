@@ -27,18 +27,19 @@ private fun JsonObject.hasRiskEvaluation(): Boolean {
  */
 internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspend (Long) -> JsonObject): OrderCapacity {
     var acceptedAny = false
+    var lastRejection: String? = null
     val ceiling = Int.MAX_VALUE.toLong()
     suspend fun accepts(quantity: Long): Boolean {
         val response = check(quantity)
-        require(response.str("errorText").isNullOrBlank()) { "服务器数量校验失败" }
+        response.str("errorText")?.takeIf { it.isNotBlank() }?.let { throw IllegalArgumentException("券商试算错误：${safeMessage(it)}") }
         return when (val reason = response.str("rejectReason")) {
             "Success" -> true.also { acceptedAny = true }
             null -> {
                 require(response.hasRiskEvaluation()) { "响应缺少数量校验结果" }
                 true.also { acceptedAny = true }
             }
-            in quantityRejections -> false
-            in blockedRejections -> throw CapacityBlocked()
+            in quantityRejections -> false.also { lastRejection = reason }
+            in blockedRejections -> throw CapacityBlocked(reason!!)
             else -> throw IllegalArgumentException("可下单数量未知（${reason ?: "响应缺少校验结果"}）")
         }
     }
@@ -46,7 +47,7 @@ internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspe
         // The limit last found is usually still right: two checks prove it where a search takes about a dozen, a second each.
         val known = lastKnown?.div(100)?.takeIf { it in 1 until ceiling }
         if (known != null && accepts(known) && !accepts(known + 1)) return OrderCapacity(known * 100)
-        if (!accepts(1)) return OrderCapacity(0, "当前资金或账户限额不足以开仓")
+        if (!accepts(1)) return OrderCapacity(0, "券商试算拒绝 1 张（${lastRejection ?: "未知原因"}）")
         var low = 1L
         var high = 2L
         while (accepts(high)) {
@@ -61,14 +62,17 @@ internal suspend fun discoverOrderCapacity(lastKnown: Long? = null, check: suspe
         if (!accepts(low) || accepts(high)) OrderCapacity(message = "账户可用额度已变化，请刷新数量上限")
         else OrderCapacity(low * 100)
     } catch (cancel: CancellationException) { throw cancel }
-    catch (_: CapacityBlocked) {
-        if (acceptedAny) OrderCapacity(message = "账户交易状态已变化，请刷新数量上限")
-        else OrderCapacity(0, "当前账户或交易时段不允许该方向下单")
+    catch (blocked: CapacityBlocked) {
+        if (acceptedAny) OrderCapacity(message = "账户交易状态已变化，请刷新数量上限（${blocked.reason}）")
+        else OrderCapacity(0, "券商试算拒绝当前账户或交易时段（${blocked.reason}）")
     }
-    catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
+    catch (error: Exception) {
+        val detail = (error as? IllegalArgumentException)?.message?.let(::safeMessage)
+        OrderCapacity(message = detail ?: "可下单数量暂时无法确认，请刷新")
+    }
 }
 
-private class CapacityBlocked : Exception()
+private class CapacityBlocked(val reason: String) : Exception()
 
 internal fun capacityBody(accountId: Long, contractId: Long, request: OrderRequest, quantity: Long) = buildJsonObject {
     put("accountId", accountId)

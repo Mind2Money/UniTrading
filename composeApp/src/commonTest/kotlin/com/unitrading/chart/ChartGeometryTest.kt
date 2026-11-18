@@ -5,6 +5,14 @@ import kotlin.math.abs
 import kotlin.test.*
 
 class ChartGeometryTest {
+    @Test fun priceLabelsFitShortAndTallPanesWithoutGettingTooDense() {
+        assertEquals(1, priceAxisIntervals(0f, 1f, 14f))
+        assertEquals(2, priceAxisIntervals(128f, 1f, 14f))
+        assertEquals(7, priceAxisIntervals(500f, 1f, 14f))
+        assertEquals(10, priceAxisIntervals(1600f, 1f, 14f))
+        assertEquals(2, priceAxisIntervals(256f, 2f, 28f))
+        assertTrue(priceAxisIntervals(500f, 1f, 50f) <= 4)
+    }
     @Test fun candleBodiesGrowWithTheirSlotsAndNeverOverlap() {
         for (density in listOf(.6f, 1f, 2f, 3f)) {
             var previous = 0f

@@ -451,6 +451,30 @@ class ChartDrawingsTest {
         assertEquals(fib.levels, drawings.drawings.last().levels)
     }
 
+    @Test fun splitPanesShareToolDefaultsWithoutSharingDrawings() {
+        val global = DrawingLibrary(store, Dispatchers.Unconfined)
+        val paneStore = MemorySnapshotStore()
+        val main = ChartDrawings(global).apply { bind("TEST") }
+        val pane = ChartDrawings(DrawingLibrary(paneStore, Dispatchers.Unconfined), global).apply { bind("TEST") }
+        val point = DrawingPoint(START, 39_000.0)
+        main.addHorizontalLine(point)
+        val styled = main.drawings.single().copy(style = main.drawings.single().style.copy(color = "#123456", width = 3f))
+        main.setAsDefault(styled)
+        assertTrue(pane.hasDefault(DrawingTool.HORIZONTAL_LINE))
+        pane.addHorizontalLine(point)
+        assertEquals("#123456", pane.drawings.single().style.color)
+        assertEquals(1, main.drawings.size, "drawings remain local to each pane")
+        pane.setAsDefault(pane.drawings.single().copy(style = pane.drawings.single().style.copy(color = "#ABCDEF")))
+        main.addHorizontalLine(point)
+        assertEquals("#ABCDEF", main.drawings.last().style.color)
+        val restarted = DrawingLibrary(store, Dispatchers.Unconfined)
+        val another = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), restarted).apply { bind("OTHER") }
+        another.addHorizontalLine(point)
+        assertEquals("#ABCDEF", another.drawings.single().style.color)
+        pane.clearDefault(DrawingTool.HORIZONTAL_LINE)
+        assertFalse(main.hasDefault(DrawingTool.HORIZONTAL_LINE))
+    }
+
     @Test fun savedDefaultsComeBackAfterARestartAndOldStyleOnlyDefaultsStillApply() {
         drawings.addHorizontalLine(DrawingPoint(START + 20 * HOUR, 40_125.0))
         val line = drawings.drawings.single()

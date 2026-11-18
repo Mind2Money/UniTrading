@@ -64,7 +64,9 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     fun indicatorsForChart(id: String): IndicatorController = if (id == "main") indicators else
         chartIndicatorControllers.getOrPut(id) { IndicatorController(chartStore(id)) }
     fun drawingsForChart(id: String): com.unitrading.chart.drawing.ChartDrawings = if (id == "main") drawings else
-        chartDrawingControllers.getOrPut(id) { com.unitrading.chart.drawing.ChartDrawings(chartStore(id)) }
+        chartDrawingControllers.getOrPut(id) {
+            com.unitrading.chart.drawing.ChartDrawings(com.unitrading.chart.drawing.DrawingLibrary(chartStore(id)), drawingLibrary)
+        }
     /** Names the user gave logins and accounts on this device. */
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
     internal val accountRisk by lazy { AccountRiskController(store) }

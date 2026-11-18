@@ -21,13 +21,14 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private class CapacitySession : AccountSession {
+private class CapacitySession(accountId: String = "A1") : AccountSession {
     var answer = OrderCapacity(500)
     val lastKnown = mutableListOf<Long?>()
-    override val account = AccountInfo("A1", "Test")
-    override val state = MutableStateFlow(AccountSnapshot("A1", 0))
+    val requests = mutableListOf<OrderRequest>()
+    override val account = AccountInfo(accountId, "Test")
+    override val state = MutableStateFlow(AccountSnapshot(accountId, 0))
     override fun preview(request: OrderRequest) = OrderPreview(1)
-    override suspend fun orderCapacity(request: OrderRequest, lastKnown: Long?): OrderCapacity { this.lastKnown.add(lastKnown); return answer }
+    override suspend fun orderCapacity(request: OrderRequest, lastKnown: Long?): OrderCapacity { this.lastKnown.add(lastKnown); requests.add(request); return answer }
     override fun previewOrderModification(orderId: String, entryPrice: Long) = OrderPreview(1)
     override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = TradeResult(false, "unused")
     override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = TradeResult(false, "unused")
@@ -68,13 +69,52 @@ class OrderCapacityUiTest {
         awaitChecks(2)
         compose.waitUntil(5_000) { !state.loading }
         assertEquals(500, state.maximum, "A failed check is not an answer")
-        assertNull(state.message)
+        assertTrue(state.message.orEmpty().contains("上次缓存的上限"))
+        assertTrue(state.message.orEmpty().contains("账户状态已变化"))
         assertEquals(listOf(null, 500L), session.lastKnown)
         session.answer = OrderCapacity(300)
         compose.runOnIdle { refresh!!() }
         awaitChecks(3)
         compose.waitUntil(5_000) { state.maximum == 300L }
         assertEquals(CachedCapacity(300), OrderCapacityCache(store).entries.value.values.single(), "The next launch starts from it")
+    }
+
+    @Test fun switchingAccountsUsesTheActiveSessionAndItsOwnCachedCapacity() {
+        val first = CapacitySession("A1").apply { answer = OrderCapacity(29700) }
+        val second = CapacitySession("A2").apply { answer = OrderCapacity(0, "MaxOrderQtyLimitReached") }
+        var active by mutableStateOf(first)
+        val nnq = mes.copy(symbol = "NNQZ6")
+        compose.setContent {
+            state = rememberQuantityCapacity(cache, "broker", active, nnq, draft, active.state.value, true, false).first
+        }
+        compose.waitUntil(5_000) { first.requests.isNotEmpty() && state.maximum == 29700L }
+        assertEquals("NNQZ6", first.requests.last().symbol)
+        compose.runOnIdle { active = second }
+        compose.waitUntil(5_000) { second.requests.isNotEmpty() && state.maximum == 0L }
+        assertEquals("NNQZ6", second.requests.last().symbol)
+        assertEquals(null, second.lastKnown.first(), "A different account's capacity must not be reused")
+        compose.runOnIdle { active = first }
+        compose.waitUntil(5_000) { first.requests.size >= 2 && state.maximum == 29700L }
+        assertTrue(cache.entries.value.keys.any { it.contains("/A1/NNQZ6/") })
+        assertTrue(cache.entries.value.keys.any { it.contains("/A2/NNQZ6/") })
+    }
+
+    @Test fun aCachedZeroIsIdentifiedWhenRefreshCannotConfirmIt() {
+        session.answer = OrderCapacity(0, "券商试算拒绝 1 张（MaxPosLimitReached）")
+        render()
+        awaitChecks(1)
+        compose.waitUntil(5_000) { state.maximum == 0L }
+        session.answer = OrderCapacity(message = "报价不可用")
+        compose.runOnIdle { refresh!!() }
+        awaitChecks(2)
+        compose.waitUntil(5_000) { !state.loading && state.message.orEmpty().contains("上次缓存") }
+        assertEquals(0L, state.maximum, "Failed verification must not silently bypass the earlier limit")
+        assertTrue(state.message.orEmpty().contains("报价不可用"))
+        session.answer = OrderCapacity(100)
+        compose.runOnIdle { refresh!!() }
+        awaitChecks(3)
+        compose.waitUntil(5_000) { state.maximum == 100L }
+        assertNull(state.message)
     }
 
     @Test fun thePlusButtonWorksUntilTheServerGivesALimit() {
@@ -107,7 +147,11 @@ class OrderCapacityUiTest {
         compose.waitUntil(5_000) { state.maximum == 800L }
         session.answer = OrderCapacity(500)
         compose.runOnIdle { draft = draft.copy(side = Side.BUY) }
-        compose.runOnIdle { assertEquals(QuantityCapacityState(500), state, "Shown at once, not as loading") }
+        compose.runOnIdle {
+            assertEquals(500L, state.maximum, "The known upper bound stays visible")
+            assertTrue(state.loading, "A cached value must be identified while the broker verifies it")
+            assertTrue(state.message.orEmpty().contains("缓存"))
+        }
         awaitChecks(3)
         assertEquals(500L, session.lastKnown.last())
     }
@@ -122,7 +166,7 @@ class OrderCapacityUiTest {
         assertEquals(1, session.lastKnown.size, "A balance update alone does not query")
         assertEquals(QuantityCapacityState(500), state)
         compose.runOnIdle { account = account.copy(positions = listOf(Position("p", "MESZ6", Side.BUY, 100, 5_000_000_000, 0, marginMicros = 0))) }
-        compose.runOnIdle { assertEquals(QuantityCapacityState(500), state, "Still shown while the check runs") }
+        compose.runOnIdle { assertEquals(500L, state.maximum, "The upper bound stays visible while the check runs") }
         awaitChecks(2)
         assertEquals(500L, session.lastKnown.last())
     }
