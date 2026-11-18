@@ -96,6 +96,14 @@ class DesktopPanelGeometryTest {
         assertEquals(preferred.copy(marketOpen = false, orderOpen = false, terminalOpen = false).sidebarWidth, 450f)
     }
 
+    @Test fun shortWindowReservesUsableChartHeight() {
+        val preferred = DesktopLayoutPreferences()
+        val viewportHeight = 490f
+        val layout = desktopPanelGeometry(900f, viewportHeight, false, preferred, orderFlowOpen = true)
+        assertTrue(viewportHeight - PANEL_DIVIDER - layout.terminal.value >= 320f)
+        assertEquals(220f, preferred.terminalHeight, "The saved preference remains unchanged")
+    }
+
     @Test fun smallWindowsClampWithoutOverwritingPreferredDimensions() {
         val preferred = DesktopLayoutPreferences(450f, 500f, 600f)
         val small = desktopPanelGeometry(1240f, 300f, true, preferred)
