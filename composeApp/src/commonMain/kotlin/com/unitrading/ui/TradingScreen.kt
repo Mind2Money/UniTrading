@@ -270,6 +270,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             workspace in visibleWorkspaces && (0 until layoutOf(workspace).count).any { cellId(workspace, it) == id }
         }
         val chartSymbols = visibleParkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
+        // Every visible tab needs its own live last trade, even while another workspace is selected.
+        if (LocalChartPlatform.current == ChartPlatform.DESKTOP && LocalPanelWindowHost.current != null) {
+            (listOf(MAIN_CHART) + chartOrder).forEach { workspace ->
+                val selected = workspaceSelected[workspace] ?: workspace
+                val tabSymbol = if (selected == activeChart) restoring ?: symbol else parkedCharts[selected]?.symbol
+                if (tabSymbol != null) chartSymbols.add(tabSymbol)
+            }
+        }
         LaunchedEffect(plugin, watchSymbols, chartSymbols) { plugin.watchQuotes(watchSymbols + chartSymbols) }
         DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
         val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
@@ -1462,50 +1470,35 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                 }
+                val titleBarSlot = LocalDesktopTitleBarSlot.current
+                val tabs = if (nativeDesktop && panelWindows) (listOf(MAIN_CHART) + chartOrder)
+                    .filterNot { it in detachedWorkspaces }.map { id ->
+                        val tabChart = chartSlot(workspaceSelected[id] ?: id)
+                        val tabSymbol = tabChart?.symbol ?: "图表"
+                        val tabInstrument = catalog.instruments.firstOrNull { it.symbol == tabSymbol }
+                        workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
+                    } else emptyList()
+                val latestTitleTabs = rememberUpdatedState<@Composable () -> Unit>({
+                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, Modifier.fillMaxWidth())
+                })
+                DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
+                    if (titleBarSlot != null && nativeDesktop && desktop) {
+                        val registered: @Composable () -> Unit = { latestTitleTabs.value.invoke() }
+                        titleBarSlot.content = registered
+                        onDispose { if (titleBarSlot.content === registered) titleBarSlot.content = null }
+                    } else onDispose { }
+                }
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    if (nativeDesktop && desktop) {
-                        Row(Modifier.fillMaxWidth().height(44.dp).background(colors.Surface)
+                    // Other desktop systems keep their native title bar; the Windows frame supplies its own title slot.
+                    if (nativeDesktop && desktop && titleBarSlot == null) {
+                        Row(Modifier.fillMaxWidth().height(40.dp).background(colors.Surface)
                             .testTag("desktop-title-toolbar").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Row(Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState())
-                                .testTag("chart-workspace-tabs"), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            if (panelWindows) (listOf(MAIN_CHART) + chartOrder).filterNot { it in detachedWorkspaces }.forEach { id -> key(id) {
-                                val selected = selectedWorkspace == id
-                                val chart = chartSlot(workspaceSelected[id] ?: id)
-                                var dragY by remember(id) { mutableFloatStateOf(0f) }
-                                val tabShape = RoundedCornerShape(8.dp)
-                                val tabColors = MaterialTheme.colorScheme
-                                Row(Modifier.height(32.dp).widthIn(min = 132.dp, max = 205.dp)
-                                    .clip(tabShape)
-                                    .background(if (selected) tabColors.secondaryContainer else tabColors.surfaceContainerHigh)
-                                    .border(1.dp, if (selected) tabColors.primary.copy(alpha = .45f) else tabColors.outlineVariant, tabShape)
-                                    .pointerInput(id, detachedWorkspaces, chartOrder) {
-                                        detectDragGestures(onDragStart = { dragY = 0f }, onDragEnd = {
-                                            if (kotlin.math.abs(dragY) > 35.dp.toPx()) detachWorkspace(id)
-                                        }) { change, amount -> dragY += amount.y; change.consume() }
-                                    }.clickable { selectWorkspace(id) }.testTag("workspace-tab-$id")
-                                    .padding(start = 10.dp, end = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(chart?.symbol ?: "图表", Modifier.weight(1f), maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                        color = if (selected) tabColors.onSecondaryContainer else tabColors.onSurfaceVariant)
-                                    IconButton({ detachWorkspace(id) }, Modifier.size(27.dp).testTag("detach-workspace-$id")) {
-                                        Icon(AppIcons.OpenInNew, "拖出图表布局", Modifier.size(16.dp))
-                                    }
-                                    if (id != MAIN_CHART) IconButton({ closeChart(id) }, Modifier.size(27.dp).testTag("close-workspace-$id")) {
-                                        Icon(AppIcons.Close, "关闭图表布局", Modifier.size(16.dp))
-                                    }
-                                }
-                            } }
-                            }
-                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                Modifier.width(360.dp).testTag("desktop-trade-accounts"), enabled = !busy,
-                                dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true)
+                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
                         }
                         DividerLine()
                     }
@@ -1598,6 +1591,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
                                 }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            terminalHeader = {
+                                if (nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                    Modifier.width(360.dp).testTag("desktop-trade-accounts"), enabled = !busy,
+                                    dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true)
+                            },
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
@@ -1614,7 +1612,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                 }
                             } } else null,
-                            onNewChartWindow = if (nativeDesktop) ({ openChart(detached = true) }) else null,
+                            onNewChartWindow = if (nativeDesktop) ({ openChart() }) else null,
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (nativeDesktop) ({ showResetLayout = true }) else null,
@@ -1628,6 +1626,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
                         if (chartWindows != null) detachedWorkspaces.forEach { id -> key(id) {
                             val slot = chartSlot(workspaceSelected[id] ?: id)
+                            val detachedInstrument = catalog.instruments.firstOrNull { it.symbol == slot?.symbol }
+                            val detachedQuote = workspaceTabData(id, slot?.symbol.orEmpty(), detachedInstrument,
+                                detachedInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                             val window = chartWindowKey(id)
                             chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
@@ -1646,6 +1647,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 Icon(AppIcons.DragIndicator, null, Modifier.size(18.dp), tint = colors.Muted)
                                                 Spacer(Modifier.width(5.dp))
                                                 Text(slot?.symbol.orEmpty(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(detachedQuote.price, Modifier.testTag("detached-workspace-price-$id"), style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(detachedQuote.change, Modifier.testTag("detached-workspace-change-$id"), style = MaterialTheme.typography.labelMedium,
+                                                    color = when { detachedQuote.direction > 0 -> colors.UpText; detachedQuote.direction < 0 -> colors.DownText; else -> colors.Muted }, maxLines = 1)
                                                 Spacer(Modifier.width(10.dp))
                                                 Text("拖动到主窗口标签栏", style = MaterialTheme.typography.labelSmall, color = colors.Muted, maxLines = 1)
                                             }

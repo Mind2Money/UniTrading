@@ -214,7 +214,7 @@ internal fun DesktopWorkspace(
             if (WorkspacePanel.ORDER in detached && preferred.orderOpen) window(WorkspacePanel.ORDER, 360, 760) { order(Modifier.fillMaxSize()) { setOpen(DesktopPanel.ORDER, false) } }
             if (WorkspacePanel.TERMINAL in detached && preferred.terminalOpen) window(WorkspacePanel.TERMINAL, 960, 360) {
                 Column(Modifier.fillMaxSize()) {
-                    PanelHeader("交易", Modifier.background(TradingColors.Surface), terminalSummary.ifBlank { null })
+                    PanelHeader("交易", Modifier.background(TradingColors.Surface), terminalSummary.ifBlank { null }) { terminalHeader() }
                     terminal(Modifier.weight(1f).fillMaxWidth())
                 }
             }
