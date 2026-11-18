@@ -3,13 +3,18 @@ package com.unitrading.chart
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -18,6 +23,7 @@ import com.unitrading.broker.OrderKind
 import com.unitrading.broker.Quote
 import com.unitrading.broker.Side
 import com.unitrading.ui.DividerLine
+import com.unitrading.ui.AppIcons
 import com.unitrading.ui.TradingColors
 import com.unitrading.ui.label
 import kotlin.math.roundToInt
@@ -87,6 +93,11 @@ internal fun plotOrderLabel(instrument: Instrument, order: PlotOrder, lotsHundre
             else -> ""
         }
 
+@Composable
+private fun PlotMenuIcon(icon: ImageVector, name: String, tint: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp).testTag("plot-icon-$name"), tint = tint)
+}
+
 /**
  * The plot's own context menu: a horizontal line at the clicked price when the chart has drawings ([onLine]), and the
  * entry orders of [menu]. [lotsHundredths] is the quantity an order would carry, shown in its label.
@@ -98,7 +109,10 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
     Box(Modifier.offset { IntOffset(menu.at.x.roundToInt(), menu.at.y.roundToInt()) }) {
         DropdownMenu(true, onDismiss, Modifier.widthIn(min = 200.dp)) {
             if (menu.desktop && desktopActions != null) {
-                DropdownMenuItem(text = { Text("重置图表视图     Alt + R") }, onClick = { onDismiss(); desktopActions.reset() }, modifier = Modifier.testTag("plot-reset"))
+                DropdownMenuItem(text = { Text("重置图表视图") },
+                    leadingIcon = { PlotMenuIcon(AppIcons.RestartAlt, "reset") },
+                    trailingIcon = { Text("Alt + R", style = MaterialTheme.typography.labelSmall, color = colors.Muted) },
+                    onClick = { onDismiss(); desktopActions.reset() }, modifier = Modifier.testTag("plot-reset"))
                 DividerLine()
             }
             if (!menu.desktop && onLine != null) DropdownMenuItem(
@@ -118,6 +132,8 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                             Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price, stopRequiredForSizing, attached),
                                 color = if (order.side == Side.BUY) colors.UpText else colors.DownText)
                         },
+                        leadingIcon = if (menu.desktop) ({ PlotMenuIcon(if (order.side == Side.BUY) AppIcons.ExpandLess else AppIcons.ExpandMore,
+                            "${order.side.name}-${order.kind.name}", if (order.side == Side.BUY) colors.UpText else colors.DownText) }) else null,
                         trailingIcon = if (menu.desktop && desktopActions?.keyboardTrading == true && order.side == Side.SELL && order.kind == OrderKind.LIMIT) ({ Text("Alt + Shift + S") }) else null,
                         onClick = { onDismiss(); onOrder(order) },
                         modifier = Modifier.testTag("plot-menu-${order.side.name}-${order.kind.name}"),
@@ -125,19 +141,27 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                 }
             }
             if (menu.desktop && desktopActions != null) {
-                DropdownMenuItem(text = { Text("止损限价单（当前接口不支持）") }, enabled = false, onClick = {}, modifier = Modifier.testTag("plot-stop-limit-unavailable"))
-                DropdownMenuItem(text = { Text("以 ${instrument.formatPrice(menu.price)} 打开下单面板     Shift + T") }, enabled = desktopActions.openOrder != null,
+                DropdownMenuItem(text = { Text("止损限价单（当前接口不支持）") }, enabled = false, onClick = {},
+                    leadingIcon = { PlotMenuIcon(AppIcons.Lock, "stop-limit", colors.Muted.copy(alpha = .5f)) }, modifier = Modifier.testTag("plot-stop-limit-unavailable"))
+                DropdownMenuItem(text = { Text("以 ${instrument.formatPrice(menu.price)} 打开下单面板") }, enabled = desktopActions.openOrder != null,
+                    leadingIcon = { PlotMenuIcon(AppIcons.OrderEntry, "open-order") },
+                    trailingIcon = { Text("Shift + T", style = MaterialTheme.typography.labelSmall, color = colors.Muted) },
                     onClick = { onDismiss(); desktopActions.openOrder?.invoke() }, modifier = Modifier.testTag("plot-open-order"))
                 DividerLine()
-                DropdownMenuItem(text = { Text("对象树") }, enabled = desktopActions.showObjects != null, onClick = { onDismiss(); desktopActions.showObjects?.invoke() }, modifier = Modifier.testTag("plot-objects"))
-                DropdownMenuItem(text = { Text("图表模板") }, enabled = desktopActions.showTemplates != null, onClick = { onDismiss(); desktopActions.showTemplates?.invoke() }, modifier = Modifier.testTag("plot-templates"))
+                DropdownMenuItem(text = { Text("对象树") }, enabled = desktopActions.showObjects != null,
+                    leadingIcon = { PlotMenuIcon(AppIcons.Layers, "objects") }, onClick = { onDismiss(); desktopActions.showObjects?.invoke() }, modifier = Modifier.testTag("plot-objects"))
+                DropdownMenuItem(text = { Text("图表模板") }, enabled = desktopActions.showTemplates != null,
+                    leadingIcon = { PlotMenuIcon(AppIcons.ViewQuilt, "templates") }, onClick = { onDismiss(); desktopActions.showTemplates?.invoke() }, modifier = Modifier.testTag("plot-templates"))
                 DividerLine()
                 DropdownMenuItem(text = { Text("移除 ${desktopActions.indicatorCount} 个指标") }, enabled = desktopActions.removeIndicators != null && desktopActions.indicatorCount > 0,
+                    leadingIcon = { PlotMenuIcon(AppIcons.Tune, "remove-indicators") },
                     onClick = { onDismiss(); desktopActions.removeIndicators?.invoke() }, modifier = Modifier.testTag("plot-remove-indicators"))
                 DropdownMenuItem(text = { Text("移除 ${desktopActions.drawingCount} 个绘图") }, enabled = desktopActions.removeDrawings != null && desktopActions.drawingCount > 0,
+                    leadingIcon = { PlotMenuIcon(AppIcons.Delete, "remove-drawings") },
                     onClick = { onDismiss(); desktopActions.removeDrawings?.invoke() }, modifier = Modifier.testTag("plot-remove-drawings"))
                 DividerLine()
-                DropdownMenuItem(text = { Text("图表设置…") }, onClick = { onDismiss(); desktopActions.settings() }, modifier = Modifier.testTag("plot-settings"))
+                DropdownMenuItem(text = { Text("图表设置…") }, leadingIcon = { PlotMenuIcon(AppIcons.Settings, "settings") },
+                    onClick = { onDismiss(); desktopActions.settings() }, modifier = Modifier.testTag("plot-settings"))
             }
         }
     }

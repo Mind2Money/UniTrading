@@ -40,6 +40,13 @@ class DesktopAccountPanelsUiTest {
             onNodeWithTag("desktop-trade-tab-$tab").performScrollTo().performClick()
             onNodeWithTag(section).assertIsDisplayed()
         }
+        val tabs = onNodeWithTag("desktop-trade-actions").fetchSemanticsNode().boundsInRoot
+        val controls = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
+        val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+        kotlin.test.assertTrue(controls.top >= tabs.bottom + 3f, "Flatten actions are below the navigation tabs")
+        kotlin.test.assertTrue(controls.top > accounts.bottom, "Flatten actions are below the account selectors")
+        val tradeShot = File("../artifacts/desktop-account-panels/trade-actions.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", tradeShot)
         onNodeWithTag("flatten-selected-account").assertIsDisplayed().assertIsEnabled().performClick()
         onNodeWithText("平仓此子账户？").assertExists()
         onNodeWithTag("cancel-bulk-flatten").performClick()

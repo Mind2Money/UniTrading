@@ -197,6 +197,41 @@ class DesktopWorkspaceTabsUiTest {
         } finally { compose.runOnIdle { frame.dispose() } }
     }
 
+    @Test fun tabsDragHorizontallyAndKeepTheirOrderAfterRestart() {
+        render(); addTab()
+        compose.onNodeWithTag("chart-new-workspace").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c2").fetchSemanticsNodes().isNotEmpty() }
+        fun left(id: String) = compose.onNodeWithTag("workspace-tab-$id").fetchSemanticsNode().boundsInRoot.left
+        fun dragTo(from: String, to: String, extra: Float) {
+            val source = compose.onNodeWithTag("workspace-tab-$from")
+            val sourceBounds = source.fetchSemanticsNode().boundsInRoot
+            val targetBounds = compose.onNodeWithTag("workspace-tab-$to").fetchSemanticsNode().boundsInRoot
+            val delta = targetBounds.center.x - sourceBounds.center.x + extra
+            source.performMouseInput {
+                val start = Offset(size.width * .35f, size.height * .5f)
+                moveTo(start); press(); moveTo(start + Offset(delta * .5f, 0f)); moveTo(start + Offset(delta, 0f)); release()
+            }
+            compose.waitForIdle()
+        }
+        dragTo("c2", "main", -20f)
+        assertTrue(left("c2") < left("main") && left("main") < left("c1"), "A new tab can move before the main tab")
+        assertTrue("chart-c2" !in windows.open, "A horizontal drag must not detach the tab")
+        compose.onNodeWithTag("detach-workspace-c1").performClick()
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        dragTo("main", "c2", -20f)
+        compose.onNodeWithTag("dock-workspace-c1").performClick()
+        compose.waitUntil(10_000) { "chart-c1" !in windows.open }
+        assertTrue(left("main") < left("c2") && left("c2") < left("c1"), "Docking retains the detached tab's place")
+        assertTrue(runBlocking { runtime.desktopWorkspaceSaver!!.invoke() })
+        assertEquals(listOf("main", "c2", "c1"), runtime.chartPreferences.preferences.value.workspaceOrder)
+        compose.runOnIdle { windows = FakePanelWindows(); runtime = newRuntime() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c2").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue(left("main") < left("c2") && left("c2") < left("c1"), "Saved ordering is restored after restart")
+        assertTrue(broker.placed.isEmpty(), "Reordering workspaces does not send trades")
+        val out = File("../artifacts/desktop-tabs/reordered-tabs.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+    }
+
     @Test fun detachedTabCanBeDraggedBackOnlyOverTheMainTabStrip() {
         render(); addTab()
         compose.onNodeWithTag("detach-workspace-c1").performClick()

@@ -273,6 +273,45 @@ class ChartContextMenuUiTest {
         item("horizontal-line").assertDoesNotExist()
     }
 
+    @Test fun desktopContextMenuHasDistinctIconsWithoutRestoringRemovedItems() {
+        render()
+        rightClick(549_000)
+        listOf("reset", "BUY-MARKET", "SELL-MARKET", "BUY-LIMIT", "SELL-STOP", "open-order", "objects", "templates", "remove-indicators", "remove-drawings", "settings")
+            .forEach { compose.onNodeWithTag("plot-icon-$it", useUnmergedTree = true).assertExists() }
+        compose.onNodeWithTag("plot-copy-price").assertDoesNotExist()
+        compose.onNodeWithTag("plot-paste-drawing").assertDoesNotExist()
+        compose.onNodeWithTag("plot-time-lock").assertDoesNotExist()
+        val file = File("../artifacts/desktop-order/context-menu.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", file)
+    }
+
+    @Test fun desktopOrderReviewShowsLiveRefusalAndCancelNeverSends() {
+        render()
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        compose.onNodeWithTag("desktop-order-confirmation").assertIsDisplayed()
+        compose.onNodeWithText("TESTZ6 · 买入限价 · 1 张").assertExists()
+        compose.onNodeWithTag("confirm-action").assertIsEnabled()
+        assertTrue(broker.placed.isEmpty())
+        val folder = File("../artifacts/desktop-order").also { it.mkdirs() }
+        compose.runOnIdle { runBlocking { runtime.theme.apply(com.unitrading.app.ThemeSettings(com.unitrading.app.ThemePreset.LIGHT)) } }
+        compose.waitForIdle()
+        ImageIO.write(compose.onNodeWithTag("desktop-order-confirmation").captureToImage().toAwtImage(), "png", File(folder, "confirm-valid.png"))
+        compose.runOnIdle {
+            broker.refusal = "券商拒绝：数量超过上限"
+            broker.market.value = broker.market.value.copy(revision = broker.market.value.revision + 1)
+        }
+        compose.onNodeWithTag("confirm-error").assertTextEquals("券商拒绝：数量超过上限")
+        compose.onNodeWithTag("confirm-action").assertIsNotEnabled()
+        ImageIO.write(compose.onNodeWithTag("desktop-order-confirmation").captureToImage().toAwtImage(), "png", File(folder, "confirm-light.png"))
+        compose.runOnIdle { runBlocking { runtime.theme.apply(com.unitrading.app.ThemeSettings(com.unitrading.app.ThemePreset.DARK)) } }
+        compose.waitForIdle()
+        ImageIO.write(compose.onNodeWithTag("desktop-order-confirmation").captureToImage().toAwtImage(), "png", File(folder, "confirm-dark.png"))
+        compose.onNodeWithTag("cancel-order-review").performClick()
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        assertTrue(broker.placed.isEmpty(), "Reviewing or cancelling an invalid order must never send it")
+    }
+
     @Test fun underTheMarketItOffersABuyLimitAndASellStopAndTheOrderWaitsForTheConfirmation() {
         render()
         rightClick(549_000)
