@@ -102,19 +102,15 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
             if (menu.desktop && desktopActions != null) {
                 DropdownMenuItem(text = { Text("重置图表视图     Alt + R") }, onClick = { onDismiss(); desktopActions.reset() }, modifier = Modifier.testTag("plot-reset"))
                 DividerLine()
-                DropdownMenuItem(text = { Text("复制价格 ${instrument.formatPrice(menu.price)}") }, onClick = { onDismiss(); desktopActions.copyPrice() }, modifier = Modifier.testTag("plot-copy-price"))
-                DropdownMenuItem(text = { Text("粘贴绘图     Ctrl + V") }, enabled = desktopActions.pasteDrawing != null,
-                    onClick = { onDismiss(); desktopActions.pasteDrawing?.invoke() }, modifier = Modifier.testTag("plot-paste-drawing"))
-                DividerLine()
             }
-            if (onLine != null) DropdownMenuItem(
+            if (!menu.desktop && onLine != null) DropdownMenuItem(
                 text = { Text("在 ${instrument.formatPrice(menu.price)} 画水平线") },
                 onClick = { onDismiss(); onLine() },
                 modifier = Modifier.testTag("plot-menu-horizontal-line"),
             )
             // The line, the market orders and the orders resting at the price, each group set apart from the one before.
             val groups = listOf(menu.orders.filter { it.kind == OrderKind.MARKET }, menu.orders.filter { it.kind != OrderKind.MARKET })
-            var above = onLine != null
+            var above = !menu.desktop && onLine != null
             groups.filter { it.isNotEmpty() }.forEach { group ->
                 if (above) DividerLine(Modifier.padding(vertical = 4.dp))
                 above = true
@@ -135,10 +131,6 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                 DropdownMenuItem(text = { Text("以 ${instrument.formatPrice(menu.price)} 打开下单面板     Shift + T") }, enabled = desktopActions.openOrder != null,
                     onClick = { onDismiss(); desktopActions.openOrder?.invoke() }, modifier = Modifier.testTag("plot-open-order"))
                 DividerLine()
-                DropdownMenuItem(text = { Text(if (desktopActions.timeLocked) "解锁垂直光标线" else "按时间锁定垂直光标线") }, enabled = desktopActions.toggleTimeLock != null,
-                    onClick = { onDismiss(); desktopActions.toggleTimeLock?.invoke() }, modifier = Modifier.testTag("plot-time-lock"))
-                DividerLine()
-                DropdownMenuItem(text = { Text("表格视图") }, onClick = { onDismiss(); desktopActions.showTable() }, modifier = Modifier.testTag("plot-table"))
                 DropdownMenuItem(text = { Text("对象树") }, enabled = desktopActions.showObjects != null, onClick = { onDismiss(); desktopActions.showObjects?.invoke() }, modifier = Modifier.testTag("plot-objects"))
                 DropdownMenuItem(text = { Text("图表模板") }, enabled = desktopActions.showTemplates != null, onClick = { onDismiss(); desktopActions.showTemplates?.invoke() }, modifier = Modifier.testTag("plot-templates"))
                 DividerLine()

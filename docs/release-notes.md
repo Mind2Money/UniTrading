@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 桌面交易区收起时仍显示两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
+
 - 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
 
 - 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录，并在交易区固定提供按账户平仓入口。手机版和平板原有账户页面保留。
@@ -25,6 +27,8 @@
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Keep account selectors visible in the collapsed desktop trading bar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
 
 - Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
 

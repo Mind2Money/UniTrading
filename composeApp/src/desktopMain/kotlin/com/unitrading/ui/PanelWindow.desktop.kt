@@ -19,6 +19,8 @@ import com.unitrading.app.WindowBounds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import java.awt.GraphicsEnvironment
+import java.awt.Frame
+import java.awt.MouseInfo
 import java.awt.Rectangle
 
 internal actual val platformPanelWindowHost: PanelWindowHost? = DesktopPanelWindows
@@ -35,6 +37,18 @@ private const val VISIBLE = 80
 private const val TITLE_STRIP = 32
 
 private object DesktopPanelWindows : PanelWindowHost {
+    override fun canDockAtPointer(): Boolean = runCatching {
+        val pointer = MouseInfo.getPointerInfo()?.location ?: return@runCatching false
+        Frame.getFrames().firstOrNull { frame ->
+            frame.isVisible && (frame.extendedState and Frame.ICONIFIED) == 0 &&
+                (frame.title == "UniTrading · 交易终端" || frame.title == "UniTrading · 本地模拟 · 不连接真实账户")
+        }?.let { main ->
+            val bounds = main.bounds
+            val top = bounds.y + main.insets.top
+            pointer.x >= bounds.x && pointer.x < bounds.x + bounds.width && pointer.y >= top && pointer.y < top + 90
+        } ?: false
+    }.getOrDefault(false)
+
     @Composable
     override fun Window(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit, onClose: () -> Unit, content: @Composable () -> Unit) = key(id) {
         // Read once: afterwards the window itself is the source of its bounds.

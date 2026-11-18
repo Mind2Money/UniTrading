@@ -1,6 +1,9 @@
 package com.unitrading.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -25,6 +28,7 @@ internal fun AccountContextBar(
     onBroker: (String) -> Unit, onAccount: (String) -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true, dense: Boolean = false,
     aliases: AccountAliasesController? = null,
+    emphasize: Boolean = false,
 ) {
     val brokers by registry.state.collectAsState()
     val catalog by key(plugin) { plugin.catalog.collectAsState() }
@@ -33,14 +37,20 @@ internal fun AccountContextBar(
     var childMenu by remember(plugin) { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<AliasEdit?>(null) }
     renaming?.let { AliasDialog(it) { renaming = null } }
+    val pickerShape = RoundedCornerShape(7.dp)
+    val pickerColors = ButtonDefaults.textButtonColors(
+        containerColor = if (emphasize) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+        contentColor = if (emphasize) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary)
+    val pickerBorder = if (emphasize) Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, pickerShape) else Modifier
     Row(modifier.heightIn(min = if (dense) 40.dp else 56.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.weight(1f)) {
-            TextButton({ loginMenu = true }, Modifier.fillMaxWidth().testTag("quick-login-picker"), enabled = enabled,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) {
+            TextButton({ loginMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-login-picker"), enabled = enabled,
+                shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                    if (!dense) Text("登录账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
-                    Text(names.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                    if (!dense || emphasize) Text("登录账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+                    Text(names.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal)
                 }
                 Icon(AppIcons.ExpandMore, null, Modifier.size(18.dp))
             }
@@ -65,14 +75,15 @@ internal fun AccountContextBar(
                 }
             }
         }
-        Box(Modifier.width(1.dp).height(24.dp).background(TradingColors.Border))
+        if (!emphasize) Box(Modifier.width(1.dp).height(24.dp).background(TradingColors.Border))
         Box(Modifier.weight(1f)) {
-            TextButton({ childMenu = true }, Modifier.fillMaxWidth().testTag("quick-account-picker"), enabled = enabled && catalog.accounts.isNotEmpty(),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) {
+            TextButton({ childMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-account-picker"), enabled = enabled && catalog.accounts.isNotEmpty(),
+                shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                    if (!dense) Text("交易子账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+                    if (!dense || emphasize) Text("交易子账户", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
                     Text(catalog.accounts.firstOrNull { it.id == accountId }?.let { names.account(plugin.descriptor.id, it) } ?: "选择子账户", maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal)
                 }
                 Icon(AppIcons.ExpandMore, null, Modifier.size(18.dp))
             }

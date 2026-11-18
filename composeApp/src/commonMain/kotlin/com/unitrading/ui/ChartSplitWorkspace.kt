@@ -89,11 +89,11 @@ internal fun ChartLayoutMenu(layout: ChartSplitLayout, onLayout: (ChartSplitLayo
     var expanded by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     Box {
-        TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("chart-layout-menu")) {
-            LayoutIcon(layout, colors.primary)
-            Spacer(Modifier.width(6.dp))
-            Text("布局")
-        }
+        AssistChip(onClick = { expanded = true }, modifier = Modifier.testTag("chart-layout-menu"),
+            label = { Text("布局") }, leadingIcon = { LayoutIcon(layout, colors.onSurfaceVariant, Modifier.size(18.dp)) },
+            colors = AssistChipDefaults.assistChipColors(containerColor = colors.surfaceContainerHigh.copy(alpha = .94f),
+                labelColor = colors.onSurface, leadingIconContentColor = colors.onSurfaceVariant),
+            border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant))
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ChartSplitLayout.entries.forEach { option ->
                 DropdownMenuItem(text = { Text(option.label) },
@@ -104,6 +104,16 @@ internal fun ChartLayoutMenu(layout: ChartSplitLayout, onLayout: (ChartSplitLayo
             }
         }
     }
+}
+
+/** A compact chip that matches the adjacent chart controls. */
+@Composable
+internal fun ChartNewWorkspaceButton(onClick: () -> Unit, enabled: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    AssistChip(onClick = onClick, enabled = enabled, modifier = Modifier.testTag("chart-new-workspace"),
+        label = { Icon(AppIcons.Add, "新建图表布局", Modifier.size(18.dp)) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = colors.surfaceContainerHigh.copy(alpha = .94f),
+            labelColor = colors.onSurface), border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant))
 }
 
 @Composable

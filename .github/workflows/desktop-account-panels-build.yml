@@ -1,7 +1,7 @@
 name: Desktop account and trading panels
 on:
   push:
-    branches: ['build/desktop-workspaces-20261119']
+    branches: ['build/desktop-finesse-20261119']
 permissions:
   contents: read
 jobs:

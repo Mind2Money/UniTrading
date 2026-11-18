@@ -32,6 +32,8 @@ internal class FakePanelWindows(private val strip: Dp = 440.dp) : PanelWindowHos
     class Open(val title: String, val bounds: WindowBounds?, val size: DpSize, val onBounds: (WindowBounds) -> Unit, val onClose: () -> Unit)
 
     val open = mutableStateMapOf<String, Open>()
+    var dockAllowed = false
+    override fun canDockAtPointer() = dockAllowed
     private val names = androidx.compose.runtime.mutableStateListOf<String>()
 
     @Composable

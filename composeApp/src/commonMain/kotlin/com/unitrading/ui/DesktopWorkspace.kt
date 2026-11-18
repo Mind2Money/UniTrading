@@ -140,7 +140,7 @@ internal fun DesktopWorkspace(
                     } else {
                         if (terminalInline) {
                             DividerLine()
-                            Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false) { setOpen(DesktopPanel.TERMINAL, true) } }
+                            Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false, extra = terminalHeader) { setOpen(DesktopPanel.TERMINAL, true) } }
                         }
                         if (!chartArea) Spacer(Modifier.weight(1f))
                     }
@@ -178,13 +178,13 @@ internal fun DesktopWorkspace(
                         if (showAnalytics) { analyticsOpen = false; setOpen(DesktopPanel.MARKET, true) }
                         else setOpen(DesktopPanel.MARKET, !preferred.marketOpen)
                     }
-                    if (dom != null) RailToggle(AppIcons.Candlestick, "DOM", "rail-dom", domOpen) { onDomOpenChange(!domOpen) }
+                    if (dom != null) RailToggle(AppIcons.OrderBook, "DOM", "rail-dom", domOpen) { onDomOpenChange(!domOpen) }
                     // The ticket only fits beside a wide chart, but its own window has room at any width.
-                    if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.Add, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
+                    if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.OrderEntry, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
-                    if (analytics != null) RailToggle(AppIcons.TrendingUp, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
+                    if (analytics != null) RailToggle(AppIcons.Analytics, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (host != null && onNewChartWindow != null)
-                        RailToggle(AppIcons.Add, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
+                        RailToggle(AppIcons.AddWindow, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
                     if (onOpenSettings != null)
                         RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
@@ -265,7 +265,7 @@ private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePane
 @Composable
 private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowScope.() -> Unit = {}, onToggle: () -> Unit) {
     PanelHeader("交易", Modifier.background(TradingColors.Surface).testTag("desktop-terminal-bar"), summary.ifBlank { null }) {
-        if (open) extra()
+        extra()
         ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)
     }
 }
