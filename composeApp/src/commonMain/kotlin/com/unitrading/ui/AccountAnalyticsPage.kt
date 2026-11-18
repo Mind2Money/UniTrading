@@ -42,7 +42,8 @@ private fun ratio(value: Double?, percent: Boolean = false): String = when {
  * cached none. With it the header says that [trades] also hold cached records, from which day, and what the cache lacks.
  */
 @Composable
-internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name, cachedSinceMs: Long? = null) {
+internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name, cachedSinceMs: Long? = null,
+    showHeading: Boolean = true) {
     var symbol by remember { mutableStateOf<String?>(null) }
     var zoneId by remember { mutableStateOf("America/Chicago") }
     val zone = remember(zoneId) { TimeZone.of(zoneId) }
@@ -67,7 +68,7 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
     LazyColumn(modifier.background(colors.Shell).testTag("account-analytics"), contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text("交易分析", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
+            if (showHeading) Text("交易分析", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
             // The cache holds only what was synchronized on this device, so the header names its start instead of a fixed span.
             val coverage = cachedSinceMs?.let {
                 "券商已同步记录 + 本机缓存（自 ${kotlin.time.Instant.fromEpochMilliseconds(it).toLocalDateTime(zone).date} 起，仅含本机运行并选中该子账户时同步到的记录）"
