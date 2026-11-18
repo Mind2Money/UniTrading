@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录，并在交易区固定提供按账户平仓入口。手机版和平板原有账户页面保留。
 - 桌面和平板图表将账户选择、周期、指标、图层与布局合并为单行工具栏，工具较多时可横向滚动；手机版保留原有布局。
 - 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
@@ -23,6 +24,7 @@
 
 ## English
 
+- Add desktop analytics to the side rail and consolidate positions, orders, executions, closed trades and account-flatten controls in the trading panel; phone and tablet account pages remain available.
 - Combine the desktop and tablet account selectors and chart controls in a single scrollable toolbar, retaining the phone layout.
 - Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.

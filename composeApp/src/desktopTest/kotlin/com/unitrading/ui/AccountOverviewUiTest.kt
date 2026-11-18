@@ -29,9 +29,9 @@ class AccountOverviewUiTest {
     private val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
     private val plugin = runtime.registry.plugins.first()
 
-    /** On the desktop the hub opens over the workspace, which stays in place with any panel that has a window of its own. */
-    @Test fun desktopToolbarOpensTheAccountHubOverTheWorkspace() {
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
+    /** The tablet hub stays available over the workspace. */
+    @Test fun tabletToolbarOpensTheAccountHubOverTheWorkspace() {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.IOS) { TradingScreen(runtime) } }
         compose.onNodeWithTag("account-hub").assertDoesNotExist()
         compose.onNodeWithTag("toggle-account-overview").performClick()
         compose.onNodeWithTag("account-overview").assertIsDisplayed()

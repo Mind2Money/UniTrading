@@ -4,6 +4,14 @@ import com.unitrading.app.DesktopLayoutPreferences
 import kotlin.test.*
 
 class DesktopPanelGeometryTest {
+    @Test fun analyticsFitsBesideDomAndRestoresMarketWidth() {
+        val pref = DesktopLayoutPreferences(sidebarWidth = 320f, analyticsWidth = 640f, domWidth = 300f)
+        val analysis = desktopPanelGeometry(1800f, 900f, true, pref, domOpen = true, analyticsOpen = true)
+        assertTrue(analysis.sidebar.value in analysis.sidebar.min..analysis.sidebar.max)
+        assertTrue(1800f - PANEL_RAIL - 3 * PANEL_DIVIDER - analysis.dom.value - analysis.sidebar.value - analysis.order.value >= 320f)
+        val market = desktopPanelGeometry(1800f, 900f, true, pref, domOpen = true)
+        assertEquals(320f, market.sidebar.value)
+    }
     @Test fun orderFlowStartsAtHalfOfTheContentWidthAndKeepsADraggableRange() {
         val half = orderFlowPanelDimension(1008f, .5f)
         assertEquals(500f, half.value)

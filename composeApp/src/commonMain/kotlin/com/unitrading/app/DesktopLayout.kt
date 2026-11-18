@@ -46,9 +46,10 @@ data class DesktopLayoutPreferences(
     /** Last bounds of each window other than the main one, by its key: a panel's name, or a chart window's id. */
     val windows: Map<String, WindowBounds> = emptyMap(),
     val domWidth: Float = 300f,
+    val analyticsWidth: Float = 600f,
 ) {
     fun validate() {
-        require(listOf(sidebarWidth, domWidth, orderWidth, terminalHeight).all { it.isFinite() && it in 1f..4000f }) {
+        require(listOf(sidebarWidth, domWidth, orderWidth, terminalHeight, analyticsWidth).all { it.isFinite() && it in 1f..4000f }) {
             "面板尺寸超出范围"
         }
         require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {

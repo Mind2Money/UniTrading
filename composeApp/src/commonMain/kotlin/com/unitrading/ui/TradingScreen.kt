@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -637,6 +638,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val desktop = maxWidth >= 900.dp && maxHeight >= 600.dp
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
+                val nativeDesktop = LocalChartPlatform.current == ChartPlatform.DESKTOP
                 // Use the touch layout only on tablet-sized screens, never on a landscape phone.
                 val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
@@ -1261,7 +1263,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 }
                 val dialogsOpen = showIndicators || showOrder || popupVisible || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null ||
-                    standaloneEdit != null
+                    standaloneEdit != null || flattenReview != null || flattening || flattenResults != null
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
                 // Read as state where a window draws its overlay: that content belongs to another composition than this one.
@@ -1343,7 +1345,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
                             if (desktop) {
-                                ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
+                                if (!nativeDesktop) ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
                                 if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause,
                                     if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
@@ -1382,17 +1384,60 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request) },
                             terminal = { m ->
-                                TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                    onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
-                                    onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
-                                    onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                    modifier = m, onProtectOrder = { editPendingProtection(it) })
+                                var section by remember(plugin, accountId) { mutableStateOf(TerminalSection.POSITIONS) }
+                                val tabs = listOf(TerminalSection.POSITIONS to "持仓 ${account.positions.size}",
+                                    TerminalSection.ORDERS to "挂单 ${terminalOrders(account).rows.size}",
+                                    TerminalSection.EXECUTIONS to "成交 ${account.executions.size}",
+                                    TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
+                                Column(m.background(colors.Surface)) {
+                                    if (nativeDesktop) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                                            .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically) {
+                                                tabs.forEach { (value, label) ->
+                                                    FilterChip(section == value, { section = value }, label = { Text(label) },
+                                                        modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
+                                                }
+                                            }
+                                            val closeColors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                            TextButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
+                                                enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
+                                                contentPadding = PaddingValues(horizontal = 4.dp), colors = closeColors,
+                                                modifier = Modifier.testTag("flatten-selected-account")) { Text("平仓此子账户") }
+                                            TextButton(onClick = {
+                                                val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                                if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                            }, enabled = !busy, contentPadding = PaddingValues(horizontal = 4.dp), colors = closeColors,
+                                                modifier = Modifier.testTag("flatten-all-accounts")) { Text("平仓全部账户") }
+                                        }
+                                        AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
+                                    }
+                                    TradeTerminal(plugin, account, market, selectedPositionId, false,
+                                        onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
+                                        onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
+                                        onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
+                                        modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
+                                        section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
+                                }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
                             domOpen = showDom, onDomOpenChange = { showDom = it },
                             orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
+                            analytics = if (nativeDesktop) { { m, close ->
+                                Column(m.background(colors.Shell)) {
+                                    PanelHeader("交易分析", Modifier.background(colors.Surface), subtitle = accountName,
+                                        actions = { ActionIcon(AppIcons.Close, "关闭分析", "close-desktop-analytics", onClick = close) })
+                                    DividerLine()
+                                    key(plugin, accountId) {
+                                        AccountAnalyticsPage(session.account, analyticsTrades, Modifier.weight(1f).fillMaxWidth(),
+                                            name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs })
+                                    }
+                                }
+                            } } else null,
                             windowMenuExtra = { close ->
                                 DividerLine(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
