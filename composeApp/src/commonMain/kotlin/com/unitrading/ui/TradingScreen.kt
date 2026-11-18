@@ -221,6 +221,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** The chart windows beside the main chart, in the order they were opened. */
         var chartOrder by remember(plugin) { mutableStateOf(savedChart.extraCharts.map { it.id }) }
+        var chartOpening by remember(plugin) { mutableStateOf(false) }
         // The chart's symbol menu lists the market page's watch list, in its order.
         val watchLists by runtime.marketWatch.lists.collectAsState()
         val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
@@ -463,10 +464,24 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Opens one more chart window, on the symbol and interval of the chart being worked on. */
         fun openChart() {
+            if (chartOpening) return
             if (chartOrder.size >= ChartPreferences.MAX_EXTRA_CHARTS) { showNotice("最多同时打开 ${ChartPreferences.MAX_EXTRA_CHARTS} 个图表窗口", attention = true); return }
             val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
-            parkedCharts = parkedCharts + (id to ChartSlot(id, restoring ?: chosenSymbol, timeframe))
-            chartOrder = chartOrder + id
+            val sourceId = activeChart
+            val sourceSymbol = restoring ?: chosenSymbol
+            val sourceFrame = timeframe
+            val sourceIndicators = runtime.indicatorsForChart(sourceId).settings.value
+            chartOpening = true
+            scope.launch {
+                try {
+                    runtime.drawingsForChart(id).copySymbolFrom(runtime.drawingsForChart(sourceId), sourceSymbol)
+                    if (!runtime.indicatorsForChart(id).apply(sourceIndicators)) error("指标设置无法保存")
+                    parkedCharts = parkedCharts + (id to ChartSlot(id, sourceSymbol, sourceFrame))
+                    chartOrder = chartOrder + id
+                } catch (cancel: CancellationException) { throw cancel }
+                  catch (error: Exception) { showNotice("新建窗口失败：${error.message ?: "请重试"}", attention = true) }
+                finally { chartOpening = false }
+            }
         }
         fun selectSplitLayout(layout: ChartSplitLayout) {
             val ids = (1 until layout.count).map { "split$it" }
@@ -1341,7 +1356,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically) {
                             if (desktop) AppLogo(22.dp)
                             sharedChartBar(Modifier.weight(1f), true)
-                            AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                            if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
                             if (desktop) {
@@ -1349,10 +1364,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause,
                                     if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
-                                ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") {
-                                    showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
+                                if (!nativeDesktop) {
+                                    ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") {
+                                        showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
+                                    }
+                                    ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                                 }
-                                ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                                 if (!wide) Button({
                                     showDraft = true
                                     if (!orderDetached()) showOrder = true
@@ -1391,6 +1408,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
                                 Column(m.background(colors.Surface)) {
                                     if (nativeDesktop) {
+                                        AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                            Modifier.widthIn(max = 480.dp).fillMaxWidth().testTag("desktop-trade-accounts"),
+                                            enabled = !busy, dense = true, aliases = runtime.accountAliases)
                                         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                                             .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1438,6 +1458,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                 }
                             } } else null,
+                            onNewChartWindow = if (nativeDesktop) ::openChart else null,
+                            onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
+                            onResetLayout = if (nativeDesktop) ({
+                                showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
+                            }) else null,
                             windowMenuExtra = { close ->
                                 DividerLine(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,

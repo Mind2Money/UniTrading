@@ -72,8 +72,7 @@ class ChartWindowsUiTest {
     private fun saved() = ChartPreferencesController(store).preferences.value
     private fun awaitSaved(what: (ChartPreferences) -> Boolean) = compose.waitUntil(5_000) { what(saved()) }
     private fun newChart() {
-        compose.onNodeWithTag("rail-windows").performClick()
-        compose.onNodeWithTag("window-menu-new-chart").performClick()
+        compose.onNodeWithTag("rail-new-chart").performScrollTo().performClick()
         compose.waitForIdle()
     }
     /** A node of the chart window [chart]; the main chart is the one in the workspace. */
@@ -167,6 +166,19 @@ class ChartWindowsUiTest {
                 ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", File(folder, "desktop-four-charts.png"))
             }
         }
+    }
+
+    @Test fun newWindowCopiesCurrentIndicatorsButKeepsIndependentEdits() {
+        render()
+        compose.onNodeWithTag("chart-indicators").performClick()
+        compose.onNodeWithTag("add-indicator-MA").performClick()
+        compose.onNodeWithTag("indicators-save").performClick()
+        compose.waitUntil(5_000) { runtime.indicatorsForChart(MAIN_CHART).settings.value.indicators.size == 1 }
+        newChart()
+        compose.waitUntil(5_000) { "chart-c1" in windows.open }
+        assertEquals(runtime.indicatorsForChart(MAIN_CHART).settings.value, runtime.indicatorsForChart("c1").settings.value)
+        kotlinx.coroutines.runBlocking { runtime.indicatorsForChart("c1").apply(com.unitrading.app.IndicatorSettings()) }
+        assertEquals(1, runtime.indicatorsForChart(MAIN_CHART).settings.value.indicators.size)
     }
 
     @Test fun aNewChartWindowOpensOnTheWorkingChartAndKeepsASymbolAndIntervalOfItsOwn() {

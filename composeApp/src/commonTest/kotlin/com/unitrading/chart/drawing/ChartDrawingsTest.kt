@@ -25,6 +25,16 @@ class ChartDrawingsTest {
 
     private fun line(from: Offset, to: Offset, tool: DrawingTool = DrawingTool.TREND_LINE) { drawings.chooseTool(tool); click(from); move(to); click(to); frame() }
 
+    @Test fun newChartCopiesDrawingsWithoutSharingLaterEdits() = kotlinx.coroutines.runBlocking {
+        line(at(10, 39_000), at(30, 40_000))
+        val target = ChartDrawings(MemorySnapshotStore(), Dispatchers.Unconfined).apply { bind("TEST") }
+        target.copySymbolFrom(drawings, "TEST")
+        assertEquals(drawings.drawings, target.drawings)
+        drawings.remove(drawings.drawings.single().id)
+        assertEquals(1, target.drawings.size)
+        assertTrue(drawings.drawings.isEmpty())
+    }
+
     @Test fun twoClicksPlaceATrendLineAndDisarmTheTool() {
         drawings.chooseTool(DrawingTool.TREND_LINE)
         val a = at(10, 39_000)
