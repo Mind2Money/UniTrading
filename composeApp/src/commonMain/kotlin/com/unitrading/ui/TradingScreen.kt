@@ -239,7 +239,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val available = (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).filterNot { it in savedChart.detachedWorkspaces }
             mutableStateOf(savedChart.selectedWorkspace.takeIf { it in available } ?: available.firstOrNull() ?: MAIN_CHART)
         }
-        val workspaceSelected = remember(plugin) { mutableStateMapOf<String, String>() }
+        val workspaceSelected = remember(plugin) { mutableStateMapOf<String, String>().apply {
+            (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).forEach { workspace ->
+                val candidate = savedChart.workspaceSelections[workspace] ?: workspace
+                val count = (workspaceLayouts[workspace] ?: ChartSplitLayout.SINGLE).count
+                val validIds = (0 until count).map { index ->
+                    if (index == 0) workspace else if (workspace == MAIN_CHART) "split$index" else "${workspace}s$index"
+                }
+                if (candidate in validIds && (candidate == MAIN_CHART || candidate in parkedCharts)) put(workspace, candidate)
+            }
+        } }
         fun workspaceOf(id: String): String = if (id == MAIN_CHART || id.startsWith("split")) MAIN_CHART else id.substringBefore("s")
         fun cellId(workspace: String, index: Int): String = if (index == 0) workspace
             else if (workspace == MAIN_CHART) "split$index" else "${workspace}s$index"
@@ -453,16 +462,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val workspaceCells = workspaceCellIds.mapNotNull(::chartSlot)
         val savedLayouts = workspaceLayouts.toMap().mapValues { it.value.name }
         val savedRatios = workspaceRatios.mapValues { it.value.toMap() }
-        LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, detachedWorkspaces, selectedWorkspace) {
+        val savedSelections = workspaceSelected.toMap()
+        LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, savedSelections, detachedWorkspaces, selectedWorkspace) {
             runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
-                workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, detachedWorkspaces, selectedWorkspace)
+                workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace)
         }
 
         val saveDesktopWorkspace by rememberUpdatedState<suspend () -> Boolean>({
             runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) &&
                 runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
                 runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
-                    workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, detachedWorkspaces, selectedWorkspace) &&
+                    workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace) &&
                 runtime.desktopLayout.save() && runtime.flushChartDrawings()
         })
         SideEffect { runtime.desktopWorkspaceCount.value = 1 + chartOrder.size }
@@ -513,7 +523,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             timeframe = target.timeframe
         }
         /** Opens one more chart window, on the symbol and interval of the chart being worked on. */
-        fun openChart() {
+        fun openChart(detached: Boolean = false) {
             if (chartOpening) return
             if (chartOrder.size >= ChartPreferences.MAX_EXTRA_CHARTS) { showNotice("最多同时打开 ${ChartPreferences.MAX_EXTRA_CHARTS} 个图表窗口", attention = true); return }
             val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
@@ -530,7 +540,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     chartOrder = chartOrder + id
                     workspaceLayouts[id] = ChartSplitLayout.SINGLE
                     workspaceRatios[id] = mutableStateMapOf()
-                    selectedWorkspace = id
+                    if (detached) detachedWorkspaces = detachedWorkspaces + id else selectedWorkspace = id
                     activateChart(id)
                 } catch (cancel: CancellationException) { throw cancel }
                   catch (error: Exception) { showNotice("新建窗口失败：${error.message ?: "请重试"}", attention = true) }
@@ -539,6 +549,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         fun selectSplitLayout(workspace: String, layout: ChartSplitLayout) {
             val ids = (0 until layout.count).map { cellId(workspace, it) }
+            if ((workspaceSelected[workspace] ?: workspace) !in ids) workspaceSelected[workspace] = workspace
             if (workspaceOf(activeChart) == workspace && activeChart !in ids) activateChart(workspace)
             val source = chartSlot(workspaceSelected[workspace] ?: workspace) ?: ChartSlot(workspace, symbol, timeframe)
             val missing = ids.filter { it != activeChart && it !in parkedCharts }
@@ -1584,7 +1595,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                 }
                             } } else null,
-                            onNewChartWindow = if (nativeDesktop) ::openChart else null,
+                            onNewChartWindow = if (nativeDesktop) ({ openChart(detached = true) }) else null,
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (nativeDesktop) ({ showResetLayout = true }) else null,

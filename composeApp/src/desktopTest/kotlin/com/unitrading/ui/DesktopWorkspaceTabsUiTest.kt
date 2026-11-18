@@ -83,6 +83,7 @@ class DesktopWorkspaceTabsUiTest {
         compose.waitForIdle()
         compose.onNodeWithTag("split-cell-c1s2").assertExists()
         assertTrue(runBlocking { runtime.desktopWorkspaceSaver!!.invoke() })
+        assertEquals("c1s1", runtime.chartPreferences.preferences.value.workspaceSelections["c1"])
         compose.runOnIdle { windows = FakePanelWindows(); runtime = newRuntime() }
         compose.waitUntil(10_000) { "chart-c1" in windows.open }
         compose.onNodeWithTag("split-cell-c1s2").assertExists()
@@ -95,7 +96,10 @@ class DesktopWorkspaceTabsUiTest {
     }
     @Test fun rightNewWindowRemainsAndResetNeedsConfirmation() {
         render()
-        addTab("rail-new-chart")
+        compose.onNodeWithTag("rail-new-chart").performScrollTo().performClick()
+        compose.waitUntil(10_000) { "chart-c1" in windows.open }
+        compose.onNodeWithTag("dock-workspace-c1").performClick()
+        compose.waitForIdle()
         compose.runOnIdle { runtime.desktopLayout.update(runtime.desktopLayout.preferences.value.copy(sidebarWidth = 410f)) }
         compose.onNodeWithTag("reset-desktop-layout").performClick()
         compose.onNodeWithTag("cancel-reset-desktop-layout").performClick()

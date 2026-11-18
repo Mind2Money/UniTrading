@@ -171,7 +171,8 @@ internal fun DesktopWorkspace(
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("desktop-panel-rail"),
                     windowInsets = WindowInsets(0, 0, 0, 0),
-                    header = { Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium) }) {
+                    header = { if (onNewChartWindow == null) Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium)
+                        else Spacer(Modifier.height(8.dp)) }) {
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                     RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen && !showAnalytics) {
                         if (showAnalytics) { analyticsOpen = false; setOpen(DesktopPanel.MARKET, true) }

@@ -41,6 +41,7 @@ data class ChartPreferences(
     val workspaceLayouts: Map<String, String> = emptyMap(),
     val workspaceRatios: Map<String, Map<String, Float>> = emptyMap(),
     val workspaceCells: List<SavedChart> = emptyList(),
+    val workspaceSelections: Map<String, String> = emptyMap(),
     val detachedWorkspaces: Set<String> = emptySet(),
     val selectedWorkspace: String = "main",
     /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
@@ -66,6 +67,9 @@ data class ChartPreferences(
                 key.isNotBlank() && key.length <= 64 && value.isFinite() && value >= 0.2f && value <= 0.8f
             }
         }) { "图表布局比例无效" }
+        require(workspaceSelections.size <= MAX_EXTRA_CHARTS + 1 && workspaceSelections.all { (workspace, chart) ->
+            workspace.isNotBlank() && workspace.length <= 16 && chart.isNotBlank() && chart.length <= 16
+        }) { "图表选择无效" }
         require(workspaceLayouts.size <= MAX_EXTRA_CHARTS + 1 && workspaceLayouts.all { (id, layout) ->
             id.isNotBlank() && id.length <= 16 && layout.length <= 32
         } && workspaceCells.size <= (MAX_EXTRA_CHARTS + 1) * 3 && workspaceCells.map { it.id }.distinct().size == workspaceCells.size &&
@@ -168,11 +172,11 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     /** Persists each tab's layout and subcharts without replacing unrelated preferences. */
     suspend fun setWorkspaces(broker: String, layouts: Map<String, String>, ratios: Map<String, Map<String, Float>>,
-        cells: List<Triple<String, String, Timeframe>>, detached: Set<String>, selected: String): Boolean = saveMutex.withLock {
+        cells: List<Triple<String, String, Timeframe>>, selections: Map<String, String>, detached: Set<String>, selected: String): Boolean = saveMutex.withLock {
         val current = preferences.value
         val known = current.workspaceCells.associateBy { it.id }
         val nextCells = cells.map { (id, symbol, frame) -> SavedChart(id, known[id]?.symbols.orEmpty() + (broker to symbol), frame.seconds) }
-        val next = current.copy(workspaceLayouts = layouts, workspaceRatios = ratios, workspaceCells = nextCells,
+        val next = current.copy(workspaceLayouts = layouts, workspaceRatios = ratios, workspaceCells = nextCells, workspaceSelections = selections,
             detachedWorkspaces = detached, selectedWorkspace = selected)
         next == current || persist(next)
     }
