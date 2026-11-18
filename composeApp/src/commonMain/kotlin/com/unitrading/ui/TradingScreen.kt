@@ -228,6 +228,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Each tab is a workspace with its own root chart and up to three subcharts. */
         var chartOrder by remember(plugin) { mutableStateOf(savedChart.extraCharts.map { it.id }) }
+        var workspaceOrder by remember(plugin) {
+            val available = listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }
+            val saved = savedChart.workspaceOrder.filter { it in available }.distinct()
+            mutableStateOf(saved + available.filterNot { it in saved })
+        }
         val workspaceLayouts = remember(plugin) { mutableStateMapOf<String, ChartSplitLayout>().apply {
             savedChart.workspaceLayouts.forEach { (id, name) -> ChartSplitLayout.entries.firstOrNull { it.name == name }?.let { put(id, it) } }
         } }
@@ -475,16 +480,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val savedLayouts = workspaceLayouts.toMap().mapValues { it.value.name }
         val savedRatios = workspaceRatios.mapValues { it.value.toMap() }
         val savedSelections = workspaceSelected.toMap()
-        LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, savedSelections, detachedWorkspaces, selectedWorkspace) {
+        LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) {
             runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
-                workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace)
+                workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder)
         }
 
         val saveDesktopWorkspace by rememberUpdatedState<suspend () -> Boolean>({
             runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) &&
                 runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
                 runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
-                    workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace) &&
+                    workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) &&
                 runtime.desktopLayout.save() && runtime.flushChartDrawings()
         })
         SideEffect { runtime.desktopWorkspaceCount.value = 1 + chartOrder.size }
@@ -550,6 +555,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (!runtime.indicatorsForChart(id).apply(sourceIndicators)) error("指标设置无法保存")
                     parkedCharts = parkedCharts + (id to ChartSlot(id, sourceSymbol, sourceFrame))
                     chartOrder = chartOrder + id
+                    workspaceOrder = workspaceOrder + id
                     workspaceLayouts[id] = ChartSplitLayout.SINGLE
                     workspaceRatios[id] = mutableStateMapOf()
                     if (detached) detachedWorkspaces = detachedWorkspaces + id else selectedWorkspace = id
@@ -567,6 +573,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val missing = ids.filter { it != activeChart && it !in parkedCharts }
             parkedCharts = parkedCharts + missing.associateWith { ChartSlot(it, source.symbol, source.timeframe) }
             workspaceLayouts[workspace] = layout
+        }
+        fun reorderWorkspaces(visibleOrder: List<String>) {
+            val currentVisible = workspaceOrder.filterNot { it in detachedWorkspaces }
+            if (visibleOrder.size != currentVisible.size || visibleOrder.toSet() != currentVisible.toSet()) return
+            val reordered = visibleOrder.iterator()
+            workspaceOrder = workspaceOrder.map { if (it in detachedWorkspaces) it else reordered.next() }
         }
         fun selectWorkspace(id: String) {
             if (id in detachedWorkspaces) return
@@ -596,6 +608,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             workspaceRatios.remove(id)
             workspaceSelected.remove(id)
             chartOrder = chartOrder - id
+            workspaceOrder = workspaceOrder - id
             runtime.desktopLayout.setWindowBounds(chartWindowKey(id), null)
             scope.launch { runtime.desktopLayout.save() }
         }
@@ -1227,7 +1240,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)
                         else -> actionFill(MaterialTheme.colorScheme.error)
                     }
-                    AlertDialog(
+                    if (nativeDesktop && desktop && action is Confirmation.Place) {
+                        val r = liveOrder ?: action.request
+                        val bracketsApply = orderRule.bracketsApply(account, hedging, r)
+                        DesktopOrderConfirmation(title, loginName, accountName, environment.label, instrument, r, livePreview,
+                            placeConfirmationDisclosure(r, bracketsApply, brackets.enabled, sizeByRisk), action.fromKeys, busy,
+                            onCancel = { confirmation = null }, onConfirm = { confirmation = null; executeTrade(action) })
+                    } else AlertDialog(
                         onDismissRequest = { if (!busy) confirmation = null },
                         title = { Text(title) },
                         // On a phone held sideways the rows do not fit: they scroll, and the buttons stay below them.
@@ -1246,13 +1265,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     EstimateRow("止盈价$estimated", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
                                     EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
                                     val bracketsApply = orderRule.bracketsApply(account, hedging, r)
-                                    Text(when {
-                                        sizeByRisk && bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"
-                                        bracketsApply && r.kind == OrderKind.MARKET -> "提交时按最新报价重算自动止损止盈，实际成交价可能与预估不同。"
-                                        brackets.enabled && !bracketsApply -> (if (sizeByRisk) "减仓单按输入的数量提交，不按风险计算手数。" else "减仓单不附加子账户止损止盈。") +
-                                            "提交时会按最新报价和账户状态重新校验。"
-                                        else -> "提交时会按最新报价和账户状态重新校验，实际成交价可能与预估不同。"
-                                    },
+                                    Text(placeConfirmationDisclosure(r, bracketsApply, brackets.enabled, sizeByRisk),
                                         style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
                                     // An error says why 确认 is disabled, so it comes before the broker's notes.
@@ -1471,7 +1484,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 val titleBarSlot = LocalDesktopTitleBarSlot.current
-                val tabs = if (nativeDesktop && panelWindows) (listOf(MAIN_CHART) + chartOrder)
+                val tabs = if (nativeDesktop && panelWindows) workspaceOrder
                     .filterNot { it in detachedWorkspaces }.map { id ->
                         val tabChart = chartSlot(workspaceSelected[id] ?: id)
                         val tabSymbol = tabChart?.symbol ?: "图表"
@@ -1479,7 +1492,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                     } else emptyList()
                 val latestTitleTabs = rememberUpdatedState<@Composable () -> Unit>({
-                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, Modifier.fillMaxWidth())
+                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces, Modifier.fillMaxWidth())
                 })
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
@@ -1560,26 +1573,29 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
                                 Column(m.background(colors.Surface)) {
                                     if (nativeDesktop) {
-                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
                                             .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                verticalAlignment = Alignment.CenterVertically) {
-                                                tabs.forEach { (value, label) ->
-                                                    FilterChip(section == value, { section = value }, label = { Text(label) },
-                                                        modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
-                                                }
+                                            tabs.forEach { (value, label) ->
+                                                FilterChip(section == value, { section = value }, label = { Text(label) },
+                                                    modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
                                             }
+                                        }
+                                        // Keep bulk actions below the tabs and account selectors so a navigation click cannot hit them.
+                                        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 2.dp)
+                                            .testTag("desktop-flatten-actions"), horizontalArrangement = Arrangement.End,
+                                            verticalAlignment = Alignment.CenterVertically) {
                                             val closeColors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                                             TextButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
                                                 enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
-                                                contentPadding = PaddingValues(horizontal = 4.dp), colors = closeColors,
-                                                modifier = Modifier.testTag("flatten-selected-account")) { Text("平仓此子账户") }
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), colors = closeColors,
+                                                modifier = Modifier.height(36.dp).testTag("flatten-selected-account")) { Text("平仓此子账户") }
+                                            Spacer(Modifier.width(8.dp))
                                             TextButton(onClick = {
                                                 val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                                 if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
-                                            }, enabled = !busy, contentPadding = PaddingValues(horizontal = 4.dp), colors = closeColors,
-                                                modifier = Modifier.testTag("flatten-all-accounts")) { Text("平仓全部账户") }
+                                            }, enabled = !busy, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), colors = closeColors,
+                                                modifier = Modifier.height(36.dp).testTag("flatten-all-accounts")) { Text("平仓全部账户") }
                                         }
                                         AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
                                     }

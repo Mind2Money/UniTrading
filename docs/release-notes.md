@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 桌面窗口标签支持左右拖动排序并保存顺序；交易区将批量平仓按钮移到标签下方，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
+
 - Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅，账户选择器回到交易栏；两个新建窗口入口都创建标签页，保留单独拖出功能。
 
 - 收紧桌面账户选择和窗口标签栏；指标与绘图撤销合并到图表工具栏及快捷键，精简价格轴与图层菜单，并对齐分析日历。
@@ -31,6 +33,8 @@
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Reorder desktop workspace tabs by dragging and restore their saved order; move bulk-flatten controls below the trading tabs, add chart-menu icons, and redesign desktop order review while retaining the existing safety checks.
 
 - Put Windows workspace tabs and their live last price and percentage change in the title bar, return account selectors to the trading bar, and make both new-window buttons create a tab.
 

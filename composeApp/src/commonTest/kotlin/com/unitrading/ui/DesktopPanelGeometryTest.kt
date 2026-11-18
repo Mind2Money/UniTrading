@@ -101,6 +101,7 @@ class DesktopPanelGeometryTest {
         val viewportHeight = 490f
         val layout = desktopPanelGeometry(900f, viewportHeight, false, preferred, orderFlowOpen = true)
         assertTrue(viewportHeight - PANEL_DIVIDER - layout.terminal.value >= 320f)
+        assertTrue(layout.terminal.value >= 160f, "The account tabs and separate flatten actions remain usable")
         assertEquals(220f, preferred.terminalHeight, "The saved preference remains unchanged")
     }
 

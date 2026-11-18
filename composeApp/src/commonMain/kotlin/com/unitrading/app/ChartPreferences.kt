@@ -44,6 +44,8 @@ data class ChartPreferences(
     val workspaceSelections: Map<String, String> = emptyMap(),
     val detachedWorkspaces: Set<String> = emptySet(),
     val selectedWorkspace: String = "main",
+    /** Visual order of all workspaces, including the main and temporarily detached tabs. */
+    val workspaceOrder: List<String> = emptyList(),
     /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
     val chartLocked: Boolean = false,
     /** Whether historical fills and trade markers are shown on charts. */
@@ -62,6 +64,8 @@ data class ChartPreferences(
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
         require(indicatorPaneFractions.all { (id, fraction) -> id.isNotBlank() && fraction.isFinite() && fraction > 0f && fraction <= .75f }) { "指标窗口比例超出范围" }
         require(lastSymbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }) { "上次图表品种无效" }
+        require(workspaceOrder.size <= MAX_EXTRA_CHARTS + 1 && workspaceOrder.distinct().size == workspaceOrder.size &&
+            workspaceOrder.all { it.isNotBlank() && it.length <= 16 }) { "图表窗口顺序无效" }
         require(workspaceRatios.size <= MAX_EXTRA_CHARTS + 1 && workspaceRatios.all { (id, ratios) ->
             id.isNotBlank() && id.length <= 16 && ratios.size <= 16 && ratios.all { (key, value) ->
                 key.isNotBlank() && key.length <= 64 && value.isFinite() && value >= 0.2f && value <= 0.8f
@@ -172,12 +176,13 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     /** Persists each tab's layout and subcharts without replacing unrelated preferences. */
     suspend fun setWorkspaces(broker: String, layouts: Map<String, String>, ratios: Map<String, Map<String, Float>>,
-        cells: List<Triple<String, String, Timeframe>>, selections: Map<String, String>, detached: Set<String>, selected: String): Boolean = saveMutex.withLock {
+        cells: List<Triple<String, String, Timeframe>>, selections: Map<String, String>, detached: Set<String>, selected: String,
+        order: List<String>): Boolean = saveMutex.withLock {
         val current = preferences.value
         val known = current.workspaceCells.associateBy { it.id }
         val nextCells = cells.map { (id, symbol, frame) -> SavedChart(id, known[id]?.symbols.orEmpty() + (broker to symbol), frame.seconds) }
         val next = current.copy(workspaceLayouts = layouts, workspaceRatios = ratios, workspaceCells = nextCells, workspaceSelections = selections,
-            detachedWorkspaces = detached, selectedWorkspace = selected)
+            detachedWorkspaces = detached, selectedWorkspace = selected, workspaceOrder = order)
         next == current || persist(next)
     }
 

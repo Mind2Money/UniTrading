@@ -49,7 +49,8 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
         minOf(if (analyticsOpen) 900f else 520f, room - if (orderOpen) 260f else 0f)) else closed
     val order = if (orderOpen) dimension(preferred.orderWidth, 260f, minOf(560f, room - sidebar.value)) else closed
     val availableHeight = (height - PANEL_DIVIDER).coerceAtLeast(0f)
-    val terminalMin = minOf(128f, availableHeight * .35f)
+    // The separated bulk-action row needs room below the account bar and section tabs.
+    val terminalMin = minOf(160f, availableHeight * .35f)
     return DesktopPanelGeometry(
         if (preferred.marketOpen) sidebar.copy(max = minOf(sidebar.max, room - order.value).coerceAtLeast(sidebar.min)) else closed, order,
         // Leave enough chart height for the compact order-flow controls and a complete price row.

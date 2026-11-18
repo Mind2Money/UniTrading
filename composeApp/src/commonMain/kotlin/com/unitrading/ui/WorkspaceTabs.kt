@@ -1,5 +1,7 @@
 package com.unitrading.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,13 +18,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Quote
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** A title slot owned by the desktop window, populated only while the trading workspace exists. */
 internal class DesktopTitleBarSlot {
@@ -48,31 +61,112 @@ internal fun groupPriceDigits(price: String): String {
     return (if (negative) "-" else "") + whole + (if (parts.size == 2) ".${parts[1]}" else "")
 }
 
-/** Tabs remain independent chart workspaces; dragging a tab vertically or its button detaches it. */
+/** Snapshot tab positions at drag start; the list is committed only when a horizontal drag is released. */
+private class WorkspaceTabDrag(
+    val id: String, val ids: List<String>, val starts: List<Float>, val widths: List<Float>,
+    val startScroll: Int, val grabX: Float,
+) {
+    var x by mutableFloatStateOf(0f)
+    var y by mutableFloatStateOf(0f)
+    val from = ids.indexOf(id)
+    val pointerX get() = starts[from] + grabX + x
+    fun detaching(threshold: Float) = abs(y) > threshold && abs(y) > abs(x)
+    fun target(scroll: Int, threshold: Float): Int {
+        if (detaching(threshold)) return from
+        val center = starts[from] + widths[from] / 2f + x + scroll - startScroll
+        var to = from
+        while (to < starts.lastIndex && center > starts[to + 1] + widths[to + 1] / 2f) to++
+        if (to == from) while (to > 0 && center < starts[to - 1] + widths[to - 1] / 2f) to--
+        return to
+    }
+}
+
+/** Tabs remain independent workspaces; drag horizontally to reorder or vertically to detach. */
 @Composable
 internal fun WorkspaceTabStrip(
     tabs: List<WorkspaceTabData>, selected: String,
     onSelect: (String) -> Unit, onDetach: (String) -> Unit, onClose: (String) -> Unit,
+    onReorder: (List<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val detach by rememberUpdatedState(onDetach)
+    val reorder by rememberUpdatedState(onReorder)
+    val currentTabs by rememberUpdatedState(tabs)
     val colors = MaterialTheme.colorScheme
     val palette = TradingColors
-    Row(modifier.fillMaxHeight().horizontalScroll(rememberScrollState()).testTag("chart-workspace-tabs"),
+    val density = LocalDensity.current
+    val threshold = with(density) { 35.dp.toPx() }
+    val spacing = with(density) { 4.dp.toPx() }
+    val edgeZone = with(density) { 40.dp.toPx() }
+    val speed = with(density) { 300.dp.toPx() }
+    val scroll = rememberScrollState()
+    val placements = remember { mutableMapOf<String, LayoutCoordinates>() }
+    var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var drag by remember { mutableStateOf<WorkspaceTabDrag?>(null) }
+    val held = drag
+    val viewLeft = viewport?.positionInWindow()?.x ?: 0f
+    val viewRight = viewLeft + (viewport?.size?.width ?: 0)
+    val edge = if (held == null || held.detaching(threshold)) 0 else when {
+        held.x < 0f && held.pointerX < viewLeft + edgeZone -> -1
+        held.x > 0f && held.pointerX > viewRight - edgeZone -> 1
+        else -> 0
+    }
+    LaunchedEffect(edge, held?.id) {
+        val end = when (edge) { -1 -> 0; 1 -> scroll.maxValue; else -> return@LaunchedEffect }
+        val duration = (abs(end - scroll.value) * 1000f / speed).roundToInt().coerceAtLeast(1)
+        scroll.animateScrollTo(end, tween(duration, easing = LinearEasing))
+    }
+    Row(modifier.fillMaxHeight().onGloballyPositioned { viewport = it }.horizontalScroll(scroll).testTag("chart-workspace-tabs"),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        tabs.forEach { tab -> key(tab.id) {
-            var dragY by remember(tab.id) { mutableFloatStateOf(0f) }
+        tabs.forEachIndexed { index, tab -> key(tab.id) {
             val active = tab.id == selected
             val shape = RoundedCornerShape(7.dp)
-            Row(Modifier.height(32.dp).widthIn(min = 150.dp, max = 300.dp).clip(shape)
-                .background(if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
-                .border(1.dp, if (active) colors.primary.copy(alpha = .45f) else colors.outlineVariant, shape)
+            val mine = held?.takeIf { it.id == tab.id }
+            val target = held?.target(scroll.value, threshold) ?: index
+            val shift = when {
+                held == null -> 0f
+                mine != null && !held.detaching(threshold) -> held.x + scroll.value - held.startScroll
+                mine != null -> 0f
+                index in (held.from + 1)..target -> -(held.widths[held.from] + spacing)
+                index in target until held.from -> held.widths[held.from] + spacing
+                else -> 0f
+            }
+            Row(Modifier.height(32.dp).widthIn(min = 150.dp, max = 300.dp)
+                .onGloballyPositioned { placements[tab.id] = it }.zIndex(if (mine != null) 1f else 0f)
+                .graphicsLayer { translationX = shift; if (mine != null) shadowElevation = 5.dp.toPx() }
+                .clip(shape).background(if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
+                .border(1.dp, if (active || mine != null) colors.primary.copy(alpha = .6f) else colors.outlineVariant, shape)
                 .pointerInput(tab.id) {
-                    detectDragGestures(onDragStart = { dragY = 0f }, onDragEnd = {
-                        if (kotlin.math.abs(dragY) > 35.dp.toPx()) detach(tab.id)
-                    }) { change, amount -> dragY += amount.y; change.consume() }
+                    detectDragGestures(onDragStart = { position ->
+                        val ids = currentTabs.map { it.id }
+                        val rows = ids.mapNotNull { placements[it] }
+                        if (rows.size == ids.size && tab.id in ids) drag = WorkspaceTabDrag(tab.id, ids,
+                            rows.map { it.positionInWindow().x }, rows.map { it.size.width.toFloat() }, scroll.value, position.x)
+                    }, onDragEnd = {
+                        val finished = drag?.takeIf { it.id == tab.id }
+                        drag = null
+                        if (finished != null && finished.ids == currentTabs.map { it.id }) {
+                            if (finished.detaching(threshold)) detach(tab.id)
+                            else {
+                                val to = finished.target(scroll.value, threshold)
+                                if (to != finished.from) reorder(finished.ids.toMutableList().apply { add(to, removeAt(finished.from)) })
+                            }
+                        }
+                    }, onDragCancel = { drag = null }) { change, amount ->
+                        drag?.takeIf { it.id == tab.id }?.let { it.x += amount.x; it.y += amount.y }
+                        change.consume()
+                    }
                 }.clickable { onSelect(tab.id) }.testTag("workspace-tab-${tab.id}")
-                .padding(start = 8.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                .semantics {
+                    customActions = listOfNotNull(
+                        CustomAccessibilityAction("向左移动 ${tab.symbol}") {
+                            reorder(currentTabs.map { it.id }.toMutableList().apply { add(index - 1, removeAt(index)) }); true
+                        }.takeIf { index > 0 },
+                        CustomAccessibilityAction("向右移动 ${tab.symbol}") {
+                            reorder(currentTabs.map { it.id }.toMutableList().apply { add(index + 1, removeAt(index)) }); true
+                        }.takeIf { index < tabs.lastIndex },
+                    )
+                }.padding(start = 8.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(tab.symbol, Modifier.widthIn(max = 80.dp).testTag("workspace-symbol-${tab.id}"), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
