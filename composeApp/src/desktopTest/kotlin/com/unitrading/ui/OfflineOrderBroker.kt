@@ -22,6 +22,8 @@ internal class OfflineOrderBroker : BrokerPlugin {
     val placed = mutableListOf<OrderRequest>()
     /** The charts the screen asked to keep live, the one being worked on first; one entry for each time it asked. */
     val watched = mutableListOf<List<Pair<String, Timeframe>>>()
+    val quoteWatches = mutableListOf<Set<String>>()
+    override fun watchQuotes(symbols: Set<String>) { quoteWatches += symbols.toSet() }
     override fun watchAll(series: List<Pair<String, Timeframe>>) { watched += series }
     /** What the broker's own check answers; an error stands for any order it would refuse. */
     var refusal: String? = null

@@ -1,7 +1,6 @@
 package com.unitrading.ui
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -11,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.material3.Text
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -97,8 +98,9 @@ class DesktopWorkspaceTabsUiTest {
     @Test fun rightNewWindowRemainsAndResetNeedsConfirmation() {
         render()
         compose.onNodeWithTag("rail-new-chart").performScrollTo().performClick()
-        compose.waitUntil(10_000) { "chart-c1" in windows.open }
-        compose.onNodeWithTag("dock-workspace-c1").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        assertTrue("chart-c1" !in windows.open, "The rail button creates a tab rather than a detached window")
+        compose.onNodeWithTag("chart-new-workspace").assertTextContains("新建窗口", substring = true)
         compose.waitForIdle()
         compose.runOnIdle { runtime.desktopLayout.update(runtime.desktopLayout.preferences.value.copy(sidebarWidth = 410f)) }
         compose.onNodeWithTag("reset-desktop-layout").performClick()
@@ -110,9 +112,10 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("workspace-tab-c1").assertExists()
         val header = compose.onNodeWithTag("desktop-title-toolbar").fetchSemanticsNode().boundsInRoot
         val tabs = compose.onNodeWithTag("chart-workspace-tabs").fetchSemanticsNode().boundsInRoot
+        val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
         val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
-        assertTrue(accounts.top >= header.top && accounts.bottom <= header.bottom + 1f)
-        assertTrue(tabs.left > header.left && tabs.right <= accounts.left)
+        assertTrue(tabs.top >= header.top && tabs.bottom <= header.bottom + 1f)
+        assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
         assertTrue(accounts.width <= 360f * .6f + 1f)
     }
     @Test fun foldedTradeBarKeepsAccountPickersAndMenusWorking() {
@@ -131,6 +134,58 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("desktop-terminal-toggle").performClick()
         compose.onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
     }
+    @Test fun eachTabShowsItsOwnLiveLastTradeAndChange() {
+        render()
+        compose.runOnIdle {
+            val first = broker.market.value.quotes.getValue("TESTZ6").copy(lastTrade = 550000, settlement = 555000)
+            val second = broker.market.value.quotes.getValue("OTHRZ6").copy(lastTrade = 700000, settlement = 700000)
+            broker.market.value = broker.market.value.copy(quotes = mapOf("TESTZ6" to first, "OTHRZ6" to second), revision = 1)
+        }
+        compose.onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("5,500.00")
+        compose.onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)
+        addTab()
+        compose.onNodeWithTag("chart-symbol").performClick()
+        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("workspace-symbol-c1", useUnmergedTree = true).assertTextEquals("OTHRZ6")
+        compose.onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("7,000.00")
+        compose.runOnIdle { runtime.marketWatch.update(broker.descriptor.id, listOf("TESTZ6")) }
+        compose.onNodeWithTag("workspace-tab-main").performClick()
+        compose.waitUntil(5_000) { broker.quoteWatches.lastOrNull()?.contains("OTHRZ6") == true }
+        compose.runOnIdle {
+            val updated = broker.market.value.quotes.getValue("OTHRZ6").copy(lastTrade = 701000)
+            broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes + ("OTHRZ6" to updated), revision = 2)
+        }
+        compose.onNodeWithTag("workspace-price-c1", useUnmergedTree = true).assertTextEquals("7,010.00")
+        compose.onNodeWithTag("workspace-change-c1", useUnmergedTree = true).assertTextContains("+0.14%", substring = true)
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun windowsFrameHostsLiveTabsWithoutASecondToolbar() {
+        val slot = DesktopTitleBarSlot()
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+            LocalPanelWindowHost provides windows, LocalDesktopTitleBarSlot provides slot) {
+            Column(Modifier.requiredSize(1500.dp, 1000.dp)) {
+                Row(Modifier.height(40.dp).fillMaxWidth().testTag("actual-window-title-bar")) {
+                    Text("UniTrading · 交易终端")
+                    Box(Modifier.weight(1f).fillMaxHeight()) { slot.content?.invoke() }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) { TradingScreen(runtime) }
+            }
+        } }
+        compose.waitForIdle()
+        compose.onNodeWithTag("desktop-title-toolbar").assertDoesNotExist()
+        compose.onNode(hasTestTag("workspace-tab-main") and hasAnyAncestor(hasTestTag("actual-window-title-bar"))).assertExists()
+        compose.onNodeWithTag("chart-new-workspace").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasTestTag("workspace-tab-c1") and hasAnyAncestor(hasTestTag("actual-window-title-bar"))).assertExists()
+        val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+        val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+        assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
+        val out = File("../artifacts/desktop-tabs/windows-title-tabs.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
+    }
+
     @Test fun detachedTabCanBeDraggedBackOnlyOverTheMainTabStrip() {
         render(); addTab()
         compose.onNodeWithTag("detach-workspace-c1").performClick()

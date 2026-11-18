@@ -40,9 +40,9 @@ class UnifiedToolbarUiTest {
             val login = onNodeWithTag("quick-login-picker").fetchSemanticsNode().boundsInRoot
             assertTrue(chartBar.top >= header.top && chartBar.bottom <= header.bottom + 1f)
             if (platform == ChartPlatform.DESKTOP) {
-                val titleBar = onNodeWithTag("desktop-title-toolbar").fetchSemanticsNode().boundsInRoot
-                assertTrue(login.top >= titleBar.top && login.bottom <= titleBar.bottom + 1f)
-                assertTrue(titleBar.bottom <= header.top + 1f)
+                val terminalBar = onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+                assertTrue(login.top >= terminalBar.top && login.bottom <= terminalBar.bottom + 1f)
+                assertTrue(login.top > header.bottom)
             } else assertTrue(login.top >= header.top && login.bottom <= header.bottom + 1f)
             onNodeWithTag("quick-account-picker").performClick()
             onNodeWithTag("quick-account-${runtime.registry.plugins.first().accounts.first().id}").performClick()

@@ -14,6 +14,13 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import com.unitrading.ui.DesktopTitleBarSlot
+import com.unitrading.ui.LocalDesktopTitleBarSlot
+import com.unitrading.ui.TradingTheme
+import com.unitrading.ui.WindowsTitleBar
 import com.unitrading.app.AnalyticsTradeCache
 import com.unitrading.app.LicenseController
 import com.unitrading.app.CheckOnlyUpdateTarget
@@ -110,9 +117,24 @@ private fun desktopApplication(args: Array<String>) = application {
         else shutdown()
     }
     LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { requestClose() } } }
-    Window(onCloseRequest = ::requestClose, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
-        state = rememberWindowState(width = 1440.dp, height = 940.dp), icon = rememberVectorPainter(AppIcons.LogoTile)) {
-        LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
+    val windowState = rememberWindowState(width = 1440.dp, height = 940.dp)
+    val customTitle = remember { System.getProperty("os.name").startsWith("Windows", ignoreCase = true) || System.getProperty("unitrading.customTitleBar") == "true" }
+    val titleSlot = remember { DesktopTitleBarSlot() }
+    val windowTitle = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端"
+    Window(onCloseRequest = ::requestClose, title = windowTitle, state = windowState, undecorated = customTitle,
+        icon = rememberVectorPainter(AppIcons.LogoTile)) {
+        val content: @Composable () -> Unit = {
+            LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
+        }
+        if (customTitle) {
+            val theme by runtime.theme.settings.collectAsState()
+            CompositionLocalProvider(LocalDesktopTitleBarSlot provides titleSlot) {
+                Column(Modifier.fillMaxSize()) {
+                    TradingTheme(theme) { WindowsTitleBar(titleSlot, windowState, windowTitle, ::requestClose) }
+                    Box(Modifier.weight(1f).fillMaxSize()) { content() }
+                }
+            }
+        } else content()
         if (confirmExit) AlertDialog(onDismissRequest = { if (!closing) confirmExit = false },
             title = { Text("保存窗口布局？") },
             text = { Text(exitError ?: "保存当前图表标签、分图和独立窗口，下次打开时恢复。") },

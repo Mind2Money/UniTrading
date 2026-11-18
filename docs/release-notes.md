@@ -2,9 +2,11 @@
 
 ## 简体中文
 
+- Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅，账户选择器回到交易栏；两个新建窗口入口都创建标签页，保留单独拖出功能。
+
 - 收紧桌面账户选择和窗口标签栏；指标与绘图撤销合并到图表工具栏及快捷键，精简价格轴与图层菜单，并对齐分析日历。
 
-- 桌面顶栏保留两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
+- 桌面交易栏保留两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
 
 - 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
 
@@ -30,9 +32,11 @@
 
 ## English
 
+- Put Windows workspace tabs and their live last price and percentage change in the title bar, return account selectors to the trading bar, and make both new-window buttons create a tab.
+
 - Compact desktop account selectors and workspace tabs, combine chart undo for drawings and indicators, streamline menus, and align the analytics calendar.
 
-- Keep account selectors in the desktop header, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
+- Keep account selectors in the desktop trading bar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
 
 - Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
 

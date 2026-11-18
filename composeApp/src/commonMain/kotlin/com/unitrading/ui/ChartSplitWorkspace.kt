@@ -111,7 +111,11 @@ internal fun ChartLayoutMenu(layout: ChartSplitLayout, onLayout: (ChartSplitLayo
 internal fun ChartNewWorkspaceButton(onClick: () -> Unit, enabled: Boolean) {
     val colors = MaterialTheme.colorScheme
     AssistChip(onClick = onClick, enabled = enabled, modifier = Modifier.testTag("chart-new-workspace"),
-        label = { Icon(AppIcons.Add, "新建图表布局", Modifier.size(18.dp)) },
+        label = { Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(AppIcons.Add, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("新建窗口")
+        } },
         colors = AssistChipDefaults.assistChipColors(containerColor = colors.surfaceContainerHigh.copy(alpha = .94f),
             labelColor = colors.onSurface), border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant))
 }
