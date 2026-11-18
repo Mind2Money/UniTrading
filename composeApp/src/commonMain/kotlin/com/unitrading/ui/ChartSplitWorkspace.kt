@@ -112,15 +112,18 @@ internal fun ChartSplitWorkspace(
     activeChart: String,
     chart: @Composable (String, Modifier) -> Unit,
     modifier: Modifier = Modifier,
+    chartId: (String) -> String = { it },
+    ratiosOverride: MutableMap<String, Float>? = null,
 ) {
     val colors = MaterialTheme.colorScheme
-    val ratios = remember { mutableMapOf<String, Float>() }
+    val defaultRatios = remember { mutableMapOf<String, Float>() }
+    val ratios = ratiosOverride ?: defaultRatios
     Column(modifier.testTag("split-workspace")) {
         @Composable fun cell(id: String, cellModifier: Modifier) {
             Box(cellModifier.border(1.dp,
-                if (id == activeChart && layout.count > 1) colors.primary else colors.outlineVariant).clipToBounds()
-                .testTag("split-cell-$id")) {
-                chart(id, Modifier.fillMaxSize())
+                if (chartId(id) == activeChart && layout.count > 1) colors.primary else colors.outlineVariant).clipToBounds()
+                .testTag("split-cell-${chartId(id)}")) {
+                chart(chartId(id), Modifier.fillMaxSize())
             }
         }
         val content = Modifier.weight(1f).fillMaxWidth()

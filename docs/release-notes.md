@@ -2,13 +2,15 @@
 
 ## 简体中文
 
+- 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
+
 - 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录，并在交易区固定提供按账户平仓入口。手机版和平板原有账户页面保留。
 - 桌面和平板图表将账户选择、周期、指标、图层与布局合并为单行工具栏，工具较多时可横向滚动；手机版保留原有布局。
 - 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
 - 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
 - 多图共用顶部和左侧绘图工具栏，操作当前子图；缩小可拖动的分隔线，Windows 的 DOM 移到独立侧栏并跟随当前品种。
-- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。布局及分隔比例目前不会在重启后恢复。
+- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。桌面布局及分隔比例可保存恢复；平板布局暂不恢复。
 - 图表右键菜单新增移除绘图及撤销指标、绘图更改的操作；仅影响当前子图，撤销历史保留至应用关闭。
 - 新增只读 DOM 盘口面板，从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
 - 当已确认的实际合约有新成交而连续合约图表停滞或明显落后时，自动限频重订阅连续图表；不根据报价拼造 K 线或重发订单。实时券商连接仍需验证，数据源本身的延迟无法由此消除。
@@ -24,13 +26,15 @@
 
 ## English
 
+- Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
+
 - Add desktop analytics to the side rail and consolidate positions, orders, executions, closed trades and account-flatten controls in the trading panel; phone and tablet account pages remain available.
 - Combine the desktop and tablet account selectors and chart controls in a single scrollable toolbar, retaining the phone layout.
 - Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.
 - Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.
 - Share chart and drawing toolbars across split charts, scope controls to the selected pane, reduce divider spacing, and dock the Windows DOM in a resizable side panel following the selected instrument.
-- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Layout and divider sizes do not yet persist across restarts.
+- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Desktop layouts and divider sizes can be restored; tablet layouts are not yet persisted.
 - Add chart context-menu actions to remove drawings and undo indicator or drawing changes for the selected chart; undo history lasts until the app closes.
 - Add a read-only DOM panel in chart layers; live depth depends on Tradovate market-data permissions.
 - Rate-limit automatic resubscription when a verified dated contract trades but its continuous chart stalls or falls substantially behind. The app does not synthesize bars from quotes or replay orders; live broker verification remains outstanding and upstream delays can still occur.

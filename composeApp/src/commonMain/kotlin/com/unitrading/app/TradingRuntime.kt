@@ -27,6 +27,9 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val startupError = MutableStateFlow<String?>(null)
     val storageError = MutableStateFlow<String?>(null)
     val paused = MutableStateFlow(false)
+    /** The active desktop screen supplies a snapshot for the save-before-exit flow. */
+    val desktopWorkspaceCount = MutableStateFlow(0)
+    var desktopWorkspaceSaver: (suspend () -> Boolean)? = null
     private val saveMutex = Mutex()
     val theme = ThemeController(store)
     val tradingPreferences: TradingPreferencesController by lazy { TradingPreferencesController(store) }
@@ -67,6 +70,10 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
         chartDrawingControllers.getOrPut(id) {
             com.unitrading.chart.drawing.ChartDrawings(com.unitrading.chart.drawing.DrawingLibrary(chartStore(id)), drawingLibrary)
         }
+    suspend fun flushChartDrawings(): Boolean {
+        if (!drawings.flush()) return false
+        return chartDrawingControllers.values.all { it.flush() }
+    }
     /** Names the user gave logins and accounts on this device. */
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
     internal val accountRisk by lazy { AccountRiskController(store) }

@@ -37,6 +37,12 @@ data class ChartPreferences(
     val lastTimeframeSeconds: Int? = null,
     /** The chart windows open beside the main chart, in the order they were opened. */
     val extraCharts: List<SavedChart> = emptyList(),
+    /** Desktop workspace tabs and their individual split-chart state. */
+    val workspaceLayouts: Map<String, String> = emptyMap(),
+    val workspaceRatios: Map<String, Map<String, Float>> = emptyMap(),
+    val workspaceCells: List<SavedChart> = emptyList(),
+    val detachedWorkspaces: Set<String> = emptySet(),
+    val selectedWorkspace: String = "main",
     /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
     val chartLocked: Boolean = false,
     /** Whether historical fills and trade markers are shown on charts. */
@@ -55,6 +61,18 @@ data class ChartPreferences(
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
         require(indicatorPaneFractions.all { (id, fraction) -> id.isNotBlank() && fraction.isFinite() && fraction > 0f && fraction <= .75f }) { "指标窗口比例超出范围" }
         require(lastSymbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }) { "上次图表品种无效" }
+        require(workspaceRatios.size <= MAX_EXTRA_CHARTS + 1 && workspaceRatios.all { (id, ratios) ->
+            id.isNotBlank() && id.length <= 16 && ratios.size <= 16 && ratios.all { (key, value) ->
+                key.isNotBlank() && key.length <= 64 && value.isFinite() && value >= 0.2f && value <= 0.8f
+            }
+        }) { "图表布局比例无效" }
+        require(workspaceLayouts.size <= MAX_EXTRA_CHARTS + 1 && workspaceLayouts.all { (id, layout) ->
+            id.isNotBlank() && id.length <= 16 && layout.length <= 32
+        } && workspaceCells.size <= (MAX_EXTRA_CHARTS + 1) * 3 && workspaceCells.map { it.id }.distinct().size == workspaceCells.size &&
+            workspaceCells.all { it.id.isNotBlank() && it.id.length <= 16 && it.timeframeSeconds in 1..Timeframe.MAX_SECONDS &&
+                it.symbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 } } &&
+            detachedWorkspaces.size <= MAX_EXTRA_CHARTS && detachedWorkspaces.all { it.isNotBlank() && it.length <= 16 } &&
+            selectedWorkspace.isNotBlank() && selectedWorkspace.length <= 16) { "图表布局设置无效" }
         require(extraCharts.size <= MAX_EXTRA_CHARTS && extraCharts.map { it.id }.distinct().size == extraCharts.size && extraCharts.all { chart ->
             chart.id.isNotBlank() && chart.id.length <= 16 && chart.timeframeSeconds in 1..Timeframe.MAX_SECONDS &&
                 chart.symbols.all { (broker, symbol) -> broker.isNotBlank() && symbol.isNotBlank() && symbol.length <= 64 }
@@ -146,6 +164,17 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setIndicatorPaneFractions(fractions: Map<String, Float>): Boolean = saveMutex.withLock {
         preferences.value.indicatorPaneFractions == fractions || persist(preferences.value.copy(indicatorPaneFractions = fractions))
+    }
+
+    /** Persists each tab's layout and subcharts without replacing unrelated preferences. */
+    suspend fun setWorkspaces(broker: String, layouts: Map<String, String>, ratios: Map<String, Map<String, Float>>,
+        cells: List<Triple<String, String, Timeframe>>, detached: Set<String>, selected: String): Boolean = saveMutex.withLock {
+        val current = preferences.value
+        val known = current.workspaceCells.associateBy { it.id }
+        val nextCells = cells.map { (id, symbol, frame) -> SavedChart(id, known[id]?.symbols.orEmpty() + (broker to symbol), frame.seconds) }
+        val next = current.copy(workspaceLayouts = layouts, workspaceRatios = ratios, workspaceCells = nextCells,
+            detachedWorkspaces = detached, selectedWorkspace = selected)
+        next == current || persist(next)
     }
 
     /**

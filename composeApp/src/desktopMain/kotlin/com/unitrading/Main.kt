@@ -1,6 +1,11 @@
 package com.unitrading
 
 import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,21 +88,37 @@ private fun desktopApplication(args: Array<String>) = application {
     val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
-    fun shutdown() {
+    var confirmExit by remember { mutableStateOf(false) }
+    var exitError by remember { mutableStateOf<String?>(null) }
+    fun shutdown(saveWorkspace: Boolean = false) {
         if (!closing) {
             closing = true
             scope.launch {
+                val saved = try { !saveWorkspace || runtime.desktopWorkspaceSaver?.invoke() == true }
+                    catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                    catch (_: Exception) { false }
+                if (!saved) { exitError = "窗口布局或绘图保存失败，请重试。"; closing = false; return@launch }
                 if (runtime.startupError.value != null || runtime.save()) {
                     runtime.registry.plugins.forEach { it.disconnect() }
                     exitApplication()
-                }
-                else closing = false
+                } else { exitError = "账户数据保存失败，请重试。"; closing = false }
             }
         }
     }
-    LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { shutdown() } } }
-    Window(onCloseRequest = ::shutdown, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
+    fun requestClose() {
+        if (runtime.desktopWorkspaceCount.value > 1) { exitError = null; confirmExit = true }
+        else shutdown()
+    }
+    LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { requestClose() } } }
+    Window(onCloseRequest = ::requestClose, title = if (localDemo) "UniTrading · 本地模拟 · 不连接真实账户" else "UniTrading · 交易终端",
         state = rememberWindowState(width = 1440.dp, height = 940.dp), icon = rememberVectorPainter(AppIcons.LogoTile)) {
         LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
+        if (confirmExit) AlertDialog(onDismissRequest = { if (!closing) confirmExit = false },
+            title = { Text("保存窗口布局？") },
+            text = { Text(exitError ?: "保存当前图表标签、分图和独立窗口，下次打开时恢复。") },
+            confirmButton = { TextButton(onClick = { shutdown(saveWorkspace = true) }, enabled = !closing,
+                modifier = Modifier.testTag("save-workspaces-and-exit")) { Text("保存并退出") } },
+            dismissButton = { TextButton(onClick = { confirmExit = false }, enabled = !closing,
+                modifier = Modifier.testTag("cancel-workspace-exit")) { Text("取消") } })
     }
 }

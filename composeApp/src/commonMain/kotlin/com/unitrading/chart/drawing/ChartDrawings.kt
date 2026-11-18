@@ -15,6 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.math.roundToInt
@@ -88,6 +92,8 @@ class DrawingLibrary(internal val store: SnapshotStore, saveDispatcher: Coroutin
     internal val scope = CoroutineScope(SupervisorJob() + saveDispatcher)
     private val saves = Channel<Unit>(Channel.CONFLATED)
     private val prefSaves = Channel<Unit>(Channel.CONFLATED)
+    private val saveMutex = Mutex()
+    internal val imageWrites = mutableListOf<Job>()
     /** One list per symbol. Each chart reads and replaces the list of the symbol it shows, so two charts of one symbol show the same drawings. */
     internal val lists = mutableStateMapOf<String, List<Drawing>>()
     internal var prefs by mutableStateOf(load<DrawingToolPrefs>(PREFS_KEY) ?: DrawingToolPrefs()); private set
@@ -105,8 +111,28 @@ class DrawingLibrary(internal val store: SnapshotStore, saveDispatcher: Coroutin
             store.read(STATE_KEY)?.let { runCatching { store.write("$STATE_KEY-unreadable", it) } }
             notice = "图表绘图无法读取，原文件已另存。"
         }
-        scope.launch { for (ignored in saves) runCatching { store.write(STATE_KEY, json.encodeToString(lists.toMap().filterValues { it.isNotEmpty() })) } }
-        scope.launch { for (ignored in prefSaves) runCatching { store.write(PREFS_KEY, json.encodeToString(prefs)) } }
+        scope.launch { for (ignored in saves) runCatching { saveMutex.withLock { store.write(STATE_KEY, json.encodeToString(lists.toMap().filterValues { it.isNotEmpty() })) } } }
+        scope.launch { for (ignored in prefSaves) runCatching { saveMutex.withLock { store.write(PREFS_KEY, json.encodeToString(prefs)) } } }
+    }
+
+    /** Wait for image writes and serialize the latest drawing state before application exit. */
+    suspend fun flush(): Boolean {
+        imageWrites.toList().forEach { it.join() }
+        val snapshot = lists.toMap().filterValues { it.isNotEmpty() }
+        val preferences = prefs
+        return try {
+            saveMutex.withLock {
+                withContext(Dispatchers.Default) {
+                    snapshot.values.flatten().mapNotNull { it.imageId }.distinct().forEach { id ->
+                        check(store.read(IMAGE_KEY_PREFIX + id) != null) { "图片绘图保存失败" }
+                    }
+                    store.write(STATE_KEY, json.encodeToString(snapshot))
+                    store.write(PREFS_KEY, json.encodeToString(preferences))
+                }
+            }
+            true
+        } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+          catch (_: Exception) { notice = "绘图保存失败，请重试。"; false }
     }
 
     private inline fun <reified T> load(key: String): T? = runCatching { store.read(key)?.let { json.decodeFromString<T>(it) } }.getOrNull()
@@ -282,6 +308,8 @@ class ChartDrawings internal constructor(
         loadImages(drawings)
     }
 
+    suspend fun flush(): Boolean = library.flush()
+
     /** Copy the selected symbol to a new chart without linking later edits between charts. */
     suspend fun copySymbolFrom(source: ChartDrawings, symbol: String) {
         val copy = source.library.lists[symbol].orEmpty().toList()
@@ -413,7 +441,7 @@ class ChartDrawings internal constructor(
         val imageId = newId()
         images[imageId] = bitmap
         val text = encodeDrawingImage(encoded)
-        saveScope.launch { runCatching { store.write(IMAGE_KEY_PREFIX + imageId, text) } }
+        library.imageWrites += saveScope.launch { runCatching { store.write(IMAGE_KEY_PREFIX + imageId, text) } }
         drawings.firstOrNull { it.id == drawingId }?.let { d ->
             val width = 200.0
             val height = width * bitmap.height / bitmap.width.coerceAtLeast(1)

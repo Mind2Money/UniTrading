@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -215,20 +217,44 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
          */
         var activeChart by remember(plugin) { mutableStateOf(MAIN_CHART) }
         var indicatorChartId by remember(plugin) { mutableStateOf(MAIN_CHART) }
-        var splitLayout by remember(plugin) { mutableStateOf(ChartSplitLayout.SINGLE) }
         var parkedCharts by remember(plugin) {
-            mutableStateOf(savedChart.extraCharts.associate { it.id to ChartSlot(it.id, it.symbols[plugin.descriptor.id] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds)) })
+            mutableStateOf((savedChart.extraCharts + savedChart.workspaceCells).associate {
+                it.id to ChartSlot(it.id, it.symbols[plugin.descriptor.id] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds))
+            })
         }
-        /** The chart windows beside the main chart, in the order they were opened. */
+        /** Each tab is a workspace with its own root chart and up to three subcharts. */
         var chartOrder by remember(plugin) { mutableStateOf(savedChart.extraCharts.map { it.id }) }
+        val workspaceLayouts = remember(plugin) { mutableStateMapOf<String, ChartSplitLayout>().apply {
+            savedChart.workspaceLayouts.forEach { (id, name) -> ChartSplitLayout.entries.firstOrNull { it.name == name }?.let { put(id, it) } }
+        } }
+        val workspaceRatios = remember(plugin) { mutableStateMapOf<String, MutableMap<String, Float>>().apply {
+            (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).forEach { id ->
+                put(id, mutableStateMapOf<String, Float>().apply { putAll(savedChart.workspaceRatios[id].orEmpty()) })
+            }
+        } }
+        var detachedWorkspaces by remember(plugin) {
+            mutableStateOf(savedChart.detachedWorkspaces.intersect(savedChart.extraCharts.map { it.id }.toSet() + MAIN_CHART))
+        }
+        var selectedWorkspace by remember(plugin) {
+            val available = (listOf(MAIN_CHART) + savedChart.extraCharts.map { it.id }).filterNot { it in savedChart.detachedWorkspaces }
+            mutableStateOf(savedChart.selectedWorkspace.takeIf { it in available } ?: available.firstOrNull() ?: MAIN_CHART)
+        }
+        val workspaceSelected = remember(plugin) { mutableStateMapOf<String, String>() }
+        fun workspaceOf(id: String): String = if (id == MAIN_CHART || id.startsWith("split")) MAIN_CHART else id.substringBefore("s")
+        fun cellId(workspace: String, index: Int): String = if (index == 0) workspace
+            else if (workspace == MAIN_CHART) "split$index" else "${workspace}s$index"
+        fun layoutOf(workspace: String) = workspaceLayouts[workspace] ?: ChartSplitLayout.SINGLE
         var chartOpening by remember(plugin) { mutableStateOf(false) }
+        var showResetLayout by remember { mutableStateOf(false) }
         // The chart's symbol menu lists the market page's watch list, in its order.
         val watchLists by runtime.marketWatch.lists.collectAsState()
         val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
         // Keep loading and verifying the saved list while mobile navigation shows another page. A chart window's symbol is
         // loaded, verified and quoted the same way, so its chart is complete before it is the one being worked on.
+        val visibleWorkspaces = detachedWorkspaces + selectedWorkspace
         val visibleParkedCharts = parkedCharts.filterKeys { id ->
-            !id.startsWith("split") || (id.removePrefix("split").toIntOrNull()?.let { it in 1 until splitLayout.count } == true)
+            val workspace = workspaceOf(id)
+            workspace in visibleWorkspaces && (0 until layoutOf(workspace).count).any { cellId(workspace, it) == id }
         }
         val chartSymbols = visibleParkedCharts.values.mapTo(mutableSetOf()) { it.symbol }
         LaunchedEffect(plugin, watchSymbols, chartSymbols) { plugin.watchQuotes(watchSymbols + chartSymbols) }
@@ -423,6 +449,29 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) })
         }
 
+        val workspaceCellIds = (listOf(MAIN_CHART) + chartOrder).flatMap { ws -> (1..3).map { cellId(ws, it) } }
+        val workspaceCells = workspaceCellIds.mapNotNull(::chartSlot)
+        val savedLayouts = workspaceLayouts.toMap().mapValues { it.value.name }
+        val savedRatios = workspaceRatios.mapValues { it.value.toMap() }
+        LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, detachedWorkspaces, selectedWorkspace) {
+            runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
+                workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, detachedWorkspaces, selectedWorkspace)
+        }
+
+        val saveDesktopWorkspace by rememberUpdatedState<suspend () -> Boolean>({
+            runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) &&
+                runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
+                runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
+                    workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, detachedWorkspaces, selectedWorkspace) &&
+                runtime.desktopLayout.save() && runtime.flushChartDrawings()
+        })
+        SideEffect { runtime.desktopWorkspaceCount.value = 1 + chartOrder.size }
+        DisposableEffect(runtime, plugin) {
+            val saver: suspend () -> Boolean = { saveDesktopWorkspace() }
+            runtime.desktopWorkspaceSaver = saver
+            onDispose { if (runtime.desktopWorkspaceSaver === saver) { runtime.desktopWorkspaceSaver = null; runtime.desktopWorkspaceCount.value = 0 } }
+        }
+
         fun showSymbol(value: String) {
             chosenSymbol = value
             restoring = null
@@ -449,6 +498,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Makes [id] the chart the screen works on. It trades places with the active chart; each keeps its symbol and interval. */
         fun activateChart(id: String) {
+            workspaceSelected[workspaceOf(id)] = id
             if (id == activeChart) return
             val target = parkedCharts[id] ?: return
             // The chart being left keeps what it was asked to show, also while that symbol is still being loaded.
@@ -478,25 +528,57 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (!runtime.indicatorsForChart(id).apply(sourceIndicators)) error("指标设置无法保存")
                     parkedCharts = parkedCharts + (id to ChartSlot(id, sourceSymbol, sourceFrame))
                     chartOrder = chartOrder + id
+                    workspaceLayouts[id] = ChartSplitLayout.SINGLE
+                    workspaceRatios[id] = mutableStateMapOf()
+                    selectedWorkspace = id
+                    activateChart(id)
                 } catch (cancel: CancellationException) { throw cancel }
                   catch (error: Exception) { showNotice("新建窗口失败：${error.message ?: "请重试"}", attention = true) }
                 finally { chartOpening = false }
             }
         }
-        fun selectSplitLayout(layout: ChartSplitLayout) {
-            val ids = (1 until layout.count).map { "split$it" }
-            if (activeChart != MAIN_CHART && activeChart !in ids) activateChart(MAIN_CHART)
+        fun selectSplitLayout(workspace: String, layout: ChartSplitLayout) {
+            val ids = (0 until layout.count).map { cellId(workspace, it) }
+            if (workspaceOf(activeChart) == workspace && activeChart !in ids) activateChart(workspace)
+            val source = chartSlot(workspaceSelected[workspace] ?: workspace) ?: ChartSlot(workspace, symbol, timeframe)
             val missing = ids.filter { it != activeChart && it !in parkedCharts }
-            parkedCharts = parkedCharts + missing.associateWith { ChartSlot(it, restoring ?: chosenSymbol, timeframe) }
-            splitLayout = layout
+            parkedCharts = parkedCharts + missing.associateWith { ChartSlot(it, source.symbol, source.timeframe) }
+            workspaceLayouts[workspace] = layout
         }
-        /** Closes a chart window for good; the main chart takes over when it was the one being worked on. */
+        fun selectWorkspace(id: String) {
+            if (id in detachedWorkspaces) return
+            selectedWorkspace = id
+            activateChart(workspaceSelected[id] ?: id)
+        }
+        fun detachWorkspace(id: String) {
+            if (id in detachedWorkspaces) return
+            val remaining = (listOf(MAIN_CHART) + chartOrder).filter { it != id && it !in detachedWorkspaces }
+            if (remaining.isEmpty()) { showNotice("请先新建一个布局，再拖出当前布局", attention = true); return }
+            detachedWorkspaces = detachedWorkspaces + id
+            if (selectedWorkspace == id) selectWorkspace(remaining.first())
+        }
+        fun dockWorkspace(id: String) {
+            detachedWorkspaces = detachedWorkspaces - id
+            selectedWorkspace = id
+            activateChart(workspaceSelected[id] ?: id)
+        }
         fun closeChart(id: String) {
-            if (id == activeChart) activateChart(MAIN_CHART)
-            parkedCharts = parkedCharts - id
+            if (id == MAIN_CHART) return
+            val fallback = (listOf(MAIN_CHART) + chartOrder).firstOrNull { it != id && it !in detachedWorkspaces } ?: MAIN_CHART
+            if (workspaceOf(activeChart) == id) activateChart(fallback)
+            if (selectedWorkspace == id) selectedWorkspace = fallback
+            detachedWorkspaces = detachedWorkspaces - id
+            parkedCharts = parkedCharts.filterKeys { workspaceOf(it) != id }
+            workspaceLayouts.remove(id)
+            workspaceRatios.remove(id)
+            workspaceSelected.remove(id)
             chartOrder = chartOrder - id
             runtime.desktopLayout.setWindowBounds(chartWindowKey(id), null)
             scope.launch { runtime.desktopLayout.save() }
+        }
+        val restoreDesktopWorkspace = LocalChartPlatform.current == ChartPlatform.DESKTOP && panelWindows
+        LaunchedEffect(plugin, restoreDesktopWorkspace) {
+            if (restoreDesktopWorkspace) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
         }
         fun clearAccountEditors() {
             confirmation = null; protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null
@@ -660,9 +742,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // Chart windows exist only beside the desktop workspace. Without them the main chart is the one being worked on.
                 val chartWindowsShown = desktop && panelWindows
                 val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
-                LaunchedEffect(chartWindowsShown, splitAvailable, splitLayout, activeChart) {
-                    val visibleSplit = splitAvailable && activeChart.startsWith("split") &&
-                        activeChart.removePrefix("split").toIntOrNull()?.let { it in 1 until splitLayout.count } == true
+                LaunchedEffect(chartWindowsShown, splitAvailable, activeChart) {
+                    val workspace = workspaceOf(activeChart)
+                    val visibleSplit = splitAvailable && workspace == MAIN_CHART &&
+                        (0 until layoutOf(MAIN_CHART).count).any { cellId(MAIN_CHART, it) == activeChart }
                     if (!chartWindowsShown && !visibleSplit) activateChart(MAIN_CHART)
                 }
                 val compactShort = compact && maxHeight < 550.dp
@@ -997,19 +1080,25 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     }
                 }
-                // The bar always follows the selected chart; each pane retains independent settings.
-                val sharedChartBar: @Composable (Modifier, Boolean) -> Unit = { modifier, singleLine ->
-                    val currentLayers = layersFor(workingChart)
-                    val indicatorController = runtime.indicatorsForChart(workingChart)
+                // A toolbar follows the last-selected chart in its own workspace.
+                @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
+                    val target = workspaceSelected[workspace] ?: workspace
+                    val slot = shownCharts[target]
+                    val selectedInstrument = if (target == workingChart) instrument else
+                        catalog.instruments.firstOrNull { it.symbol == slot?.symbol } ?: instrument
+                    val selectedFrame = slot?.timeframe ?: timeframe
+                    val currentLayers = layersFor(target)
+                    val indicatorController = runtime.indicatorsForChart(target)
                     val indicatorSettings by indicatorController.settings.collectAsState()
-                    ChartToolbar(instrument, watchInstruments.ifEmpty { listOf(instrument) }, ::chooseSymbol,
-                        timeframe, { timeframe = it }, intervals,
+                    fun work(action: () -> Unit) { activateChart(target); action() }
+                    ChartToolbar(selectedInstrument, watchInstruments.ifEmpty { listOf(selectedInstrument) },
+                        { value -> work { chooseSymbol(value) } }, selectedFrame, { value -> work { timeframe = value } }, intervals,
                         listOf(
                             ChartToggle("仓位", currentLayers.showPositions) { currentLayers.showPositions = !currentLayers.showPositions },
                             ChartToggle("挂单", currentLayers.showOrders) { currentLayers.showOrders = !currentLayers.showOrders },
                             ChartToggle("历史", currentLayers.showHistory) {
                                 currentLayers.showHistory = !currentLayers.showHistory
-                                if (workingChart == MAIN_CHART) {
+                                if (target == MAIN_CHART) {
                                     runtime.chartPreferences.selectHistoryVisible(currentLayers.showHistory)
                                     scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                                 }
@@ -1017,29 +1106,40 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
                         ) + listOfNotNull(if (domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
                         ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
-                            indicatorSettings.indicators.any { it.visible }) { indicatorChartId = workingChart; showIndicators = true },
+                            indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
-                        additionalControls = { ChartLayoutMenu(splitLayout, ::selectSplitLayout) }, singleRow = singleLine)
-                }
-                val chart: @Composable (Modifier) -> Unit = { m ->
-                    if (!splitAvailable) chartView(MAIN_CHART, m, false)
-                    else {
-                        val indicatorController = runtime.indicatorsForChart(workingChart)
-                        val indicatorSettings by indicatorController.settings.collectAsState()
-                        val currentDrawings = runtime.drawingsForChart(workingChart)
-                        Column(m) {
-                            if (!unifiedChartBar) {
-                                sharedChartBar(Modifier.fillMaxWidth().padding(horizontal = 4.dp), false)
-                                DividerLine()
+                        additionalControls = {
+                            if (nativeDesktop && panelWindows) ActionIcon(AppIcons.Add, "新建图表布局", "chart-new-workspace") {
+                                activateChart(target); openChart()
                             }
-                            Row(Modifier.weight(1f).fillMaxWidth()) {
-                                com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
-                                    { scope.launch { indicatorController.apply(IndicatorSettings()) } })
-                                ChartSplitWorkspace(splitLayout, workingChart, { id, cellModifier -> chartView(id, cellModifier, true) },
-                                    Modifier.weight(1f).fillMaxHeight())
+                            ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
+                        }, singleRow = singleLine)
+                }
+                @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
+                    val selected = workspaceSelected[workspace] ?: workspace
+                    val indicatorController = runtime.indicatorsForChart(selected)
+                    val indicatorSettings by indicatorController.settings.collectAsState()
+                    val currentDrawings = runtime.drawingsForChart(selected)
+                    Column(m) {
+                        if (ownToolbar || !unifiedChartBar) {
+                            sharedChartBar(workspace, Modifier.fillMaxWidth().padding(horizontal = 4.dp), ownToolbar)
+                            DividerLine()
+                        }
+                        Row(Modifier.weight(1f).fillMaxWidth()) {
+                            com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
+                                { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                            key(workspace) {
+                                ChartSplitWorkspace(layoutOf(workspace), selected, { id, cellModifier -> chartView(id, cellModifier, true) },
+                                    Modifier.weight(1f).fillMaxHeight(), chartId = { id ->
+                                        if (id == "main") workspace else cellId(workspace, id.removePrefix("split").toInt())
+                                    }, ratiosOverride = workspaceRatios[workspace])
                             }
                         }
                     }
+                }
+                val chart: @Composable (Modifier) -> Unit = { m ->
+                    if (!splitAvailable) chartView(MAIN_CHART, m, false)
+                    else workspaceView(if (nativeDesktop) selectedWorkspace else MAIN_CHART, m, false)
                 }
                 // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
                 val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
@@ -1350,12 +1450,36 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
+                    if (nativeDesktop && desktop && panelWindows) {
+                        Row(Modifier.fillMaxWidth().height(38.dp).background(colors.Surface).horizontalScroll(rememberScrollState())
+                            .testTag("chart-workspace-tabs"), verticalAlignment = Alignment.CenterVertically) {
+                            (listOf(MAIN_CHART) + chartOrder).filterNot { it in detachedWorkspaces }.forEach { id -> key(id) {
+                                val selected = selectedWorkspace == id
+                                val chart = chartSlot(workspaceSelected[id] ?: id)
+                                var dragY by remember(id) { mutableFloatStateOf(0f) }
+                                Row(Modifier.height(36.dp).widthIn(min = 130.dp, max = 210.dp)
+                                    .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else colors.Surface)
+                                    .pointerInput(id, detachedWorkspaces, chartOrder) {
+                                        detectDragGestures(onDragStart = { dragY = 0f }, onDragEnd = {
+                                            if (kotlin.math.abs(dragY) > 35.dp.toPx()) detachWorkspace(id)
+                                        }) { change, amount -> dragY += amount.y; change.consume() }
+                                    }.clickable { selectWorkspace(id) }.testTag("workspace-tab-$id")
+                                    .padding(start = 10.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(chart?.symbol ?: "图表", Modifier.weight(1f), maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge)
+                                    ActionIcon(AppIcons.OpenInNew, "拖出图表布局", "detach-workspace-$id") { detachWorkspace(id) }
+                                    if (id != MAIN_CHART) ActionIcon(AppIcons.Close, "关闭图表布局", "close-workspace-$id") { closeChart(id) }
+                                }
+                            } }
+                        }
+                        DividerLine()
+                    }
                     if (unifiedChartBar) {
                         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).background(colors.Surface)
                             .testTag("app-toolbar").padding(start = 6.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             if (desktop) AppLogo(22.dp)
-                            sharedChartBar(Modifier.weight(1f), true)
+                            sharedChartBar(if (nativeDesktop) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
                             if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
@@ -1408,9 +1532,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
                                 Column(m.background(colors.Surface)) {
                                     if (nativeDesktop) {
-                                        AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                            Modifier.widthIn(max = 480.dp).fillMaxWidth().testTag("desktop-trade-accounts"),
-                                            enabled = !busy, dense = true, aliases = runtime.accountAliases)
                                         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)
                                             .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1442,6 +1563,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
                                 }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            terminalHeader = {
+                                if (nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                    Modifier.fillMaxWidth(.68f).widthIn(max = 480.dp).testTag("desktop-trade-accounts"),
+                                    enabled = !busy, dense = true, aliases = runtime.accountAliases)
+                            },
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
@@ -1461,24 +1587,39 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             onNewChartWindow = if (nativeDesktop) ::openChart else null,
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
-                            onResetLayout = if (nativeDesktop) ({
-                                showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
-                            }) else null,
+                            onResetLayout = if (nativeDesktop) ({ showResetLayout = true }) else null,
                             windowMenuExtra = { close ->
                                 DividerLine(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                                     leadingIcon = { Icon(AppIcons.Add, contentDescription = null) }, modifier = Modifier.testTag("window-menu-new-chart"))
                             })
-                        // The chart windows beside the main chart; closing one closes that chart for good.
+                        // A detached tab keeps its own workspace and can be returned to the tab strip.
                         val chartWindows = LocalPanelWindowHost.current
                         val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
-                        if (chartWindows != null) chartOrder.forEach { id -> key(id) {
-                            val slot = chartSlot(id)
+                        if (chartWindows != null) detachedWorkspaces.forEach { id -> key(id) {
+                            val slot = chartSlot(workspaceSelected[id] ?: id)
                             val window = chartWindowKey(id)
                             chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
-                                onClose = { closeChart(id) }) { WindowSurface(window, windowOverlay) { chartView(id, Modifier.fillMaxSize(), false) } }
+                                onClose = { dockWorkspace(id) }) {
+                                WindowSurface(window, windowOverlay) {
+                                    Column(Modifier.fillMaxSize()) {
+                                        Row(Modifier.fillMaxWidth().background(colors.Surface), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(slot?.symbol.orEmpty(), Modifier.weight(1f).padding(start = 12.dp), maxLines = 1)
+                                            TextButton({ dockWorkspace(id) }, Modifier.testTag("dock-workspace-$id")) { Text("收回标签") }
+                                        }
+                                        workspaceView(id, Modifier.weight(1f).fillMaxWidth(), true)
+                                    }
+                                }
+                            }
                         } }
+                        if (showResetLayout) AlertDialog(onDismissRequest = { showResetLayout = false },
+                            title = { Text("重置布局？") }, text = { Text("将恢复面板的位置和尺寸。图表内容、指标和绘图会保留。") },
+                            confirmButton = { TextButton({
+                                showResetLayout = false; showOrderFlow = false; runtime.desktopLayout.reset()
+                                scope.launch { runtime.desktopLayout.save() }
+                            }, Modifier.testTag("confirm-reset-desktop-layout")) { Text("确定重置") } },
+                            dismissButton = { TextButton({ showResetLayout = false }, Modifier.testTag("cancel-reset-desktop-layout")) { Text("取消") } })
                     } else if (showOrderFlow) {
                         OrderFlowPanel(plugin, instrument, timeframe, Modifier.weight(1f).fillMaxWidth()) { showOrderFlow = false }
                     } else {
