@@ -39,16 +39,22 @@ class ChartUndoCoordinatorTest {
         assertFalse(first.redo(), "a new action discards the combined redo history")
     }
 
-    @Test fun switchingSymbolsCannotUndoDrawingsOnAnotherSymbol() = runTest {
+    @Test fun switchingSymbolsRetainsOrderedHistoryWithoutChangingTheSelectedInstrument() = runTest {
         val runtime = TradingRuntime(MemorySnapshotStore())
         val drawings = runtime.drawingsForChart("split1").apply { bind("A") }
+        val indicators = runtime.indicatorsForChart("split1")
         val history = runtime.undoForChart("split1", this)
         drawings.addHorizontalLine(DrawingPoint(1, 100.0))
+        drawings.removeAllDrawings()
         drawings.bind("B")
-        assertFalse(history.undo())
-        drawings.addHorizontalLine(DrawingPoint(2, 200.0))
-        assertTrue(history.undo()); assertEquals(0, drawings.drawingCount())
+        val ma = IndicatorSettings(listOf(IndicatorConfig("ma", IndicatorKind.MA)))
+        assertTrue(indicators.apply(ma))
+        assertTrue(history.undo()); assertEquals(IndicatorSettings(), indicators.settings.value)
+        assertTrue(history.undo()); assertEquals("B", drawings.symbol)
+        assertEquals(0, drawings.drawingCount())
         drawings.bind("A")
         assertEquals(1, drawings.drawingCount())
+        assertTrue(history.redo()); assertEquals(0, drawings.drawingCount())
+        assertTrue(history.redo()); assertEquals(ma, indicators.settings.value)
     }
 }

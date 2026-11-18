@@ -13,7 +13,7 @@ internal class ChartUndoCoordinator(
     internal var scope: CoroutineScope,
 ) {
     private enum class Step { INDICATOR, DRAWING }
-    private class Entry(val step: Step)
+    private class Entry(val step: Step, val symbol: String)
     private val undone = ArrayDeque<Entry>()
     private val redone = ArrayDeque<Entry>()
     private val mutex = Mutex()
@@ -21,15 +21,12 @@ internal class ChartUndoCoordinator(
     init {
         indicators.onRecorded = { record(Step.INDICATOR) }
         drawings.onRecorded = { record(Step.DRAWING) }
-        // Drawing histories are symbol-specific while indicator settings are chart-specific. Reset the
-        // combined timeline on a symbol change so an undo cannot restore another symbol's drawings.
-        drawings.onSymbolChanged = { undone.clear(); redone.clear() }
         drawings.onUndoRequested = { scope.launch { undo() }; Unit }
         drawings.onRedoRequested = { scope.launch { redo() }; Unit }
     }
 
     private fun record(step: Step) {
-        undone.addLast(Entry(step))
+        undone.addLast(Entry(step, drawings.symbol))
         if (undone.size > 100) undone.removeFirst()
         redone.clear()
     }
@@ -38,13 +35,13 @@ internal class ChartUndoCoordinator(
         val entry = undone.lastOrNull() ?: return@withLock false
         val restored = when (entry.step) {
             Step.INDICATOR -> indicators.undo()
-            Step.DRAWING -> if (drawings.canUndo) { drawings.undo(); true } else false
+            Step.DRAWING -> drawings.undoForSymbol(entry.symbol)
         }
         if (restored && undone.lastOrNull() === entry) {
             undone.removeLast()
             redone.addLast(entry)
         } else if (restored) {
-            // An edit or symbol change arrived during persistence; never remove a newer action.
+            // An edit arrived during persistence; never remove a newer action.
             undone.remove(entry)
             redone.clear()
         }
@@ -55,7 +52,7 @@ internal class ChartUndoCoordinator(
         val entry = redone.lastOrNull() ?: return@withLock false
         val restored = when (entry.step) {
             Step.INDICATOR -> indicators.redo()
-            Step.DRAWING -> if (drawings.canRedo) { drawings.redo(); true } else false
+            Step.DRAWING -> drawings.redoForSymbol(entry.symbol)
         }
         if (restored && redone.lastOrNull() === entry) {
             redone.removeLast()

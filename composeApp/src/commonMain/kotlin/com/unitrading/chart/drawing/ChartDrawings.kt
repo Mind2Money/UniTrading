@@ -289,7 +289,6 @@ class ChartDrawings internal constructor(
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo
     internal var onRecorded: (() -> Unit)? = null
-    internal var onSymbolChanged: (() -> Unit)? = null
     internal var onUndoRequested: (() -> Unit)? = null
     internal var onRedoRequested: (() -> Unit)? = null
 
@@ -309,7 +308,6 @@ class ChartDrawings internal constructor(
         if (value == symbol) return
         cancelPlacement()
         symbol = value
-        onSymbolChanged?.invoke()
         selectedId = null
         hoveredId = null
         measured = null
@@ -347,15 +345,27 @@ class ChartDrawings internal constructor(
 
     private fun persist() { library.save() }
 
-    fun undo() {
-        drawings = history.undo(drawings) ?: return
-        if (drawings.none { it.id == selectedId }) selectedId = null
+    fun undo() { undoForSymbol(symbol) }
+
+    fun redo() { redoForSymbol(symbol) }
+
+    /** Restore the original instrument without changing the chart's currently selected symbol. */
+    internal fun undoForSymbol(target: String): Boolean {
+        val previous = library.history(target).undo(library.lists[target].orEmpty()) ?: return false
+        library.lists[target] = previous
+        if (target == symbol) {
+            if (previous.none { it.id == selectedId }) selectedId = null
+        } else notice = "已撤销 $target 的绘图更改"
         persist()
+        return true
     }
 
-    fun redo() {
-        drawings = history.redo(drawings) ?: return
+    internal fun redoForSymbol(target: String): Boolean {
+        val next = library.history(target).redo(library.lists[target].orEmpty()) ?: return false
+        library.lists[target] = next
+        if (target != symbol) notice = "已重做 $target 的绘图更改"
         persist()
+        return true
     }
 
     private fun newId() = Random.nextLong().toULong().toString(16)
