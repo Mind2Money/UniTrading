@@ -390,7 +390,9 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
+        if (instrument.isContinuous) Text(if (instrument.symbol == "@MCL")
+            "连续图表 @MCL · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
+            "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
@@ -696,12 +698,16 @@ fun TradingChart(
                     val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                     val labelPadding = 3.dp.toPx()
                     val priceTags = mutableListOf<PriceTag>()
-                    for (i in 0..5) {
-                        val y = top + (plotBottom - top) * i / 5
+                    val priceIntervals = priceAxisIntervals(plotBottom - top, density.density, labelHeight)
+                    val drawnPriceLabels = mutableSetOf<String>()
+                    for (i in 0..priceIntervals) {
+                        val y = top + (plotBottom - top) * i / priceIntervals
                         drawLine(colors.Grid, Offset(left, y), Offset(right, y), 1f)
                         val label = axisPrice(scale.price(y, instrument.tickSize))
-                        val labelX = if (axis.left) (left - textMeasurer.measure(label, labelStyle).size.width - 8f).coerceAtLeast(0f) else right + 8f
-                        text(label, labelX, y - labelHeight / 2)
+                        if (drawnPriceLabels.add(label)) {
+                            val labelX = if (axis.left) (left - textMeasurer.measure(label, labelStyle).size.width - 8f).coerceAtLeast(0f) else right + 8f
+                            text(label, labelX, y - labelHeight / 2)
+                        }
                     }
                     for (i in 0..4) {
                         if (visible.isEmpty()) break

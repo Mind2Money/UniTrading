@@ -262,3 +262,10 @@ fun spreadLabelCenters(desired: List<Float>, top: Float, bottom: Float, minimumG
     for (i in result.lastIndex - 1 downTo 0) result[i] = minOf(result[i], result[i + 1] - gap(i + 1))
     return result
 }
+
+/** Price grid density grows with available height while keeping labels legible in short split panes. */
+internal fun priceAxisIntervals(heightPx: Float, density: Float, labelHeightPx: Float): Int {
+    if (!heightPx.isFinite() || heightPx <= 0f || !density.isFinite() || density <= 0f) return 1
+    val minimumSpacing = maxOf(64f * density, labelHeightPx.coerceAtLeast(0f) * 2.5f)
+    return (heightPx / minimumSpacing).toInt().coerceIn(1, 10)
+}

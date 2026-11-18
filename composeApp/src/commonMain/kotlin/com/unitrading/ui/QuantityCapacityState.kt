@@ -38,7 +38,7 @@ internal fun rememberQuantityCapacity(cache: OrderCapacityCache, brokerId: Strin
     val latestHoldings by rememberUpdatedState(holdings)
     val context = listOf(session, instrument.symbol, symbol, draft.side, draft.kind, entry, ready)
     var refresh by remember { mutableIntStateOf(0) }
-    var refreshing by remember { mutableStateOf(false) }
+    var refreshing by remember(context) { mutableStateOf(true) }
     // Why there is no limit to show yet; a limit already known outranks it.
     var unavailable by remember(context, refresh) { mutableStateOf<String?>(null) }
     LaunchedEffect(context, refresh) {
@@ -49,17 +49,25 @@ internal fun rememberQuantityCapacity(cache: OrderCapacityCache, brokerId: Strin
         }
         // Conflated, not restarted: an account push during a check must not throw the check away.
         snapshotFlow { latestHoldings }.conflate().collect {
+            refreshing = true
             delay(400) // Coalesce typing and account pushes.
             val request = OrderRequest(symbol, draft.side, draft.kind, instrument.minLotsHundredths, entry, sourceSymbol = instrument.symbol.takeIf { instrument.isContinuous })
             val result = try { session.orderCapacity(request, cache.hint(brokerId, session.account.id, symbol, draft.side)) }
                 catch (cancel: CancellationException) { throw cancel }
                 catch (_: Exception) { OrderCapacity(message = "可下单数量暂时无法确认，请刷新") }
             val maximum = result.maximumLotsHundredths
-            if (maximum != null) cache.put(cacheKey, CachedCapacity(maximum, result.message)) else unavailable = result.message ?: "可下单数量未知"
+            if (maximum != null) {
+                unavailable = null
+                cache.put(cacheKey, CachedCapacity(maximum, result.message))
+            } else unavailable = result.message ?: "可下单数量未知"
             refreshing = false
         }
     }
     val state = when {
+        cached != null && refreshing -> QuantityCapacityState(cached.maximum,
+            "正在核对券商上限，当前显示上次缓存", loading = true)
+        cached != null && unavailable != null -> QuantityCapacityState(cached.maximum,
+            "当前显示上次缓存的上限；本次校验失败：$unavailable", loading = false)
         cached != null -> QuantityCapacityState(cached.maximum, cached.message, loading = refreshing)
         unavailable != null -> QuantityCapacityState(message = unavailable)
         else -> QuantityCapacityState(message = "正在确认可下单数量", loading = true)

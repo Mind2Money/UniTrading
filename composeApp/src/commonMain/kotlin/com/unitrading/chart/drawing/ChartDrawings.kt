@@ -144,7 +144,11 @@ internal class DrawingHistory {
  * history live in the [DrawingLibrary], which every open chart shares.
  */
 @Stable
-class ChartDrawings internal constructor(private val library: DrawingLibrary) {
+class ChartDrawings internal constructor(
+    private val library: DrawingLibrary,
+    /** Defaults are global even when each pane keeps its own drawing library. */
+    private val defaultsLibrary: DrawingLibrary = library,
+) {
     /** A chart with a library of its own, for an app that shows one chart. */
     constructor(store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) : this(DrawingLibrary(store, saveDispatcher))
 
@@ -361,10 +365,10 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     fun closeMenu() { menuAt = null }
     fun clearNotice() { notice = null }
     /** Saves everything [value]'s settings dialog sets as the default of its tool: new drawings of the tool start with it. */
-    fun setAsDefault(value: Drawing) = updatePrefs { it.copy(toolDefaults = it.toolDefaults + (value.tool to DrawingDefaults.of(value)), defaults = it.defaults - value.tool) }
+    fun setAsDefault(value: Drawing) = defaultsLibrary.updatePrefs { it.copy(toolDefaults = it.toolDefaults + (value.tool to DrawingDefaults.of(value)), defaults = it.defaults - value.tool) }
     /** Forgets the saved default of [tool]: new drawings of it start with the built-in settings again. */
-    fun clearDefault(tool: DrawingTool) = updatePrefs { it.copy(toolDefaults = it.toolDefaults - tool, defaults = it.defaults - tool) }
-    fun hasDefault(tool: DrawingTool): Boolean = tool in prefs.toolDefaults || tool in prefs.defaults
+    fun clearDefault(tool: DrawingTool) = defaultsLibrary.updatePrefs { it.copy(toolDefaults = it.toolDefaults - tool, defaults = it.defaults - tool) }
+    fun hasDefault(tool: DrawingTool): Boolean = tool in defaultsLibrary.prefs.toolDefaults || tool in defaultsLibrary.prefs.defaults
     /** [value] with the built-in settings of its tool, its own content kept. */
     fun builtInSettings(value: Drawing): Drawing =
         DrawingDefaults.of(newDrawing(value.tool, value.id, value.points, value.glyph)).applyTo(value)
@@ -437,7 +441,7 @@ class ChartDrawings internal constructor(private val library: DrawingLibrary) {
     }
 
     private fun defaultsFor(value: DrawingTool, base: Drawing): Drawing =
-        prefs.toolDefaults[value]?.applyTo(base) ?: prefs.defaults[value]?.let { base.copy(style = it) } ?: base
+        defaultsLibrary.prefs.toolDefaults[value]?.applyTo(base) ?: defaultsLibrary.prefs.defaults[value]?.let { base.copy(style = it) } ?: base
 
     private fun startDraft(value: DrawingTool, first: DrawingPoint, ctx: DrawingContext) {
         val points = if (value.anchors == 1 || value.anchors == FREEHAND) listOf(first) else listOf(first, first)
