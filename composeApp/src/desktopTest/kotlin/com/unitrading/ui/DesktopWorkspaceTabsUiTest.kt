@@ -208,7 +208,7 @@ class DesktopWorkspaceTabsUiTest {
             val targetBounds = compose.onNodeWithTag("workspace-tab-$to").fetchSemanticsNode().boundsInRoot
             val delta = targetBounds.center.x - sourceBounds.center.x + extra
             source.performMouseInput {
-                val start = Offset(size.width * .35f, size.height * .5f)
+                val start = Offset(sourceBounds.width * .35f, sourceBounds.height * .5f)
                 moveTo(start); press(); moveTo(start + Offset(delta * .5f, 0f)); moveTo(start + Offset(delta, 0f)); release()
             }
             compose.waitForIdle()
