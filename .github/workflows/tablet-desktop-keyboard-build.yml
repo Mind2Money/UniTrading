@@ -138,17 +138,23 @@ jobs:
             adb shell settings put secure show_ime_with_hard_keyboard 1
             adb shell wm density 160
             adb shell wm size 1280x800
-            ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.AppearanceUiTest#landscapeTabletKeepsDesktopEditorWhenKeyboardOpens --no-daemon
-            mkdir -p artifacts/tablet-ime
-            adb pull /sdcard/Download/tablet-desktop-keyboard.png artifacts/tablet-ime/tablet-desktop-keyboard.png
+            mkdir -p artifacts/tablet-ime/tablet-results artifacts/tablet-ime/phone-results
+            ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.AppearanceUiTest#landscapeTabletKeepsDesktopEditorWhenKeyboardOpens --no-daemon || touch /tmp/unitrading-tablet-ime-failed
+            cp -R androidApp/build/outputs/androidTest-results/connected/. artifacts/tablet-ime/tablet-results/ || true
+            adb pull /sdcard/Download/tablet-desktop-keyboard.png artifacts/tablet-ime/tablet-desktop-keyboard.png || true
+            adb pull /sdcard/Download/landscape-ime-failure.png artifacts/tablet-ime/tablet-ime-failure.png || true
+            adb shell rm -f /sdcard/Download/landscape-ime-failure.png
             adb shell wm size 960x540
-            ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.AppearanceUiTest#landscapePhoneKeepsOrderSheetWhenKeyboardOpens --no-daemon
+            ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.AppearanceUiTest#landscapePhoneKeepsOrderSheetWhenKeyboardOpens --no-daemon || touch /tmp/unitrading-phone-ime-failed
+            cp -R androidApp/build/outputs/androidTest-results/connected/. artifacts/tablet-ime/phone-results/ || true
+            adb pull /sdcard/Download/landscape-ime-failure.png artifacts/tablet-ime/phone-ime-failure.png || true
+            test ! -e /tmp/unitrading-tablet-ime-failed && test ! -e /tmp/unitrading-phone-ime-failed
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: UniTrading-TabletDesktop-Android-IME-Tests
           path: |
-            artifacts/tablet-ime/*.png
+            artifacts/tablet-ime/**
             androidApp/build/reports/androidTests/connected/**
             androidApp/build/outputs/androidTest-results/connected/**
           if-no-files-found: warn

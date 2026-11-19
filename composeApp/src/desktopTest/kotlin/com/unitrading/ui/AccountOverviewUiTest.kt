@@ -29,13 +29,14 @@ class AccountOverviewUiTest {
     private val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
     private val plugin = runtime.registry.plugins.first()
 
-    /** The tablet hub stays available over the workspace. */
-    @Test fun tabletToolbarOpensTheAccountHubOverTheWorkspace() {
+    /** The tablet uses the desktop account strip and the same analysis rail, retaining its chart. */
+    @Test fun tabletUsesTheDesktopAccountStripAndAnalysisRail() {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f), LocalChartPlatform provides ChartPlatform.IOS) { TradingScreen(runtime) } }
         compose.onNodeWithTag("account-hub").assertDoesNotExist()
-        compose.onNodeWithTag("toggle-account-overview").performClick()
-        compose.onNodeWithTag("account-overview").assertIsDisplayed()
-        compose.onNodeWithTag("account-tab-2").performClick()
+        compose.onNodeWithTag("toggle-account-overview").assertDoesNotExist()
+        compose.onNodeWithTag("quick-account-picker").assertIsDisplayed()
+        compose.onNodeWithTag("daily-pnl-value").assertIsDisplayed()
+        compose.onNodeWithTag("rail-analytics").performScrollTo().performClick()
         compose.onNodeWithTag("account-analytics").assertIsDisplayed()
         compose.onNodeWithTag("trading-chart").assertExists()
     }

@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -216,7 +217,7 @@ private fun QuantityStep(increase: Boolean, enabled: Boolean, onClick: () -> Uni
 internal fun PriceInput(label: String, value: String, onValue: (String) -> Unit, tag: String, modifier: Modifier = Modifier,
     enabled: Boolean = true, integer: Boolean = false, centered: Boolean = false) {
     val focus = LocalFocusManager.current
-    OutlinedTextField(value, onValue, modifier.fillMaxWidth().testTag(tag), enabled = enabled, label = { Text(label) }, singleLine = true,
+    OutlinedTextField(value, onValue, modifier.fillMaxWidth().onFocusChanged { if (tag == "order-quantity") println("IMEDBG quantity focused=${it.isFocused}") }.testTag(tag), enabled = enabled, label = { Text(label) }, singleLine = true,
         textStyle = LocalTextStyle.current.copy(textAlign = if (centered) TextAlign.Center else TextAlign.Start),
         keyboardOptions = KeyboardOptions(keyboardType = if (integer) KeyboardType.Number else KeyboardType.Decimal, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }))

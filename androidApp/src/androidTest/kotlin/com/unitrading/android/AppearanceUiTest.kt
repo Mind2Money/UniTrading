@@ -60,6 +60,7 @@ class AppearanceUiTest {
     /** Runs on a landscape tablet emulator with synthetic data and the system IME enabled. */
     @Test fun landscapeTabletKeepsDesktopEditorWhenKeyboardOpens() {
         check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        prepareSyntheticLicense()
         automation.serviceInfo = automation.serviceInfo.apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
@@ -90,6 +91,7 @@ class AppearanceUiTest {
     /** The phone order sheet must remain editable when the landscape IME changes the available height. */
     @Test fun landscapePhoneKeepsOrderSheetWhenKeyboardOpens() {
         check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        prepareSyntheticLicense()
         automation.serviceInfo = automation.serviceInfo.apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
@@ -111,6 +113,10 @@ class AppearanceUiTest {
         }
     }
 
+    private fun prepareSyntheticLicense() {
+        val license = AndroidCredentialStore(instrumentation.targetContext, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS)
+        runBlocking { license.write("""{"activation":{"keyId":"${ProductionLicenseKeys.first().id}","activatedAtMs":0}}""") }
+    }
     private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -134,14 +140,19 @@ class AppearanceUiTest {
     private fun awaitKeyboard(visible: Boolean) {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
         var stableSince = 0L
+        var previous: Boolean? = null
         while (SystemClock.uptimeMillis() < deadline) {
             val shown = automation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            if (shown != previous) { Log.i("LandscapeImeTest", "IME visible=$shown"); previous = shown }
             if (shown != visible) stableSince = 0L
             else if (stableSince == 0L) stableSince = SystemClock.uptimeMillis()
             else if (SystemClock.uptimeMillis() - stableSince >= 500) { idle(); return }
             SystemClock.sleep(50)
         }
-        error("Keyboard visibility did not become $visible")
+        automation.executeShellCommand("screencap -p /sdcard/Download/landscape-ime-failure.png").use { descriptor ->
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+        }
+        error("Keyboard visibility did not become $visible; on screen: ${visibleTexts()}")
     }
     /** Diagnostics for a failed wait: which window answers and what it shows. */
     private fun visibleTexts(): String {
