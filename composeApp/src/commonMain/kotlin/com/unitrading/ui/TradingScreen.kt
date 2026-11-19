@@ -797,6 +797,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 val desktopPickerWidth = if (maxWidth >= 1200.dp) 340.dp else 280.dp
+                val wrapTabletControls = tablet && maxWidth < 900.dp
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
@@ -1099,6 +1100,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
+                            desktopAxisStyle = desktopStyle,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
@@ -1553,7 +1555,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         DividerLine()
                     }
                     if (unifiedChartBar) {
-                        val wrapTabletControls = tablet && maxWidth < 900.dp
                         val desktopControls: @Composable () -> Unit = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
