@@ -40,6 +40,24 @@ class TabletWorkspaceTabsUiTest {
             broker.market.value = broker.market.value.copy(quotes = mapOf("TESTZ6" to first, "OTHRZ6" to second), revision = 1)
         }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
+        onNodeWithTag("desktop-workspace").assertIsDisplayed()
+        onNodeWithTag("desktop-panel-rail").assertIsDisplayed()
+        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
+        onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
+        val flatten = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
+        val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+        assertTrue(flatten.right + 28f <= accounts.left, "Keep a clear gap between flatten and account controls")
+        onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
+        onNodeWithTag("rail-analytics").performScrollTo().performClick()
+        onNodeWithTag("desktop-analytics").assertIsDisplayed()
+        onNodeWithTag("rail-market").performScrollTo().performClick()
+        onNodeWithTag("open-settings").performScrollTo().performClick()
+        onNodeWithTag("settings-page").assertIsDisplayed()
+        onNodeWithTag("close-settings").performClick()
+        onNodeWithTag("reset-desktop-layout").performClick()
+        onNodeWithTag("cancel-reset-desktop-layout").performClick()
+        onNodeWithTag("rail-new-chart").assertExists()
+        onNodeWithTag("nav-4").assertDoesNotExist()
         onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("5,500.00")
         onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
@@ -92,6 +110,11 @@ class TabletWorkspaceTabsUiTest {
             Box(Modifier.requiredSize(800.dp, 1200.dp)) { TradingScreen(runtime) }
         } }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
+        onNodeWithTag("desktop-workspace").assertIsDisplayed()
+        onNodeWithTag("tablet-account-toolbar").assertIsDisplayed()
+        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
+        onNodeWithTag("quick-account-picker").assertIsDisplayed()
+        onNodeWithTag("rail-analytics").assertExists()
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()
@@ -107,6 +130,9 @@ class TabletWorkspaceTabsUiTest {
         setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.IOS) {
             Box(Modifier.requiredSize(1024.dp, 768.dp)) { TradingScreen(runtime) }
         } }
+        onNodeWithTag("desktop-workspace").assertIsDisplayed()
+        onNodeWithTag("rail-analytics").assertExists()
+        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()

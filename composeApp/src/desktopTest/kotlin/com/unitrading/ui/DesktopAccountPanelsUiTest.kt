@@ -46,7 +46,7 @@ class DesktopAccountPanelsUiTest {
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         kotlin.test.assertTrue(controls.top >= toolbar.top && controls.bottom <= toolbar.bottom + 1f, "Flatten actions stay in the chart toolbar")
         kotlin.test.assertTrue(accounts.top >= toolbar.top && accounts.bottom <= toolbar.bottom + 1f, "Both account selectors stay in the chart toolbar")
-        kotlin.test.assertTrue(controls.right + 10f <= accounts.left, "Flatten actions have a gap from the account selectors")
+        kotlin.test.assertTrue(controls.right + 28f <= accounts.left, "Flatten actions have a gap from the account selectors")
         val tradeShot = File("../artifacts/desktop-account-panels/trade-actions.png").also { it.parentFile.mkdirs() }
         ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", tradeShot)
         runOnIdle { runBlocking { runtime.theme.apply(com.unitrading.app.ThemeSettings(com.unitrading.app.ThemePreset.LIGHT)) } }
@@ -89,7 +89,7 @@ class DesktopAccountPanelsUiTest {
         val controls = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         kotlin.test.assertTrue(chart.width > 100f, "Chart tools remain scrollable at the minimum desktop width")
-        kotlin.test.assertTrue(chart.right <= controls.left + 1f && controls.right + 10f <= accounts.left)
+        kotlin.test.assertTrue(chart.right <= controls.left + 1f && controls.right + 28f <= accounts.left)
         kotlin.test.assertTrue(accounts.right <= toolbar.right && controls.top >= toolbar.top && accounts.bottom <= toolbar.bottom + 1f)
         onNodeWithTag("flatten-all-accounts").assertIsDisplayed()
         onNodeWithTag("quick-login-picker").assertIsDisplayed()
