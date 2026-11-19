@@ -75,16 +75,20 @@ class AppearanceUiTest {
             }
             awaitNode("选择品种", description = true)
             awaitNode("增加数量", description = true)
+            automation.executeShellCommand("screencap -p /sdcard/Download/tablet-desktop.png").use { descriptor ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+            }
             tapNode(firstEditableNode())
             awaitKeyboard(true)
             assertNotNull("The chart and desktop workspace remain mounted while the IME is visible", node("选择品种", description = true))
+            setTestQuantity("0.20")
             screenshot("android-landscape-tablet-keyboard")
             automation.executeShellCommand("screencap -p /sdcard/Download/tablet-desktop-keyboard.png").use { descriptor ->
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitKeyboard(false)
-            assertNotNull("The order editor remains after the keyboard is dismissed", firstEditableNode())
+            assertTrue("The entered quantity remains after the keyboard is dismissed", firstEditableNode().text.toString().contains("0.20"))
         }
     }
 
@@ -106,16 +110,50 @@ class AppearanceUiTest {
             awaitNode("最小化下单面板", description = true)
             tapNode(firstEditableNode())
             awaitKeyboard(true)
+            setTestQuantity("0.20")
             check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             awaitKeyboard(false)
             assertNotNull("Dismissing the keyboard must not minimize the order editor", node("最小化下单面板", description = true))
-            assertNotNull(firstEditableNode())
+            assertTrue(firstEditableNode().text.toString().contains("0.20"))
+        }
+    }
+
+    /** A narrower landscape tablet uses the desktop order dialog rather than a docked ticket. */
+    @Test fun landscapeNarrowTabletKeepsOrderDialogWhenKeyboardOpens() {
+        check(instrumentation.targetContext.packageName.endsWith(".credentialtest"))
+        prepareSyntheticLicense()
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+        runtime.desktopLayout.setOpen(DesktopPanel.TERMINAL, false)
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                activity.setContent { TradingScreen(runtime) }
+            }
+            awaitNode("选择品种", description = true)
+            tap("下单")
+            awaitNode("返回图表", description = true)
+            tapNode(firstEditableNode())
+            awaitKeyboard(true)
+            setTestQuantity("0.20")
+            check(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            awaitKeyboard(false)
+            assertNotNull("The order dialog remains after closing the keyboard", node("返回图表", description = true))
+            assertTrue(firstEditableNode().text.toString().contains("0.20"))
         }
     }
 
     private fun prepareSyntheticLicense() {
         val license = AndroidCredentialStore(instrumentation.targetContext, AndroidCredentialStore.LICENSE_FILE, AndroidCredentialStore.LICENSE_KEY_ALIAS)
         runBlocking { license.write("""{"activation":{"keyId":"${ProductionLicenseKeys.first().id}","activatedAtMs":0}}""") }
+    }
+    private fun setTestQuantity(value: String) {
+        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }
+        assertTrue("The focused quantity field accepts input", firstEditableNode().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+        idle()
     }
     private fun awaitNode(text: String, description: Boolean = false, last: Boolean = false): AccessibilityNodeInfo {
         val deadline = SystemClock.uptimeMillis() + uiTimeoutMs
