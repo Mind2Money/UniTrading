@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 安卓和 iPad 平板统一使用桌面式交易、行情、分析、设置和账户工具栏；支持布局标签和排序，不能拖出系统窗口。加大平仓按钮与账户选择器之间的间距。修复安卓横屏输入时键盘打开导致界面切换、编辑器失去焦点的问题。
+
 - 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；桌面顶部工具栏集中显示两个平仓入口和账户选择，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
 
 - Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅；两个新建窗口入口都创建标签页，保留单独拖出功能。
@@ -12,13 +14,13 @@
 
 - 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
 
-- 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录。手机版和平板原有账户页面保留。
-- 桌面和平板图表将账户选择、周期、指标、图层与布局合并为单行工具栏，工具较多时可横向滚动；手机版保留原有布局。
+- 桌面与平板右侧提供分析入口；交易区整合持仓、挂单、成交和平仓记录。手机版保留原有账户页面。
+- 桌面与平板图表提供账户选择、周期、指标、图层与布局工具；窄平板自动换行，手机版保留原有布局。
 - 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
 - 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
 - 多图共用顶部和左侧绘图工具栏，操作当前子图；缩小可拖动的分隔线，Windows 的 DOM 移到独立侧栏并跟随当前品种。
-- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。桌面布局及分隔比例可保存恢复；平板布局暂不恢复。
+- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。布局及分隔比例可保存恢复。
 - 图表右键菜单支持移除指标和绘图，通过左侧工具栏或 Ctrl+Z 撤销；仅影响当前子图。
 - 新增只读 DOM 盘口面板，桌面从右侧栏打开，手机从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
 - 当已确认的实际合约有新成交而连续合约图表停滞或明显落后时，自动限频重订阅连续图表；不根据报价拼造 K 线或重发订单。实时券商连接仍需验证，数据源本身的延迟无法由此消除。
@@ -34,6 +36,8 @@
 
 ## English
 
+- Use the desktop workspace, trading panels, analytics, settings and account toolbar on Android tablets and iPad; tabs can be reordered but not detached. Leave more space between the flatten actions and account selectors. Keep the active editor and responsive layout stable when the Android landscape keyboard opens.
+
 - Reorder desktop workspace tabs by dragging and restore their saved order; Android and iPad tablets can create, switch and reorder tabs without detaching windows; place desktop flatten actions and account selectors together in the top toolbar, add chart-menu icons, and redesign desktop order review while retaining the existing safety checks.
 
 - Put Windows workspace tabs and their live last price and percentage change in the title bar and make both new-window buttons create a tab.
@@ -44,13 +48,13 @@
 
 - Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
 
-- Add desktop analytics to the side rail and consolidate positions, orders, executions and closed trades in the trading panel; phone and tablet account pages remain available.
-- Combine the desktop and tablet account selectors and chart controls in a single scrollable toolbar, retaining the phone layout.
+- Add analytics to the desktop and tablet side rail and consolidate positions, orders, executions and closed trades in the trading panel; the phone account page remains available.
+- Combine the desktop and tablet account selectors and chart controls in a responsive toolbar, retaining the phone layout.
 - Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.
 - Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.
 - Share chart and drawing toolbars across split charts, scope controls to the selected pane, reduce divider spacing, and dock the Windows DOM in a resizable side panel following the selected instrument.
-- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Desktop layouts and divider sizes can be restored; tablet layouts are not yet persisted.
+- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Layouts and divider sizes can be restored.
 - Add chart context-menu actions to remove drawings and indicators; use the shared undo toolbar or Ctrl+Z for the selected chart.
 - Add a read-only DOM panel from the desktop side rail or phone chart layers; live depth depends on Tradovate market-data permissions.
 - Rate-limit automatic resubscription when a verified dated contract trades but its continuous chart stalls or falls substantially behind. The app does not synthesize bars from quotes or replay orders; live broker verification remains outstanding and upstream delays can still occur.

@@ -29,6 +29,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
@@ -767,21 +768,39 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
 
         Surface(Modifier.fillMaxSize(), color = colors.Shell) {
-            val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val density = LocalDensity.current
+            val imeBottom = WindowInsets.ime.getBottom(density)
+            val keyboardOpen = imeBottom > 0
             val focusManager = LocalFocusManager.current
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-                val desktop = maxWidth >= 900.dp && maxHeight >= 600.dp
+                val nativeDesktop = LocalChartPlatform.current == ChartPlatform.DESKTOP
+                // The IME consumes part of safeDrawingPadding. Classify the window using its size before
+                // the IME opened so a focused field is not destroyed by a switch to the phone layout.
+                val unoccludedHeight = remember(maxWidth, nativeDesktop) { mutableStateOf(maxHeight) }
+                val imeHeight = with(density) {
+                    (imeBottom - WindowInsets.navigationBars.getBottom(density)).coerceAtLeast(0).toDp()
+                }
+                val layoutHeight = if (keyboardOpen) maxOf(unoccludedHeight.value, maxHeight + imeHeight) else maxHeight
+                SideEffect { if (!keyboardOpen) unoccludedHeight.value = maxHeight }
+                // Tablet sizes use the desktop workspace in both orientations. The actual window host is
+                // still desktop-only, so tabs can be reordered on tablets but cannot become OS windows.
+                val systemBars = WindowInsets.systemBars
+                val direction = LocalLayoutDirection.current
+                val sizeWithBars = with(density) {
+                    DpSize(maxWidth + (systemBars.getLeft(density, direction) + systemBars.getRight(density, direction)).toDp(),
+                        layoutHeight + (systemBars.getTop(density) + systemBars.getBottom(density)).toDp())
+                }
+                val tablet = !nativeDesktop && minOf(sizeWithBars.width, sizeWithBars.height) >= 600.dp
+                val desktop = tablet || (maxWidth >= 900.dp && layoutHeight >= 600.dp)
+                val desktopStyle = nativeDesktop || tablet
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
-                val nativeDesktop = LocalChartPlatform.current == ChartPlatform.DESKTOP
-                // Use the touch layout only on tablet-sized screens, never on a landscape phone.
-                val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 val desktopPickerWidth = if (maxWidth >= 1200.dp) 340.dp else 280.dp
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
-                val splitAvailable = desktop || (maxWidth >= 600.dp && maxHeight >= 550.dp)
+                val splitAvailable = desktop || (maxWidth >= 600.dp && layoutHeight >= 550.dp)
                 LaunchedEffect(chartWindowsShown) {
                     if (chartWindowsShown) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
                 }
@@ -791,11 +810,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         (0 until layoutOf(MAIN_CHART).count).any { cellId(MAIN_CHART, it) == activeChart }
                     if (!chartWindowsShown && !visibleSplit) activateChart(MAIN_CHART)
                 }
-                val compactShort = compact && maxHeight < 550.dp
+                val compactShort = compact && layoutHeight < 550.dp
                 // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
-                val rail = compact && (maxWidth >= 600.dp || (maxWidth >= 480.dp && maxWidth > maxHeight))
+                val rail = compact && (maxWidth >= 600.dp || (maxWidth >= 480.dp && maxWidth > layoutHeight))
                 val denseLandscape = compactShort && rail
-                val landscapeDock = rail && maxWidth > maxHeight
+                val landscapeDock = rail && maxWidth > layoutHeight
                 val tradeDockHeight = if (denseLandscape) 48.dp else MobileTradeBarHeight
                 val environment = plugin.descriptor.environment
                 val syncAction: (() -> Unit)? = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null
@@ -1247,7 +1266,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)
                         else -> actionFill(MaterialTheme.colorScheme.error)
                     }
-                    if (nativeDesktop && desktop && action is Confirmation.Place) {
+                    if (desktopStyle && desktop && action is Confirmation.Place) {
                         val r = liveOrder ?: action.request
                         val bracketsApply = orderRule.bracketsApply(account, hedging, r)
                         DesktopOrderConfirmation(title, loginName, accountName, environment.label, instrument, r, livePreview,
@@ -1528,20 +1547,18 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
+                            Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
                         }
                         DividerLine()
                     }
                     if (unifiedChartBar) {
-                        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).background(colors.Surface)
-                            .testTag("app-toolbar").padding(start = 6.dp, end = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            if (desktop && !nativeDesktop && !tabletWorkspaces) AppLogo(22.dp)
-                            sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
-                            if (nativeDesktop && desktop) {
+                        val wrapTabletControls = tablet && maxWidth < 900.dp
+                        val desktopControls: @Composable () -> Unit = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     val actionColors = ButtonDefaults.outlinedButtonColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                                         contentColor = MaterialTheme.colorScheme.error,
@@ -1549,7 +1566,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                     OutlinedButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
-                                        modifier = Modifier.height(36.dp).testTag("flatten-selected-account"),
+                                        modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-selected-account"),
                                         enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓此子账户", maxLines = 1)
@@ -1557,25 +1574,27 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     OutlinedButton(onClick = {
                                         val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                         if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
-                                    }, modifier = Modifier.height(36.dp).testTag("flatten-all-accounts"), enabled = !busy,
+                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = !busy,
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓全部账户", maxLines = 1)
                                     }
                                 }
-                                Spacer(Modifier.width(14.dp))
+                                Spacer(Modifier.width(32.dp))
                                 AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                     Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = !busy,
                                     dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true, inlineLoginLabel = "平台")
                             }
-                            if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                        }
+                        val toolbarStatus: @Composable () -> Unit = {
+                            if (!desktopStyle) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
                             if (desktop) {
-                                if (!nativeDesktop) ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
+                                if (!desktopStyle) ActionIcon(AppIcons.AccountCircle, "账户总览", "toggle-account-overview") { showOverview = true }
                                 if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                                 if (localDemo) ActionIcon(if (paused) AppIcons.PlayArrow else AppIcons.Pause,
                                     if (paused) "继续行情" else "暂停行情", "toggle-demo-feed") { runtime.paused.value = !paused }
-                                if (!nativeDesktop) {
+                                if (!desktopStyle) {
                                     ActionIcon(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout") {
                                         showOrderFlow = false; runtime.desktopLayout.reset(); scope.launch { runtime.desktopLayout.save() }
                                     }
@@ -1587,6 +1606,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
                                 }, Modifier.testTag("open-order"), colors = brandButtonColors()) { Text("下单") }
                             } else if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
+                        }
+                        Column(Modifier.fillMaxWidth().background(colors.Surface).testTag("app-toolbar")) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 6.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
+                                sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
+                                if (!wrapTabletControls) {
+                                    if (desktopStyle && desktop) desktopControls()
+                                    toolbarStatus()
+                                } else toolbarStatus()
+                            }
+                            // A narrow portrait tablet retains all desktop actions in a second scrollable row.
+                            if (wrapTabletControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                                .padding(start = 6.dp, end = 4.dp, bottom = 4.dp).testTag("tablet-account-toolbar"),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                desktopControls()
+                            }
                         }
                         DividerLine()
                     }
@@ -1618,7 +1654,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     TerminalSection.EXECUTIONS to "成交 ${account.executions.size}",
                                     TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
                                 Column(m.background(colors.Surface)) {
-                                    if (nativeDesktop) {
+                                    if (desktopStyle) {
                                         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
                                             .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1634,7 +1670,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
                                         onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
                                         modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
-                                        section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
+                                        section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) analyticsTrades else account.trades)
                                 }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
@@ -1642,7 +1678,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
                             domOpen = showDom, onDomOpenChange = { showDom = it },
                             orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
-                            analytics = if (nativeDesktop) { { m, close ->
+                            analytics = if (desktopStyle) { { m, close ->
                                 Column(m.background(colors.Shell)) {
                                     PanelHeader("交易分析", Modifier.background(colors.Surface), subtitle = accountName,
                                         actions = { ActionIcon(AppIcons.Close, "关闭分析", "close-desktop-analytics", onClick = close) })
@@ -1655,8 +1691,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } } else null,
                             onNewChartWindow = if (nativeDesktop || tabletWorkspaces) ({ openChart() }) else null,
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
-                            onOpenSettings = if (nativeDesktop) ({ showActivity = false; showSettings = true }) else null,
-                            onResetLayout = if (nativeDesktop) ({ showResetLayout = true }) else null,
+                            onOpenSettings = if (desktopStyle) ({ showActivity = false; showSettings = true }) else null,
+                            onResetLayout = if (desktopStyle) ({ showResetLayout = true }) else null,
                             windowMenuExtra = { close ->
                                 DividerLine(Modifier.padding(vertical = 4.dp))
                                 DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,

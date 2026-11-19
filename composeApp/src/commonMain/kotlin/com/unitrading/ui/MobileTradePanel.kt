@@ -114,13 +114,15 @@ private fun MobileOrderSheetSurface(
     val latestState by rememberUpdatedState(panelState)
     val latestChange by rememberUpdatedState(onStateChange)
     val latestHidden by rememberUpdatedState(onHidden)
+    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val latestKeyboardOpen by rememberUpdatedState(keyboardOpen)
     var applyingRequest by remember { mutableStateOf(true) }
     var minimizeFlingRequest by remember { mutableIntStateOf(0) }
     val sheetState = rememberStandardBottomSheetState(
         initialValue = SheetValue.Hidden, skipHiddenState = false,
         confirmValueChange = remember { { value ->
             val allowed = value != SheetValue.Hidden || latestState == MobileOrderPanelState.CLOSED
-            if (!allowed) {
+            if (!allowed && !latestKeyboardOpen) {
                 // A fling past the peek must settle at the peek. A veto alone springs back up.
                 applyingRequest = true
                 minimizeFlingRequest++
@@ -144,16 +146,16 @@ private fun MobileOrderSheetSurface(
         } finally { applyingRequest = false }
     }
     LaunchedEffect(sheetState) {
-        snapshotFlow { Triple(sheetState.currentValue, sheetState.targetValue, applyingRequest) }
-            .collect { (current, target, applying) ->
-                if (!applying && current != SheetValue.Hidden && latestState != MobileOrderPanelState.CLOSED &&
+        snapshotFlow { Triple(sheetState.currentValue, sheetState.targetValue, applyingRequest) to latestKeyboardOpen }
+            .collect { (sheet, imeOpen) ->
+                val (current, target, applying) = sheet
+                if (!imeOpen && !applying && current != SheetValue.Hidden && latestState != MobileOrderPanelState.CLOSED &&
                     current == target && current != latestState.sheetValue) {
                     if (current != SheetValue.Expanded) focus.clearFocus()
                     latestChange(current.panelValue)
                 }
             }
     }
-    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
         isBackEnabled = panelState != MobileOrderPanelState.CLOSED && !keyboardOpen,
         onBackCompleted = {
@@ -167,7 +169,7 @@ private fun MobileOrderSheetSurface(
         BottomSheetScaffold(
             scaffoldState = rememberBottomSheetScaffoldState(bottomSheetState = sheetState),
             sheetPeekHeight = MobileOrderPeekHeight,
-            sheetSwipeEnabled = panelState != MobileOrderPanelState.CLOSED,
+            sheetSwipeEnabled = panelState != MobileOrderPanelState.CLOSED && !keyboardOpen,
             sheetMaxWidth = androidx.compose.ui.unit.Dp.Unspecified,
             sheetContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh, sheetContentColor = colors.Ink, containerColor = Color.Transparent,
             sheetDragHandle = {
