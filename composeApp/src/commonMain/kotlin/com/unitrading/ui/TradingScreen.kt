@@ -806,7 +806,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     println("IMEDBG keyboard=$keyboardOpen width=$measuredWidth height=$measuredHeight logicalHeight=$layoutHeight tablet=$tablet wide=$wide")
                 }
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
-                val desktopPickerWidth = if (maxWidth >= 1200.dp) 340.dp else 280.dp
+                val desktopPickerWidth = if (maxWidth >= 1200.dp && (!tablet || maxWidth >= 1400.dp)) 340.dp else 280.dp
                 val wrapTabletControls = tablet && maxWidth < 900.dp
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
@@ -1862,7 +1862,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 }
-                if (noticeWindow == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, maxHeight * .65f, desktop)
+                if (noticeWindow == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, observedHeight * .65f, desktop)
                 if (desktop && showOverview) {
                     Dialog(onDismissRequest = { showOverview = false }) {
                         Surface(Modifier.widthIn(max = 720.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Shell) {
