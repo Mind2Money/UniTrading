@@ -1537,6 +1537,35 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically) {
                             if (desktop && !nativeDesktop && !tabletWorkspaces) AppLogo(22.dp)
                             sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
+                            if (nativeDesktop && desktop) {
+                                // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
+                                Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val actionColors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        contentColor = MaterialTheme.colorScheme.error,
+                                        disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .6f))
+                                    val shape = RoundedCornerShape(7.dp)
+                                    val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    OutlinedButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
+                                        modifier = Modifier.height(36.dp).testTag("flatten-selected-account"),
+                                        enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
+                                        shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                        Text("平仓此子账户", maxLines = 1)
+                                    }
+                                    OutlinedButton(onClick = {
+                                        val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                        if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                    }, modifier = Modifier.height(36.dp).testTag("flatten-all-accounts"), enabled = !busy,
+                                        shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                        Text("平仓全部账户", maxLines = 1)
+                                    }
+                                }
+                                Spacer(Modifier.width(14.dp))
+                                AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                    Modifier.width(if (maxWidth >= 1200.dp) 340.dp else 280.dp).testTag("desktop-trade-accounts"), enabled = !busy,
+                                    dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true, inlineLoginLabel = "平台")
+                            }
                             if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
                                 aliases = runtime.accountAliases)
@@ -1597,22 +1626,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                     modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
                                             }
                                         }
-                                        // Keep bulk actions below the tabs and account selectors so a navigation click cannot hit them.
-                                        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 2.dp)
-                                            .testTag("desktop-flatten-actions"), horizontalArrangement = Arrangement.End,
-                                            verticalAlignment = Alignment.CenterVertically) {
-                                            val closeColors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                            TextButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
-                                                enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), colors = closeColors,
-                                                modifier = Modifier.height(36.dp).testTag("flatten-selected-account")) { Text("平仓此子账户") }
-                                            Spacer(Modifier.width(8.dp))
-                                            TextButton(onClick = {
-                                                val (targets, skipped) = bulkFlattenTargets(registry.plugins)
-                                                if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
-                                            }, enabled = !busy, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp), colors = closeColors,
-                                                modifier = Modifier.height(36.dp).testTag("flatten-all-accounts")) { Text("平仓全部账户") }
-                                        }
                                         AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
                                     }
                                     TradeTerminal(plugin, account, market, selectedPositionId, false,
@@ -1623,11 +1636,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         section = section.takeIf { nativeDesktop }, historyTrades = if (nativeDesktop) analyticsTrades else account.trades)
                                 }
                             }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
-                            terminalHeader = {
-                                if (nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.width(360.dp).testTag("desktop-trade-accounts"), enabled = !busy,
-                                    dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true)
-                            },
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
                             dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
                                 account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,

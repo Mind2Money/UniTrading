@@ -32,18 +32,13 @@ class UnifiedToolbarUiTest {
             }
             onNodeWithTag("app-toolbar").assertIsDisplayed()
             onAllNodesWithTag("chart-toolbar").assertCountEquals(1)
-            if (platform == ChartPlatform.DESKTOP) onNodeWithTag("rail-terminal").performClick()
             onNodeWithTag("quick-login-picker").assertIsDisplayed()
             onNodeWithTag("quick-account-picker").assertIsDisplayed()
             val header = onNodeWithTag("app-toolbar").fetchSemanticsNode().boundsInRoot
             val chartBar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
             val login = onNodeWithTag("quick-login-picker").fetchSemanticsNode().boundsInRoot
             assertTrue(chartBar.top >= header.top && chartBar.bottom <= header.bottom + 1f)
-            if (platform == ChartPlatform.DESKTOP) {
-                val terminalBar = onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
-                assertTrue(login.top >= terminalBar.top && login.bottom <= terminalBar.bottom + 1f)
-                assertTrue(login.top > header.bottom)
-            } else assertTrue(login.top >= header.top && login.bottom <= header.bottom + 1f)
+            assertTrue(login.top >= header.top && login.bottom <= header.bottom + 1f)
             onNodeWithTag("quick-account-picker").performClick()
             onNodeWithTag("quick-account-${runtime.registry.plugins.first().accounts.first().id}").performClick()
             onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
