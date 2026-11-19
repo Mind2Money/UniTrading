@@ -2,17 +2,17 @@
 
 ## 简体中文
 
-- 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；交易区将批量平仓按钮移到标签下方，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
+- 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；桌面顶部工具栏集中显示两个平仓入口和账户选择，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
 
-- Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅，账户选择器回到交易栏；两个新建窗口入口都创建标签页，保留单独拖出功能。
+- Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅；两个新建窗口入口都创建标签页，保留单独拖出功能。
 
 - 收紧桌面账户选择和窗口标签栏；指标与绘图撤销合并到图表工具栏及快捷键，精简价格轴与图层菜单，并对齐分析日历。
 
-- 桌面交易栏保留两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
+- 桌面顶部工具栏提供两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
 
 - 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
 
-- 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录，并在交易区固定提供按账户平仓入口。手机版和平板原有账户页面保留。
+- 桌面端右侧新增分析入口；交易区整合持仓、挂单、成交和平仓记录。手机版和平板原有账户页面保留。
 - 桌面和平板图表将账户选择、周期、指标、图层与布局合并为单行工具栏，工具较多时可横向滚动；手机版保留原有布局。
 - 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
 - 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
@@ -34,17 +34,17 @@
 
 ## English
 
-- Reorder desktop workspace tabs by dragging and restore their saved order; Android and iPad tablets can create, switch and reorder tabs without detaching windows; move bulk-flatten controls below the trading tabs, add chart-menu icons, and redesign desktop order review while retaining the existing safety checks.
+- Reorder desktop workspace tabs by dragging and restore their saved order; Android and iPad tablets can create, switch and reorder tabs without detaching windows; place desktop flatten actions and account selectors together in the top toolbar, add chart-menu icons, and redesign desktop order review while retaining the existing safety checks.
 
-- Put Windows workspace tabs and their live last price and percentage change in the title bar, return account selectors to the trading bar, and make both new-window buttons create a tab.
+- Put Windows workspace tabs and their live last price and percentage change in the title bar and make both new-window buttons create a tab.
 
 - Compact desktop account selectors and workspace tabs, combine chart undo for drawings and indicators, streamline menus, and align the analytics calendar.
 
-- Keep account selectors in the desktop trading bar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
+- Keep account selectors in the desktop top toolbar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
 
 - Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
 
-- Add desktop analytics to the side rail and consolidate positions, orders, executions, closed trades and account-flatten controls in the trading panel; phone and tablet account pages remain available.
+- Add desktop analytics to the side rail and consolidate positions, orders, executions and closed trades in the trading panel; phone and tablet account pages remain available.
 - Combine the desktop and tablet account selectors and chart controls in a single scrollable toolbar, retaining the phone layout.
 - Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
 - Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.

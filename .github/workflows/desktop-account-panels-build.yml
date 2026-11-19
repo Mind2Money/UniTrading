@@ -1,7 +1,7 @@
-name: Desktop chart review and Android build
+name: Desktop account toolbar and Android build
 on:
   push:
-    branches: ['build/chart-menu-review-20261119']
+    branches: ['build/chart-menu-review-20261119', 'build/top-account-toolbar-20261119']
 permissions:
   contents: read
 jobs:
@@ -26,7 +26,7 @@ jobs:
             ./gradlew :androidApp:assembleStandardDebug --no-daemon --refresh-dependencies
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: UniTrading-ChartReview-Android-debug
+          name: UniTrading-AccountToolbar-Android-debug
           path: androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk
           if-no-files-found: error
   windows:
@@ -54,11 +54,11 @@ jobs:
           if (-not (Test-Path "$app/UniTrading.exe")) { throw 'Windows executable missing' }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-ChartReview-Windows-x64.zip'
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-AccountToolbar-Windows-x64.zip'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: UniTrading-ChartReview-Windows-x64
-          path: dist/UniTrading-ChartReview-Windows-x64.zip
+          name: UniTrading-AccountToolbar-Windows-x64
+          path: dist/UniTrading-AccountToolbar-Windows-x64.zip
           compression-level: 0
           if-no-files-found: error
   tests:
@@ -78,17 +78,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Install CJK fonts when available
         run: |
-          if ! (timeout 90s sudo apt-get update && timeout 90s sudo apt-get install -y fonts-noto-cjk); then
-            echo "::warning::CJK font installation timed out; continuing functional tests with runner fonts."
+          if ! fc-list :lang=zh file | grep -q .; then
+            mkdir -p ~/.local/share/fonts
+            if timeout 120s curl -fsSL --retry 2 \
+              https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf \
+              -o ~/.local/share/fonts/NotoSansCJKsc-Regular.otf; then
+              fc-cache -f ~/.local/share/fonts
+            else
+              echo "::warning::CJK font unavailable; continuing functional tests with runner fonts."
+            fi
           fi
-      - name: Test desktop order review, safety and mobile regressions
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest*' --tests '*TabletWorkspaceTabsUiTest*' --tests '*WindowsTitleBarUiTest*' --tests '*ChartContextMenuUiTest*' --tests '*KeyboardTradingUiTest*' --tests '*AccountBracketsUiTest*' --tests '*OrderCapacityUiTest*' --tests '*ContinuousContractUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*UnifiedToolbarUiTest*' --tests '*ChartDrawingsTest*' --tests '*DesktopPanelGeometryTest*' --tests '*ChartPreferencesTest*' --tests '*WorkspaceTabDataTest*' --tests '*ChartUndoCoordinatorTest*' --tests '*IndicatorSettingsTest*' --tests '*AccountAnalyticsTest*' --tests '*AccountAnalyticsUiTest*' --tests '*ResponsiveCalendarUiTest*' --tests '*SettingsPageTest*' --tests '*PriceAxisUiTest*' --tests '*OrderFlowUiTest*' --tests '*TradeListUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
+      - name: Test account toolbar, order safety and mobile regressions
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*DesktopWorkspaceTabsUiTest*' --tests '*TabletWorkspaceTabsUiTest*' --tests '*WindowsTitleBarUiTest*' --tests '*ChartContextMenuUiTest*' --tests '*KeyboardTradingUiTest*' --tests '*AccountBracketsUiTest*' --tests '*OrderCapacityUiTest*' --tests '*ContinuousContractUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*AccountAliasUiTest*' --tests '*AccountOverviewUiTest*' --tests '*DesktopWindowsUiTest*' --tests '*MobileLayoutTest*' --tests '*UnifiedToolbarUiTest*' --tests '*ChartDrawingsTest*' --tests '*DesktopPanelGeometryTest*' --tests '*ChartPreferencesTest*' --tests '*WorkspaceTabDataTest*' --tests '*ChartUndoCoordinatorTest*' --tests '*IndicatorSettingsTest*' --tests '*AccountAnalyticsTest*' --tests '*AccountAnalyticsUiTest*' --tests '*ResponsiveCalendarUiTest*' --tests '*SettingsPageTest*' --tests '*PriceAxisUiTest*' --tests '*OrderFlowUiTest*' --tests '*TradeListUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: UniTrading-ChartReview-Test-Results
+          name: UniTrading-AccountToolbar-Test-Results
           path: |
             artifacts/desktop-order/*.png
+            artifacts/unified-toolbar/*.png
             artifacts/desktop-account-panels/*.png
             artifacts/desktop-tabs/*.png
             artifacts/multichart/*.png

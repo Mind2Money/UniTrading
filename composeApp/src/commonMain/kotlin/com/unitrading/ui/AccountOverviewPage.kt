@@ -28,7 +28,7 @@ internal fun AccountContextBar(
     onBroker: (String) -> Unit, onAccount: (String) -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true, dense: Boolean = false,
     aliases: AccountAliasesController? = null,
-    emphasize: Boolean = false, inline: Boolean = false,
+    emphasize: Boolean = false, inline: Boolean = false, inlineLoginLabel: String = "登录",
 ) {
     val brokers by registry.state.collectAsState()
     val catalog by key(plugin) { plugin.catalog.collectAsState() }
@@ -48,7 +48,7 @@ internal fun AccountContextBar(
             TextButton({ loginMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-login-picker"), enabled = enabled,
                 shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
                 if (inline) {
-                    Text("登录", style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+                    Text(inlineLoginLabel, style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
                     Spacer(Modifier.width(4.dp))
                     Text(names.login(plugin.descriptor), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)

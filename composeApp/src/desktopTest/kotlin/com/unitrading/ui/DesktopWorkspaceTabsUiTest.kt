@@ -115,11 +115,11 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("workspace-tab-c1").assertExists()
         val header = compose.onNodeWithTag("desktop-title-toolbar").fetchSemanticsNode().boundsInRoot
         val tabs = compose.onNodeWithTag("chart-workspace-tabs").fetchSemanticsNode().boundsInRoot
-        val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+        val toolbar = compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().boundsInRoot
         val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         assertTrue(tabs.top >= header.top && tabs.bottom <= header.bottom + 1f)
-        assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
-        assertTrue(accounts.width <= 360f * .6f + 1f)
+        assertTrue(accounts.top >= toolbar.top && accounts.bottom <= toolbar.bottom + 1f)
+        assertTrue(accounts.width <= 340f * .6f + 1f)
     }
     @Test fun foldedTradeBarKeepsAccountPickersAndMenusWorking() {
         render(); addTab()
@@ -134,6 +134,10 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("quick-login-${broker.descriptor.id}").assertExists().performClick()
         compose.onNodeWithTag("quick-account-picker").assertIsDisplayed().performClick()
         compose.onNodeWithTag("quick-account-${broker.accounts.first().id}").assertExists().performClick()
+        compose.onNodeWithTag("flatten-all-accounts").assertIsDisplayed().performClick()
+        compose.onNodeWithText("平仓全部子账户？").assertExists()
+        compose.onNodeWithTag("cancel-bulk-flatten").performClick()
+        assertTrue(broker.placed.isEmpty(), "Cancelling the flatten confirmation never submits a trade")
         compose.onNodeWithTag("desktop-terminal-toggle").performClick()
         compose.onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
     }
@@ -189,9 +193,9 @@ class DesktopWorkspaceTabsUiTest {
             compose.onNodeWithTag("window-minimize").assertExists()
             compose.onNodeWithTag("window-maximize").assertExists()
             compose.onNodeWithTag("window-close").assertExists()
-            val terminal = compose.onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+            val toolbar = compose.onNodeWithTag("app-toolbar").fetchSemanticsNode().boundsInRoot
             val accounts = compose.onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
-            assertTrue(accounts.top >= terminal.top && accounts.bottom <= terminal.bottom + 1f)
+            assertTrue(accounts.top >= toolbar.top && accounts.bottom <= toolbar.bottom + 1f)
             val out = File("../artifacts/desktop-tabs/windows-title-tabs.png").also { it.parentFile.mkdirs() }
             ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", out)
         } finally { compose.runOnIdle { frame.dispose() } }
