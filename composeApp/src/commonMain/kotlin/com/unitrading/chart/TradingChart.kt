@@ -96,7 +96,7 @@ fun TradingChart(
 ) {
     val colors = TradingColors
     val compact = chrome.compact
-    val mobilePlatform = LocalChartPlatform.current != ChartPlatform.DESKTOP
+    val mobilePlatform = !(chrome.desktopAxisStyle ?: (LocalChartPlatform.current == ChartPlatform.DESKTOP))
     val views = chrome.views
     val viewKey = chartViewKey(instrument.symbol, timeframe)
     /** This chart's bar count before a change of series: a series it has not shown before opens with it, on the newest bar. */
@@ -163,7 +163,7 @@ fun TradingChart(
     var axisPage by remember { mutableStateOf(0) }
     val left = with(density) { (if (axis.left) 84.dp else 12.dp).toPx() }
     val right = (size.width - with(density) { (if (axis.left) 12.dp else 84.dp).toPx() }).coerceAtLeast(left + 1)
-    // On phones/tablets the price-axis control gets its own space at the top; on desktop it stays below the axis.
+    // Phone controls stay above the plot; the desktop-style workspace puts them below the axis.
     val top = with(density) { (if (mobilePlatform) 58.dp else 18.dp).toPx() }
     val bottom = (size.height - with(density) { (if (mobilePlatform) 30.dp else 54.dp).toPx() }).coerceAtLeast(top + 1)
     val plotWidth = right - left
@@ -1029,6 +1029,8 @@ class ChartChrome(
     val onDomToggle: (() -> Unit)? = null,
     val sharedToolbar: Boolean = false,
     val layerState: ChartLayerState? = null,
+    /** Tablets can use the desktop axis placement while retaining touch input. */
+    val desktopAxisStyle: Boolean? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

@@ -79,6 +79,16 @@ class ChartControlLayoutUiTest {
         assertMobileControlIsAwayFromOrder()
         assertOnlyConnectionIndicator()
     }
+    @Test fun androidTabletUsesTheDesktopAxisControlPlacement() {
+        render(ChartPlatform.ANDROID, 1280.dp, 800.dp)
+        val chart = bounds("trading-chart")
+        val settings = bounds("price-axis-menu-button")
+        assertTrue(settings.width >= 48f && settings.height >= 48f)
+        assertTrue(settings.top >= chart.top + state().getValue("plotBottom").toFloat())
+        compose.onNodeWithTag("price-axis-menu-button").performClick()
+        compose.onNodeWithText("自动适应屏幕", substring = true).performClick()
+        assertTrue(source.placed.isEmpty())
+    }
     @Test fun desktopUsesLargeButtonBelowAxisOnEitherSide() {
         render(ChartPlatform.DESKTOP, 960.dp, 700.dp)
         fun verify(left: Boolean) {
