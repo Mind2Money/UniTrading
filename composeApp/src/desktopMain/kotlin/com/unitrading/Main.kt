@@ -29,7 +29,6 @@ import com.unitrading.rithmic.RithmicCredentials
 import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
-import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
@@ -45,6 +44,7 @@ class DesktopSnapshotStore(private val directory: Path = defaultDataDirectory())
         val file = directory.resolve("$key.json")
         return if (Files.exists(file)) Files.readString(file) else null
     }
+    fun delete(key: String) { Files.deleteIfExists(directory.resolve("$key.json")) }
     override fun write(key: String, value: String) {
         Files.createDirectories(directory)
         val target = directory.resolve("$key.json")
@@ -77,13 +77,23 @@ fun main(args: Array<String>) {
 
 private fun desktopApplication(args: Array<String>) = application {
     val localDemo = "--local-demo" in args
+    val diskStore = remember { DesktopSnapshotStore() }
+    val demoValues = remember { mutableMapOf<String, String>() }
+    val demoStore = remember { object : SnapshotStore {
+        override fun read(key: String) = demoValues[key]
+        override fun write(key: String, value: String) { demoValues[key] = value }
+    } }
+    val workspaceStore = remember {
+        if (localDemo) DesktopWorkspaceSessionStore(demoStore) { demoValues.remove(it) }
+        else DesktopWorkspaceSessionStore(diskStore, diskStore::delete)
+    }
     val runtime = remember {
-        if (localDemo) TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).also {
+        if (localDemo) TradingRuntime(workspaceStore, includeDemoBrokers = true).also {
             // The demo keeps its state in memory, so its runtime trims nothing on disk; the trades normal runs cached
             // still leave the data folder after 30 days.
             AnalyticsTradeCache(DesktopSnapshotStore()).pruneInBackground()
         }
-        else TradingRuntime(DesktopSnapshotStore(), credentialStore = DesktopCredentialStore())
+        else TradingRuntime(workspaceStore, credentialStore = DesktopCredentialStore())
     }
     val updateTarget = remember { if (localDemo) null else UpdateLayout.locate(System.getProperty("jpackage.app-path"))?.let { DesktopUpdateTarget(it) } }
     // A run that cannot replace itself (from source, --local-demo, the macOS package) still checks for new versions.
@@ -97,7 +107,7 @@ private fun desktopApplication(args: Array<String>) = application {
     var closing by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
     var exitError by remember { mutableStateOf<String?>(null) }
-    fun shutdown(saveWorkspace: Boolean = false) {
+    fun shutdown(saveWorkspace: Boolean = false, discardWorkspace: Boolean = false) {
         if (!closing) {
             closing = true
             scope.launch {
@@ -105,16 +115,29 @@ private fun desktopApplication(args: Array<String>) = application {
                     catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
                     catch (_: Exception) { false }
                 if (!saved) { exitError = "窗口布局或绘图保存失败，请重试。"; closing = false; return@launch }
+                if (discardWorkspace) {
+                    try { workspaceStore.discard() }
+                    catch (_: Exception) { exitError = "无法恢复退出前的窗口设置，请重试。"; closing = false; return@launch }
+                }
                 if (runtime.startupError.value != null || runtime.save()) {
                     runtime.registry.plugins.forEach { it.disconnect() }
                     exitApplication()
-                } else { exitError = "账户数据保存失败，请重试。"; closing = false }
+                } else { if (discardWorkspace) workspaceStore.resumeWrites(); exitError = "账户数据保存失败，请重试。"; closing = false }
             }
         }
     }
     fun requestClose() {
-        if (runtime.desktopWorkspaceCount.value > 1) { exitError = null; confirmExit = true }
-        else shutdown()
+        if (closing || confirmExit) return
+        exitError = null
+        closing = true
+        scope.launch {
+            val flushed = try { runtime.desktopWorkspaceSaver?.invoke() ?: true }
+                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                catch (_: Exception) { false }
+            if (!flushed) exitError = "窗口布局或绘图保存失败，请重试或选择不保存退出。"
+            closing = false
+            confirmExit = true
+        }
     }
     LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { requestClose() } } }
     val windowState = rememberWindowState(width = 1440.dp, height = 940.dp)
@@ -136,11 +159,15 @@ private fun desktopApplication(args: Array<String>) = application {
             }
         } else content()
         if (confirmExit) AlertDialog(onDismissRequest = { if (!closing) confirmExit = false },
-            title = { Text("保存窗口布局？") },
-            text = { Text(exitError ?: "保存当前图表标签、分图和独立窗口，下次打开时恢复。") },
+            title = { Text("确定退出？") },
+            text = { Text(exitError ?: "保存当前图表和窗口布局，或放弃本次修改并退出。") },
             confirmButton = { TextButton(onClick = { shutdown(saveWorkspace = true) }, enabled = !closing,
                 modifier = Modifier.testTag("save-workspaces-and-exit")) { Text("保存并退出") } },
-            dismissButton = { TextButton(onClick = { confirmExit = false }, enabled = !closing,
-                modifier = Modifier.testTag("cancel-workspace-exit")) { Text("取消") } })
+            dismissButton = { androidx.compose.foundation.layout.Row {
+                TextButton(onClick = { shutdown(discardWorkspace = true) }, enabled = !closing,
+                    modifier = Modifier.testTag("discard-workspaces-and-exit")) { Text("不保存并退出") }
+                TextButton(onClick = { confirmExit = false }, enabled = !closing,
+                    modifier = Modifier.testTag("cancel-workspace-exit")) { Text("取消") }
+            } })
     }
 }

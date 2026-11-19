@@ -37,13 +37,45 @@ import com.unitrading.broker.Quote
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** A title slot owned by the desktop window, populated only while the trading workspace exists. */
+internal data class WorkspaceTabData(val id: String, val symbol: String, val price: String, val change: String, val direction: Int)
+
+internal data class DesktopTitleTabs(
+    val tabs: List<WorkspaceTabData>, val selected: String, val canDetach: Boolean, val touchSized: Boolean, val canAdd: Boolean = true,
+)
+
+/** Publishes data to the native title row; its actions always point to the current workspace. */
 internal class DesktopTitleBarSlot {
-    var content: (@Composable () -> Unit)? by mutableStateOf(null)
+    var tabs: DesktopTitleTabs? by mutableStateOf(null)
+        private set
+    private var owner: Any? = null
+    private var selectAction: (String) -> Unit = {}
+    private var detachAction: (String) -> Unit = {}
+    private var closeAction: (String) -> Unit = {}
+    private var reorderAction: (List<String>) -> Unit = {}
+    private var addAction: () -> Unit = {}
+
+    fun publish(owner: Any, tabs: DesktopTitleTabs, onSelect: (String) -> Unit, onDetach: (String) -> Unit,
+        onClose: (String) -> Unit, onReorder: (List<String>) -> Unit, onAdd: () -> Unit = {}) {
+        this.owner = owner
+        selectAction = onSelect; detachAction = onDetach; closeAction = onClose; reorderAction = onReorder
+        addAction = onAdd
+        this.tabs = tabs
+    }
+
+    fun clear(owner: Any) {
+        if (this.owner !== owner) return
+        this.owner = null
+        selectAction = {}; detachAction = {}; closeAction = {}; reorderAction = {}; addAction = {}
+        tabs = null
+    }
+
+    fun select(id: String) = selectAction(id)
+    fun detach(id: String) = detachAction(id)
+    fun close(id: String) = closeAction(id)
+    fun reorder(ids: List<String>) = reorderAction(ids)
+    fun add() = addAction()
 }
 internal val LocalDesktopTitleBarSlot = staticCompositionLocalOf<DesktopTitleBarSlot?> { null }
-
-internal data class WorkspaceTabData(val id: String, val symbol: String, val price: String, val change: String, val direction: Int)
 
 /** Never substitute a bid, ask or historical candle for a missing last trade. */
 internal fun workspaceTabData(id: String, symbol: String, instrument: Instrument?, quote: Quote?, connected: Boolean): WorkspaceTabData {
@@ -88,6 +120,7 @@ internal fun WorkspaceTabStrip(
     onSelect: (String) -> Unit, onDetach: (String) -> Unit, onClose: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     modifier: Modifier = Modifier, canDetach: Boolean = true, touchSized: Boolean = false,
+    onAdd: (() -> Unit)? = null, canAdd: Boolean = true,
 ) {
     val detach by rememberUpdatedState(onDetach)
     val reorder by rememberUpdatedState(onReorder)
@@ -100,6 +133,10 @@ internal fun WorkspaceTabStrip(
     val edgeZone = with(density) { 40.dp.toPx() }
     val speed = with(density) { 300.dp.toPx() }
     val scroll = rememberScrollState()
+    LaunchedEffect(tabs.size) {
+        withFrameNanos { }
+        scroll.animateScrollTo(scroll.maxValue)
+    }
     val placements = remember { mutableMapOf<String, LayoutCoordinates>() }
     var viewport by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var drag by remember { mutableStateOf<WorkspaceTabDrag?>(null) }
@@ -187,5 +224,9 @@ internal fun WorkspaceTabStrip(
                 }
             }
         } }
+        if (onAdd != null) IconButton(onClick = onAdd, enabled = canAdd,
+            modifier = Modifier.size(if (touchSized) 42.dp else 32.dp).testTag("chart-new-workspace")) {
+            Icon(AppIcons.Add, "新建窗口", Modifier.size(20.dp))
+        }
     }
 }

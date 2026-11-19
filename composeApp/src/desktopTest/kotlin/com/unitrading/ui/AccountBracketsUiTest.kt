@@ -237,6 +237,8 @@ class AccountBracketsUiTest {
         awaitPlaced(broker, 1)
         rightClickChart(551_000)
         onNodeWithTag("plot-menu-SELL-LIMIT").performClick()
+        assertEquals(1, broker.placed.size, "The menu only prepares the order")
+        onNodeWithTag("review-order").performClick()
         awaitPlaced(broker, 2)
         // W adds to the long: an entry, which goes out with the stop and target of the amounts.
         focusChart()
@@ -394,9 +396,11 @@ class AccountBracketsUiTest {
         desktop(runtime)
         focusChart()
         onNodeWithTag("trading-keys-hint").assertTextEquals("W 市价买入 · S 市价卖出 · 1 张 · 开仓自动附加 SL · 按键即成交")
-        // With confirmations skipped the menu item is the last thing shown before the order is out.
+        // With confirmations skipped the menu still opens the order form; the form sends the order.
         rightClickChart(549_000)
         onNodeWithTag("plot-menu-BUY-LIMIT").assertTextEquals("买入限价 1 张 @ 5490.00 · 开仓自动附加 SL").performClick()
+        assertTrue(broker.placed.isEmpty())
+        onNodeWithTag("review-order").performClick()
         waitUntil(timeoutMillis = 5_000) { broker.placed.size == 1 }
         assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.LIMIT, 100, 549_000, stopLoss = 547_000), broker.placed.single())
         onNodeWithTag("open-settings").performClick()

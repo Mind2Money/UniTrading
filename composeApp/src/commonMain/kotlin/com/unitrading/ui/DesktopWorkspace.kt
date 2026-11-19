@@ -79,6 +79,7 @@ internal fun DesktopWorkspace(
     newChartWindowEnabled: Boolean = true,
     onOpenSettings: (() -> Unit)? = null,
     onResetLayout: (() -> Unit)? = null,
+    contextOrderRequest: Int = 0,
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -97,6 +98,7 @@ internal fun DesktopWorkspace(
     val terminalInline = WorkspacePanel.TERMINAL !in detached
     val orderInline = wide && preferred.orderOpen && WorkspacePanel.ORDER !in detached
     var analyticsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(contextOrderRequest) { if (contextOrderRequest > 0) analyticsOpen = false }
     val showAnalytics = analytics != null && analyticsOpen
     val sidebarInline = showAnalytics || (preferred.marketOpen && WorkspacePanel.MARKET !in detached)
     Column(modifier.testTag("desktop-workspace")) {
@@ -183,8 +185,6 @@ internal fun DesktopWorkspace(
                     if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.OrderEntry, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.Analytics, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
-                    if (onNewChartWindow != null)
-                        RailToggle(AppIcons.AddWindow, "新建窗口", "rail-new-chart", false, enabled = newChartWindowEnabled, onToggle = onNewChartWindow)
                     if (onOpenSettings != null)
                         RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
                     if (orderFlow != null) RailToggle(if (flowOpen) AppIcons.CandlestickFilled else AppIcons.Candlestick, "订单流", "rail-order-flow", flowOpen) {
@@ -272,7 +272,7 @@ private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowSc
 
 /** A native rail destination whose pill marks an open panel. Several panels can stay open, so each also reports as a toggle. */
 @Composable
-private fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
+internal fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
     Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
         NavigationRailItem(open, onToggle, { Icon(icon, contentDescription = null) },
             Modifier.testTag(tag).semantics {

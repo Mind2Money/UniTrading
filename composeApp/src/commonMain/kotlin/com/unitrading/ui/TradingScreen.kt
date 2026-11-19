@@ -169,16 +169,35 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             return@TradingTheme
         }
         var chosenAccountId by remember(plugin) { mutableStateOf(runtime.savedLogins.selectedAccount(plugin.descriptor.id) ?: catalog.accounts.first().id) }
-        val accountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+        // Detached workspaces may select a different subaccount without replacing the main window's selection.
+        var activeChart by remember(plugin) { mutableStateOf(MAIN_CHART) }
+        val supportsDetachedAccounts = LocalChartPlatform.current == ChartPlatform.DESKTOP && LocalPanelWindowHost.current != null
+        val mainAccountId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+        val detachedAccounts = remember(plugin, supportsDetachedAccounts) { mutableStateMapOf<String, String>().apply {
+            if (supportsDetachedAccounts) {
+                val saved = runtime.workspaceAccounts.selections.value[plugin.descriptor.id].orEmpty()
+                runtime.chartPreferences.preferences.value.detachedWorkspaces.forEach { put(it, saved[it] ?: mainAccountId) }
+            }
+        } }
+        val unresolvedDetachedAccounts = remember(plugin, supportsDetachedAccounts) { mutableStateMapOf<String, Boolean>().apply {
+            if (supportsDetachedAccounts && !runtime.workspaceAccounts.readable)
+                runtime.chartPreferences.preferences.value.detachedWorkspaces.forEach { put(it, true) }
+        } }
+        val activeAccountWorkspace = if (activeChart == MAIN_CHART || activeChart.startsWith("split")) MAIN_CHART else activeChart.substringBefore("s")
+        val accountId = detachedAccounts[activeAccountWorkspace]?.takeIf { id -> catalog.accounts.any { it.id == id } } ?: mainAccountId
         val localDemo = plugin.descriptor.environment == BrokerEnvironment.LOCAL_DEMO
-        val session = remember(plugin, accountId) { runtime.accountRisk.guard(plugin, plugin.openSession(accountId)) }
+        val mainSession = remember(plugin, mainAccountId) { runtime.accountRisk.guard(plugin, plugin.openSession(mainAccountId)) }
+        val session = remember(plugin, accountId, mainSession) {
+            if (accountId == mainAccountId) mainSession else runtime.accountRisk.guard(plugin, plugin.openSession(accountId))
+        }
         DisposableEffect(plugin, session) {
             runtime.livePnl.track(plugin, session)
             onDispose { runtime.livePnl.untrack(session) }
         }
         val account by key(session) { session.state.collectAsState() }
+        val mainAccount by key(mainSession) { mainSession.state.collectAsState() }
         // What this device cached of the account's closed trades; the local demo keeps its whole history itself.
-        val cachedTrades = if (localDemo) emptyList() else {
+        val cachedByAccount = if (localDemo) emptyMap() else {
             val cached by runtime.analyticsCache.rows.collectAsState()
             // The only writer of the cache. A login that was just disconnected or forgotten is not written back.
             LaunchedEffect(session) {
@@ -186,9 +205,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (registry.plugins.any { it === plugin }) runtime.analyticsCache.update(plugin.descriptor.id, accountId, trades)
                 }
             }
-            cached[plugin.descriptor.id]?.get(accountId).orEmpty()
+            LaunchedEffect(mainSession, session) {
+                if (mainSession !== session) mainSession.state.map { it.trades }.distinctUntilChanged().collect { trades ->
+                    if (registry.plugins.any { it === plugin }) runtime.analyticsCache.update(plugin.descriptor.id, mainAccountId, trades)
+                }
+            }
+            cached[plugin.descriptor.id].orEmpty()
         }
+        val cachedTrades = cachedByAccount[accountId].orEmpty()
+        val mainCachedTrades = cachedByAccount[mainAccountId].orEmpty()
         val analyticsTrades = remember(cachedTrades, account.trades) { mergeAnalyticsTrades(cachedTrades, account.trades) }
+        val mainAnalyticsTrades = remember(mainCachedTrades, mainAccount.trades) { mergeAnalyticsTrades(mainCachedTrades, mainAccount.trades) }
         val loginName = aliases.login(plugin.descriptor)
         val accountName = aliases.account(plugin.descriptor.id, session.account)
         val market by key(plugin) { plugin.market.collectAsState() }
@@ -203,6 +230,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val paused by runtime.paused.collectAsState()
         val startupError by runtime.startupError.collectAsState()
         val storageError by runtime.storageError.collectAsState()
+        val workspaceAccountError = if (supportsDetachedAccounts) {
+            val value by runtime.workspaceAccounts.error.collectAsState()
+            value
+        } else null
         val accountKey = "$brokerId/$accountId/${plugin.hashCode()}"
         val savedChart = remember(plugin) { runtime.chartPreferences.preferences.value }
         // The last chart symbol can load after the first catalog snapshot; keep it pending until it loads or the user picks one.
@@ -221,7 +252,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
          * and the order panel, the market list's selection and the order flow follow it. Every other chart window waits in
          * [parkedCharts] with its own symbol and interval until a press makes it the active one, when the two trade places.
          */
-        var activeChart by remember(plugin) { mutableStateOf(MAIN_CHART) }
         var indicatorChartId by remember(plugin) { mutableStateOf(MAIN_CHART) }
         var parkedCharts by remember(plugin) {
             mutableStateOf((savedChart.extraCharts + savedChart.workspaceCells).associate {
@@ -312,6 +342,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val orderFlowSupported = domSupported && plugin.descriptor.environment !in setOf(BrokerEnvironment.REMOTE_DEMO, BrokerEnvironment.LIVE)
         var showOrderFlow by remember(plugin) { mutableStateOf(false) }
         var showDom by remember(plugin) { mutableStateOf(false) }
+        // A broker currently exposes one depth stream. Each detached window may open DOM,
+        // but the stream follows the focused window and never displays another symbol's book.
+        val detachedDomOpen = remember(plugin) { mutableStateMapOf<String, Boolean>() }
+        val detachedOrderRequests = remember(plugin) { mutableStateMapOf<String, Int>() }
         var orderPanelState by orderSession.panelState
         // The docked order bar's "更多设置" fold. It opens at once and is saved, so the next order and the next start find it as it was left.
         // When the latest change cannot be saved the fold goes back to the saved one, as the preferences themselves do.
@@ -323,6 +357,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var flattenReview by remember { mutableStateOf<FlattenReview?>(null) }
         var flattenResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
         var flattening by remember { mutableStateOf(false) }
+        // A detached window must not change the account behind another window's pending order or edit.
+        fun accountOperationPending() = busy || confirmation != null || flattenReview != null || flattening || flattenResults != null ||
+            protection != null || pendingEdit != null || pendingProtection != null || standaloneEdit != null
         /** The window the user last worked in: null for the main window, else the key of a window that holds part of the workspace. */
         var activeWindow by remember { mutableStateOf<String?>(null) }
         val liveWindows = remember { mutableStateListOf<String>() }
@@ -429,16 +466,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         fun capacityFor(order: OrderRequest): QuantityCapacityState = if (localDemo || order.side == draft.side) capacity else
             runtime.orderCapacity.entries.value[OrderCapacityCache.key(plugin.descriptor.id, session.account.id, order.symbol, order.side)]
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
-        val visiblePositions = account.positions.filter { it.symbol == executionSymbol }
-        val visibleTrades = account.trades.filter { it.symbol == executionSymbol }
-        val visibleOrders = account.orders.filter { it.request.symbol == executionSymbol }
-
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
         val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
         LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
-        LaunchedEffect(plugin, symbol, executionSymbol, showOrderFlow, showDom, mobileTab) {
-            plugin.watchOrderFlow(symbol.takeIf { showOrderFlow || showDom })
+        val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
+        val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
+        val mainDomActive = focusedDetached == null && (showOrderFlow || showDom)
+        LaunchedEffect(plugin, symbol, executionSymbol, mainDomActive, detachedDomActive, mobileTab) {
+            plugin.watchOrderFlow(symbol.takeIf { mainDomActive || detachedDomActive })
         }
         DisposableEffect(plugin) { onDispose { plugin.watchOrderFlow(null) } }
         LaunchedEffect(symbol, executionSymbol) {
@@ -484,9 +520,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val savedLayouts = workspaceLayouts.toMap().mapValues { it.value.name }
         val savedRatios = workspaceRatios.mapValues { it.value.toMap() }
         val savedSelections = workspaceSelected.toMap()
+        val savedDetachedAccounts = detachedAccounts.toMap()
         LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) {
             runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
                 workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder)
+        }
+        LaunchedEffect(plugin, savedDetachedAccounts, detachedWorkspaces, supportsDetachedAccounts) {
+            if (supportsDetachedAccounts) runtime.workspaceAccounts.save(plugin.descriptor.id, savedDetachedAccounts.filterKeys { it in detachedWorkspaces })
         }
 
         val saveDesktopWorkspace by rememberUpdatedState<suspend () -> Boolean>({
@@ -494,6 +534,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
                 runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
                     workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) &&
+                (!supportsDetachedAccounts || runtime.workspaceAccounts.save(plugin.descriptor.id, savedDetachedAccounts.filterKeys { it in detachedWorkspaces })) &&
                 runtime.desktopLayout.save() && runtime.flushChartDrawings()
         })
         SideEffect { runtime.desktopWorkspaceCount.value = 1 + chartOrder.size }
@@ -516,6 +557,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val replacement = continuousChart(symbol).takeIf { restoring == null && !instrument.isContinuous && symbol !in watchSymbols }
         LaunchedEffect(replacement) { replacement?.let(::showSymbol) }
         fun chooseSymbol(value: String) {
+            if (accountOperationPending()) return
             showSymbol(value)
             focusedTrade = null
             focusedExecution = null
@@ -529,6 +571,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Makes [id] the chart the screen works on. It trades places with the active chart; each keeps its symbol and interval. */
         fun activateChart(id: String) {
+            if (id != activeChart && accountOperationPending()) return
             workspaceSelected[workspaceOf(id)] = id
             if (id == activeChart) return
             val target = parkedCharts[id] ?: return
@@ -545,7 +588,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         /** Opens one more chart window, on the symbol and interval of the chart being worked on. */
         fun openChart(detached: Boolean = false) {
-            if (chartOpening) return
+            if (chartOpening || accountOperationPending()) return
             if (chartOrder.size >= ChartPreferences.MAX_EXTRA_CHARTS) { showNotice("最多同时打开 ${ChartPreferences.MAX_EXTRA_CHARTS} 个图表窗口", attention = true); return }
             val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { it !in chartOrder }
             val sourceId = activeChart
@@ -562,7 +605,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     workspaceOrder = workspaceOrder + id
                     workspaceLayouts[id] = ChartSplitLayout.SINGLE
                     workspaceRatios[id] = mutableStateMapOf()
-                    if (detached) detachedWorkspaces = detachedWorkspaces + id else selectedWorkspace = id
+                    if (detached) { detachedAccounts[id] = accountId; unresolvedDetachedAccounts.remove(id); detachedWorkspaces = detachedWorkspaces + id }
+                    else selectedWorkspace = id
                     activateChart(id)
                 } catch (cancel: CancellationException) { throw cancel }
                   catch (error: Exception) { showNotice("新建窗口失败：${error.message ?: "请重试"}", attention = true) }
@@ -570,6 +614,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
         }
         fun selectSplitLayout(workspace: String, layout: ChartSplitLayout) {
+            if (accountOperationPending()) return
             val ids = (0 until layout.count).map { cellId(workspace, it) }
             if ((workspaceSelected[workspace] ?: workspace) !in ids) workspaceSelected[workspace] = workspace
             if (workspaceOf(activeChart) == workspace && activeChart !in ids) activateChart(workspace)
@@ -585,28 +630,41 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             workspaceOrder = workspaceOrder.map { if (it in detachedWorkspaces) it else reordered.next() }
         }
         fun selectWorkspace(id: String) {
+            if (accountOperationPending()) return
             if (id in detachedWorkspaces) return
+            activeWindow = null
             selectedWorkspace = id
             activateChart(workspaceSelected[id] ?: id)
         }
         fun detachWorkspace(id: String) {
+            if (accountOperationPending()) return
             if (id in detachedWorkspaces) return
             val remaining = (listOf(MAIN_CHART) + chartOrder).filter { it != id && it !in detachedWorkspaces }
             if (remaining.isEmpty()) { showNotice("请先新建一个布局，再拖出当前布局", attention = true); return }
+            detachedAccounts[id] = if (workspaceOf(activeChart) == id) accountId else mainAccountId
+            unresolvedDetachedAccounts.remove(id)
             detachedWorkspaces = detachedWorkspaces + id
             if (selectedWorkspace == id) selectWorkspace(remaining.first())
         }
         fun dockWorkspace(id: String) {
+            if (accountOperationPending()) return
             detachedWorkspaces = detachedWorkspaces - id
+            detachedAccounts.remove(id)
+            unresolvedDetachedAccounts.remove(id)
+            detachedOrderRequests.remove(id)
             selectedWorkspace = id
             activateChart(workspaceSelected[id] ?: id)
         }
         fun closeChart(id: String) {
+            if (accountOperationPending()) return
             if (id == MAIN_CHART) return
             val fallback = (listOf(MAIN_CHART) + chartOrder).firstOrNull { it != id && it !in detachedWorkspaces } ?: MAIN_CHART
             if (workspaceOf(activeChart) == id) activateChart(fallback)
             if (selectedWorkspace == id) selectedWorkspace = fallback
             detachedWorkspaces = detachedWorkspaces - id
+            detachedAccounts.remove(id)
+            unresolvedDetachedAccounts.remove(id)
+            detachedOrderRequests.remove(id)
             parkedCharts = parkedCharts.filterKeys { workspaceOf(it) != id }
             workspaceLayouts.remove(id)
             workspaceRatios.remove(id)
@@ -622,19 +680,43 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         fun clearAccountEditors() {
             confirmation = null; protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null
+            // A review opened in another window must not survive a global account change.
+            flattenReview = null
             focusedTrade = null; focusedExecution = null; selectedPositionId = null
             showOrder = false; showDraft = false; orderPanelState = MobileOrderPanelState.CLOSED
         }
         fun chooseBroker(value: String) {
-            if (!busy && value != plugin.descriptor.id) { clearAccountEditors(); selectBroker(value) }
+            if (!accountOperationPending() && value != plugin.descriptor.id) {
+                clearAccountEditors(); selectBroker(value)
+            }
         }
         fun chooseAccount(value: String) {
-            if (!busy && catalog.accounts.any { it.id == value }) {
-                if (value != accountId) clearAccountEditors()
+            if (!accountOperationPending() && catalog.accounts.any { it.id == value }) {
+                if (value != mainAccountId) clearAccountEditors()
                 manuallySelected = true
                 chosenAccountId = value
                 loginScope.launch { runtime.savedLogins.select(plugin.descriptor.id, value) }
             }
+        }
+        fun chooseDetachedAccount(workspace: String, value: String) {
+            if (accountOperationPending() ||
+                workspace !in detachedWorkspaces || catalog.accounts.none { it.id == value } ||
+                (plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()) !== plugin) return
+            if ((detachedAccounts[workspace] ?: mainAccountId) != value) clearAccountEditors()
+            detachedAccounts[workspace] = value
+            unresolvedDetachedAccounts.remove(workspace)
+            activeWindow = chartWindowKey(workspace)
+            activateChart(workspaceSelected[workspace] ?: workspace)
+        }
+        /** An account switch in another window can precede this window's next recomposition. */
+        fun accountContextCurrent(): Boolean {
+            val currentBroker = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+            val workspace = workspaceOf(activeChart)
+            if (workspace in unresolvedDetachedAccounts) return false
+            val detached = detachedAccounts[workspace]
+            if (detached != null && catalog.accounts.none { it.id == detached }) return false
+            val currentAccount = detached ?: chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } } ?: catalog.accounts.first().id
+            return currentBroker === plugin && currentAccount == accountId
         }
         fun changeDraft(value: OrderDraft) {
             // Side/kind changes may seed reference protection for a manual ticket. Sizing uses the user's SL.
@@ -643,8 +725,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             else value
             showDraft = true
         }
-        fun perform(onAccepted: () -> Unit = {}, action: suspend () -> TradeResult) {
+        fun perform(onAccepted: () -> Unit = {}, requireCurrentAccount: Boolean = true, action: suspend () -> TradeResult) {
             if (busy) return
+            if (requireCurrentAccount && !accountContextCurrent()) {
+                showNotice("账户已切换，请重新检查后操作", attention = true)
+                return
+            }
             busy = true
             val origin = accountName
             scope.launch {
@@ -839,6 +925,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val unifiedChartBar = desktop || (tablet && chartFirst)
                 val orderLayout = tradingPreferences.orderPanelLayout
                 val useOrderPopup = orderLayout == OrderPanelLayout.POPUP
+                // Context-menu orders use the right-hand ticket even in a narrower desktop/tablet workspace.
+                var contextOrderSidebar by remember { mutableStateOf(false) }
+                var contextOrderRequest by remember { mutableIntStateOf(0) }
                 // The sheet and the dock stay on the chart page for as long as an order is being prepared; the popup does not.
                 val orderOnChart = orderActive && !useOrderPopup
                 val popupVisible = chartFirst && useOrderPopup && orderOpen && confirmation !is Confirmation.Place
@@ -876,6 +965,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                 }
+                fun openChartOrderEditor(chartId: String) {
+                    val workspace = workspaceOf(chartId)
+                    if (desktop && workspace in detachedWorkspaces)
+                        detachedOrderRequests[workspace] = (detachedOrderRequests[workspace] ?: 0) + 1
+                    else if (desktop) {
+                        contextOrderSidebar = true
+                        contextOrderRequest++
+                        showOrder = false
+                        showDom = false
+                        runtime.desktopLayout.setDetached(WorkspacePanel.ORDER, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                        scope.launch { runtime.desktopLayout.save() }
+                    }
+                    else openOrderEditor()
+                }
                 fun placePreview(order: OrderRequest): OrderPreview {
                     val checked = session.preview(order).withCapacity(order, capacityFor(order))
                     // A market order was priced from the quote a moment ago, and the guard prices it once more as it goes out. Only a
@@ -886,6 +991,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun executeTrade(action: Confirmation) {
                     if (busy) return
+                    if (action !is Confirmation.Reset && !accountContextCurrent()) {
+                        showNotice("账户已切换，请重新检查后操作", attention = true)
+                        return
+                    }
                     when (action) {
                         is Confirmation.Place -> {
                             if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
@@ -915,11 +1024,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                             perform { session.cancelOrder(requestId(), current.id) }
                         }
-                        Confirmation.Reset -> perform { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
+                        Confirmation.Reset -> perform(requireCurrentAccount = false) { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
                     }
                 }
                 fun reviewTrade(action: Confirmation) {
                     if (busy) return
+                    if (action !is Confirmation.Reset && !accountContextCurrent()) {
+                        showNotice("账户已切换，请重新检查后操作", attention = true)
+                        return
+                    }
                     if (action is Confirmation.Place) {
                         if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
                             showNotice("当前图表品种已变更或尚未加载，请重新检查订单", attention = true)
@@ -971,7 +1084,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (sizeByRisk) {
                         draft = OrderDraft(side, kind, draft.quantity, entry)
                         showDraft = true
-                        openOrderEditor()
+                        openChartOrderEditor(activeChart)
                         return
                     }
                     val order = OrderDraft(side, kind, draft.quantity, entry).request(instrument)
@@ -986,6 +1099,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                     reviewTrade(Confirmation.Place(protectedOrder, fromChart = true, fromKeys = fromKeys))
                 }
+                /** Context-menu choices only prepare a draft; the user submits it from the order panel. */
+                fun prepareChartOrder(chartId: String, side: Side, kind: OrderKind, price: Long?) {
+                    val entry = price?.takeUnless { kind == OrderKind.MARKET }?.let(instrument::formatPrice).orEmpty()
+                    draft = OrderDraft(side, kind, draft.quantity, entry)
+                    showDraft = true
+                    activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
+                    openChartOrderEditor(chartId)
+                }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
@@ -996,7 +1117,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
                     onBackCompleted = { if (!busy) closeOrder() })
-                val activate by rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
+                val activate = rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
                 // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
                 // its own symbol and interval and becomes the active one at the first press inside it.
                 // What every chart shows, as this pass of the screen saw it. A chart's content decides from these alone, never from
@@ -1008,10 +1129,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 fun layersFor(id: String) = layerStates.getOrPut(id) { ChartLayerState(historyVisible) }
                 val chartView: @Composable (String, Modifier, Boolean) -> Unit = { chartId, m, shared ->
                     val active = chartId == workingChart
+                    val chartWorkspace = workspaceOf(chartId)
+                    val displayedAccountId = if (chartWorkspace in unresolvedDetachedAccounts) "" else detachedAccounts[chartWorkspace] ?: mainAccountId
+                    val displayedSession = remember(plugin, displayedAccountId, session, mainSession, catalog.accounts) {
+                        if (catalog.accounts.none { it.id == displayedAccountId }) null
+                        else if (displayedAccountId == accountId) session
+                        else if (displayedAccountId == mainAccountId) mainSession
+                        else runtime.accountRisk.guard(plugin, plugin.openSession(displayedAccountId))
+                    }
+                    val displayedAccount = if (displayedSession == null) AccountSnapshot(displayedAccountId, 0, balanceKnown = false, equityKnown = false, marginKnown = false)
+                    else {
+                        val current by key(displayedSession) { displayedSession.state.collectAsState() }
+                        current
+                    }
                     val parked = shownCharts[chartId]
                     val shownInstrument = if (active) instrument else parked?.let { slot -> catalog.instruments.firstOrNull { it.symbol == slot.symbol } }
                     // A symbol this broker has not loaded: the window says so, and a press makes it the active chart, where another can be chosen.
-                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate(chartId) } }.testTag("chart-unavailable-$chartId"),
+                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate.value(chartId) } }.testTag("chart-unavailable-$chartId"),
                         contentAlignment = Alignment.Center) {
                         EmptyState("品种未加载", "${parked?.symbol.orEmpty()} 不在当前交易商已加载的合约里。点一下这里，再在图表上另选品种。", icon = AppIcons.Candlestick)
                     } else {
@@ -1020,9 +1154,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val shownQuote = if (active) quote else market.quotes[shownExecution]
                     val shownCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
-                    fun onActive(block: () -> Unit) { if (active) block() else activateChart(chartId) }
+                    fun onActive(block: () -> Unit) {
+                        if (!active) activateChart(chartId)
+                        else if (displayedSession != null && displayedAccountId == accountId && accountContextCurrent()) block()
+                    }
                     // Minimizing hides only the form; the active draft remains editable on the chart.
-                    val draftShown = active && if (compact) orderActive else showDraft
+                    val draftShown = active && displayedAccountId == accountId && accountContextCurrent() && if (compact) orderActive else showDraft
                     // Draft lines take a drop at once; pending orders and positions wait for the confirmation dialogs.
                     val actions = ChartOrderActions(
                         estimateDraft = { order ->
@@ -1042,10 +1179,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             onActive { changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price))) }
                         },
                         editPending = plugin.capabilities.modifyPendingOrders,
-                        estimatePending = session::previewOrderModification,
+                        estimatePending = displayedSession?.let { target -> target::previewOrderModification } ?: { _, _ -> OrderPreview(null) },
                         onPendingEntry = { order, price -> onActive { editPending(order, price, fromChart = true) } },
                         editPendingProtection = plugin.capabilities.modifyPendingProtection,
-                        estimatePendingProtection = session::previewOrderProtection,
+                        estimatePendingProtection = displayedSession?.let { target -> target::previewOrderProtection } ?: { _, _, _ -> OrderPreview(null) },
                         onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
                         onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
                         onLineAction = { action -> onActive { runLineAction(action) } },
@@ -1057,8 +1194,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         entryLots = if (sizeByRisk) request?.lotsHundredths.takeIf { active }
                         else shownInstrument.parseQuantity(if (active) draft.quantity else
                             orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
-                        onEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price) } },
-                        estimateStandalone = { order, price -> session.previewOrderChange(order.id, price, order.request.lotsHundredths) },
+                        onEntryOrder = { side, kind, price -> onActive { prepareChartOrder(chartId, side, kind, price) } },
+                        onKeyboardEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price, fromKeys = true) } },
+                        estimateStandalone = { order, price -> displayedSession?.previewOrderChange(order.id, price, order.request.lotsHundredths) ?: OrderPreview(null) },
                         onStandalone = { order, price -> onActive { changeAlone(order, price, order.request.lotsHundredths, fromChart = true) } },
                         tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
                         instantOrders = skipConfirmation,
@@ -1074,19 +1212,19 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val chartIndicatorSettings by indicatorController.settings.collectAsState()
                     BoxWithConstraints(m.pointerInput(chartId) {
                         // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
-                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate(chartId) } }
+                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate.value(chartId) } }
                     }.testTag("chart-view-$chartId")) {
                     // Split cells can be narrower than the desktop window that contains them.
                     val chartCompact = compact || maxWidth < 600.dp
                     val chartShort = chartCompact && maxHeight < 550.dp
                     Row(Modifier.fillMaxSize()) {
                     if (!shared && (!chartCompact || drawings.toolbarOpen)) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
-                    TradingChart(accountKey, shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
-                        if (active) visiblePositions else account.positions.filter { it.symbol == shownExecution },
-                        if (active) visibleTrades else account.trades.filter { it.symbol == shownExecution },
+                    TradingChart("$brokerId/$displayedAccountId/${plugin.hashCode()}", shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
+                        displayedAccount.positions.filter { it.symbol == shownExecution },
+                        displayedAccount.trades.filter { it.symbol == shownExecution },
                         selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, chartDraft.takeIf { draftShown }, preview.takeIf { draftShown },
-                        if (active) visibleOrders else account.orders.filter { it.request.symbol == shownExecution }, actions,
-                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = account.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else chartIndicatorSettings.indicators, onIndicators = { activateChart(chartId); indicatorChartId = chartId; showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
+                        displayedAccount.orders.filter { it.request.symbol == shownExecution }, actions,
+                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = displayedAccount.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else chartIndicatorSettings.indicators, onIndicators = { activateChart(chartId); indicatorChartId = chartId; showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
                         instruments = watchInstruments, onSymbol = { value -> activateChart(chartId); chooseSymbol(value) }, intervals = intervals, connected = market.connected,
                         indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
                         onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
@@ -1094,7 +1232,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
                                 OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
                             changeDraft(base.withSide(side, instrument, quote))
-                            openOrderEditor()
+                            openChartOrderEditor(chartId)
                         } },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
@@ -1125,7 +1263,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
                                 changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
                                 showDraft = true
-                                openOrderEditor()
+                                openChartOrderEditor(chartId)
                             } },
                             domVisible = active && showDom,
                             onDomToggle = if (!desktop && active && domSupported) ({ showDom = !showDom }) else null,
@@ -1177,9 +1315,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
-                            if (chartWindowsShown) ChartNewWorkspaceButton(onClick = {
-                                activateChart(target); openChart()
-                            }, enabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                         }, singleRow = singleLine)
                 }
@@ -1220,6 +1355,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
                             title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
                     }
+                    workspaceAccountError?.let { message ->
+                        FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "workspace-account-storage-notice", null,
+                            title = "子窗口账户设置")
+                    }
                     shownNotice()?.takeUnless { panelOpen }?.let { current ->
                         FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
                     }
@@ -1247,7 +1386,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
-                                accountName = accountName.takeIf { popupVisible })
+                                accountName = accountName)
                         }
                     }
                 }
@@ -1451,10 +1590,16 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
                 // Read as state where a window draws its overlay: that content belongs to another composition than this one.
-                val dialogWindow by rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
-                val noticeWindow by rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
+                val dialogWindow = rememberUpdatedState(remember(dialogsOpen) { activeWindow }.takeIf { it in liveWindows })
+                val noticeWindow = rememberUpdatedState(activeWindow.takeIf { it in liveWindows })
+                val latestTradeDialogs = rememberUpdatedState(tradeDialogs)
                 val mainFocused = LocalWindowInfo.current.isWindowFocused
-                LaunchedEffect(mainFocused) { if (mainFocused) activeWindow = null }
+                LaunchedEffect(mainFocused) {
+                    if (mainFocused) {
+                        activeWindow = null
+                        if (!dialogsOpen && chartWindowsShown) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
+                    }
+                }
                 val windowOverlay: @Composable (String) -> Unit = { window ->
                     val focused = LocalWindowInfo.current.isWindowFocused
                     LaunchedEffect(focused) { if (focused) activeWindow = window }
@@ -1463,8 +1608,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDispose { liveWindows -= window; if (activeWindow == window) activeWindow = null }
                     }
                     Box(Modifier.fillMaxSize()) {
-                        if (noticeWindow == window) notices(12.dp, Dp.Unspecified, true)
-                        if (dialogWindow == window) tradeDialogs()
+                        if (noticeWindow.value == window) notices(12.dp, Dp.Unspecified, true)
+                        if (dialogWindow.value == window) latestTradeDialogs.value()
                     }
                 }
                 // Overview, positions and orders, and analytics of the trading child: a tab on phones, a dialog on the desktop.
@@ -1524,16 +1669,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val tabInstrument = catalog.instruments.firstOrNull { it.symbol == tabSymbol }
                         workspaceTabData(id, tabSymbol, tabInstrument, tabInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                     } else emptyList()
-                val latestTitleTabs = rememberUpdatedState<@Composable () -> Unit>({
-                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
-                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces)
-                })
-                DisposableEffect(titleBarSlot, nativeDesktop, desktop) {
+                // The native title row is a sibling composition. Publish its data and the current
+                // workspace actions separately so live quotes cannot leave stale event handlers.
+                val titleOwner = remember(titleBarSlot, plugin) { Any() }
+                SideEffect {
                     if (titleBarSlot != null && nativeDesktop && desktop) {
-                        val registered: @Composable () -> Unit = { latestTitleTabs.value.invoke() }
-                        titleBarSlot.content = registered
-                        onDispose { if (titleBarSlot.content === registered) titleBarSlot.content = null }
-                    } else onDispose { }
+                        titleBarSlot.publish(titleOwner, DesktopTitleTabs(tabs, selectedWorkspace, canDetachWorkspaces, tabletWorkspaces, !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS),
+                            ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces, { openChart() })
+                    }
+                }
+                val titleContent: @Composable () -> Unit = {
+                    WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
+                        Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces,
+                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
+                }
+                DisposableEffect(titleBarSlot, nativeDesktop, desktop, titleOwner) {
+                    onDispose { titleBarSlot?.clear(titleOwner) }
                 }
                 Box(Modifier.fillMaxSize().imePadding()) {
                 Row(Modifier.fillMaxSize()) {
@@ -1546,7 +1697,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                         }
                         DividerLine()
                     }
@@ -1556,13 +1707,33 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Box(Modifier.weight(1f).fillMaxHeight()) { latestTitleTabs.value.invoke() }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                         }
                         DividerLine()
                     }
-                    if (unifiedChartBar) {
-                        val desktopControls: @Composable () -> Unit = {
+                    val desktopControls: @Composable (String?) -> Unit = { workspace ->
+                            val selectedId = when {
+                                workspace == null -> mainAccountId
+                                workspace in unresolvedDetachedAccounts -> ""
+                                else -> detachedAccounts[workspace] ?: mainAccountId
+                            }
+                            val selected = catalog.accounts.firstOrNull { it.id == selectedId }
+                            val targetSession = remember(plugin, selected?.id) {
+                                selected?.let { runtime.accountRisk.guard(plugin, plugin.openSession(it.id)) }
+                            }
+                            val targetSnapshot = if (targetSession == null) null else {
+                                val value by key(targetSession) { targetSession.state.collectAsState() }
+                                value
+                            }
+                            fun selectionStillCurrent(): Boolean {
+                                if (workspace != null && workspace in unresolvedDetachedAccounts) return false
+                                val currentBroker = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
+                                val current = if (workspace == null) chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } }
+                                    ?: catalog.accounts.first().id else detachedAccounts[workspace] ?: mainAccountId
+                                return currentBroker === plugin && current == selectedId && catalog.accounts.any { it.id == selectedId }
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                val accountActionsReady = !accountOperationPending()
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1572,26 +1743,37 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .6f))
                                     val shape = RoundedCornerShape(7.dp)
                                     val outline = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                                    OutlinedButton(onClick = { flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, session.account))) },
+                                    OutlinedButton(onClick = {
+                                        if (!accountOperationPending() &&
+                                            targetSession != null && selectionStillCurrent())
+                                            flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
+                                    },
                                         modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-selected-account"),
-                                        enabled = !busy && !session.account.readOnly && (account.positions.isNotEmpty() || account.orders.isNotEmpty()),
+                                        enabled = accountActionsReady && targetSession != null && !targetSession.account.readOnly &&
+                                            (targetSnapshot?.positions?.isNotEmpty() == true || targetSnapshot?.orders?.isNotEmpty() == true),
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓此子账户", maxLines = 1)
                                     }
                                     OutlinedButton(onClick = {
-                                        val (targets, skipped) = bulkFlattenTargets(registry.plugins)
-                                        if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
-                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = !busy,
+                                        if (!accountOperationPending() && selectionStillCurrent()) {
+                                            val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                            if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                        }
+                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady && targetSession != null,
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓全部账户", maxLines = 1)
                                     }
                                 }
                                 Spacer(Modifier.width(32.dp))
-                                AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = !busy,
-                                    dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true, inlineLoginLabel = "平台")
+                                AccountContextBar(registry, plugin, selectedId,
+                                    { value -> if (workspace == null) chooseBroker(value) },
+                                    { value -> if (workspace == null) chooseAccount(value) else chooseDetachedAccount(workspace, value) },
+                                    Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = accountActionsReady,
+                                    dense = true, aliases = runtime.accountAliases.takeIf { workspace == null }, emphasize = true, inline = true,
+                                    inlineLoginLabel = "平台", allowLoginSwitch = workspace == null)
                             }
-                        }
+                    }
+                    if (unifiedChartBar) {
                         val toolbarStatus: @Composable () -> Unit = {
                             if (!desktopStyle) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
                                 Modifier.width(accountPickerWidth), enabled = !busy,
@@ -1620,7 +1802,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
                                 if (!wrapTabletControls) {
-                                    if (desktopStyle && desktop) desktopControls()
+                                    if (desktopStyle && desktop) desktopControls(null)
                                     toolbarStatus()
                                 } else toolbarStatus()
                             }
@@ -1628,7 +1810,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (wrapTabletControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                                 .padding(start = 6.dp, end = 4.dp, bottom = 4.dp).testTag("tablet-account-toolbar"),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                desktopControls()
+                                desktopControls(null)
                             }
                         }
                         DividerLine()
@@ -1647,52 +1829,142 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                     if (desktop) {
-                        DesktopWorkspace(runtime.desktopLayout, wide, Modifier.weight(1f).fillMaxWidth(),
-                            market = { m, minimize -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, m, runtime.marketWatch, panel = true, onClose = minimize) },
-                            chart = chart,
-                            order = { m, minimize -> OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
-                                { request?.let { reviewTrade(Confirmation.Place(it)) } }, m.background(colors.Surface), environment = environment,
-                                capacity = capacity, onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
-                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request) },
-                            terminal = { m ->
-                                var section by remember(plugin, accountId) { mutableStateOf(TerminalSection.POSITIONS) }
-                                val tabs = listOf(TerminalSection.POSITIONS to "持仓 ${account.positions.size}",
-                                    TerminalSection.ORDERS to "挂单 ${terminalOrders(account).rows.size}",
-                                    TerminalSection.EXECUTIONS to "成交 ${account.executions.size}",
-                                    TerminalSection.CLOSED_TRADES to "平仓记录 ${analyticsTrades.size}")
-                                Column(m.background(colors.Surface)) {
-                                    if (desktopStyle) {
-                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
-                                            .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            tabs.forEach { (value, label) ->
-                                                FilterChip(section == value, { section = value }, label = { Text(label) },
-                                                    modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
-                                            }
-                                        }
-                                        AccountRiskNotice(riskMessage, riskTrigger, session.account.currency, Modifier.padding(horizontal = 12.dp))
-                                    }
-                                    TradeTerminal(plugin, account, market, selectedPositionId, false,
-                                        onSelectPosition = { p -> focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null },
-                                        onSelectTrade = { t -> focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null },
-                                        onClose = { reviewTrade(Confirmation.Close(it)) }, onProtect = { editProtection(it) }, onCancel = { reviewTrade(Confirmation.Cancel(it)) }, onEditOrder = { editPending(it) }, busy = busy,
-                                        modifier = Modifier.weight(1f).fillMaxWidth(), onProtectOrder = { editPendingProtection(it) },
-                                        section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) analyticsTrades else account.trades)
+                        @Composable fun workspaceAccount(workspace: String): Pair<AccountSession?, AccountSnapshot?> {
+                            val id = if (workspace in unresolvedDetachedAccounts) "" else detachedAccounts[workspace] ?: mainAccountId
+                            val target = remember(plugin, id, session, mainSession, catalog.accounts) {
+                                if (catalog.accounts.none { it.id == id }) null
+                                else if (id == accountId) session
+                                else if (id == mainAccountId) mainSession
+                                else runtime.accountRisk.guard(plugin, plugin.openSession(id))
+                            }
+                            val snapshot = if (target == null) null else {
+                                val current by key(target) { target.state.collectAsState() }
+                                current
+                            }
+                            return target to snapshot
+                        }
+                        fun readyForWorkspace(target: String): Boolean {
+                            return activeChart == target && restoring == null && chosenSymbol == symbol && accountContextCurrent()
+                        }
+                        fun workInWorkspace(target: String, action: () -> Unit) {
+                            if (accountOperationPending()) { showNotice("请先完成当前交易操作", attention = true); return }
+                            if (!readyForWorkspace(target)) {
+                                activateChart(target)
+                                showNotice("正在切换窗口，请检查账户与合约后重试", attention = true)
+                                return
+                            }
+                            activeWindow = workspaceOf(target).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
+                            action()
+                        }
+                        // Slots can be composed in a separate native window. Keep their callbacks tied to the
+                        // current account and draft even when Compose reuses a lambda after switching windows.
+                        val submitWorkspaceOrder = rememberUpdatedState<(String) -> Unit> { target ->
+                            workInWorkspace(target) {
+                                request?.let { reviewTrade(Confirmation.Place(it)) }
+                                    ?: showNotice("订单参数尚未准备好，请检查后重试", attention = true)
+                            }
+                        }
+                        val selectWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { focusedExecution = null; showContract(p.symbol); selectedPositionId = p.id; focusedTrade = null }
+                        }
+                        val selectWorkspaceTrade = rememberUpdatedState<(String, ClosedTrade) -> Unit> { target, t ->
+                            workInWorkspace(target) { focusedExecution = null; showContract(t.symbol); focusedTrade = t; selectedPositionId = null }
+                        }
+                        val closeWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { reviewTrade(Confirmation.Close(p)) }
+                        }
+                        val protectWorkspacePosition = rememberUpdatedState<(String, Position) -> Unit> { target, p ->
+                            workInWorkspace(target) { editProtection(p) }
+                        }
+                        val cancelWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { reviewTrade(Confirmation.Cancel(o)) }
+                        }
+                        val editWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { editPending(o) }
+                        }
+                        val protectWorkspaceOrder = rememberUpdatedState<(String, PendingOrder) -> Unit> { target, o ->
+                            workInWorkspace(target) { editPendingProtection(o) }
+                        }
+                        @Composable fun workspaceOrder(target: String, m: Modifier, minimize: () -> Unit) {
+                            if (!readyForWorkspace(target)) {
+                                Column(m.background(colors.Surface).padding(16.dp).testTag("inactive-workspace-order-$target"),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("下单 · ${chartSlot(target)?.symbol.orEmpty()}", style = MaterialTheme.typography.titleMedium)
+                                    val wanted = detachedAccounts[workspaceOf(target)]
+                                    Text(if (workspaceOf(target) in unresolvedDetachedAccounts || wanted != null && catalog.accounts.none { it.id == wanted }) "子账户不可用，请在此窗口重新选择子账户"
+                                        else if (activeChart == target) "正在加载当前图表合约" else "切换到此窗口后显示对应合约的下单面板",
+                                        color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                                    if (activeChart != target) Button({ activateChart(target) }, Modifier.testTag("activate-workspace-order-$target")) { Text("激活此窗口") }
                                 }
-                            }, terminalSummary = "持仓 ${account.positions.size} · 挂单 ${terminalOrders(account).rows.size}",
+                            } else OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy,
+                                { submitWorkspaceOrder.value(target) },
+                                m.background(colors.Surface), environment = environment, capacity = capacity,
+                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
+                                onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
+                                accountName = accountName)
+                        }
+                        @Composable fun workspaceTerminal(target: String, m: Modifier) {
+                            val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))
+                            val targetAccount = targetSnapshot ?: AccountSnapshot("", 0, balanceKnown = false, equityKnown = false, marginKnown = false)
+                            val targetTrades = when (targetSession?.account?.id) {
+                                accountId -> analyticsTrades
+                                mainAccountId -> mainAnalyticsTrades
+                                else -> mergeAnalyticsTrades(cachedByAccount[targetSession?.account?.id].orEmpty(), targetAccount.trades)
+                            }
+                            var section by remember(plugin, targetSession?.account?.id, target) { mutableStateOf(TerminalSection.POSITIONS) }
+                            val sections = listOf(TerminalSection.POSITIONS to "持仓 ${targetAccount.positions.size}",
+                                TerminalSection.ORDERS to "挂单 ${terminalOrders(targetAccount).rows.size}",
+                                TerminalSection.EXECUTIONS to "成交 ${targetAccount.executions.size}",
+                                TerminalSection.CLOSED_TRADES to "平仓记录 ${targetTrades.size}")
+                            Column(m.background(colors.Surface)) {
+                                if (desktopStyle) {
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).horizontalScroll(rememberScrollState())
+                                        .testTag("desktop-trade-actions"), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        sections.forEach { (value, label) ->
+                                            FilterChip(section == value, { section = value }, label = { Text(label) },
+                                                modifier = Modifier.testTag("desktop-trade-tab-${value.name}"))
+                                        }
+                                    }
+                                    if (targetSession != null) AccountRiskNotice(runtime.accountRisk.restriction(plugin, targetSession),
+                                        runtime.accountRisk.lockingTrigger(plugin, targetSession), targetSession.account.currency, Modifier.padding(horizontal = 12.dp))
+                                }
+                                TradeTerminal(plugin, targetAccount, market, selectedPositionId.takeIf { readyForWorkspace(target) }, false,
+                                    onSelectPosition = { p -> selectWorkspacePosition.value(target, p) },
+                                    onSelectTrade = { t -> selectWorkspaceTrade.value(target, t) },
+                                    onClose = { p -> closeWorkspacePosition.value(target, p) },
+                                    onProtect = { p -> protectWorkspacePosition.value(target, p) },
+                                    onCancel = { o -> cancelWorkspaceOrder.value(target, o) },
+                                    onEditOrder = { o -> editWorkspaceOrder.value(target, o) }, busy = busy,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    onProtectOrder = { o -> protectWorkspaceOrder.value(target, o) },
+                                    section = section.takeIf { desktopStyle }, historyTrades = if (desktopStyle) targetTrades else targetAccount.trades)
+                            }
+                        }
+                        val mainWorkspace = if (chartWindowsShown) selectedWorkspace else MAIN_CHART
+                        val mainTarget = workspaceSelected[mainWorkspace] ?: mainWorkspace
+                        val mainSlot = chartSlot(mainTarget)
+                        val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
+                            DesktopWorkspace(runtime.desktopLayout, wide || contextOrderSidebar, Modifier.weight(1f).fillMaxWidth(),
+                            contextOrderRequest = contextOrderRequest,
+                            market = { m, minimize -> MarketWatch(plugin, market, mainAccount, mainSlot?.symbol ?: symbol,
+                                { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize) },
+                            chart = chart,
+                            order = { m, minimize -> workspaceOrder(mainTarget, m, minimize) },
+                            terminal = { m -> workspaceTerminal(mainTarget, m) }, terminalSummary = "持仓 ${mainAccount.positions.size} · 挂单 ${terminalOrders(mainAccount).rows.size}",
                             orderFlow = if (orderFlowSupported) { { m -> OrderFlowPanel(plugin, instrument, timeframe, m) { showOrderFlow = false } } } else null,
-                            dom = if (domSupported) { { m, minimize -> DomPanel(plugin, instrument,
-                                account.orders.filter { it.request.symbol == executionSymbol }, m, minimize) } } else null,
+                            dom = if (domSupported && mainInstrument != null) { { m, minimize -> DomPanel(plugin, mainInstrument,
+                                mainAccount.orders.filter { it.request.symbol == mainInstrument.executionSymbol }, m, minimize) } } else null,
                             domOpen = showDom, onDomOpenChange = { showDom = it },
                             orderFlowOpen = showOrderFlow, onOrderFlowOpenChange = { showOrderFlow = it }, windowOverlay = windowOverlay,
                             analytics = if (desktopStyle) { { m, close ->
                                 Column(m.background(colors.Shell)) {
-                                    PanelHeader("交易分析", Modifier.background(colors.Surface), subtitle = accountName,
+                                    PanelHeader("交易分析", Modifier.background(colors.Surface), subtitle = aliases.account(plugin.descriptor.id, mainSession.account),
                                         actions = { ActionIcon(AppIcons.Close, "关闭分析", "close-desktop-analytics", onClick = close) })
                                     DividerLine()
-                                    key(plugin, accountId) {
-                                        AccountAnalyticsPage(session.account, analyticsTrades, Modifier.weight(1f).fillMaxWidth(),
-                                            name = accountName, cachedSinceMs = cachedTrades.minOfOrNull { it.closedAtMs }, showHeading = false)
+                                    key(plugin, mainAccountId) {
+                                        AccountAnalyticsPage(mainSession.account, mainAnalyticsTrades, Modifier.weight(1f).fillMaxWidth(),
+                                            name = aliases.account(plugin.descriptor.id, mainSession.account), cachedSinceMs = mainCachedTrades.minOfOrNull { it.closedAtMs }, showHeading = false)
                                     }
                                 }
                             } } else null,
@@ -1700,24 +1972,34 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             newChartWindowEnabled = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
                             onOpenSettings = if (desktopStyle) ({ showActivity = false; showSettings = true }) else null,
                             onResetLayout = if (desktopStyle) ({ showResetLayout = true }) else null,
-                            windowMenuExtra = { close ->
-                                DividerLine(Modifier.padding(vertical = 4.dp))
-                                DropdownMenuItem(text = { Text("新建图表窗口") }, onClick = { close(); openChart() }, enabled = chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
-                                    leadingIcon = { Icon(AppIcons.Add, contentDescription = null) }, modifier = Modifier.testTag("window-menu-new-chart"))
-                            })
+                            windowMenuExtra = {})
                         // A detached tab keeps its own workspace and can be returned to the tab strip.
                         val chartWindows = LocalPanelWindowHost.current
                         val layoutPreferences by runtime.desktopLayout.preferences.collectAsState()
                         if (chartWindows != null) detachedWorkspaces.forEach { id -> key(id) {
-                            val slot = chartSlot(workspaceSelected[id] ?: id)
+                            val target = workspaceSelected[id] ?: id
+                            val slot = chartSlot(target)
                             val detachedInstrument = catalog.instruments.firstOrNull { it.symbol == slot?.symbol }
                             val detachedQuote = workspaceTabData(id, slot?.symbol.orEmpty(), detachedInstrument,
                                 detachedInstrument?.priceSymbol?.let { market.quotes[it] }, market.connected)
                             val window = chartWindowKey(id)
-                            chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1000.dp, 680.dp),
+                            chartWindows.Window(window, "UniTrading · 图表 · ${slot?.symbol.orEmpty()} · ${slot?.timeframe?.label.orEmpty()}", layoutPreferences.windows[window], DpSize(1280.dp, 800.dp),
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
                                 onClose = { dockWorkspace(id) }) {
                                 WindowSurface(window, windowOverlay) {
+                                    val (_, childSnapshot) = workspaceAccount(id)
+                                    val childAccount = childSnapshot ?: AccountSnapshot("", 0, balanceKnown = false, equityKnown = false, marginKnown = false)
+                                    val childFocused = LocalWindowInfo.current.isWindowFocused
+                                    LaunchedEffect(childFocused) {
+                                        if (childFocused) {
+                                            activeWindow = window
+                                            if (!dialogsOpen) activateChart(workspaceSelected[id] ?: id)
+                                        }
+                                    }
+                                    fun activateDetached() {
+                                        activeWindow = window
+                                        if (!dialogsOpen) activateChart(workspaceSelected[id] ?: id)
+                                    }
                                     Column(Modifier.fillMaxSize()) {
                                         Row(Modifier.fillMaxWidth().background(colors.Surface), verticalAlignment = Alignment.CenterVertically) {
                                             var dragged by remember(id) { mutableStateOf(false) }
@@ -1741,7 +2023,49 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             }
                                             TextButton({ dockWorkspace(id) }, Modifier.testTag("dock-workspace-$id")) { Text("收回标签") }
                                         }
-                                        workspaceView(id, Modifier.weight(1f).fillMaxWidth(), true)
+                                        BoxWithConstraints(Modifier.fillMaxWidth().background(colors.Surface)
+                                            .pointerInput(window) {
+                                                awaitPointerEventScope { while (true) {
+                                                    if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activeWindow = window
+                                                } }
+                                            }.testTag("detached-account-toolbar-$id")) {
+                                            val wrapControls = maxWidth < 900.dp
+                                            Column(Modifier.fillMaxWidth()) {
+                                                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically) {
+                                                    sharedChartBar(id, Modifier.weight(1f), true)
+                                                    if (!wrapControls) desktopControls(id)
+                                                }
+                                                if (wrapControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                                                    .padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    desktopControls(id)
+                                                }
+                                            }
+                                        }
+                                        DividerLine()
+                                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                                            DetachedWorkspace(id,
+                                                chart = { m -> workspaceView(id, m, false) },
+                                                market = { m, close -> MarketWatch(plugin, market, childAccount, slot?.symbol ?: symbol,
+                                                    { value -> if (!dialogsOpen) { activateDetached(); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = close) },
+                                                order = { m, close -> workspaceOrder(target, m, close) },
+                                                terminal = { m -> workspaceTerminal(target, m) },
+                                                terminalSummary = "持仓 ${childAccount.positions.size} · 挂单 ${terminalOrders(childAccount).rows.size}",
+                                                dom = if (domSupported && detachedInstrument != null) { { m, close ->
+                                                    Column(m.background(colors.Surface)) {
+                                                        DomPanel(plugin, detachedInstrument, childAccount.orders.filter { it.request.symbol == detachedInstrument.executionSymbol },
+                                                            Modifier.weight(1f).fillMaxWidth(), close)
+                                                        Text("盘口随当前活动窗口切换", Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                            .testTag("detached-dom-scope-$id"), color = colors.Muted, style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                } } else null,
+                                                orderRequest = detachedOrderRequests[id] ?: 0,
+                                                onDomOpenChange = { open -> if (open) detachedDomOpen[id] = true else detachedDomOpen.remove(id) },
+                                                onActivate = ::activateDetached)
+                                        }
+                                        DividerLine()
+                                        AccountStrip(childAccount, Modifier.testTag("detached-account-strip-$id"),
+                                            note = "状态以服务器为准 · ${environment.label}", connected = market.connected)
                                     }
                                 }
                             }
@@ -1852,12 +2176,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
                     else if (desktop) {
                         DividerLine()
-                        AccountStrip(account, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
+                        AccountStrip(mainAccount, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
                             else "状态以服务器为准 · ${environment.label}", connected = market.connected)
                     }
                 }
                 }
-                if (noticeWindow == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, observedHeight * .65f, desktop)
+                if (noticeWindow.value == null) notices(if (desktop) 72.dp else if (keyboardOpen) 8.dp else 56.dp, observedHeight * .65f, desktop)
                 if (desktop && showOverview) {
                     Dialog(onDismissRequest = { showOverview = false }) {
                         Surface(Modifier.widthIn(max = 720.dp).fillMaxWidth().fillMaxHeight(.9f), shape = MaterialTheme.shapes.extraLarge, color = colors.Shell) {
@@ -1879,7 +2203,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                 }
-                if (dialogWindow == null) tradeDialogs()
+                if (dialogWindow.value == null) tradeDialogs()
                 if (startupError != null && confirmation !is Confirmation.Reset) AlertDialog(
                     onDismissRequest = {}, title = { Text("模拟存档无法读取") },
                     text = { Text(startupError!! + "\n请先备份原文件。继续重置会覆盖所有模拟账户。") },

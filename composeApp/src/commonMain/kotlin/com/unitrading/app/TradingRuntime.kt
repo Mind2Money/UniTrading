@@ -38,6 +38,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
      * the background the analytics cache it trims ([analyticsTrim]).
      */
     val chartPreferences: ChartPreferencesController by lazy { ChartPreferencesController(store) }
+    internal val workspaceAccounts: WorkspaceAccounts by lazy { WorkspaceAccounts(store) }
     val chartTemplates: ChartTemplateController by lazy { ChartTemplateController(store) }
     /** A locked time cursor is shared between charts in this running workspace. */
     val chartLockedTime = MutableStateFlow<Long?>(null)
