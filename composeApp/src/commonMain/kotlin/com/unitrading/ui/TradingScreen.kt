@@ -52,6 +52,7 @@ import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -772,16 +773,20 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             val imeBottom = WindowInsets.ime.getBottom(density)
             val keyboardOpen = imeBottom > 0
             val focusManager = LocalFocusManager.current
-            BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+            val windowChromeInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+            BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(windowChromeInsets)) {
                 val nativeDesktop = LocalChartPlatform.current == ChartPlatform.DESKTOP
-                // The IME consumes part of safeDrawingPadding. Classify the window using its size before
-                // the IME opened so a focused field is not destroyed by a switch to the phone layout.
+                // Measure the workspace outside IME padding. On platforms that resize the host view first,
+                // defer a height decrease briefly until the IME visibility signal has had time to arrive.
                 val unoccludedHeight = remember(maxWidth, nativeDesktop) { mutableStateOf(maxHeight) }
-                val imeHeight = with(density) {
-                    (imeBottom - WindowInsets.navigationBars.getBottom(density)).coerceAtLeast(0).toDp()
+                val observedHeight = maxHeight
+                LaunchedEffect(observedHeight, keyboardOpen) {
+                    if (!keyboardOpen) {
+                        if (observedHeight < unoccludedHeight.value) delay(1500)
+                        unoccludedHeight.value = observedHeight
+                    }
                 }
-                val layoutHeight = if (keyboardOpen) maxOf(unoccludedHeight.value, maxHeight + imeHeight) else maxHeight
-                SideEffect { if (!keyboardOpen) unoccludedHeight.value = maxHeight }
+                val layoutHeight = if (nativeDesktop) maxHeight else maxOf(unoccludedHeight.value, maxHeight)
                 // Tablet sizes use the desktop workspace in both orientations. The actual window host is
                 // still desktop-only, so tabs can be reordered on tablets but cannot become OS windows.
                 val systemBars = WindowInsets.systemBars
@@ -1535,6 +1540,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onDispose { if (titleBarSlot.content === registered) titleBarSlot.content = null }
                     } else onDispose { }
                 }
+                Box(Modifier.fillMaxSize().imePadding()) {
                 Row(Modifier.fillMaxSize()) {
                 if (rail) MobileNavigationRail(mobileTab, selectTab, dense = denseLandscape)
                 Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -1884,6 +1890,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     text = { Text(startupError!! + "\n请先备份原文件。继续重置会覆盖所有模拟账户。") },
                     confirmButton = { TextButton({ confirmation = Confirmation.Reset }) { Text("检查重置操作") } },
                 )
+                }
             }
         }
     }
