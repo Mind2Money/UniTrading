@@ -777,6 +777,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // Use the touch layout only on tablet-sized screens, never on a landscape phone.
                 val tablet = LocalChartPlatform.current != ChartPlatform.DESKTOP && minOf(maxWidth, maxHeight) >= 600.dp
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
+                val desktopPickerWidth = if (maxWidth >= 1200.dp) 340.dp else 280.dp
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
@@ -1563,7 +1564,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                                 Spacer(Modifier.width(14.dp))
                                 AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.width(if (maxWidth >= 1200.dp) 340.dp else 280.dp).testTag("desktop-trade-accounts"), enabled = !busy,
+                                    Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = !busy,
                                     dense = true, aliases = runtime.accountAliases, emphasize = true, inline = true, inlineLoginLabel = "平台")
                             }
                             if (!nativeDesktop) AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
