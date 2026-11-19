@@ -800,11 +800,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val desktopStyle = nativeDesktop || tablet
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
-                val measuredWidth = maxWidth
-                val measuredHeight = maxHeight
-                LaunchedEffect(keyboardOpen, measuredWidth, measuredHeight, tablet, wide) {
-                    println("IMEDBG keyboard=$keyboardOpen width=$measuredWidth height=$measuredHeight logicalHeight=$layoutHeight tablet=$tablet wide=$wide")
-                }
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 val desktopPickerWidth = if (maxWidth >= 1200.dp && (!tablet || maxWidth >= 1400.dp)) 340.dp else 280.dp
                 val wrapTabletControls = tablet && maxWidth < 900.dp
