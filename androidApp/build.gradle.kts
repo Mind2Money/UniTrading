@@ -15,8 +15,8 @@ android {
         applicationId = "com.unitrading.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.6.0"
+        versionCode = 13
+        versionName = "1.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("test-r8-rules.pro")
         // Separate application ID for credential tests; never replace the normal installation.
@@ -112,7 +112,7 @@ dependencies {
     implementation(libs.activity.compose)
     "standardImplementation"("androidx.webkit:webkit:1.18.0")
     // Follows Firefox releases. The engine updates only when this version does, so raise it with each app release.
-    "geckoImplementation"("org.mozilla.geckoview:geckoview-$geckoAbi:160.0.20261104181552")
+    "geckoImplementation"("org.mozilla.geckoview:geckoview-$geckoAbi:160.0.20261116130455")
     tradovateDesktopRuntime(project(":tradovate-broker"))
     // NotificationCompat Live Update helpers (promotion request, status-bar chip text) and startForegroundService.
     implementation("androidx.core:core:1.18.0")
