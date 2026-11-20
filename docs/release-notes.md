@@ -2,11 +2,11 @@
 
 ## 简体中文
 
-- 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单按钮固定在最右侧。
+- 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
 
 ## English
 
-- Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and keep the order button at the far right.
+- Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and put the order button on the right rail between DOM and trading.
 
 # v1.7.0
 
