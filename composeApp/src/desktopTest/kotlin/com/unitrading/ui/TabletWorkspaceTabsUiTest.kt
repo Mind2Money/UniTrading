@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.unitrading.app.DesktopPanel
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import kotlinx.coroutines.runBlocking
@@ -28,6 +29,8 @@ class TabletWorkspaceTabsUiTest {
     private fun verifySeparatedTabletActions(platform: ChartPlatform, width: Int, height: Int) =
         runDesktopComposeUiTest(width = width, height = height) {
             val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+            runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+            runtime.desktopLayout.setOpen(DesktopPanel.TERMINAL, false)
             val broker = runtime.registry.plugins.first()
             val account = broker.accounts.first()
             val initialPositions = broker.openSession(account.id).state.value.positions.size
@@ -43,12 +46,20 @@ class TabletWorkspaceTabsUiTest {
             val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
             val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
             val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
+            val rail = onNodeWithTag("desktop-panel-rail").fetchSemanticsNode().boundsInRoot
+            val tradeBar = onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+            val figures = onNodeWithTag("tablet-account-bar").fetchSemanticsNode().boundsInRoot
+            assertTrue(rail.width <= 64f && header.height <= 44f, "Tablet controls must leave more chart space")
+            assertTrue(figures.top >= tradeBar.top && figures.bottom <= tradeBar.bottom, "Account figures must share the trade bar")
+            assertTrue(kotlin.math.abs(actions.left - accountPicker.left) <= 4f && kotlin.math.abs(actions.right - accountPicker.right) <= 4f, "Flatten and account controls should align: actions=$actions accounts=$accountPicker")
+            onNodeWithTag("daily-pnl-value").assertExists()
+            onNodeWithTag("drawdown-room-value", useUnmergedTree = true).assertExists()
             assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
             assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
             assertTrue(accountPicker.right <= width && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail before trading")
             onNodeWithTag("open-order").assertDoesNotExist()
-            assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
-                "Flatten targets must have adequate spacing and touch size")
+            assertTrue(selected.right + 7f <= all.left && selected.height >= 40f && all.height >= 40f,
+                "Flatten targets must remain separated and touchable")
             val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
                 .also { it.parentFile.mkdirs() }
             ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", screenshot)

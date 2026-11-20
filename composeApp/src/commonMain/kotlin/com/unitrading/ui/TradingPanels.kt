@@ -150,17 +150,21 @@ private class AccountFigures(account: AccountSnapshot, colors: TradingPalette) {
 
 /** Desktop status bar: every account figure on one line, scrolling sideways only when the window is too narrow. */
 @Composable
-internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier, note: String? = null, connected: Boolean = true) {
+internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifier, note: String? = null, connected: Boolean = true, compact: Boolean = false) {
     val figures = AccountFigures(account, TradingColors)
-    Row(modifier.fillMaxWidth().background(TradingColors.Surface).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+    Row(modifier.fillMaxWidth().background(TradingColors.Surface).padding(horizontal = if (compact) 4.dp else 16.dp, vertical = if (compact) 0.dp else 8.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 24.dp)) {
             Metric("今日盈亏 USD（券商）", figures.daily, color = figures.dailyColor, valueTag = "daily-pnl-value")
             figures.funds.forEach { (label, value, color) -> Metric(label, value, color = color) }
             DrawdownStrip(account.drawdown, connected)
             figures.others.forEach { (label, value, color) -> Metric(label, value, color = color) }
+            if (compact) Column(horizontalAlignment = Alignment.End) {
+                Text(figures.dailySource, Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                if (note != null) Text(note, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            }
         }
-        Column(horizontalAlignment = Alignment.End) {
+        if (!compact) Column(horizontalAlignment = Alignment.End) {
             Text(figures.dailySource, Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             if (note != null) Text(note, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
         }

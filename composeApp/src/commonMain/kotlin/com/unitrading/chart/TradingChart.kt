@@ -161,8 +161,16 @@ fun TradingChart(
     val axis = chrome.priceAxis
     var axisMenu by remember { mutableStateOf(false) }
     var axisPage by remember { mutableStateOf(0) }
-    val left = with(density) { (if (axis.left) 84.dp else 12.dp).toPx() }
-    val right = (size.width - with(density) { (if (axis.left) 12.dp else 84.dp).toPx() }).coerceAtLeast(left + 1)
+    // Tablets reclaim chart width, while long symbols and prices still receive enough space.
+    val priceColumn = if (chrome.tabletCompactAxis) {
+        val samples = listOfNotNull(instrument.symbol, quote?.bid?.let(instrument::formatPrice),
+            quote?.ask?.let(instrument::formatPrice), candles.maxOfOrNull { it.high }?.let(instrument::formatPrice),
+            candles.minOfOrNull { it.low }?.let(instrument::formatPrice), "00:00:00")
+        maxOf(with(density) { 68.dp.toPx() }, samples.maxOf { textMeasurer.measure(it, TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")).size.width.toFloat() } + with(density) { 12.dp.toPx() })
+    } else with(density) { 84.dp.toPx() }
+    val innerMargin = with(density) { 12.dp.toPx() }
+    val left = if (axis.left) priceColumn else innerMargin
+    val right = (size.width - if (axis.left) innerMargin else priceColumn).coerceAtLeast(left + 1)
     // Phone controls stay above the plot; the desktop-style workspace puts them below the axis.
     val top = with(density) { (if (mobilePlatform) 58.dp else 18.dp).toPx() }
     val bottom = (size.height - with(density) { (if (mobilePlatform) 30.dp else 54.dp).toPx() }).coerceAtLeast(top + 1)
@@ -1031,6 +1039,7 @@ class ChartChrome(
     val layerState: ChartLayerState? = null,
     /** Tablets can use the desktop axis placement while retaining touch input. */
     val desktopAxisStyle: Boolean? = null,
+    val tabletCompactAxis: Boolean = false,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

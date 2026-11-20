@@ -29,7 +29,7 @@ internal data class DesktopPanelGeometry(
 )
 
 /** Sizes for the panels of a [width] by [height] workspace; a folded panel takes no width, so the chart gets its space. */
-internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false, domOpen: Boolean = false, analyticsOpen: Boolean = false): DesktopPanelGeometry {
+internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false, domOpen: Boolean = false, analyticsOpen: Boolean = false, railWidth: Float = PANEL_RAIL): DesktopPanelGeometry {
     fun dimension(value: Float, minimum: Float, maximum: Float): PanelDimension {
         val max = maximum.coerceAtLeast(0f)
         val min = minimum.coerceAtMost(max)
@@ -40,7 +40,7 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
     // Each half still fits the compact chart controls or a price column plus one footprint column.
     val chartMinimum = if (orderFlowOpen) 488f else CHART_MIN_WIDTH
     val dividerCount = listOf(preferred.marketOpen, orderOpen, domOpen).count { it }
-    val totalRoom = width - PANEL_RAIL - PANEL_DIVIDER * dividerCount - chartMinimum
+    val totalRoom = width - railWidth - PANEL_DIVIDER * dividerCount - chartMinimum
     val sidebarMinimum = if (analyticsOpen) 440f else 280f
     val domRoom = totalRoom - (if (preferred.marketOpen) sidebarMinimum else 0f) - (if (orderOpen) 260f else 0f)
     val dom = if (domOpen) dimension(preferred.domWidth, 220f, minOf(520f, domRoom)) else closed

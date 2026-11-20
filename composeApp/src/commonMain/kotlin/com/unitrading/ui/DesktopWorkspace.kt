@@ -81,7 +81,10 @@ internal fun DesktopWorkspace(
     onResetLayout: (() -> Unit)? = null,
     contextOrderRequest: Int = 0,
     onCompactOrderOpen: (() -> Unit)? = null,
+    tablet: Boolean = false,
+    tabletAccountBar: (@Composable (Modifier) -> Unit)? = null,
 ) {
+    val railWidth = if (tablet) 65f else PANEL_RAIL
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
     val scope = rememberCoroutineScope()
@@ -110,7 +113,7 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline, showAnalytics)
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline, showAnalytics, railWidth)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     // With the chart in its own window and no order flow beside it, the trade list takes the chart's room.
@@ -137,13 +140,13 @@ internal fun DesktopWorkspace(
                             onChange = { controller.update(preferred.copy(terminalHeight = it)) }, onFinish = ::save,
                             onReset = { controller.update(preferred.copy(terminalHeight = defaults.terminalHeight)); save() })
                         Column((if (chartArea) Modifier.height(layout.terminal.value.dp) else Modifier.weight(1f)).fillMaxWidth().testTag("desktop-terminal")) {
-                            TerminalBar(terminalSummary, open = true, extra = terminalHeader) { setOpen(DesktopPanel.TERMINAL, false) }
+                            TerminalBar(terminalSummary, open = true, extra = terminalHeader, tabletAccountBar = tabletAccountBar) { setOpen(DesktopPanel.TERMINAL, false) }
                             terminal(Modifier.weight(1f).fillMaxWidth())
                         }
                     } else {
                         if (terminalInline) {
                             DividerLine()
-                            Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false, extra = terminalHeader) { setOpen(DesktopPanel.TERMINAL, true) } }
+                            Column(Modifier.fillMaxWidth().testTag("desktop-terminal")) { TerminalBar(terminalSummary, open = false, extra = terminalHeader, tabletAccountBar = tabletAccountBar) { setOpen(DesktopPanel.TERMINAL, true) } }
                         }
                         if (!chartArea) Spacer(Modifier.weight(1f))
                     }
@@ -172,10 +175,11 @@ internal fun DesktopWorkspace(
                     }
                 }
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("desktop-panel-rail"),
+                NavigationRail(Modifier.width((railWidth - 1f).dp).fillMaxHeight().testTag("desktop-panel-rail"),
                     windowInsets = WindowInsets(0, 0, 0, 0),
                     header = { if (onNewChartWindow == null) Text("面板", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium)
                         else Spacer(Modifier.height(8.dp)) }) {
+                    CompositionLocalProvider(LocalRailWidth provides (railWidth - 1f).dp) {
                     Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                     RailToggle(AppIcons.TrendingUp, "行情", "rail-market", preferred.marketOpen && !showAnalytics) {
                         if (showAnalytics) { analyticsOpen = false; setOpen(DesktopPanel.MARKET, true) }
@@ -200,6 +204,7 @@ internal fun DesktopWorkspace(
                         { panel -> setDetached(panel, panel !in detached) }, windowMenuExtra)
                     if (onResetLayout != null)
                         RailToggle(AppIcons.ViewQuilt, "重置布局", "reset-desktop-layout", false, onToggle = onResetLayout)
+                    }
                 }
             }
         }
@@ -268,17 +273,29 @@ private fun WindowMenu(detached: Set<WorkspacePanel>, panels: List<WorkspacePane
 
 /** The trade list's title bar. [summary] keeps the counts in view while the list is folded down to this bar. */
 @Composable
-private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowScope.() -> Unit = {}, onToggle: () -> Unit) {
-    PanelHeader("交易", Modifier.background(TradingColors.Surface).testTag("desktop-terminal-bar"), summary.ifBlank { null }) {
+private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowScope.() -> Unit = {}, tabletAccountBar: (@Composable (Modifier) -> Unit)? = null, onToggle: () -> Unit) {
+    if (tabletAccountBar != null) {
+        Row(Modifier.fillMaxWidth().heightIn(min = PANEL_BAR.dp).background(TradingColors.Surface).testTag("desktop-terminal-bar").padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(104.dp)) {
+                Text("交易", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                if (summary.isNotBlank()) Text(summary, style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted, maxLines = 1)
+            }
+            tabletAccountBar(Modifier.weight(1f).testTag("tablet-account-bar"))
+            extra()
+            ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)
+        }
+    } else PanelHeader("交易", Modifier.background(TradingColors.Surface).testTag("desktop-terminal-bar"), summary.ifBlank { null }) {
         extra()
         ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)
     }
 }
 
+private val LocalRailWidth = staticCompositionLocalOf { (PANEL_RAIL - 1f).dp }
+
 /** A native rail destination whose pill marks an open panel. Several panels can stay open, so each also reports as a toggle. */
 @Composable
 internal fun RailToggle(icon: ImageVector, name: String, tag: String, open: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
-    Box(Modifier.width((PANEL_RAIL - 1f).dp).heightIn(min = 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
+    Box(Modifier.width(LocalRailWidth.current).heightIn(min = if (LocalRailWidth.current < 80.dp) 64.dp else 80.dp).testTag("$tag-item"), contentAlignment = Alignment.Center) {
         NavigationRailItem(open, onToggle, { Icon(icon, contentDescription = null) },
             Modifier.testTag(tag).semantics {
                 toggleableState = if (open) ToggleableState.On else ToggleableState.Off
