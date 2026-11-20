@@ -297,10 +297,6 @@ class LocalBuildTests(unittest.TestCase):
     def write_release_outputs(self, root, entries=('assets/tradovate-login/demo/login.js', 'assets/tradovate-login/live/login.js')):
         outputs = root / 'androidApp/build/outputs'
         for flavor in ('standard', 'gecko'):
-            maps = outputs / 'mapping' / f'{flavor}Release'
-            maps.mkdir(parents=True)
-            (maps / 'mapping.txt').write_text(flavor)
-            (maps / 'resources.txt').write_text(flavor)
             apk = outputs / 'apk' / flavor / 'release' / f'androidApp-{flavor}-release-unsigned.apk'
             apk.parent.mkdir(parents=True)
             with zipfile.ZipFile(apk, 'w') as package:
@@ -329,10 +325,9 @@ class LocalBuildTests(unittest.TestCase):
             build = self.run_android(folder)
             self.assertEqual(build.unsigned.name, 'UniTrading-1.5.0-abc1234-unsigned.apk')
             self.assertEqual(build.webview_unsigned.name, 'UniTrading-1.5.0-abc1234-webview-unsigned.apk')
-            self.assertEqual((build.output / 'mapping.txt').read_text(), 'standard')
-            self.assertEqual((build.output / 'webview-mapping.txt').read_text(), 'gecko')
+            self.assertFalse((build.output / 'mapping.txt').exists())
             self.assertEqual(build.summary['version_name'], '1.5.0')
-            self.assertEqual(build.summary['artifacts']['webview_resources'], 'webview-resources.txt')
+            self.assertEqual(build.summary['artifacts']['webview_unsigned_apk'], build.webview_unsigned.name)
 
     def test_android_refuses_a_webview_apk_without_a_login_extension(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -400,3 +395,4 @@ class LocalBuildTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

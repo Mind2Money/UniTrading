@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES = ('broker-api', 'demo-broker', 'tradovate-broker', 'composeApp')
 # Each release flavor and what its APK name adds after the commit; released apps look for these names.
 APK_VARIANTS = (('standard', ''), ('gecko', '-webview'))
-STAGES = {'preflight': '环境检查', 'desktop': '桌面测试与打包', 'android': 'Android R8 编译',
+STAGES = {'preflight': '环境检查', 'desktop': '桌面测试与打包', 'android': 'Android release 编译',
           'ios': 'iOS 构建与检查', 'sign-android': 'Android 签名', 'telegram': 'Telegram 发布'}
 DEFAULT_CONFIG = ROOT / 'local-build.json'
 BUILD_DEFAULTS = {
@@ -459,17 +459,12 @@ class Build:
         # this module so stale APK/maps cannot be mistaken for production artifacts.
         self.gradle_tasks(':androidApp:clean', label='清理旧 Android 产物')
         self.gradle_tasks(':androidApp:assembleRelease', '-PcredentialStoreTest=false',
-                          '-PinstrumentationBuildType=debug', label='编译 Release APK（R8 代码与资源压缩）')
+                          '-PinstrumentationBuildType=debug', label='编译 Release APK（未压缩）')
         outputs = ROOT / 'androidApp/build/outputs'
         short_sha = self.run(['git', 'rev-parse', '--short', 'HEAD'], capture=True).strip()
         for flavor, suffix in APK_VARIANTS:
             copied = 'webview-' if suffix else ''
             key = copied.replace('-', '_')
-            for name in ('mapping.txt', 'resources.txt'):
-                source = outputs / f'mapping/{flavor}Release' / name
-                if not source.is_file() or not source.stat().st_size:
-                    raise RuntimeError(f'R8 output missing: {source}')
-                shutil.copy2(source, self.output / (copied + name))
             apk = outputs / f'apk/{flavor}/release/androidApp-{flavor}-release-unsigned.apk'
             badging = self.run([self.android_tool('aapt2'), 'dump', 'badging', apk], capture=True)
             values = {k: re.search(rf"{k}='([^']+)'", badging) for k in ('versionName', 'versionCode')}
@@ -485,8 +480,7 @@ class Build:
             else:
                 self.unsigned = unsigned
                 self.summary.update(version_name=version, version_code=code)
-            self.summary['artifacts'].update({key + 'unsigned_apk': unsigned.name, key + 'mapping': copied + 'mapping.txt',
-                                              key + 'resources': copied + 'resources.txt'})
+            self.summary['artifacts'][key + 'unsigned_apk'] = unsigned.name
             self.console.line(f'{unsigned.name} · {unsigned.stat().st_size / 1024 / 1024:.2f} MiB', 'INFO')
 
     @staticmethod
@@ -547,7 +541,7 @@ class Build:
         caption = (f"UniTrading | {self.summary['ref']}\n{self.summary['subject'][:300]}\n"
                    f"{self.summary['version_name']} ({self.summary['version_code']}) | "
                    f"{self.summary['commit'][:7]} | +{self.summary['commit_count']} commits\n"
-                   f"Local build; dirty worktree: {self.summary['dirty_worktree']}\nSigned, R8-minified APK")
+                   f"Local build; dirty worktree: {self.summary['dirty_worktree']}\nSigned, unminified APK")
         caption_file = self.output / 'telegram-caption.txt'
         caption_file.write_text(caption, encoding='utf-8')
         command = ['curl.exe' if os.name == 'nt' else 'curl', '--config', '-', '--silent', '--show-error',
@@ -687,3 +681,4 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+

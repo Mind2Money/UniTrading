@@ -1,6 +1,8 @@
 # 本地构建与 CI
 
-GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Telegram 发布；`v*` 标签另外打包 Windows、创建 GitHub Release 并发送 Discord 公告。
+为避免授权后 Android 字节码校验失败，release 构建暂时关闭 R8 代码压缩与资源压缩。
+
+GitHub Actions 运行 Android release 编译、产物上传、签名和 Telegram 发布；`v*` 标签另外打包 Windows、创建 GitHub Release 并发送 Discord 公告。
 测试和 iOS 构建在本地完成。推送所有分支、PR 和手动运行仍会编译；
 只有 main/master 或 v* 标签的 push 会签名和发布。没有新增路径过滤或跳过 CI 标记。
 
@@ -25,7 +27,7 @@ GitHub Actions 运行 Android R8 release 编译、产物上传、签名和 Teleg
 pwsh -File scripts/build-local.ps1
 ```
 
-Windows 默认执行四个模块的 desktopTest 和桌面打包，以及 Android R8 release 编译。
+Windows 默认执行四个模块的 desktopTest 和桌面打包，以及 Android release 编译。
 仓库根目录存在 `local-build.json` 时自动读取其中的构建选项和凭据；命令行可覆盖构建选项。
 未配置文件时沿用上述默认行为，签名和 Telegram 均关闭。
 测试强制重新执行；Gradle 缓存和 daemon 可继续复用。脚本不运行登录诊断或连接真实交易账户。
@@ -38,11 +40,11 @@ Android 原 CI 没有 instrumentation 测试，本脚本也不会自动在设备
 后台模式的相同进度输出保存在结果目录旁的 `.console.log` 文件。
 
 默认产物在 `artifacts/local/<时间戳>/`，包含 `build.log`、`summary.json`、测试报告、
-桌面应用目录、`UniTrading-<版本>-<提交>-unsigned.apk`、`UniTrading-<版本>-<提交>-webview-unsigned.apk`、`mapping.txt`、`resources.txt`，以及内置浏览器版的 `webview-mapping.txt`、`webview-resources.txt`。
+桌面应用目录、`UniTrading-<版本>-<提交>-unsigned.apk`、`UniTrading-<版本>-<提交>-webview-unsigned.apk`。
 `summary.json` 记录源提交、工作区是否有未提交改动、各阶段结果及 APK SHA-256。
 单个构建命令最多执行 45 分钟；Python 入口可用 `--command-timeout <秒>` 调整。
 复制的测试报告可能包含其他平台历史报告，以本次 summary 的阶段状态为执行依据。
-每次使用空输出目录；Android 会先执行模块 clean，避免旧测试变体或 R8 文件冒充本次产物。
+每次使用空输出目录；Android 会先执行模块 clean，避免旧测试变体冒充本次产物。
 
 ```powershell
 # 仅执行指定平台；android 单独运行不包含桌面回归测试
@@ -168,7 +170,7 @@ GeckoView 的版本写在 `androidApp/build.gradle.kts`，内置内核不会随�
 4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
 5. 先推 `main`，确认 workflow 能解析、Android 构建通过，再推标签。两次 push 各自触发一次 CI，Telegram 会收到两条消息。
 
-标签 CI 构建并签名两个 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带两个签名 APK、Windows zip、macOS zip、未签名的 iOS IPA 和两份 R8 mapping。iOS IPA 含主应用与小组件，需要使用有效的 Apple 证书和描述文件分别签名后才能安装；未经过真机验证。
+标签 CI 构建并签名两个 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带两个签名 APK、Windows zip、macOS zip、未签名的 iOS IPA ；当前 Android 包未启用 R8 压缩，因此没有 mapping 文件。iOS IPA 含主应用与小组件，需要使用有效的 Apple 证书和描述文件分别签名后才能安装；未经过真机验证。
 标签必须等于 `v<versionName>`，否则 Android 构建失败，不会创建 Release。重跑失败的 job 时，已有 Release 的正文和附件会被覆盖更新。
 
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
@@ -225,7 +227,7 @@ Windows 显式指定 ios 会失败，不会跳过后报告全平台成功。
 
 2026-10-31 在 Windows、JDK 21 上运行本脚本：380 项 desktop 测试通过
 （broker-api 6、demo-broker 34、tradovate-broker 157、composeApp 183），
-0 failures、0 errors、0 skipped；Windows 应用打包及 Android R8 release 编译通过。
+0 failures、0 errors、0 skipped；Windows 应用打包及 Android release 编译通过。
 结果保存在 `artifacts/local-ci-validation/summary.json`，并已实际通过一次 `codex queue` 完成回调。
 对应业务源码基线为 `f273f47`，当时工作区包含尚未提交的脚本和文档。
 此记录不覆盖后续其他会话的业务代码改动。iOS 与真实发布凭据、Telegram 发送未在本次验证中执行。
@@ -236,3 +238,4 @@ Windows 显式指定 ios 会失败，不会跳过后报告全平台成功。
 签名失败清理及模拟 Telegram 成功/失败响应。PowerShell 的配置加载、关闭开关和忽略配置预览已验证。
 空凭据的真实入口检查在编译前返回失败，记录在 `artifacts/local-config-preflight/summary.json`；
 此检查未运行 Gradle、真实签名或 Telegram 发送。根目录本机配置已通过 Git 忽略与未跟踪检查。
+
