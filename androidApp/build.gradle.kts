@@ -36,7 +36,8 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            // Avoid R8 optimization producing invalid Android bytecode in v1.7.0.
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"))
             if (providers.gradleProperty("credentialStoreTest").orNull == "true") signingConfig = signingConfigs.getByName("debug")
             // Device tests link against the shrunk app; the published APK is built without this property.
             if (providers.gradleProperty("instrumentationBuildType").orNull == "release") proguardFiles("tested-app-r8-rules.pro")
