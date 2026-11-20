@@ -55,7 +55,7 @@ class AccountRiskUiTest {
             val cancel = onNodeWithTag("cancel-bulk-flatten")
             // As in every confirmation of the app: the action on the right, named for what it does.
             assertTrue(confirm.fetchSemanticsNode().boundsInRoot.left > cancel.fetchSemanticsNode().boundsInRoot.left)
-            confirm.assertTextEquals("平仓")
+            confirm.assertTextEquals("确认平仓全部子账户")
             cancel.assertTextEquals("取消")
             // The app keeps the exits until a close is confirmed, which Tradovate's own close request does not.
             onNodeWithText("止损、止盈等减仓单由应用保留到平仓确认后再撤。Tradovate 的平仓请求本身也会撤掉该合约的挂单", substring = true).assertExists()
