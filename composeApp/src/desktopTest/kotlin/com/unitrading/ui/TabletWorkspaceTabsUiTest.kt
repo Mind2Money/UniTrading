@@ -25,6 +25,53 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class TabletWorkspaceTabsUiTest {
+    private fun verifySeparatedTabletActions(platform: ChartPlatform, width: Int, height: Int) =
+        runDesktopComposeUiTest(width = width, height = height) {
+            val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+            val broker = runtime.registry.plugins.first()
+            val account = broker.accounts.first()
+            val initialPositions = broker.openSession(account.id).state.value.positions.size
+            setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides platform) {
+                Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
+            } }
+            val chart = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
+            val row = onNodeWithTag("tablet-account-toolbar").fetchSemanticsNode().boundsInRoot
+            val actions = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
+            val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+            val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
+            val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
+            assertTrue(chart.bottom <= row.top && chart.bottom <= actions.top, "Chart and account controls must occupy separate rows")
+            assertTrue(accountPicker.right + 32f <= actions.left, "Separate account selectors from destructive actions")
+            assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
+                "Flatten targets must have adequate spacing and touch size")
+            val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", screenshot)
+
+            onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
+            onNodeWithTag("chart-layout-TWO_COLUMNS").assertExists()
+            onNodeWithText("平仓全部子账户？").assertDoesNotExist()
+            onNodeWithTag("chart-layout-SINGLE").performClick()
+            onNodeWithTag("flatten-selected-account").performScrollTo().assertIsEnabled().performClick()
+            onNodeWithText("平仓此子账户？").assertExists()
+            onNodeWithTag("confirm-bulk-flatten").assertTextEquals("确认平仓此子账户")
+            onNodeWithTag("cancel-bulk-flatten").performClick()
+            onNodeWithTag("flatten-all-accounts").performScrollTo().performClick()
+            onNodeWithText("平仓全部子账户？").assertExists()
+            onNodeWithTag("confirm-bulk-flatten").assertTextEquals("确认平仓全部子账户")
+            onNodeWithTag("cancel-bulk-flatten").performClick()
+            assertEquals(initialPositions, broker.openSession(account.id).state.value.positions.size, "Cancellation must not close positions")
+        }
+
+    @Test fun mediumAndroidTabletKeepsLayoutAndFlattenControlsSeparate() =
+        verifySeparatedTabletActions(ChartPlatform.ANDROID, 1024, 768)
+
+    @Test fun portraitAndroidTabletKeepsLayoutAndFlattenControlsSeparate() =
+        verifySeparatedTabletActions(ChartPlatform.ANDROID, 800, 1200)
+
+    @Test fun ipadKeepsLayoutAndFlattenControlsSeparate() =
+        verifySeparatedTabletActions(ChartPlatform.IOS, 1024, 768)
+
     @Test fun androidTabletCreatesSwitchesReordersAndRestoresTabsWithoutDetaching() = runDesktopComposeUiTest(width = 1440, height = 900) {
         val store = MemorySnapshotStore()
         val broker = OfflineOrderBroker()
@@ -46,7 +93,9 @@ class TabletWorkspaceTabsUiTest {
         onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
         val flatten = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
-        assertTrue(flatten.right + 28f <= accounts.left, "Keep a clear gap between flatten and account controls")
+        val chartToolbar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
+        assertTrue(chartToolbar.bottom <= flatten.top, "Flatten actions must not overlap chart controls")
+        assertTrue(accounts.right + 32f <= flatten.left, "Keep a clear gap between account and flatten controls")
         onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
         onNodeWithTag("rail-analytics").performScrollTo().performClick()
         onNodeWithTag("desktop-analytics").assertIsDisplayed()
