@@ -2,87 +2,71 @@
 
 ## 简体中文
 
-- 新建图表窗口按钮移至主窗口标签末尾；子窗口显示所选账户的资金和回撤信息。桌面退出时可确认、保存或放弃本次图表和窗口修改。
+## English
 
-- 子窗口的图表工具、平仓按钮和账户选择器与主窗口对齐；主账户随主窗口切换，子账户可独立选择并保存，别名只可在主窗口修改。账户不可用时暂停该窗口下单。
-- 图表右键或长按选择市价、限价或突破单时，先填写订单；桌面和平板展开右侧下单栏，手机打开下单界面，提交时沿用风控及确认设置。
-- 修复 Windows 标题栏中图表标签的切换、关闭、排序与弹出操作；行情刷新时仍保持操作可用。
-- 修复桌面重启后窗口标签的行情和涨跌幅不随快照更新的问题；各标签继续订阅各自的品种。
-- 桌面拖出的图表窗口新增独立的行情、DOM、下单与交易侧栏，并提供两个带确认的平仓入口。DOM 数据流跟随当前活动窗口；下单前检查窗口对应的图表、账户和合约。
+# v1.7.0
 
-- 安卓和 iPad 平板统一使用桌面式交易、行情、分析、设置和账户工具栏；支持布局标签和排序，不能拖出系统窗口。加大平仓按钮与账户选择器之间的间距。修复安卓横屏输入时键盘打开导致界面切换、编辑器失去焦点的问题。
+## 简体中文
 
-- 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；桌面顶部工具栏集中显示两个平仓入口和账户选择，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
+🎉 UniTrading 更新至 **v1.7.0**！本次更新整合 [PR #4](https://github.com/Mind2Money/UniTrading/pull/4) 和 [PR #5](https://github.com/Mind2Money/UniTrading/pull/5)，带来桌面多窗口、多图布局、平板界面、盘口和图表改进，以及连续合约行情修复。
 
-- Windows 标题栏集成图表窗口标签并显示对应合约的最新成交与涨跌幅；两个新建窗口入口都创建标签页，保留单独拖出功能。
+📖 **新功能使用说明**
 
-- 收紧桌面账户选择和窗口标签栏；指标与绘图撤销合并到图表工具栏及快捷键，精简价格轴与图层菜单，并对齐分析日历。
+1. 在主窗口顶部标签栏末尾点击“+”新建图表标签；桌面端可将标签拖出为子窗口，也可拖回。标签支持拖动排序。
+2. 使用图表的“布局”选择多图排列，并拖动分隔线调整比例；各子图可分别设置品种、周期、指标和绘图。
+3. 右键或长按图表选择下单方式后，先在下单界面填写并确认订单；桌面和平板使用右侧下单栏。
+4. 子窗口可选择交易子账户，窗口下方显示该账户的资金及回撤信息；关闭软件时可保存或放弃窗口和图表修改。
 
-- 桌面顶部工具栏提供两个账户选择器，优化标签和工具栏样式，独立窗口可拖回标签栏；精简桌面图表右键菜单。
+🖥️ **桌面与平板**
 
-- 桌面图表新增可切换、可拖出并收回的布局标签；各布局独立保存分图、分隔比例、周期、指标和绘图。退出多个布局时可保存并恢复窗口；重置布局前需要确认。
+✅ 图表标签可以新建、切换、排序、拖出和收回；每个布局保存图表、分隔比例、周期、指标和绘图。新建窗口入口位于主窗口标签末尾。
+✅ 独立子窗口提供行情、DOM、下单及交易侧栏，并支持选择子账户、查看账户资金与回撤；交易账户不可用时暂停下单。两个平仓入口保留确认步骤。
+✅ 退出桌面软件时确认退出；存在修改时可选择保存或放弃。重启后恢复已保存的布局与窗口。
+✅ Android 平板和 iPad 使用适配平板的桌面式交易界面，支持图表标签和排序；平板标签不能拖出为独立系统窗口。
+✅ 优化 Windows 标题栏标签和行情显示，修复标签操作及重启后行情刷新问题；修复 Android 横屏键盘弹出时的界面和输入焦点问题。
 
-- 桌面与平板右侧提供分析入口；交易区整合持仓、挂单、成交和平仓记录。手机版保留原有账户页面。
-- 桌面与平板图表提供账户选择、周期、指标、图层与布局工具；窄平板自动换行，手机版保留原有布局。
-- 修复 @MCL 连续图表 K 线与当前下单合约价格不一致：确认主力后使用该月份合约的真实 K 线，未确认主力时暂停显示；图表仅包含当前主力的历史，不自动拼接旧月份。
-- 显示券商数量试算的拒绝原因，并在试算失败时标明显示的是上次缓存的上限；不绕过下单风控。
-- 绘图工具默认样式在各子图间共享，绘图对象仍各自独立；价格轴刻度随可用高度增加并避免重复标签。
-- 多图共用顶部和左侧绘图工具栏，操作当前子图；缩小可拖动的分隔线，Windows 的 DOM 移到独立侧栏并跟随当前品种。
-- 桌面和平板新增可拖动分隔线的多图布局；各子图可独立设置品种、周期、指标和绘图，下单面板跟随当前选中的子图。布局及分隔比例可保存恢复。
-- 图表右键菜单支持移除指标和绘图，通过左侧工具栏或 Ctrl+Z 撤销；仅影响当前子图。
-- 新增只读 DOM 盘口面板，桌面从右侧栏打开，手机从图表图层打开；实际深度数据取决于 Tradovate 行情权限。
-- 当已确认的实际合约有新成交而连续合约图表停滞或明显落后时，自动限频重订阅连续图表；不根据报价拼造 K 线或重发订单。实时券商连接仍需验证，数据源本身的延迟无法由此消除。
-- 指标的每条线可分别设置线宽、实线、虚线或点线；柱状图仍按原方式显示。
-- 图表时间轴、十字光标、K 线图例及绘图坐标使用北京时间；日线及以上继续显示交易日。
-- 新增成交量柱和当日 VWAP：北京时间冬令时 07:00 至次日 05:59、夏令时 06:00 至次日 04:59，自动切换并排除休市一小时；根据已加载的日内 K 线典型价和成交量近似计算。
-- 行情自选显示最新成交相对结算价的涨跌幅；缺少数据时显示占位。
-- 图表仅保留连接状态圆点；调整各平台价格轴设置按钮位置和点击区域。
-- 改进 K 线缩放、自动适应、价格轴菜单和桌面右键菜单；切换周期时刷新，并保存历史标记的显示状态。
-- 修复 iOS 凭据存储接口与 Swift 导出名称不匹配导致的编译问题。
+📈 **图表与行情**
 
-- 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
+✅ 新增可调整大小的多图布局、只读 DOM 盘口、成交量柱和当日 VWAP。盘口深度取决于 Tradovate 行情权限，VWAP 根据已加载的日内 K 线近似计算。
+✅ 指标曲线可分别设置线宽和线型；改进价格轴、缩放、撤销、图表右键菜单以及北京时间显示。
+✅ 修复 @MCL 连续图表与当前实际交易合约 K 线不一致的问题；确认当前主力前暂停显示。图表使用当前主力合约的历史，不拼接旧月份。
+✅ 当实际合约有成交而连续合约图表停滞或明显落后时，限频重订阅连续行情，不根据报价拼造 K 线。实时券商连接仍需验证，数据源延迟无法由此消除。
+✅ 修复部分可单独修改的止损、止盈线无法拖动的问题，改单仍遵循原有确认与风控流程。
+
+📦 **下载与注意事项**
+
+✅ 提供 Windows x64、macOS Apple Silicon、Android 标准版和内置 GeckoView 版；macOS 包未公证。
+⚠️ iOS IPA 为**未签名版本**，不能直接安装，需自行使用有效的 Apple 签名与描述文件重新签名；本次未在 iOS 真机或真实交易账户验证。实盘使用前请先在模拟账户核对行情、下单和风控。
 
 ## English
 
-- Move the new workspace button to the end of the main tab strip, show the selected account figures in detached windows, and offer to save or discard workspace changes on desktop exit.
+🎉 **UniTrading v1.7.0** combines [PR #4](https://github.com/Mind2Money/UniTrading/pull/4) and [PR #5](https://github.com/Mind2Money/UniTrading/pull/5), adding desktop workspaces, multi-chart layouts, a tablet interface, DOM and chart improvements, and continuous-contract fixes.
 
-- Align detached-window account and flatten controls with the main toolbar. The login follows the main window, while each detached window selects and restores its own subaccount; aliases are edited only in the main window. Disable trading when a selected account is unavailable.
-- A chart context-menu or long-press order opens a prefilled order form (the right-hand panel on desktop and tablets); it is submitted with the existing risk and confirmation settings.
-- Fix selecting, closing, reordering and detaching chart tabs in the Windows title bar while quotes refresh.
-- Refresh restored desktop tab prices and percentage changes from live market snapshots without selecting each tab.
-- Add independent market, DOM, order and trade panels to detached desktop chart windows. Both flatten actions retain confirmation. The single DOM feed follows the active window, and order entry checks its chart and account first.
+📖 **Getting started**
 
-- Use the desktop workspace, trading panels, analytics, settings and account toolbar on Android tablets and iPad; tabs can be reordered but not detached. Leave more space between the flatten actions and account selectors. Keep the active editor and responsive layout stable when the Android landscape keyboard opens.
+1. Use the + at the end of the main window's tab bar to create a chart tab. On desktop, drag a tab out into a window and back, or reorder tabs.
+2. Choose a multi-chart layout and drag its dividers. Each chart keeps its own symbol, timeframe, indicators and drawings.
+3. Choose an order from the chart context or long-press menu, then complete and confirm it in the order form; desktop and tablets use the right-hand order panel.
+4. A detached window can select a trading subaccount and shows that account's funds and drawdown. On desktop exit, save or discard workspace changes.
 
-- Reorder desktop workspace tabs by dragging and restore their saved order; Android and iPad tablets can create, switch and reorder tabs without detaching windows; place desktop flatten actions and account selectors together in the top toolbar, add chart-menu icons, and redesign desktop order review while retaining the existing safety checks.
+🖥️ **Desktop and tablets**
 
-- Put Windows workspace tabs and their live last price and percentage change in the title bar and make both new-window buttons create a tab.
+✅ Save and restore chart layouts and detached windows. Detached windows have market, read-only DOM, order and trade panels, account selection and account figures; unavailable accounts cannot trade and flatten actions still require confirmation.
+✅ Android tablets and iPad use a desktop-style interface with sortable chart tabs; tablets cannot detach tabs into system windows. Desktop exit requires confirmation and offers save or discard when modified.
+✅ Fix Windows title-bar tab interactions and restored quotes, and Android landscape keyboard layout and focus.
 
-- Compact desktop account selectors and workspace tabs, combine chart undo for drawings and indicators, streamline menus, and align the analytics calendar.
+📈 **Charts and markets**
 
-- Keep account selectors in the desktop top toolbar, refine tab and toolbar controls, support dragging a detached window back, and simplify the desktop chart context menu.
+✅ Add resizable multi-chart layouts, read-only DOM, volume and session VWAP. DOM depth depends on Tradovate permissions; VWAP is an approximation from loaded intraday bars.
+✅ Configure indicator line width and style; improve chart scaling, axes, undo, menus and Beijing-time display.
+✅ Align @MCL bars with the verified current execution contract, hiding the chart until it is confirmed. History comes from the current contract and is not back-adjusted or spliced.
+✅ Rate-limit resubscription when continuous bars stall or substantially lag a trading dated contract; no bars are fabricated from quotes. Live-broker testing is still outstanding and upstream delays can remain.
+✅ Restore dragging of individually editable stop and target lines, retaining existing confirmation and risk checks.
 
-- Add desktop workspace tabs with detachable windows, independent split layouts and save-on-exit; confirm before resetting the panel layout.
+📦 **Downloads and limitations**
 
-- Add analytics to the desktop and tablet side rail and consolidate positions, orders, executions and closed trades in the trading panel; the phone account page remains available.
-- Combine the desktop and tablet account selectors and chart controls in a responsive toolbar, retaining the phone layout.
-- Align @MCL chart bars with the verified execution contract, hiding them while the leader is unconfirmed. History is the current contract's history and does not splice previous months.
-- Show broker capacity rejection reasons and identify cached limits when a refresh fails, without bypassing order risk checks.
-- Share drawing-tool defaults across chart panes while retaining separate drawings, and adapt price-axis label density to the available height.
-- Share chart and drawing toolbars across split charts, scope controls to the selected pane, reduce divider spacing, and dock the Windows DOM in a resizable side panel following the selected instrument.
-- Add resizable multi-chart layouts on desktop and tablets. Each chart has its own symbol, timeframe, indicators and drawings, and the order ticket follows the selected chart. Layouts and divider sizes can be restored.
-- Add chart context-menu actions to remove drawings and indicators; use the shared undo toolbar or Ctrl+Z for the selected chart.
-- Add a read-only DOM panel from the desktop side rail or phone chart layers; live depth depends on Tradovate market-data permissions.
-- Rate-limit automatic resubscription when a verified dated contract trades but its continuous chart stalls or falls substantially behind. The app does not synthesize bars from quotes or replay orders; live broker verification remains outstanding and upstream delays can still occur.
-- Configure width and solid, dashed or dotted style separately for each indicator line; histogram bars are unchanged.
-- Display Beijing time in the chart axis, crosshair, candle legend and drawing coordinates; daily and longer bars retain their trading dates.
-- Add volume bars and current-session VWAP. The 18:00–17:00 New York session automatically follows daylight saving time and excludes the maintenance hour; VWAP approximates using loaded intraday OHLC and volume.
-- Display the latest trade's percentage change relative to the broker's settlement reference, or a placeholder when data is unavailable.
-- Keep the connection status dot on charts and improve the placement and hit target of the price-axis settings control.
-- Improve candle zoom, auto fit, price-axis and desktop context menus; refresh on timeframe changes and retain historical marker visibility.
-- Fix the Swift-exported iOS credential storage interface name.
-
-- Fix stop and target lines that could not be dragged on the chart when their position's protection could not be edited together, even though the broker allowed each order to change on its own. Each order is still drawn once, and dragging changes only that order through the existing confirmation and risk checks; non-editable legs stay read-only.
+✅ Windows x64, macOS Apple Silicon, Android standard and bundled GeckoView builds are provided; the macOS build is not notarized.
+⚠️ The iOS IPA is **unsigned** and cannot be installed as-is. Re-sign it with a valid Apple certificate and provisioning profile. This release has not been tested on an iOS device or a live trading account; verify market data, orders and risk controls on a demo account first.
 
 # v1.6.0
 
