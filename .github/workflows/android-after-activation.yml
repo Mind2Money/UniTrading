@@ -24,11 +24,13 @@ jobs:
       - name: Prepare emulator-only synthetic activation probe
         run: |
           mkdir -p androidApp/src/androidTest/java/com/unitrading/android
-          cat > androidApp/src/androidTest/java/com/unitrading/android/SyntheticReleaseProbe.java <<'JAVA'
+          cat > androidApp/src/androidTest/java/com/unitrading/android/SyntheticReleaseProbeTest.java <<'JAVA'
           package com.unitrading.android;
           
           import android.app.Activity;
           import android.app.Instrumentation;
+          import androidx.test.platform.app.InstrumentationRegistry;
+          import org.junit.Test;
           import android.content.Context;
           import android.content.Intent;
           import android.os.Bundle;
@@ -43,12 +45,10 @@ jobs:
           import javax.crypto.SecretKey;
           
           /** Emulator-only probe: writes a synthetic activation record without exposing a real license key. */
-          public final class SyntheticReleaseProbe extends Instrumentation {
-              @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
-              @Override public void onStart() {
-                  Bundle result = new Bundle();
-                  try {
-                      Context target = getTargetContext();
+          public final class SyntheticReleaseProbeTest {
+              @Test public void activatedAppShowsLogin() throws Exception {
+                      Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+                      Context target = instrumentation.getTargetContext();
                       String alias = "unitrading.license.v1";
                       KeyStore store = KeyStore.getInstance("AndroidKeyStore");
                       store.load(null);
@@ -70,30 +70,19 @@ jobs:
                       Intent intent = target.getPackageManager().getLaunchIntentForPackage(target.getPackageName());
                       if (intent == null) throw new IllegalStateException("Launcher not found");
                       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      Activity activity = startActivitySync(intent);
+                      Activity activity = instrumentation.startActivitySync(intent);
                       boolean loginVisible = false;
                       for (int i = 0; i < 30; i++) {
                           Thread.sleep(1000);
-                          AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+                          AccessibilityNodeInfo root = instrumentation.getUiAutomation().getRootInActiveWindow();
                           if (root != null && !root.findAccessibilityNodeInfosByText("登录交易账户").isEmpty()) { loginVisible = true; break; }
                       }
                       if (!loginVisible || activity.isFinishing()) throw new AssertionError("Login page did not appear after activation");
                       Thread.sleep(3000);
-                      result.putString("stream", "\nPROBE_SUCCESS: activated app shows login page\n");
-                      finish(Activity.RESULT_OK, result);
-                  } catch (Throwable error) {
-                      android.util.Log.e("SyntheticReleaseProbe", "Activation probe failed", error);
-                      result.putString("stream", "\nPROBE_FAILURE: " + error + "\n");
-                      finish(Activity.RESULT_CANCELED, result);
-                  }
+                      System.out.println("PROBE_SUCCESS: activated app shows login page");
               }
           }
           JAVA
-          cat > androidApp/src/androidTest/AndroidManifest.xml <<'MANIFEST'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <instrumentation android:name="com.unitrading.android.SyntheticReleaseProbe" android:targetPackage="com.unitrading.demo" android:label="Synthetic release probe" />
-          </manifest>
-          MANIFEST
       - name: Build probe APK
         run: ./gradlew :androidApp:assembleStandardDebugAndroidTest --no-daemon
       - name: Sign probe for installed production APK
@@ -144,10 +133,7 @@ jobs:
             adb install "$apk" || exit 1
             adb install "$RUNNER_TEMP/probe.apk" || exit 1
             adb logcat -c
-            adb shell pm list instrumentation | tr -d '\r' | tee "artifacts/after-activation/$variant-instrumentation.txt"
-            component="$(adb shell pm list instrumentation | tr -d '\r' | sed -n 's/^instrumentation:\([^ ]*SyntheticReleaseProbe\).*/\1/p' | head -n 1)"
-            if [ -z "$component" ]; then echo "Probe entry not registered"; exit 1; fi
-            adb shell am instrument -w "$component" > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
+            adb shell am instrument -w -r -e class com.unitrading.android.SyntheticReleaseProbeTest com.unitrading.demo.test/androidx.test.runner.AndroidJUnitRunner > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
             adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
             cat "artifacts/after-activation/$variant-test.txt"
             cat "artifacts/after-activation/$variant-crash.txt"
