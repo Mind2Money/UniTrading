@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: temurin
@@ -104,8 +106,11 @@ jobs:
           (cd "$RUNNER_TEMP/probe-out" && zip -q unsigned.apk classes.dex)
           "$build_tools/zipalign" -f 4 "$RUNNER_TEMP/probe-out/unsigned.apk" "$RUNNER_TEMP/probe-out/aligned.apk"
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Build candidate release APK
-        run: ./gradlew :androidApp:assembleStandardRelease --no-daemon
+      - name: Build unminified candidate from the published source
+        run: |
+          git checkout 0c0f97caa5ee4aa0fd7a95c532a68df5fa885f3b -- composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt
+          sed -i 's/isMinifyEnabled = true/isMinifyEnabled = false/; s/isShrinkResources = true/isShrinkResources = false/' androidApp/build.gradle.kts
+          ./gradlew :androidApp:assembleStandardRelease --no-daemon
       - name: Sign probe for installed production APK
         env:
           SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
@@ -161,7 +166,23 @@ jobs:
             adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
             cat "artifacts/after-activation/$variant-test.txt"
             cat "artifacts/after-activation/$variant-crash.txt"
+            adb shell am force-stop com.unitrading.demo
+            adb logcat -c
+            adb shell am start -n com.unitrading.demo/com.unitrading.android.MainActivity
+            sleep 12
+            adb shell pidof com.unitrading.demo > "artifacts/after-activation/$variant-pid.txt" || true
+            adb shell dumpsys activity activities | grep -F 'com.unitrading.demo/com.unitrading.android.MainActivity' > "artifacts/after-activation/$variant-activity.txt" || true
+            adb shell rm -f /sdcard/probe-window.xml
+            timeout 25 adb shell uiautomator dump /sdcard/probe-window.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/probe-window.xml "artifacts/after-activation/$variant-ui.xml" >/dev/null 2>&1 || true
+            adb shell screencap -p /sdcard/probe-screen.png
+            adb pull /sdcard/probe-screen.png "artifacts/after-activation/$variant-screen.png" >/dev/null 2>&1 || true
+            adb logcat -d -b crash > "artifacts/after-activation/$variant-restart-crash.txt" || true
+            echo "Normal restart $variant PID: $(cat "artifacts/after-activation/$variant-pid.txt")"
+            cat "artifacts/after-activation/$variant-restart-crash.txt"
           done
+          test -s artifacts/after-activation/new-pid.txt
+          if grep -F 'FATAL EXCEPTION' artifacts/after-activation/new-restart-crash.txt; then exit 1; fi
           PROBE
       - name: Compare exact release APKs after synthetic activation
         uses: reactivecircus/android-emulator-runner@v2
@@ -190,6 +211,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
           distribution: temurin
@@ -200,4 +223,5 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - run: git checkout 0c0f97caa5ee4aa0fd7a95c532a68df5fa885f3b -- composeApp/src/commonMain/kotlin/com/unitrading/ui/TradingScreen.kt composeApp/src/desktopTest/kotlin/com/unitrading/ui/TabletWorkspaceTabsUiTest.kt
       - run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*TabletWorkspaceTabsUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
