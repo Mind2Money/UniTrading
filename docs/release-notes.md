@@ -2,7 +2,11 @@
 
 ## 简体中文
 
+- 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单按钮固定在最右侧。
+
 ## English
+
+- Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and keep the order button at the far right.
 
 # v1.7.0
 
@@ -657,3 +661,4 @@ Real order placement, changes and fill receipts have not been verified against a
 1️⃣ Windows x64: download `UniTrading-1.2.0-windows-x64.zip`, extract it and run `UniTrading\UniTrading.exe`. WebView2 Runtime is required; the package is not code-signed, so SmartScreen may warn on first launch
 2️⃣ Android 8.0 or later: download and install `UniTrading-1.2.0-*.apk`
 3️⃣ Windows logins and settings live in `%LOCALAPPDATA%\UniTrading`, so replacing the program folder keeps them
+
