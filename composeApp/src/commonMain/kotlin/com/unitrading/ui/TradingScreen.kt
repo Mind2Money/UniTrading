@@ -1951,6 +1951,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             contextOrderRequest = contextOrderRequest,
                             onCompactOrderOpen = if (tablet && !wide && !contextOrderSidebar) ({
                                 contextOrderSidebar = true
+                                contextOrderRequest++
                                 showOrder = false
                                 showDom = false
                                 runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
