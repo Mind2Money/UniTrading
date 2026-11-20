@@ -144,7 +144,9 @@ internal fun FlattenConfirmation(review: FlattenReview, onCancel: () -> Unit, on
         confirmButton = {
             val fill = actionFill(MaterialTheme.colorScheme.error)
             Button(onConfirm, Modifier.testTag("confirm-bulk-flatten"), enabled = review.targets.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = fill, contentColor = contentOn(fill))) { Text("平仓") }
+                colors = ButtonDefaults.buttonColors(containerColor = fill, contentColor = contentOn(fill))) {
+                Text(if (review.all) "确认平仓全部子账户" else "确认平仓此子账户")
+            }
         },
         dismissButton = { TextButton(onCancel, Modifier.testTag("cancel-bulk-flatten")) { Text("取消") } },
     )
