@@ -1,0 +1,104 @@
+name: Tablet toolbar verification
+on:
+  push:
+    branches: [fix/tablet-toolbar-layout]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Test tablet and confirmation behavior
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*TabletWorkspaceTabsUiTest*' --tests '*DesktopAccountPanelsUiTest*' --tests '*AccountRiskUiTest*' --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: tablet-toolbar-test-results
+          path: |
+            artifacts/desktop-tabs/*.png
+            composeApp/build/test-results/desktopTest/*.xml
+          if-no-files-found: warn
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - run: ./gradlew :androidApp:assembleStandardRelease --no-daemon
+      - name: Sign test APK using existing release key
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64" && test -n "$KEY_ALIAS" && test -n "$KEY_STORE_PASSWORD"
+          umask 077
+          keystore="$RUNNER_TEMP/tablet-test.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          mkdir -p dist
+          apk=androidApp/build/outputs/apk/standard/release/androidApp-standard-release-unsigned.apk
+          args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
+          if [ -n "${KEY_PASSWORD:-}" ]; then args+=(--key-pass env:KEY_PASSWORD); fi
+          "$build_tools/apksigner" "${args[@]}" --out dist/UniTrading-1.7.0-tablet-android-test.apk "$apk"
+          "$build_tools/zipalign" -c 4 dist/UniTrading-1.7.0-tablet-android-test.apk
+          "$build_tools/apksigner" verify dist/UniTrading-1.7.0-tablet-android-test.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tablet-toolbar-android
+          path: dist/*.apk
+          if-no-files-found: error
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build unsigned iPad app
+        run: |
+          set -euo pipefail
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/ios-build" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/ios-build/Build/Products/Release-iphoneos/UniTrading.app"
+          test -f "$app/UniTrading"
+          mkdir -p Payload dist
+          cp -R "$app" Payload/
+          zip -qry dist/UniTrading-1.7.0-tablet-ios-unsigned.ipa Payload
+          unzip -t dist/UniTrading-1.7.0-tablet-ios-unsigned.ipa >/dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tablet-toolbar-ios
+          path: dist/*.ipa
+          if-no-files-found: error
