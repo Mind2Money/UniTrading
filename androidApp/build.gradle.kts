@@ -32,14 +32,14 @@ android {
         create("gecko") { dimension = "loginBrowser" }
     }
     buildTypes {
-        // CI publishes this variant: R8 code shrinking plus resource shrinking.
+        // Disable R8 and resource shrinking: the minified trading screen fails Android bytecode verification after activation.
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            // Avoid R8 optimization producing invalid Android bytecode in v1.7.0.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // Keep the rules available for a future verified R8 upgrade.
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "release-r8-rules.pro")
             if (providers.gradleProperty("credentialStoreTest").orNull == "true") signingConfig = signingConfigs.getByName("debug")
-            // Device tests link against the shrunk app; the published APK is built without this property.
+            // Device tests may supply additional rules when the release variant is tested.
             if (providers.gradleProperty("instrumentationBuildType").orNull == "release") proguardFiles("tested-app-r8-rules.pro")
         }
     }
@@ -122,3 +122,4 @@ dependencies {
     // AndroidX Test references these CLASS-retained annotations when its release APK is shrunk.
     androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
 }
+
