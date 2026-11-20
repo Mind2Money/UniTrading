@@ -393,6 +393,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-apk-signed
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-apk-webview-signed
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-windows-x64
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-macos-arm64
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: UniTrading-ios-unsigned
+          path: dist
+
       # Re-running must not fail on an existing release; uploads replace assets.
       - name: 创建或更新 Release
         env:
