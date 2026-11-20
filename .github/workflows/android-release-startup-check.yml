@@ -1,28 +1,48 @@
-name: Android released APK startup check
+name: Android release startup check
 on:
   push:
     branches: [fix/android-release-startup-20261120]
 permissions:
   contents: read
+  actions: read
 jobs:
   startup:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         api: [29, 35]
     steps:
-      - name: Download published APK
+      - name: Download the signed APK built for this commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download v1.7.0 --repo Mind2Money/UniTrading --pattern 'UniTrading-1.7.0-f010f94.apk' --output app.apk
+        run: |
+          set -euo pipefail
+          run_id=''
+          for i in $(seq 1 60); do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml --branch "$GITHUB_REF_NAME" --limit 30 --json databaseId,headSha --jq '.[] | [.headSha, (.databaseId|tostring)] | @tsv' | awk -v sha="$GITHUB_SHA" '$1 == sha { print $2; exit }')
+            if [ -n "$run_id" ]; then
+              status=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status --jq .status)
+              if [ "$status" = completed ]; then
+                conclusion=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)
+                test "$conclusion" = success || { echo "Build failed: $conclusion"; exit 1; }
+                break
+              fi
+            fi
+            sleep 15
+          done
+          test -n "$run_id"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name UniTrading-apk-signed --dir signed
+          apk=$(find signed -type f -name '*.apk' -print -quit)
+          test -n "$apk"
+          cp "$apk" app.apk
       - name: Enable virtualization
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Launch exact released standard APK
+      - name: Launch signed release APK
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
@@ -36,3 +56,4 @@ jobs:
             sleep 25
             adb logcat -b crash -d
             adb shell pidof com.unitrading.demo
+            adb shell dumpsys activity activities | grep com.unitrading.demo
