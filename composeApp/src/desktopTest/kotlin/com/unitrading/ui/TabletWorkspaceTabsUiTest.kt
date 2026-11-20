@@ -41,7 +41,7 @@ class TabletWorkspaceTabsUiTest {
             val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
             val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
             assertTrue(chart.bottom <= row.top && chart.bottom <= actions.top, "Chart and account controls must occupy separate rows")
-            assertTrue(accountPicker.right + 32f <= actions.left, "Separate account selectors from destructive actions")
+            assertTrue(actions.right + 32f <= accountPicker.left, "Separate account selectors from destructive actions")
             assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
                 "Flatten targets must have adequate spacing and touch size")
             val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
@@ -95,7 +95,7 @@ class TabletWorkspaceTabsUiTest {
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         val chartToolbar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
         assertTrue(chartToolbar.bottom <= flatten.top, "Flatten actions must not overlap chart controls")
-        assertTrue(accounts.right + 32f <= flatten.left, "Keep a clear gap between account and flatten controls")
+        assertTrue(flatten.right + 32f <= accounts.left, "Keep a clear gap between account and flatten controls")
         onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
         onNodeWithTag("rail-analytics").performScrollTo().performClick()
         onNodeWithTag("desktop-analytics").assertIsDisplayed()
