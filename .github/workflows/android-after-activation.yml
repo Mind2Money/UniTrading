@@ -20,17 +20,14 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
-      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - name: Prepare emulator-only synthetic activation probe
+      - name: Prepare standalone emulator probe
         run: |
-          mkdir -p androidApp/src/androidTest/java/com/unitrading/android
-          cat > androidApp/src/androidTest/java/com/unitrading/android/SyntheticReleaseProbeTest.java <<'JAVA'
+          mkdir -p "$RUNNER_TEMP/probe-src" "$RUNNER_TEMP/probe-classes" "$RUNNER_TEMP/probe-out"
+          cat > "$RUNNER_TEMP/probe-src/SyntheticReleaseProbe.java" <<'JAVA'
           package com.unitrading.android;
           
           import android.app.Activity;
           import android.app.Instrumentation;
-          import androidx.test.platform.app.InstrumentationRegistry;
-          import org.junit.Test;
           import android.content.Context;
           import android.content.Intent;
           import android.os.Bundle;
@@ -45,10 +42,12 @@ jobs:
           import javax.crypto.SecretKey;
           
           /** Emulator-only probe: writes a synthetic activation record without exposing a real license key. */
-          public final class SyntheticReleaseProbeTest {
-              @Test public void activatedAppShowsLogin() throws Exception {
-                      Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
-                      Context target = instrumentation.getTargetContext();
+          public final class SyntheticReleaseProbe extends Instrumentation {
+              @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+              @Override public void onStart() {
+                  Bundle result = new Bundle();
+                  try {
+                      Context target = getTargetContext();
                       String alias = "unitrading.license.v1";
                       KeyStore store = KeyStore.getInstance("AndroidKeyStore");
                       store.load(null);
@@ -70,21 +69,40 @@ jobs:
                       Intent intent = target.getPackageManager().getLaunchIntentForPackage(target.getPackageName());
                       if (intent == null) throw new IllegalStateException("Launcher not found");
                       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      Activity activity = instrumentation.startActivitySync(intent);
+                      Activity activity = startActivitySync(intent);
                       boolean loginVisible = false;
                       for (int i = 0; i < 30; i++) {
                           Thread.sleep(1000);
-                          AccessibilityNodeInfo root = instrumentation.getUiAutomation().getRootInActiveWindow();
+                          AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
                           if (root != null && !root.findAccessibilityNodeInfosByText("登录交易账户").isEmpty()) { loginVisible = true; break; }
                       }
                       if (!loginVisible || activity.isFinishing()) throw new AssertionError("Login page did not appear after activation");
                       Thread.sleep(3000);
-                      System.out.println("PROBE_SUCCESS: activated app shows login page");
+                      result.putString("stream", "\nPROBE_SUCCESS: activated app shows login page\n");
+                      finish(Activity.RESULT_OK, result);
+                  } catch (Throwable error) {
+                      android.util.Log.e("SyntheticReleaseProbe", "Activation probe failed", error);
+                      result.putString("stream", "\nPROBE_FAILURE: " + error + "\n");
+                      finish(Activity.RESULT_CANCELED, result);
+                  }
               }
           }
           JAVA
-      - name: Build probe APK
-        run: ./gradlew :androidApp:assembleStandardDebugAndroidTest --no-daemon
+          cat > "$RUNNER_TEMP/probe-src/AndroidManifest.xml" <<'MANIFEST'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.unitrading.probe">
+              <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+              <application android:label="Synthetic release probe" />
+              <instrumentation android:name="com.unitrading.android.SyntheticReleaseProbe" android:targetPackage="com.unitrading.demo" android:label="Synthetic release probe" />
+          </manifest>
+          MANIFEST
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          android_jar="$(find "$ANDROID_HOME/platforms" -name android.jar | sort -V | tail -n1)"
+          test -f "$android_jar"
+          javac -source 8 -target 8 -bootclasspath "$android_jar" -d "$RUNNER_TEMP/probe-classes" "$RUNNER_TEMP/probe-src/SyntheticReleaseProbe.java"
+          "$build_tools/d8" --lib "$android_jar" --output "$RUNNER_TEMP/probe-out" "$RUNNER_TEMP/probe-classes/com/unitrading/android/SyntheticReleaseProbe.class"
+          "$build_tools/aapt" package -f -M "$RUNNER_TEMP/probe-src/AndroidManifest.xml" -I "$android_jar" -F "$RUNNER_TEMP/probe-out/unsigned.apk"
+          (cd "$RUNNER_TEMP/probe-out" && zip -q unsigned.apk classes.dex)
+          "$build_tools/zipalign" -f 4 "$RUNNER_TEMP/probe-out/unsigned.apk" "$RUNNER_TEMP/probe-out/aligned.apk"
       - name: Sign probe for installed production APK
         env:
           SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
@@ -99,7 +117,7 @@ jobs:
           trap 'rm -f "$keystore"' EXIT
           printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
           build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
-          apk="$(find androidApp/build/outputs/apk/androidTest/standard/debug -name '*.apk' | head -n 1)"
+          apk="$RUNNER_TEMP/probe-out/aligned.apk"
           test -f "$apk"
           args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
           if [ -n "${KEY_PASSWORD:-}" ]; then args+=(--key-pass env:KEY_PASSWORD); fi
@@ -126,14 +144,14 @@ jobs:
           adb shell wm density 160
           adb shell wm size 1280x800
           for variant in old new; do
-            adb uninstall com.unitrading.demo.test >/dev/null 2>&1 || true
+            adb uninstall com.unitrading.probe >/dev/null 2>&1 || true
             adb uninstall com.unitrading.demo >/dev/null 2>&1 || true
             apk="$(find "$RUNNER_TEMP/$variant" -type f -name '*.apk' ! -iname '*webview*' | head -n 1)"
             test -n "$apk" || exit 1
             adb install "$apk" || exit 1
             adb install "$RUNNER_TEMP/probe.apk" || exit 1
             adb logcat -c
-            adb shell am instrument -w -r -e class com.unitrading.android.SyntheticReleaseProbeTest com.unitrading.demo.test/androidx.test.runner.AndroidJUnitRunner > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
+            adb shell am instrument -w com.unitrading.probe/com.unitrading.android.SyntheticReleaseProbe > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
             adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
             cat "artifacts/after-activation/$variant-test.txt"
             cat "artifacts/after-activation/$variant-crash.txt"
