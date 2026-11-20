@@ -35,13 +35,15 @@ class TabletWorkspaceTabsUiTest {
                 Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
             } }
             val chart = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
-            val row = onNodeWithTag("tablet-account-toolbar").fetchSemanticsNode().boundsInRoot
+            val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
+            val order = onNodeWithTag("open-order").fetchSemanticsNode().boundsInRoot
             val actions = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
             val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
             val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
             val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
-            assertTrue(chart.bottom <= row.top && chart.bottom <= actions.top, "Chart and account controls must occupy separate rows")
-            assertTrue(accountPicker.right + 32f <= actions.left, "Separate account selectors from destructive actions")
+            assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
+            assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
+            assertTrue(accountPicker.right <= order.left && order.right >= width - 12f, "Put account selectors before the right-aligned order button")
             assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
                 "Flatten targets must have adequate spacing and touch size")
             val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
@@ -52,11 +54,11 @@ class TabletWorkspaceTabsUiTest {
             onNodeWithTag("chart-layout-TWO_COLUMNS").assertExists()
             onNodeWithText("平仓全部子账户？").assertDoesNotExist()
             onNodeWithTag("chart-layout-SINGLE").performClick()
-            onNodeWithTag("flatten-selected-account").performScrollTo().assertIsEnabled().performClick()
+            onNodeWithTag("flatten-selected-account").assertIsEnabled().performClick()
             onNodeWithText("平仓此子账户？").assertExists()
             onNodeWithTag("confirm-bulk-flatten").assertTextEquals("确认平仓此子账户")
             onNodeWithTag("cancel-bulk-flatten").performClick()
-            onNodeWithTag("flatten-all-accounts").performScrollTo().performClick()
+            onNodeWithTag("flatten-all-accounts").performClick()
             onNodeWithText("平仓全部子账户？").assertExists()
             onNodeWithTag("confirm-bulk-flatten").assertTextEquals("确认平仓全部子账户")
             onNodeWithTag("cancel-bulk-flatten").performClick()
@@ -94,8 +96,10 @@ class TabletWorkspaceTabsUiTest {
         val flatten = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         val chartToolbar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
-        assertTrue(chartToolbar.bottom <= flatten.top, "Flatten actions must not overlap chart controls")
-        assertTrue(accounts.right + 32f <= flatten.left, "Keep a clear gap between account and flatten controls")
+        val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
+        val order = onNodeWithTag("open-order").fetchSemanticsNode().boundsInRoot
+        assertTrue(flatten.top >= header.top && flatten.bottom <= header.bottom && flatten.bottom <= chartToolbar.top)
+        assertTrue(chartToolbar.right <= accounts.left && accounts.right <= order.left && order.right >= 1428f)
         onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
         onNodeWithTag("rail-analytics").performScrollTo().performClick()
         onNodeWithTag("desktop-analytics").assertIsDisplayed()
@@ -160,7 +164,7 @@ class TabletWorkspaceTabsUiTest {
         } }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
-        onNodeWithTag("tablet-account-toolbar").assertIsDisplayed()
+        onNodeWithTag("open-order").assertIsDisplayed()
         onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
         onNodeWithTag("quick-account-picker").assertIsDisplayed()
         onNodeWithTag("rail-analytics").assertExists()
@@ -200,3 +204,4 @@ class TabletWorkspaceTabsUiTest {
         onNodeWithTag("quick-login-picker").assertIsDisplayed()
     }
 }
+
