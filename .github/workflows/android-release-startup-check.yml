@@ -6,20 +6,17 @@ permissions:
   contents: read
   actions: read
 jobs:
-  startup:
+  sign-candidate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        api: [29, 35]
+    timeout-minutes: 20
     steps:
-      - name: Download the signed APK built for this commit
+      - name: Download unsigned build for this commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           run_id=''
+          status=''
           for i in $(seq 1 60); do
             run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml --branch "$GITHUB_REF_NAME" --limit 30 --json databaseId,headSha --jq '.[] | [.headSha, (.databaseId|tostring)] | @tsv' | awk -v sha="$GITHUB_SHA" '$1 == sha { print $2; exit }')
             if [ -n "$run_id" ]; then
@@ -32,9 +29,57 @@ jobs:
             fi
             sleep 15
           done
-          test -n "$run_id"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name UniTrading-apk-signed --dir signed
-          apk=$(find signed -type f -name '*.apk' -print -quit)
+          test "$status" = completed
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name UniTrading-apk-unsigned --dir unsigned
+      - name: Sign candidate APKs
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64" && test -n "$KEY_ALIAS" && test -n "$KEY_STORE_PASSWORD"
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          keystore="$RUNNER_TEMP/release.keystore"
+          umask 077
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
+          mkdir -p signed
+          args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
+          if [ -n "${KEY_PASSWORD:-}" ]; then args+=(--key-pass env:KEY_PASSWORD); fi
+          shopt -s nullglob
+          files=(unsigned/*-unsigned.apk)
+          test "${#files[@]}" = 2
+          for apk in "${files[@]}"; do
+            base="${apk##*/}"
+            base="${base%-unsigned.apk}"
+            "$build_tools/zipalign" -c 4 "$apk"
+            "$build_tools/apksigner" "${args[@]}" --out "signed/$base.apk" "$apk"
+            "$build_tools/apksigner" verify "signed/$base.apk"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UniTrading-android-startup-candidates
+          path: signed/*.apk
+          if-no-files-found: error
+  startup:
+    needs: sign-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 35]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: UniTrading-android-startup-candidates
+          path: signed
+      - name: Select standard APK
+        run: |
+          set -euo pipefail
+          apk=$(find signed -type f -name '*.apk' ! -name '*-webview.apk' -print -quit)
           test -n "$apk"
           cp "$apk" app.apk
       - name: Enable virtualization
