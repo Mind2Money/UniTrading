@@ -168,7 +168,7 @@ GeckoView 的版本写在 `androidApp/build.gradle.kts`，内置内核不会随�
 4. 提交 `chore: release vX.Y.Z`，创建附注标签 `git tag -a vX.Y.Z -m vX.Y.Z`。
 5. 先推 `main`，确认 workflow 能解析、Android 构建通过，再推标签。两次 push 各自触发一次 CI，Telegram 会收到两条消息。
 
-标签 CI 构建并签名两个 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带两个签名 APK、Windows zip、macOS zip 和两份 R8 mapping。
+标签 CI 构建并签名两个 APK、打包 Windows 和 macOS，全部成功后创建 GitHub Release，附带两个签名 APK、Windows zip、macOS zip、未签名的 iOS IPA 和两份 R8 mapping。iOS IPA 含主应用与小组件，需要使用有效的 Apple 证书和描述文件分别签名后才能安装；未经过真机验证。
 标签必须等于 `v<versionName>`，否则 Android 构建失败，不会创建 Release。重跑失败的 job 时，已有 Release 的正文和附件会被覆盖更新。
 
 `createDistributable` 只打包 `build/appResources/{common,windows,windows-x64}`。Tradovate 登录 host 放在 `appResources/windows/`，
