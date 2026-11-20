@@ -1734,8 +1734,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     ?: catalog.accounts.first().id else detachedAccounts[workspace] ?: mainAccountId
                                 return currentBroker === plugin && current == selectedId && catalog.accounts.any { it.id == selectedId }
                             }
-                            val accountActionsReady = !accountOperationPending()
-                            val flattenButtons: @Composable () -> Unit = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val accountActionsReady = !accountOperationPending()
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp)) {
@@ -1766,27 +1766,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         Text("平仓全部账户", maxLines = 1)
                                     }
                                 }
-                            }
-                            val accountSelectors: @Composable () -> Unit = {
+                                Spacer(Modifier.width(32.dp))
                                 AccountContextBar(registry, plugin, selectedId,
                                     { value -> if (workspace == null) chooseBroker(value) },
                                     { value -> if (workspace == null) chooseAccount(value) else chooseDetachedAccount(workspace, value) },
                                     Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = accountActionsReady,
                                     dense = true, aliases = runtime.accountAliases.takeIf { workspace == null }, emphasize = true, inline = true,
                                     inlineLoginLabel = "平台", allowLoginSwitch = workspace == null)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (tablet) {
-                                    accountSelectors()
-                                    Spacer(Modifier.width(24.dp))
-                                    VerticalDivider(Modifier.height(28.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                                    Spacer(Modifier.width(16.dp))
-                                    flattenButtons()
-                                } else {
-                                    flattenButtons()
-                                    Spacer(Modifier.width(32.dp))
-                                    accountSelectors()
-                                }
                             }
                     }
                     if (unifiedChartBar) {
