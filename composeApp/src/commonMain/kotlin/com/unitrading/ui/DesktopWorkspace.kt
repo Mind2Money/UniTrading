@@ -80,6 +80,7 @@ internal fun DesktopWorkspace(
     onOpenSettings: (() -> Unit)? = null,
     onResetLayout: (() -> Unit)? = null,
     contextOrderRequest: Int = 0,
+    onCompactOrderOpen: (() -> Unit)? = null,
 ) {
     val preferred by controller.preferences.collectAsState()
     val error by controller.error.collectAsState()
@@ -181,8 +182,12 @@ internal fun DesktopWorkspace(
                         else setOpen(DesktopPanel.MARKET, !preferred.marketOpen)
                     }
                     if (dom != null) RailToggle(AppIcons.OrderBook, "DOM", "rail-dom", domOpen) { onDomOpenChange(!domOpen) }
-                    // The ticket only fits beside a wide chart, but its own window has room at any width.
-                    if (wide || WorkspacePanel.ORDER in detached) RailToggle(AppIcons.OrderEntry, "下单", "rail-order", preferred.orderOpen) { setOpen(DesktopPanel.ORDER, !preferred.orderOpen) }
+                    // Tablets can open the sidebar on demand even when the workspace is narrow.
+                    if (wide || WorkspacePanel.ORDER in detached || onCompactOrderOpen != null)
+                        RailToggle(AppIcons.OrderEntry, "下单", "rail-order", (wide || WorkspacePanel.ORDER in detached) && preferred.orderOpen) {
+                            if (onCompactOrderOpen != null && !wide) onCompactOrderOpen()
+                            else setOpen(DesktopPanel.ORDER, !preferred.orderOpen)
+                        }
                     RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.Analytics, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (onOpenSettings != null)
