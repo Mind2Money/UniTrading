@@ -37,7 +37,7 @@ class TabletWorkspaceTabsUiTest {
             val chart = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
             val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
             val order = onNodeWithTag("rail-order").fetchSemanticsNode().boundsInRoot
-            val dom = onNodeWithTag("rail-dom").fetchSemanticsNode().boundsInRoot
+            val market = onNodeWithTag("rail-market").fetchSemanticsNode().boundsInRoot
             val terminal = onNodeWithTag("rail-terminal").fetchSemanticsNode().boundsInRoot
             val actions = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
             val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
@@ -45,7 +45,7 @@ class TabletWorkspaceTabsUiTest {
             val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
             assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
             assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
-            assertTrue(accountPicker.right <= width && order.right >= width - 12f && dom.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail between DOM and trading")
+            assertTrue(accountPicker.right <= width && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail before trading")
             onNodeWithTag("open-order").assertDoesNotExist()
             assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
                 "Flatten targets must have adequate spacing and touch size")
