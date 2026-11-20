@@ -2,6 +2,14 @@
 
 ## 简体中文
 
+- 新建图表窗口按钮移至主窗口标签末尾；子窗口显示所选账户的资金和回撤信息。桌面退出时可确认、保存或放弃本次图表和窗口修改。
+
+- 子窗口的图表工具、平仓按钮和账户选择器与主窗口对齐；主账户随主窗口切换，子账户可独立选择并保存，别名只可在主窗口修改。账户不可用时暂停该窗口下单。
+- 图表右键或长按选择市价、限价或突破单时，先填写订单；桌面和平板展开右侧下单栏，手机打开下单界面，提交时沿用风控及确认设置。
+- 修复 Windows 标题栏中图表标签的切换、关闭、排序与弹出操作；行情刷新时仍保持操作可用。
+- 修复桌面重启后窗口标签的行情和涨跌幅不随快照更新的问题；各标签继续订阅各自的品种。
+- 桌面拖出的图表窗口新增独立的行情、DOM、下单与交易侧栏，并提供两个带确认的平仓入口。DOM 数据流跟随当前活动窗口；下单前检查窗口对应的图表、账户和合约。
+
 - 安卓和 iPad 平板统一使用桌面式交易、行情、分析、设置和账户工具栏；支持布局标签和排序，不能拖出系统窗口。加大平仓按钮与账户选择器之间的间距。修复安卓横屏输入时键盘打开导致界面切换、编辑器失去焦点的问题。
 
 - 桌面窗口标签支持左右拖动排序并保存顺序；安卓和 iPad 平板支持新建、切换及排序图表标签（不支持拖出独立窗口）；桌面顶部工具栏集中显示两个平仓入口和账户选择，图表右键菜单加入图标，并重新整理下单确认框；保留原有平仓确认和下单前风控校验。
@@ -35,6 +43,14 @@
 - 修复图表上部分止损、止盈线无法拖动的问题：仓位保护不能成组修改、但交易商允许逐单修改时，仍可拖动对应的 SL / TP 线。每张保护单只显示一次，拖动只修改该单，沿用交易确认与风控检查；不能改单的保护线仍只读。
 
 ## English
+
+- Move the new workspace button to the end of the main tab strip, show the selected account figures in detached windows, and offer to save or discard workspace changes on desktop exit.
+
+- Align detached-window account and flatten controls with the main toolbar. The login follows the main window, while each detached window selects and restores its own subaccount; aliases are edited only in the main window. Disable trading when a selected account is unavailable.
+- A chart context-menu or long-press order opens a prefilled order form (the right-hand panel on desktop and tablets); it is submitted with the existing risk and confirmation settings.
+- Fix selecting, closing, reordering and detaching chart tabs in the Windows title bar while quotes refresh.
+- Refresh restored desktop tab prices and percentage changes from live market snapshots without selecting each tab.
+- Add independent market, DOM, order and trade panels to detached desktop chart windows. Both flatten actions retain confirmation. The single DOM feed follows the active window, and order entry checks its chart and account first.
 
 - Use the desktop workspace, trading panels, analytics, settings and account toolbar on Android tablets and iPad; tabs can be reordered but not detached. Leave more space between the flatten actions and account selectors. Keep the active editor and responsive layout stable when the Android landscape keyboard opens.
 

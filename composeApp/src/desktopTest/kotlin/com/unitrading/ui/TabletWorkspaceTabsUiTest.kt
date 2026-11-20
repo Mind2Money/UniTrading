@@ -56,7 +56,7 @@ class TabletWorkspaceTabsUiTest {
         onNodeWithTag("close-settings").performClick()
         onNodeWithTag("reset-desktop-layout").performClick()
         onNodeWithTag("cancel-reset-desktop-layout").performClick()
-        onNodeWithTag("rail-new-chart").assertExists()
+        onNodeWithTag("rail-new-chart").assertDoesNotExist()
         onNodeWithTag("nav-4").assertDoesNotExist()
         onNodeWithTag("workspace-price-main", useUnmergedTree = true).assertTextEquals("5,500.00")
         onNodeWithTag("workspace-change-main", useUnmergedTree = true).assertTextContains("−0.90%", substring = true)

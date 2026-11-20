@@ -31,9 +31,12 @@ internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: Windo
                 Text(title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Medium, color = colors.onSurface, maxLines = 1)
             }
         }
-        val tabs = slot.content
+        val tabs = slot.tabs
         if (tabs == null) WindowDraggableArea(Modifier.weight(1f).fillMaxHeight()) { }
-        else Box(Modifier.weight(1f).fillMaxHeight()) { tabs() }
+        else Box(Modifier.weight(1f).fillMaxHeight()) {
+            WorkspaceTabStrip(tabs.tabs, tabs.selected, slot::select, slot::detach, slot::close, slot::reorder,
+                Modifier.fillMaxWidth(), canDetach = tabs.canDetach, touchSized = tabs.touchSized, onAdd = slot::add, canAdd = tabs.canAdd)
+        }
         WindowDraggableArea(Modifier.width(55.dp).fillMaxHeight()) { }
         WindowButton("最小化", "window-minimize", "−") { state.isMinimized = true }
         WindowButton(if (state.placement == WindowPlacement.Maximized) "还原" else "最大化", "window-maximize", "□") {

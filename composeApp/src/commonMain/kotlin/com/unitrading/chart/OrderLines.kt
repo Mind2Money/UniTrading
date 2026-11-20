@@ -295,6 +295,8 @@ class ChartOrderActions(
     val entryLots: Long? = null,
     /** The menu's pick; [price] is null for a market order. */
     val onEntryOrder: (side: Side, kind: OrderKind, price: Long?) -> Unit = { _, _, _ -> },
+    /** Keyboard entry shortcuts remain separate from choosing an order in the context menu. */
+    val onKeyboardEntryOrder: (side: Side, kind: OrderKind, price: Long?) -> Unit = onEntryOrder,
     val tradingKeys: TradingKeys? = null,
     val instantOrders: Boolean = false,
     val onMarketOrder: (Side) -> Unit = {},

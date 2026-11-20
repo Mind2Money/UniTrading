@@ -58,6 +58,20 @@ class ChartContextMenuUiTest {
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
 
+    @Test fun chartMenuReopensTheRightHandTicketAndPrefillsTheOrder() {
+        render(skipConfirmation = true)
+        compose.onNodeWithTag("rail-order").performClick()
+        compose.onNodeWithTag("desktop-order").assertDoesNotExist()
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        compose.onNodeWithTag("order-popup").assertDoesNotExist()
+        compose.onNodeWithTag("desktop-order").assertIsDisplayed()
+        compose.onNode(hasTestTag("order-side-BUY") and hasAnyAncestor(hasTestTag("desktop-order"))).assertIsSelected()
+        compose.onNode(hasTestTag("order-kind-LIMIT") and hasAnyAncestor(hasTestTag("desktop-order"))).assertIsSelected()
+        compose.onNode(hasTestTag("order-entry") and hasAnyAncestor(hasTestTag("desktop-order"))).assertTextContains("5490.00")
+        assertTrue(broker.placed.isEmpty(), "Choosing a context-menu order must never submit it")
+    }
+
     @Test fun desktopMenuOmitsCopyPriceAndResetsTheView() {
         render()
         compose.onNodeWithTag("chart-zoom-in").performClick()
@@ -209,6 +223,10 @@ class ChartContextMenuUiTest {
         item("SELL-MARKET").assertTextContains("卖出市价 1 张").performClick()
         compose.waitForIdle()
         item("SELL-MARKET").assertDoesNotExist()
+        compose.onNodeWithTag("order-side-SELL").assertIsSelected()
+        compose.onNodeWithTag("order-kind-MARKET").assertIsSelected()
+        assertTrue(broker.placed.isEmpty(), "Selecting a menu item only opens the order form")
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("TESTZ6 · 卖出市价 · 1 张").assertExists()
         assertTrue(broker.placed.isEmpty(), "Nothing reaches the broker before the confirmation")
         compose.onNodeWithTag("confirm-action").performClick()
@@ -227,6 +245,9 @@ class ChartContextMenuUiTest {
         item("BUY-MARKET").assertExists()
         item("SELL-STOP").assertExists()
         item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00").performClick()
+        compose.onNodeWithTag("order-entry").assertTextContains("5490.00")
+        assertTrue(broker.placed.isEmpty(), "A long press cannot send an order")
+        compose.onNodeWithTag("review-order").performClick()
         compose.waitUntil(5000) { broker.placed.size == 1 }
         assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.LIMIT, 100, 549_000), broker.placed.single())
         assertTrue(runtime.drawings.drawings.isEmpty(), "the press that opened the menu drew nothing")
@@ -289,6 +310,7 @@ class ChartContextMenuUiTest {
         render()
         rightClick(549_000)
         item("BUY-LIMIT").performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("desktop-order-confirmation").assertIsDisplayed()
         compose.onNodeWithText("TESTZ6 · 买入限价 · 1 张").assertExists()
         compose.onNodeWithTag("confirm-action").assertIsEnabled()
@@ -324,6 +346,9 @@ class ChartContextMenuUiTest {
         item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00").performClick()
         compose.waitForIdle()
         item("BUY-LIMIT").assertDoesNotExist()
+        compose.onNodeWithTag("order-entry").assertTextContains("5490.00")
+        assertTrue(broker.placed.isEmpty(), "A menu selection cannot send an order")
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("确认 Tradovate Demo 下单").assertExists()
         compose.onNodeWithText("TESTZ6 · 买入限价 · 1 张").assertExists()
         assertTrue(broker.placed.isEmpty(), "Nothing reaches the broker before the confirmation")
@@ -342,6 +367,9 @@ class ChartContextMenuUiTest {
         item("SELL-STOP").assertDoesNotExist()
         item("SELL-LIMIT").assertTextContains("卖出限价 3 张 @ 5510.00")
         item("BUY-STOP").assertTextContains("买入突破 3 张 @ 5510.00").performClick()
+        compose.onNodeWithTag("order-entry").assertTextContains("5510.00")
+        assertTrue(broker.placed.isEmpty(), "Skipping confirmation does not submit from the context menu")
+        compose.onNodeWithTag("review-order").performClick()
         compose.waitUntil(5000) { broker.placed.size == 1 }
         assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.STOP, 300, 551_000), broker.placed.single())
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
@@ -353,7 +381,7 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         item("SELL-STOP").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("trade-notice").assertTextEquals("Limit/Stop 入场方向或距离无效")
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         assertTrue(broker.placed.isEmpty())
     }
 
@@ -364,7 +392,8 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         item("BUY-LIMIT").assertTextContains("买入限价 @ 5490.00").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("trade-notice").assertTextEquals("请先在下单面板输入有效数量")
+        assertEquals("", compose.onNodeWithTag("order-quantity").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         assertTrue(broker.placed.isEmpty())
     }
 

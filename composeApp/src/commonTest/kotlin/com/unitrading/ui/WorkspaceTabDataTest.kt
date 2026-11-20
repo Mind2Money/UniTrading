@@ -23,4 +23,22 @@ class WorkspaceTabDataTest {
         assertEquals("—", disconnected.price)
         assertEquals("—", disconnected.change)
     }
+
+    @Test fun titleActionsFollowTheCurrentWorkspaceEvenIfDisplayedTabsAreUnchanged() {
+        val slot = DesktopTitleBarSlot()
+        val first = Any()
+        val second = Any()
+        val tabs = DesktopTitleTabs(listOf(WorkspaceTabData("main", "MES", "—", "—", 0)), "main", true, false)
+        val events = mutableListOf<String>()
+        slot.publish(first, tabs, { events += "old-select" }, { events += "old-detach" },
+            { events += "old-close" }, { events += "old-reorder" })
+        slot.publish(second, tabs, { events += "select:$it" }, { events += "detach:$it" },
+            { events += "close:$it" }, { events += "reorder:${it.joinToString()}" })
+        slot.clear(first) // A disposed previous workspace must not clear the new workspace's title row.
+        slot.select("main"); slot.detach("main"); slot.close("main"); slot.reorder(listOf("main"))
+        assertEquals(listOf("select:main", "detach:main", "close:main", "reorder:main"), events)
+        assertEquals(tabs, slot.tabs)
+        slot.clear(second)
+        assertNull(slot.tabs)
+    }
 }

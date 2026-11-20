@@ -28,7 +28,7 @@ internal fun AccountContextBar(
     onBroker: (String) -> Unit, onAccount: (String) -> Unit,
     modifier: Modifier = Modifier, enabled: Boolean = true, dense: Boolean = false,
     aliases: AccountAliasesController? = null,
-    emphasize: Boolean = false, inline: Boolean = false, inlineLoginLabel: String = "登录",
+    emphasize: Boolean = false, inline: Boolean = false, inlineLoginLabel: String = "登录", allowLoginSwitch: Boolean = true,
 ) {
     val brokers by registry.state.collectAsState()
     val catalog by key(plugin) { plugin.catalog.collectAsState() }
@@ -45,7 +45,7 @@ internal fun AccountContextBar(
     Row(modifier.heightIn(min = if (dense) 40.dp else 56.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.weight(1f)) {
-            TextButton({ loginMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-login-picker"), enabled = enabled,
+            TextButton({ loginMenu = true }, Modifier.fillMaxWidth().then(pickerBorder).testTag("quick-login-picker"), enabled = enabled && allowLoginSwitch,
                 shape = pickerShape, colors = pickerColors, contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (emphasize) 3.dp else 6.dp)) {
                 if (inline) {
                     Text(inlineLoginLabel, style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
@@ -57,9 +57,10 @@ internal fun AccountContextBar(
                     Text(names.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (emphasize) FontWeight.SemiBold else FontWeight.Normal)
                 }
-                Icon(AppIcons.ExpandMore, null, Modifier.size(18.dp))
+                Icon(if (allowLoginSwitch) AppIcons.ExpandMore else AppIcons.Lock,
+                    if (allowLoginSwitch) null else "主账户由主窗口切换", Modifier.size(18.dp))
             }
-            DropdownMenu(loginMenu && enabled, { loginMenu = false }) {
+            DropdownMenu(loginMenu && enabled && allowLoginSwitch, { loginMenu = false }) {
                 brokers.forEach { broker ->
                     val descriptor = broker.descriptor
                     val label = names.login(descriptor)
