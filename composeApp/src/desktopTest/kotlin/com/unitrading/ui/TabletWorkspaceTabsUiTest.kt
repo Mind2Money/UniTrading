@@ -36,20 +36,27 @@ class TabletWorkspaceTabsUiTest {
             } }
             val chart = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
             val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
-            val order = onNodeWithTag("open-order").fetchSemanticsNode().boundsInRoot
+            val order = onNodeWithTag("rail-order").fetchSemanticsNode().boundsInRoot
+            val dom = onNodeWithTag("rail-dom").fetchSemanticsNode().boundsInRoot
+            val terminal = onNodeWithTag("rail-terminal").fetchSemanticsNode().boundsInRoot
             val actions = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
             val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
             val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
             val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
             assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
             assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
-            assertTrue(accountPicker.right <= order.left && order.right >= width - 12f, "Put account selectors before the right-aligned order button")
+            assertTrue(accountPicker.right <= width && order.right >= width - 12f && dom.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail between DOM and trading")
+            onNodeWithTag("open-order").assertDoesNotExist()
             assertTrue(selected.right + 15f <= all.left && selected.height >= 48f && all.height >= 48f,
                 "Flatten targets must have adequate spacing and touch size")
             val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
                 .also { it.parentFile.mkdirs() }
             ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", screenshot)
 
+            onNodeWithTag("rail-order").performClick()
+            onNodeWithTag("desktop-order").assertIsDisplayed()
+            onNodeWithTag("desktop-order-minimize").performClick()
+            onNodeWithTag("desktop-order").assertDoesNotExist()
             onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
             onNodeWithTag("chart-layout-TWO_COLUMNS").assertExists()
             onNodeWithText("平仓全部子账户？").assertDoesNotExist()
@@ -97,9 +104,10 @@ class TabletWorkspaceTabsUiTest {
         val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
         val chartToolbar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
         val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
-        val order = onNodeWithTag("open-order").fetchSemanticsNode().boundsInRoot
+        val order = onNodeWithTag("rail-order").fetchSemanticsNode().boundsInRoot
         assertTrue(flatten.top >= header.top && flatten.bottom <= header.bottom && flatten.bottom <= chartToolbar.top)
-        assertTrue(chartToolbar.right <= accounts.left && accounts.right <= order.left && order.right >= 1428f)
+        assertTrue(chartToolbar.right <= accounts.left && order.right >= 1428f)
+        onNodeWithTag("open-order").assertDoesNotExist()
         onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
         onNodeWithTag("rail-analytics").performScrollTo().performClick()
         onNodeWithTag("desktop-analytics").assertIsDisplayed()
@@ -164,7 +172,8 @@ class TabletWorkspaceTabsUiTest {
         } }
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
-        onNodeWithTag("open-order").assertIsDisplayed()
+        onNodeWithTag("rail-order").assertIsDisplayed()
+        onNodeWithTag("open-order").assertDoesNotExist()
         onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
         onNodeWithTag("quick-account-picker").assertIsDisplayed()
         onNodeWithTag("rail-analytics").assertExists()
