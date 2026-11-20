@@ -53,7 +53,7 @@ class TabletWorkspaceTabsUiTest {
             assertTrue(figures.top >= tradeBar.top && figures.bottom <= tradeBar.bottom, "Account figures must share the trade bar")
             assertTrue(kotlin.math.abs(actions.left - accountPicker.left) <= 4f && kotlin.math.abs(actions.right - accountPicker.right) <= 4f, "Flatten and account controls should align: actions=$actions accounts=$accountPicker")
             onNodeWithTag("daily-pnl-value").assertExists()
-            onNodeWithTag("drawdown-room-value").assertExists()
+            onNodeWithTag("drawdown-room-value", useUnmergedTree = true).assertExists()
             assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
             assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
             assertTrue(accountPicker.right <= width && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail before trading")
