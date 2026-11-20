@@ -888,9 +888,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 val desktopPickerWidth = if (maxWidth >= 1200.dp && (!tablet || maxWidth >= 1400.dp)) 340.dp else 280.dp
-                // Tablets reserve a separate row for account and flatten actions at every width.
-                // The chart toolbar can then scroll without drawing under destructive controls.
-                val wrapTabletControls = tablet
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
@@ -1703,17 +1700,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                         DividerLine()
                     }
-                    if (tabletWorkspaces && (desktop || chartFirst)) {
-                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface)
-                            .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            AppLogo(22.dp)
-                            Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
-                        }
-                        DividerLine()
-                    }
-                    val desktopControls: @Composable (String?) -> Unit = { workspace ->
+                    val desktopControls: @Composable (String?, Boolean, Boolean) -> Unit = { workspace, showFlatten, showAccounts ->
                             val selectedId = when {
                                 workspace == null -> mainAccountId
                                 workspace in unresolvedDetachedAccounts -> ""
@@ -1776,18 +1763,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     inlineLoginLabel = "平台", allowLoginSwitch = workspace == null)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (tablet) {
-                                    accountSelectors()
-                                    Spacer(Modifier.width(24.dp))
-                                    VerticalDivider(Modifier.height(28.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                                    Spacer(Modifier.width(16.dp))
-                                    flattenButtons()
-                                } else {
-                                    flattenButtons()
-                                    Spacer(Modifier.width(32.dp))
-                                    accountSelectors()
-                                }
+                                if (showFlatten) flattenButtons()
+                                if (showFlatten && showAccounts) Spacer(Modifier.width(32.dp))
+                                if (showAccounts) accountSelectors()
                             }
+                    }
+                    if (tabletWorkspaces && (desktop || chartFirst)) {
+                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface)
+                            .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            AppLogo(22.dp)
+                            Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
+                            desktopControls(null, true, false)
+                        }
+                        DividerLine()
                     }
                     if (unifiedChartBar) {
                         val toolbarStatus: @Composable () -> Unit = {
@@ -1805,7 +1795,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                     ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                                 }
-                                if (!wide) Button({
+                                if (!wide || tablet) Button({
                                     showDraft = true
                                     if (!orderDetached()) showOrder = true
                                     else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
@@ -1817,16 +1807,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 verticalAlignment = Alignment.CenterVertically) {
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
-                                if (!wrapTabletControls) {
-                                    if (desktopStyle && desktop) desktopControls(null)
-                                    toolbarStatus()
-                                } else toolbarStatus()
-                            }
-                            // A separate scrollable row keeps account selection and destructive actions away from chart tools.
-                            if (wrapTabletControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                                .padding(start = 6.dp, end = 4.dp, bottom = 4.dp).testTag("tablet-account-toolbar"),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                desktopControls(null)
+                                if (desktopStyle && desktop) {
+                                    // Tablet flatten controls live in the workspace header; keep the account pickers
+                                    // beside status and the order button, outside the scrolling chart tools.
+                                    desktopControls(null, !tablet, true)
+                                }
+                                toolbarStatus()
                             }
                         }
                         DividerLine()
@@ -2050,11 +2036,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 6.dp),
                                                     verticalAlignment = Alignment.CenterVertically) {
                                                     sharedChartBar(id, Modifier.weight(1f), true)
-                                                    if (!wrapControls) desktopControls(id)
+                                                    if (!wrapControls) desktopControls(id, true, true)
                                                 }
                                                 if (wrapControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                                                     .padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                    desktopControls(id)
+                                                    desktopControls(id, true, true)
                                                 }
                                             }
                                         }
@@ -2231,3 +2217,4 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
     }
     }
 }
+
