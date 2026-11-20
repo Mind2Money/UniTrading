@@ -1795,7 +1795,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                     ActionIcon(AppIcons.Settings, "设置", "open-settings") { showActivity = false; showSettings = true }
                                 }
-                                if (!wide || tablet) Button({
+                                if (!wide && !tablet) Button({
                                     showDraft = true
                                     if (!orderDetached()) showOrder = true
                                     else { runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true); scope.launch { runtime.desktopLayout.save() } }
@@ -1809,7 +1809,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
                                 if (desktopStyle && desktop) {
                                     // Tablet flatten controls live in the workspace header; keep the account pickers
-                                    // beside status and the order button, outside the scrolling chart tools.
+                                    // beside status, outside the scrolling chart tools.
                                     desktopControls(null, !tablet, true)
                                 }
                                 toolbarStatus()
@@ -1949,6 +1949,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
                             DesktopWorkspace(runtime.desktopLayout, wide || contextOrderSidebar, Modifier.weight(1f).fillMaxWidth(),
                             contextOrderRequest = contextOrderRequest,
+                            onCompactOrderOpen = if (tablet && !wide && !contextOrderSidebar) ({
+                                contextOrderSidebar = true
+                                showOrder = false
+                                showDom = false
+                                runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+                                runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                                scope.launch { runtime.desktopLayout.save() }
+                            }) else null,
                             market = { m, minimize -> MarketWatch(plugin, market, mainAccount, mainSlot?.symbol ?: symbol,
                                 { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize) },
                             chart = chart,
