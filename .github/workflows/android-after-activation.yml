@@ -144,7 +144,10 @@ jobs:
             adb install "$apk" || exit 1
             adb install "$RUNNER_TEMP/probe.apk" || exit 1
             adb logcat -c
-            adb shell am instrument -w com.unitrading.demo.test/com.unitrading.android.SyntheticReleaseProbe > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
+            adb shell pm list instrumentation | tr -d '\r' | tee "artifacts/after-activation/$variant-instrumentation.txt"
+            component="$(adb shell pm list instrumentation | tr -d '\r' | sed -n 's/^instrumentation:\([^ ]*SyntheticReleaseProbe\).*/\1/p' | head -n 1)"
+            if [ -z "$component" ]; then echo "Probe entry not registered"; exit 1; fi
+            adb shell am instrument -w "$component" > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
             adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
             cat "artifacts/after-activation/$variant-test.txt"
             cat "artifacts/after-activation/$variant-crash.txt"
