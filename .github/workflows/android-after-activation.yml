@@ -1,0 +1,161 @@
+name: Android release after activation
+on:
+  push:
+    branches: [fix/android-after-activation]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Prepare emulator-only synthetic activation probe
+        run: |
+          mkdir -p androidApp/src/androidTest/java/com/unitrading/android
+          cat > androidApp/src/androidTest/java/com/unitrading/android/SyntheticReleaseProbe.java <<'JAVA'
+          package com.unitrading.android;
+          
+          import android.app.Activity;
+          import android.app.Instrumentation;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.os.Bundle;
+          import android.security.keystore.KeyGenParameterSpec;
+          import android.security.keystore.KeyProperties;
+          import android.view.accessibility.AccessibilityNodeInfo;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.security.KeyStore;
+          import javax.crypto.Cipher;
+          import javax.crypto.KeyGenerator;
+          import javax.crypto.SecretKey;
+          
+          /** Emulator-only probe: writes a synthetic activation record without exposing a real license key. */
+          public final class SyntheticReleaseProbe extends Instrumentation {
+              @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+              @Override public void onStart() {
+                  Bundle result = new Bundle();
+                  try {
+                      Context target = getTargetContext();
+                      String alias = "unitrading.license.v1";
+                      KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+                      store.load(null);
+                      SecretKey key = (SecretKey) store.getKey(alias, null);
+                      if (key == null) {
+                          KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+                          generator.init(new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                              .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                              .setKeySize(256).build());
+                          key = generator.generateKey();
+                      }
+                      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                      cipher.init(Cipher.ENCRYPT_MODE, key);
+                      byte[] plain = "{\"activation\":{\"keyId\":\"key-2026-11\",\"activatedAtMs\":0}}".getBytes("UTF-8");
+                      byte[] encrypted = cipher.doFinal(plain);
+                      try (FileOutputStream out = new FileOutputStream(new File(target.getNoBackupFilesDir(), "license-v1.enc"))) {
+                          out.write(1); out.write(cipher.getIV()); out.write(encrypted);
+                      }
+                      Intent intent = target.getPackageManager().getLaunchIntentForPackage(target.getPackageName());
+                      if (intent == null) throw new IllegalStateException("Launcher not found");
+                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      Activity activity = startActivitySync(intent);
+                      boolean loginVisible = false;
+                      for (int i = 0; i < 30; i++) {
+                          Thread.sleep(1000);
+                          AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
+                          if (root != null && !root.findAccessibilityNodeInfosByText("登录交易账户").isEmpty()) { loginVisible = true; break; }
+                      }
+                      if (!loginVisible || activity.isFinishing()) throw new AssertionError("Login page did not appear after activation");
+                      Thread.sleep(3000);
+                      result.putString("stream", "\nPROBE_SUCCESS: activated app shows login page\n");
+                      finish(Activity.RESULT_OK, result);
+                  } catch (Throwable error) {
+                      android.util.Log.e("SyntheticReleaseProbe", "Activation probe failed", error);
+                      result.putString("stream", "\nPROBE_FAILURE: " + error + "\n");
+                      finish(Activity.RESULT_CANCELED, result);
+                  }
+              }
+          }
+          JAVA
+          cat > androidApp/src/androidTest/AndroidManifest.xml <<'MANIFEST'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <instrumentation android:name="com.unitrading.android.SyntheticReleaseProbe" android:targetPackage="com.unitrading.demo" android:label="Synthetic release probe" />
+          </manifest>
+          MANIFEST
+      - name: Build probe APK
+        run: ./gradlew :androidApp:assembleStandardDebugAndroidTest --no-daemon
+      - name: Sign probe for installed production APK
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_KEY_BASE64" && test -n "$KEY_ALIAS" && test -n "$KEY_STORE_PASSWORD"
+          umask 077
+          keystore="$RUNNER_TEMP/probe.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode --ignore-garbage > "$keystore"
+          build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)"
+          apk="$(find androidApp/build/outputs/apk/androidTest/standard/debug -name '*.apk' | head -n 1)"
+          test -f "$apk"
+          args=(sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEY_STORE_PASSWORD --v4-signing-enabled false)
+          if [ -n "${KEY_PASSWORD:-}" ]; then args+=(--key-pass env:KEY_PASSWORD); fi
+          "$build_tools/apksigner" "${args[@]}" --out "$RUNNER_TEMP/probe.apk" "$apk"
+          "$build_tools/apksigner" verify "$RUNNER_TEMP/probe.apk"
+      - name: Download the known-good and current signed packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44743533320 --repo "$GITHUB_REPOSITORY" --name UniTrading-android-startup-candidates --dir "$RUNNER_TEMP/old"
+          gh run download 44752301842 --repo "$GITHUB_REPOSITORY" --name UniTrading-apk-signed --dir "$RUNNER_TEMP/new"
+          find "$RUNNER_TEMP/old" "$RUNNER_TEMP/new" -type f -name '*.apk' -exec sha256sum {} \\;
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Compare exact release APKs after synthetic activation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 4096M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none
+          script: |
+            set -u
+            mkdir -p artifacts/after-activation
+            for variant in old new; do
+              adb uninstall com.unitrading.demo.test >/dev/null 2>&1 || true
+              adb uninstall com.unitrading.demo >/dev/null 2>&1 || true
+              apk="$(find "$RUNNER_TEMP/$variant" -type f -name '*.apk' ! -iname '*webview*' | head -n 1)"
+              test -n "$apk" || exit 1
+              adb install "$apk" || exit 1
+              adb install "$RUNNER_TEMP/probe.apk" || exit 1
+              adb logcat -c
+              adb shell am instrument -w com.unitrading.demo.test/com.unitrading.android.SyntheticReleaseProbe > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
+              adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
+              cat "artifacts/after-activation/$variant-test.txt"
+              cat "artifacts/after-activation/$variant-crash.txt"
+            done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: after-activation-results
+          path: artifacts/after-activation/*
+          if-no-files-found: warn
