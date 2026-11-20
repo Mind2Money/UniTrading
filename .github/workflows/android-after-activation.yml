@@ -128,6 +128,28 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Prepare isolated emulator script
+        run: |
+          cat > "$RUNNER_TEMP/after-activation-probe.sh" <<'PROBE'
+          #!/usr/bin/env bash
+          set -u
+          mkdir -p artifacts/after-activation
+          adb shell wm density 160
+          adb shell wm size 1280x800
+          for variant in old new; do
+            adb uninstall com.unitrading.demo.test >/dev/null 2>&1 || true
+            adb uninstall com.unitrading.demo >/dev/null 2>&1 || true
+            apk="$(find "$RUNNER_TEMP/$variant" -type f -name '*.apk' ! -iname '*webview*' | head -n 1)"
+            test -n "$apk" || exit 1
+            adb install "$apk" || exit 1
+            adb install "$RUNNER_TEMP/probe.apk" || exit 1
+            adb logcat -c
+            adb shell am instrument -w com.unitrading.demo.test/com.unitrading.android.SyntheticReleaseProbe > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
+            adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
+            cat "artifacts/after-activation/$variant-test.txt"
+            cat "artifacts/after-activation/$variant-crash.txt"
+          done
+          PROBE
       - name: Compare exact release APKs after synthetic activation
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -137,22 +159,7 @@ jobs:
           cores: 2
           ram-size: 4096M
           emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none
-          script: |
-            set -u
-            mkdir -p artifacts/after-activation
-            for variant in old new; do
-              adb uninstall com.unitrading.demo.test >/dev/null 2>&1 || true
-              adb uninstall com.unitrading.demo >/dev/null 2>&1 || true
-              apk="$(find "$RUNNER_TEMP/$variant" -type f -name '*.apk' ! -iname '*webview*' | head -n 1)"
-              test -n "$apk" || exit 1
-              adb install "$apk" || exit 1
-              adb install "$RUNNER_TEMP/probe.apk" || exit 1
-              adb logcat -c
-              adb shell am instrument -w com.unitrading.demo.test/com.unitrading.android.SyntheticReleaseProbe > "artifacts/after-activation/$variant-test.txt" 2>&1 || true
-              adb logcat -d -b crash > "artifacts/after-activation/$variant-crash.txt" || true
-              cat "artifacts/after-activation/$variant-test.txt"
-              cat "artifacts/after-activation/$variant-crash.txt"
-            done
+          script: bash "$RUNNER_TEMP/after-activation-probe.sh"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
