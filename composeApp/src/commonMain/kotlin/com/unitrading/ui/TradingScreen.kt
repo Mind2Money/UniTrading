@@ -1776,7 +1776,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                             desktopControls(null, true, false)
-                            Spacer(Modifier.width(46.dp))
+                            Spacer(Modifier.width(40.dp))
                         }
                         DividerLine()
                     }
