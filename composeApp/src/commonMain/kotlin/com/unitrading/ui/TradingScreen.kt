@@ -888,7 +888,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val compact = !desktop
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
                 val desktopPickerWidth = if (maxWidth >= 1200.dp && (!tablet || maxWidth >= 1400.dp)) 340.dp else 280.dp
-                val wrapTabletControls = tablet && maxWidth < 900.dp
+                // Tablets reserve a separate row for account and flatten actions at every width.
+                // The chart toolbar can then scroll without drawing under destructive controls.
+                val wrapTabletControls = tablet
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
@@ -1732,11 +1734,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     ?: catalog.accounts.first().id else detachedAccounts[workspace] ?: mainAccountId
                                 return currentBroker === plugin && current == selectedId && catalog.accounts.any { it.id == selectedId }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val accountActionsReady = !accountOperationPending()
+                            val accountActionsReady = !accountOperationPending()
+                            val flattenButtons: @Composable () -> Unit = {
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp)) {
                                     val actionColors = ButtonDefaults.outlinedButtonColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                                         contentColor = MaterialTheme.colorScheme.error,
@@ -1748,7 +1750,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             targetSession != null && selectionStillCurrent())
                                             flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
                                     },
-                                        modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-selected-account"),
+                                        modifier = Modifier.height(if (tablet) 48.dp else 36.dp).testTag("flatten-selected-account"),
                                         enabled = accountActionsReady && targetSession != null && !targetSession.account.readOnly &&
                                             (targetSnapshot?.positions?.isNotEmpty() == true || targetSnapshot?.orders?.isNotEmpty() == true),
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
@@ -1759,18 +1761,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                             if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         }
-                                    }, modifier = Modifier.height(if (tablet) 44.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady && targetSession != null,
+                                    }, modifier = Modifier.height(if (tablet) 48.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady && targetSession != null,
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓全部账户", maxLines = 1)
                                     }
                                 }
-                                Spacer(Modifier.width(32.dp))
+                            }
+                            val accountSelectors: @Composable () -> Unit = {
                                 AccountContextBar(registry, plugin, selectedId,
                                     { value -> if (workspace == null) chooseBroker(value) },
                                     { value -> if (workspace == null) chooseAccount(value) else chooseDetachedAccount(workspace, value) },
                                     Modifier.width(desktopPickerWidth).testTag("desktop-trade-accounts"), enabled = accountActionsReady,
                                     dense = true, aliases = runtime.accountAliases.takeIf { workspace == null }, emphasize = true, inline = true,
                                     inlineLoginLabel = "平台", allowLoginSwitch = workspace == null)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (tablet) {
+                                    accountSelectors()
+                                    Spacer(Modifier.width(24.dp))
+                                    VerticalDivider(Modifier.height(28.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                                    Spacer(Modifier.width(16.dp))
+                                    flattenButtons()
+                                } else {
+                                    flattenButtons()
+                                    Spacer(Modifier.width(32.dp))
+                                    accountSelectors()
+                                }
                             }
                     }
                     if (unifiedChartBar) {
@@ -1806,7 +1822,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     toolbarStatus()
                                 } else toolbarStatus()
                             }
-                            // A narrow portrait tablet retains all desktop actions in a second scrollable row.
+                            // A separate scrollable row keeps account selection and destructive actions away from chart tools.
                             if (wrapTabletControls) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                                 .padding(start = 6.dp, end = 4.dp, bottom = 4.dp).testTag("tablet-account-toolbar"),
                                 verticalAlignment = Alignment.CenterVertically) {
