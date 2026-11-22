@@ -112,6 +112,31 @@ class ChartWindowsUiTest {
         compose.waitForIdle()
     }
 
+    @Test fun splitChartsKeepLegendAndOrderQuantitySeparateForTheSameSymbol() {
+        render()
+        compose.onNodeWithTag("chart-layout-menu").performClick()
+        compose.onNodeWithTag("chart-layout-TWO_COLUMNS").performClick()
+        compose.waitForIdle()
+        fun inside(id: String, tag: String) = compose.onNode(hasTestTag(tag) and hasAnyAncestor(hasTestTag("chart-view-$id")))
+        inside("main", "legend-toggle").performClick()
+        compose.waitForIdle()
+        assertEquals(true, runtime.chartPreferences.preferences.value.chartLegendCollapsed["main"])
+        assertNull(runtime.chartPreferences.preferences.value.chartLegendCollapsed["split1"])
+        compose.onNodeWithTag("order-quantity").performTextReplacement("2")
+        val other = inside("split1", "trading-chart")
+        val size = other.fetchSemanticsNode().size
+        other.performMouseInput { click(Offset(size.width * .7f, size.height * .8f)) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("order-quantity").assertTextContains("1")
+        compose.onNodeWithTag("order-quantity").performTextReplacement("3")
+        val main = inside("main", "trading-chart")
+        val mainSize = main.fetchSemanticsNode().size
+        main.performMouseInput { click(Offset(mainSize.width * .7f, mainSize.height * .8f)) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("order-quantity").assertTextContains("2")
+        compose.onAllNodesWithTag("chart-zoom-in").assertCountEquals(0)
+    }
+
     @Test fun splitChartsUseTheSelectedChartForOrdersAndKeepTheirOwnSymbols() {
         render()
         fun select(layout: String) {

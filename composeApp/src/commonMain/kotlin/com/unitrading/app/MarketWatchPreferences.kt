@@ -16,7 +16,9 @@ class MarketWatchPreferences(private val store: SnapshotStore) {
 
     fun initialize(broker: String, instruments: List<Instrument>, selected: String) {
         if (broker in state.value || instruments.isEmpty()) return
-        val defaults = instruments.filter { it.isContinuous }.ifEmpty { instruments }.take(6).map { it.symbol }
+        val defaults = if (broker.startsWith("tradovate-") || broker.startsWith("rithmic-"))
+            listOf("@ES", "@NQ", "@CL", "@GC", "@MES", "@MNQ", "@MCL", "@MGC")
+        else instruments.filter { it.isContinuous }.ifEmpty { instruments }.take(6).map { it.symbol }
         update(broker, (listOf(selected).filter { s -> instruments.any { it.symbol == s } } + defaults).distinct())
     }
 

@@ -931,7 +931,7 @@ fun TradingChart(
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
-                ChartNavigation(
+                if (chrome.showNavigation) ChartNavigation(
                     onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
                     onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
@@ -1040,6 +1040,7 @@ class ChartChrome(
     /** Tablets can use the desktop axis placement while retaining touch input. */
     val desktopAxisStyle: Boolean? = null,
     val tabletCompactAxis: Boolean = false,
+    val showNavigation: Boolean = true,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

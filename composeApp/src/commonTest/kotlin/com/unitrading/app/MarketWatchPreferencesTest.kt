@@ -33,6 +33,17 @@ class MarketWatchPreferencesTest {
         assertTrue(historyPreloadSeries(emptyList(), "@MES", Timeframe.M5, starred).isEmpty())
     }
 
+    @Test fun futuresDefaultsAreAddedOnlyForANewBrokerList() {
+        val store = MemorySnapshotStore()
+        val prefs = MarketWatchPreferences(store)
+        prefs.initialize("tradovate-demo-1", listOf(spec), "@MES")
+        assertEquals(setOf("@ES", "@NQ", "@CL", "@GC", "@MES", "@MNQ", "@MCL", "@MGC"), prefs.lists.value.getValue("tradovate-demo-1").toSet())
+        prefs.update("tradovate-demo-1", listOf("@GC"))
+        val restored = MarketWatchPreferences(store)
+        restored.initialize("tradovate-demo-1", listOf(spec), "@MES")
+        assertEquals(listOf("@GC"), restored.lists.value.getValue("tradovate-demo-1"))
+    }
+
     @Test fun emptyStartupCatalogDoesNotPermanentlyInitializeAnEmptyList() {
         val prefs = MarketWatchPreferences(MemorySnapshotStore())
         prefs.initialize("demo", emptyList(), "@MES")
