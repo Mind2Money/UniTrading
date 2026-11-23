@@ -78,6 +78,7 @@ internal fun SettingsPage(
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
+    var chooseChartTimeZone by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -118,6 +119,8 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
+                SettingsRow("图表时区", chartPreferences.chartTimeZone.label, AppIcons.History, "settings-chart-timezone",
+                    { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
                 val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
@@ -210,6 +213,22 @@ internal fun SettingsPage(
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
+    if (chooseChartTimeZone) AlertDialog(
+        onDismissRequest = { chooseChartTimeZone = false },
+        title = { Text("图表时区") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
+            com.unitrading.app.ChartTimeZone.entries.forEach { zone ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
+                    selected = zone == chartPreferences.chartTimeZone, role = Role.RadioButton,
+                    onClick = { preferenceScope.launch { if (runtime.chartPreferences.setChartTimeZone(zone)) chooseChartTimeZone = false } }
+                ).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(zone == chartPreferences.chartTimeZone, onClick = null)
+                    Spacer(Modifier.width(12.dp)); Text(zone.label)
+                }
+            }
+        } },
+        confirmButton = { TextButton({ chooseChartTimeZone = false }) { Text("关闭") } },
+    )
     if (chooseOrderLayout) AlertDialog(
         onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
         title = { Text("下单界面") },

@@ -19,6 +19,14 @@ class CrosshairTest {
         assertEquals("2026-10-29 01:20:45", dateTime(time + 45_250, seconds = true))
     }
 
+    @Test fun chartTimeZoneUsesDaylightSavingAndLeavesTradingDatesUnchanged() {
+        val winter = Instant.parse("2026-01-15T12:00:00Z").toEpochMilliseconds()
+        val summer = Instant.parse("2026-07-15T12:00:00Z").toEpochMilliseconds()
+        assertEquals("2026-01-15 07:00", crosshairTimeLabel(winter, Timeframe.M5, "America/New_York"))
+        assertEquals("2026-07-15 08:00", crosshairTimeLabel(summer, Timeframe.M5, "America/New_York"))
+        assertEquals("2026-01-15", crosshairTimeLabel(winter, Timeframe.D1, "America/New_York"))
+    }
+
     @Test fun chartDrawingCoordinateRoundTripsBeijingTime() {
         val instant = Instant.parse("2026-12-31T16:30:00Z").toEpochMilliseconds()
         assertEquals("2027-01-01 00:30", beijingDateTime(instant))

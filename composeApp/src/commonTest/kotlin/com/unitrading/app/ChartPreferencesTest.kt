@@ -7,6 +7,14 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun chartZonePersistsAndDefaultsToShanghai() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertEquals(ChartTimeZone.SHANGHAI, prefs.preferences.value.chartTimeZone)
+        assertTrue(prefs.setChartTimeZone(ChartTimeZone.NEW_YORK))
+        assertEquals(ChartTimeZone.NEW_YORK, ChartPreferencesController(store).preferences.value.chartTimeZone)
+    }
+
     @Test fun watermarkVisibilityPersists() = runTest {
         val store = MemorySnapshotStore()
         val prefs = ChartPreferencesController(store)
