@@ -481,14 +481,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
-        var replayWatch by remember(plugin) { mutableStateOf<Set<Pair<String, Timeframe>>>(emptySet()) }
         val watchedCharts = listOf(ChartSlot(activeChart, symbol, timeframe)) + visibleParkedCharts.values.filter { it.id != activeChart }
         val chartSources = watchedCharts.map { slot ->
             val regular = chartPreferences.sessionForChart(slot.id) == ChartSession.REGULAR
             (slot.symbol to chartSessionSource(slot.symbol, slot.timeframe, regular)) to regular
         }
-        val liveSeries = (chartSources.map { it.first } + replayWatch).distinct()
-        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet() + replayWatch.filter { it.second == Timeframe.M1 }
+        val liveSeries = chartSources.map { it.first }.distinct()
+        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet()
         LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
@@ -1342,6 +1341,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // A toolbar follows the last-selected chart in its own workspace.
                 @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
                     var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
+                    var replaySetup by remember { mutableStateOf(false) }
+                    var replayPrepared by remember { mutableStateOf<ReplayPrepared?>(null) }
+                    val replaySeries = remember { mutableStateMapOf<Pair<String, Timeframe>, List<Candle>>() }
+                    val replayLoading = remember { mutableStateMapOf<Pair<String, Timeframe>, Boolean>() }
+                    val replayJobs = remember { mutableMapOf<Pair<String, Timeframe>, kotlinx.coroutines.Job>() }
+                    var replayGeneration by remember { mutableIntStateOf(0) }
+                    var replayRevision by remember { mutableLongStateOf(0) }
+                    var replayError by remember { mutableStateOf<String?>(null) }
                     val target = workspaceSelected[workspace] ?: workspace
                     val slot = shownCharts[target]
                     val selectedInstrument = if (target == workingChart) instrument else
@@ -1372,23 +1379,49 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                             if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
                                 onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
-                            if (desktopStyle) AssistChip(onClick = {
-                                val regular = chartPreferences.sessionForChart(target) == ChartSession.REGULAR
-                                val source = chartSessionSource(selectedInstrument.symbol, selectedFrame, regular)
-                                replayWatch = setOf(selectedInstrument.symbol to Timeframe.M1)
-                                replayInput = ReplayInput(selectedInstrument, selectedFrame, regular, chartPreferences.chartTimeZone,
-                                    plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList(), source,
-                                    catalog.instruments, intervals, priceAxis, skipConfirmation)
-                            }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
-                                leadingIcon = { Icon(AppIcons.History, null, Modifier.size(18.dp)) },
+                            if (desktopStyle) AssistChip(onClick = { replaySetup = true }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
+                                leadingIcon = { Icon(AppIcons.PlayArrow, null, Modifier.size(18.dp)) },
                                 colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
                         }, singleRow = singleLine)
-                    replayInput?.let { input -> HistoricalReplayDialog(input, market.revision,
-                        history = { sym, frame -> plugin.history(sym, frame) },
-                        watch = { sym, frame -> replayWatch = replayWatch.filter { it.first == sym }.toSet() + (sym to frame) },
+                    if (replaySetup) ReplaySetupDialog(plugin, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
+                        market.simulatedTimeMs, onDismiss = { replaySetup = false }, onReady = { ready ->
+                            replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
+                            replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
+                            replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
+                            val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
+                            replayInput = ReplayInput(chosen, selectedFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
+                                chartPreferences.chartTimeZone, ready.data[chosen.symbol to Timeframe.M1].orEmpty(), indicatorSettings.indicators.toList(),
+                                Timeframe.M1, ready.instruments, intervals, priceAxis, skipConfirmation)
+                        })
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision,
+                        history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
+                        watch = { sym, frame ->
+                            val series = sym to frame
+                            val ready = replayPrepared
+                            if (ready != null && ready.instruments.any { it.symbol == sym } && series !in replaySeries && series !in replayLoading) {
+                                replayLoading[series] = true
+                                val generation = replayGeneration
+                                val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                                    try {
+                                        val (from, until) = ready.range.forFrame(frame)
+                                        val result = plugin.historicalRange(sym, frame, from, until)
+                                        if (generation == replayGeneration) {
+                                            replaySeries[series] = result.candles.sortedBy { it.timeMs }
+                                            replayError = result.warning ?: if (result.candles.isEmpty()) "券商没有 $sym ${frame.label} 的历史数据" else null
+                                            replayRevision++
+                                        }
+                                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                                    catch (failure: Exception) { if (generation == replayGeneration) replayError = "读取 $sym ${frame.label} 失败：${failure.message ?: "请重试"}" }
+                                    finally { if (generation == replayGeneration) { replayLoading.remove(series); replayJobs.remove(series) } }
+                                }
+                                replayJobs[series] = job
+                                job.start()
+                            }
+                        },
                         drawingDefaults = runtime.drawingLibrary,
-                        onDismiss = { replayWatch = emptySet(); replayInput = null }) }
+                        historyError = replayError,
+                        onDismiss = { replayGeneration++; replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear(); replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace

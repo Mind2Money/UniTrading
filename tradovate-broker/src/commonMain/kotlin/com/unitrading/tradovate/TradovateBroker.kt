@@ -957,6 +957,27 @@ class TradovateBroker(
         if (symbol == "@MCL" && (verifiedMclSource() == null || mclChartSources[series] != verifiedMclSource())) return emptyList()
         return history[series] ?: emptyList()
     }
+    override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
+        require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
+        check(marketReady && !stopped) { "券商行情尚未连接" }
+        if (symbol == "@MCL" && verifiedMclSource() == null) refreshContinuous(symbol)
+        val source = if (symbol == "@MCL") verifiedMclSource() ?: error("MCL 当前合约尚未确认，请稍后重试") else symbol
+        val load = ChartLoad(emptyList(), startMs, extended = true, maxFreshPages = Int.MAX_VALUE)
+        var before = endMs - 1
+        while (true) {
+            lock.withLock { load.beginPage() }
+            preloadPage(source to timeframe, load, chartBackfillRange(startMs, before), historyOnly = true)
+            val next = lock.withLock {
+                check(!load.failed) { "券商历史数据读取失败，请重试" }
+                if (load.complete) null else checkNotNull(load.nextPageBefore) { "券商历史分页未完成" }
+            } ?: break
+            check(next <= before && next > startMs) { "券商历史分页未向前推进" }
+            before = next - 1
+        }
+        val bars = lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
+        val warning = if (symbol == "@MCL") "MCL 历史取当前确认的主力合约，未自动拼接旧合约" else null
+        return HistoricalRangeResult(bars, warning)
+    }
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
     private var extendedHistory = emptySet<Pair<String, Timeframe>>()

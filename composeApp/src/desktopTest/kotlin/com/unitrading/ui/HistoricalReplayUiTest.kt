@@ -3,6 +3,7 @@ package com.unitrading.ui
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -60,11 +61,35 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("quick-login-picker").performClick()
         compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
         compose.onNodeWithTag("open-historical-replay").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("replay-load").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("replay-begin").performClick()
         awaitReplay()
         compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         assertTrue(broker.placed.isEmpty(), "Replay must never use the connected broker account")
+    }
+
+    @Test fun setupRestrictsReplaySymbolsAndUsesTheRequestedDates() {
+        val broker = OfflineOrderBroker()
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        compose.setContent { TradingScreen(runtime) }
+        compose.onNodeWithTag("open-historical-replay").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-range-start").performTextReplacement("2026-12-29")
+        compose.onNodeWithTag("replay-range-end").performTextReplacement("2026-12-30")
+        compose.onNodeWithTag("replay-select-OTHRZ6").performClick()
+        compose.onNodeWithTag("replay-load").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("replay-begin").performClick()
+        awaitReplay()
+        compose.onNode(hasTestTag("chart-symbol") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
+        compose.onNodeWithTag("symbol-option-TESTZ6").assertExists()
+        compose.onNodeWithTag("symbol-option-OTHRZ6").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-chart-main").fetchSemanticsNodes().any {
+            it.config.getOrNull(SemanticsProperties.ContentDescription)?.any { value -> value.contains("OTHRZ6") } == true
+        } }
+        assertTrue(broker.placed.isEmpty())
     }
 
     @Test fun replayAxisMenuRetainsSelectionsAndRightClickUsesLocalConfirmation() {

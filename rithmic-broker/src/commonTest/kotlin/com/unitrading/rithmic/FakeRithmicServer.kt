@@ -17,6 +17,7 @@ internal class FakeRithmicServer : RithmicWire {
     var maxOrderQuantity: Long? = 10
     var quote: Pair<Double, Double>? = 5500.0 to 5500.25
     var bars = 3
+    var filterHistoryRange = false
     var closed = false
     private var baskets = 0
     /** Snapshot order notifications pushed after a show-orders request; each lambda fills one 352 frame. */
@@ -204,7 +205,11 @@ internal class FakeRithmicServer : RithmicWire {
                 val seconds = m.int(Rf.BAR_TYPE) == RithmicEnums.BAR_SECOND
                 val period = (m.int(Rf.BAR_PERIOD) ?: 1) * if (seconds) 1L else 60L
                 val lastClose = FAKE_TIME / 1_000 / period * period
-                parts(Rt.RESPONSE_TIME_BAR_REPLAY, ((if (alias) aliasBars else bars) downTo 1).map { back -> {
+                val wanted = ((if (alias) aliasBars else bars) downTo 1).filter { back ->
+                    val marker = lastClose - (back - 1) * period
+                    !filterHistoryRange || marker in (m.int(Rf.START_INDEX) ?: 0).toLong()..(m.int(Rf.FINISH_INDEX) ?: Int.MAX_VALUE).toLong()
+                }
+                parts(Rt.RESPONSE_TIME_BAR_REPLAY, wanted.map { back -> {
                     string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); int32(Rf.BAR_TYPE, if (seconds) RithmicEnums.BAR_SECOND else RithmicEnums.BAR_MINUTE); string(Rf.BAR_PERIOD, (if (seconds) period else period / 60).toString())
                     int32(Rf.BAR_MARKER, (lastClose - (back - 1) * period).toInt()); int64(Rf.BAR_VOLUME, 100L * back)
                     double(Rf.OPEN_PRICE, 5499.0); double(Rf.HIGH_PRICE, 5501.0); double(Rf.LOW_PRICE, 5498.5); double(Rf.CLOSE_PRICE, 5500.0)

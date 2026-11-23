@@ -85,7 +85,8 @@ internal const val PRELOAD_EMPTY_RETRY_MS = 60 * 60_000L
  * a month of intraday bars, so a fresh chart pages backward to [freshFloor] as well. It stays uncached until it
  * ends, because a cached series only ever grows at its end and a shallow one would stay shallow.
  */
-internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val extended: Boolean = false) {
+internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val extended: Boolean = false,
+    private val maxFreshPages: Int = if (extended) 240 else MAX_FRESH_HISTORY_PAGES) {
     private val maxBars = if (extended) Int.MAX_VALUE else CHART_BARS
     val anchor = cached.lastOrNull()?.timeMs
     val floor = anchor ?: freshFloor
@@ -135,7 +136,7 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val ext
             val oldest = pageOldest
             val previous = previousPageOldest
             val advanced = oldest != null && (previous == null || oldest < previous)
-            if (advanced && (anchor != null || ++freshPages < if (extended) 240 else MAX_FRESH_HISTORY_PAGES)) {
+            if (advanced && (anchor != null || ++freshPages < maxFreshPages)) {
                 nextPageBefore = oldest
                 previousPageOldest = oldest
             } else {

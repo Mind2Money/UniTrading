@@ -47,6 +47,7 @@ private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val pr
 internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
     watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
+    historyError: String? = null,
     onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
@@ -84,7 +85,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, Timeframe.M1)
-                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, onDismiss = onDismiss)
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError, onDismiss = onDismiss)
             }
         }
     }
@@ -94,7 +95,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
-    revision: Long, drawingDefaults: DrawingLibrary?, onDismiss: () -> Unit) {
+    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -294,6 +295,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
             TextButton(onClick = { playing = false; if (started) confirmExit = true else onDismiss() }, Modifier.testTag("replay-close")) { Text("关闭") }
         }
+        historyError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 ChartToolbar(spec, input.instruments, { sym ->

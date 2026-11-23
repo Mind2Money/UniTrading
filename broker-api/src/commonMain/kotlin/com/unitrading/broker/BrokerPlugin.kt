@@ -4,6 +4,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 
+/** A separate, bounded replay download. End is exclusive; no live order account is involved. */
+data class HistoricalRangeResult(val candles: List<Candle>, val warning: String? = null)
+
 interface BrokerPlugin {
     val descriptor: BrokerDescriptor
     val capabilities: BrokerCapabilities
@@ -39,6 +42,12 @@ interface BrokerPlugin {
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession
     fun history(symbol: String, timeframe: Timeframe): List<Candle>
+    /** Fetch replay history without truncating it to the live chart's cache size. */
+    suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
+        require(startMs < endMs) { "历史数据起始日期必须早于结束日期" }
+        val bars = history(symbol, timeframe).filter { it.timeMs in startMs until endMs }
+        return HistoricalRangeResult(bars, "当前数据源仅提供已缓存的历史，所选日期可能不完整")
+    }
 }
 
 interface AccountSession {

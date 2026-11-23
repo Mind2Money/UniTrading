@@ -113,6 +113,24 @@ class HistoryPreloadTest {
         assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == timeframe.millis })
     }
 
+    @Test fun replayRangePagesPastTheLiveCacheLimitWithoutChangingTheLiveChart() = runTest {
+        val wire = Wire().apply { serverBars = 6_000; pageLimit = 300 }
+        val broker = ready(wire)
+        broker.watch("MESZ6", M5); runCurrent()
+        val live = broker.history("MESZ6", M5)
+        val start = NOW - 5_000 * Timeframe.M1.millis
+        val end = NOW - 100 * Timeframe.M1.millis
+        val loaded = async { broker.historicalRange("MESZ6", Timeframe.M1, start, end) }
+        runCurrent()
+        val bars = loaded.await().candles
+        assertEquals(4_900, bars.size)
+        assertEquals(start, bars.first().timeMs)
+        assertEquals(end - Timeframe.M1.millis, bars.last().timeMs)
+        assertTrue(wire.of(Timeframe.M1).size > 10)
+        assertEquals(live, broker.history("MESZ6", M5))
+        assertTrue(wire.of(Timeframe.M1).flatMap { it.ids }.all { it in wire.cancelled })
+    }
+
     @Test fun listedSeriesAreReadWholeAndCachedWithoutTouchingTheChart() = runTest {
         val wire = Wire()
         val store = Store()
