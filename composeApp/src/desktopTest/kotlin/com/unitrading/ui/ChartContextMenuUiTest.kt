@@ -75,7 +75,7 @@ class ChartContextMenuUiTest {
 
     @Test fun desktopMenuOmitsCopyPriceAndResetsTheView() {
         render()
-        chart().performMouseInput { moveTo(Offset(size.width * .4f, size.height * .5f)); scroll(-3f) }
+        chart().performMouseInput { moveTo(center); scroll(-3f) }
         compose.waitForIdle()
         assertTrue(chartState().getValue("bars").toDouble() < 80.0)
         rightClick(549_000)
