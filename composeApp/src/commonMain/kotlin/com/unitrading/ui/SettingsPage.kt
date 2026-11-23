@@ -55,6 +55,7 @@ internal fun SettingsPage(
     barActions: @Composable RowScope.() -> Unit = {},
     updates: AppUpdates? = null,
     showOrderLayout: Boolean = true,
+    showChartSessionControls: Boolean = true,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
@@ -121,9 +122,9 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
-                SettingsRow("图表交易时段", chartPreferences.chartSession.label, AppIcons.History, "settings-chart-session",
+                if (showChartSessionControls) SettingsRow("图表交易时段", chartPreferences.sessionForChart("main").label, AppIcons.History, "settings-chart-session",
                     { chooseChartSession = true }, navigates = true)
-                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.History, "settings-chart-timezone",
+                if (showChartSessionControls) SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.History, "settings-chart-timezone",
                     { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
@@ -222,9 +223,9 @@ internal fun SettingsPage(
         text = { Column {
             Text("常规时段采用 TradingView CME 图表模板（芝加哥 08:30–15:15）；仅支持 ES、NQ、CL、GC 及对应 Micro。日线及以上直接使用券商的电子交易时段 K 线。分钟及小时周期由 1 分钟数据合成，历史深度受券商数据限制；秒线暂不支持。此设置不限制下单。", style = MaterialTheme.typography.bodySmall)
             com.unitrading.app.ChartSession.entries.forEach { value ->
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(value == chartPreferences.chartSession, role = Role.RadioButton, onClick = {
-                    preferenceScope.launch { if (runtime.chartPreferences.setChartSession(value)) chooseChartSession = false }
-                }), verticalAlignment = Alignment.CenterVertically) { RadioButton(value == chartPreferences.chartSession, onClick = null); Spacer(Modifier.width(12.dp)); Text(value.label) }
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(value == chartPreferences.sessionForChart("main"), role = Role.RadioButton, onClick = {
+                    preferenceScope.launch { if (runtime.chartPreferences.setChartSessionFor("main", value)) chooseChartSession = false }
+                }), verticalAlignment = Alignment.CenterVertically) { RadioButton(value == chartPreferences.sessionForChart("main"), onClick = null); Spacer(Modifier.width(12.dp)); Text(value.label) }
             }
         } }, confirmButton = { TextButton({ chooseChartSession = false }) { Text("关闭") } },
     )

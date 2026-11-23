@@ -78,7 +78,10 @@ data class ChartPreferences(
     val showChartWatermark: Boolean = true,
     val chartTimeZone: ChartTimeZone = ChartTimeZone.SHANGHAI,
     val chartSession: ChartSession = ChartSession.ELECTRONIC,
+    /** Each chart cell has an independent session; the legacy value is its initial default. */
+    val chartSessions: Map<String, ChartSession> = emptyMap(),
 ) {
+    fun sessionForChart(chartId: String): ChartSession = chartSessions[chartId] ?: chartSession
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
     private val lastLength: Int? get() = lastTimeframeSeconds ?: lastTimeframeMinutes?.let(::minutes)
@@ -86,6 +89,7 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
+        require(chartSessions.size <= 64 && chartSessions.keys.all { it.isNotBlank() && it.length <= 64 }) { "图表时段设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
@@ -195,6 +199,18 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setChartSession(session: ChartSession): Boolean = saveMutex.withLock {
         preferences.value.chartSession == session || persist(preferences.value.copy(chartSession = session))
+    }
+
+    suspend fun setChartSessionFor(chartId: String, session: ChartSession): Boolean = saveMutex.withLock {
+        require(chartId.isNotBlank() && chartId.length <= 64)
+        val current = preferences.value
+        current.chartSessions[chartId] == session || persist(current.copy(chartSessions = current.chartSessions + (chartId to session)))
+    }
+
+    suspend fun clearChartSessions(chartIds: Set<String>): Boolean = saveMutex.withLock {
+        val current = preferences.value
+        val remaining = current.chartSessions - chartIds
+        remaining == current.chartSessions || persist(current.copy(chartSessions = remaining))
     }
 
     suspend fun setChartTimeZone(zone: ChartTimeZone): Boolean = saveMutex.withLock {

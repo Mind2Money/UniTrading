@@ -7,6 +7,21 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun sessionsAreIndependentForEachChartAndSurviveRestart() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"chartSession":"REGULAR"}""") }
+        val controller = ChartPreferencesController(store)
+        assertEquals(ChartSession.REGULAR, controller.preferences.value.sessionForChart("main"))
+        assertTrue(controller.setChartSessionFor("main", ChartSession.ELECTRONIC))
+        assertTrue(controller.setChartSessionFor("split1", ChartSession.REGULAR))
+        assertTrue(controller.setChartSessionFor("c1", ChartSession.ELECTRONIC))
+        val restored = ChartPreferencesController(store)
+        assertEquals(ChartSession.ELECTRONIC, restored.preferences.value.sessionForChart("main"))
+        assertEquals(ChartSession.REGULAR, restored.preferences.value.sessionForChart("split1"))
+        assertEquals(ChartSession.ELECTRONIC, restored.preferences.value.sessionForChart("c1"))
+        assertTrue(restored.clearChartSessions(setOf("c1", "c1s1")))
+        assertEquals(ChartSession.REGULAR, ChartPreferencesController(store).preferences.value.sessionForChart("c1"))
+        assertEquals(ChartSession.ELECTRONIC, ChartPreferencesController(store).preferences.value.sessionForChart("main"))
+    }
     @Test fun chartZonePersistsAndDefaultsToShanghai() = runTest {
         val store = MemorySnapshotStore()
         val prefs = ChartPreferencesController(store)

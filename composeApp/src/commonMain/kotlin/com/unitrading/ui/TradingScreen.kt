@@ -471,10 +471,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
-        val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
-        val regularSession = chartPreferences.chartSession == ChartSession.REGULAR
-        val liveSeries = (listOf(symbol to timeframe) + parkedSeries).map { (s, frame) -> s to chartSessionSource(s, frame, regularSession) }.distinct()
-        val extendedSeries = if (regularSession) liveSeries.filter { it.second == Timeframe.M1 }.toSet() else emptySet()
+        val watchedCharts = listOf(ChartSlot(activeChart, symbol, timeframe)) + visibleParkedCharts.values.filter { it.id != activeChart }
+        val chartSources = watchedCharts.map { slot ->
+            val regular = chartPreferences.sessionForChart(slot.id) == ChartSession.REGULAR
+            (slot.symbol to chartSessionSource(slot.symbol, slot.timeframe, regular)) to regular
+        }
+        val liveSeries = chartSources.map { it.first }.distinct()
+        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet()
         LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
@@ -678,7 +681,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chartOrder = chartOrder - id
             workspaceOrder = workspaceOrder - id
             runtime.desktopLayout.setWindowBounds(chartWindowKey(id), null)
-            scope.launch { runtime.desktopLayout.save() }
+            scope.launch { runtime.chartPreferences.clearChartSessions((0..3).map { cellId(id, it) }.toSet()); runtime.desktopLayout.save() }
         }
         val restoreDesktopWorkspace = LocalChartPlatform.current == ChartPlatform.DESKTOP && panelWindows
         LaunchedEffect(plugin, restoreDesktopWorkspace) {
@@ -1164,10 +1167,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val shownTimeframe = parked?.timeframe ?: timeframe
                     val shownExecution = shownInstrument.executionSymbol
                     val shownQuote = if (active) quote else market.quotes[shownExecution]
+                    val regularSession = chartPreferences.sessionForChart(chartId) == ChartSession.REGULAR
                     val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
                     val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }
-                    val sessionResult = remember(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession) {
-                        chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession == ChartSession.REGULAR)
+                    val sessionResult = remember(rawCandles, shownInstrument.symbol, shownTimeframe, regularSession) {
+                        chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, regularSession)
                     }
                     val shownCandles = sessionResult.first
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
@@ -1342,6 +1346,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
+                            if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target), chartPreferences.chartTimeZone,
+                                if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null,
+                                onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } },
+                                onTimeZone = { value -> scope.launch { runtime.chartPreferences.setChartTimeZone(value) } })
                         }, singleRow = singleLine)
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
@@ -2213,7 +2221,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates, showOrderLayout = !nativeDesktop && !tablet)
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates,
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable)
                         }
                     }
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
@@ -2242,7 +2251,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates, showOrderLayout = !nativeDesktop && !tablet)
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates,
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable)
                         }
                     }
                 }
