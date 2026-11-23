@@ -12,6 +12,15 @@ private const val CACHE_TIME = 1_798_589_000_000L
 private const val CACHE_STEP = 5 * 60_000L
 
 class CandleCacheTest {
+    @Test fun liveUpdateKeepsOlderBarsAndReplacesTheCurrentBar() {
+        val earlier = candle(CACHE_TIME - CACHE_STEP)
+        val latest = candle(CACHE_TIME)
+        val changed = latest.copy(close = 110)
+        assertEquals(listOf(earlier, changed), mergeCandles(listOf(earlier, latest), listOf(changed)))
+        assertEquals(listOf(earlier, latest), mergeCandles(listOf(earlier, latest), emptyList()))
+        assertEquals(listOf(latest, candle(CACHE_TIME + CACHE_STEP)),
+            mergeCandles(listOf(earlier, latest), listOf(candle(CACHE_TIME + CACHE_STEP)), 2))
+    }
     @Test fun extendedHistoryKeepsPagingBeyondNormalChartLimit() {
         val load = ChartLoad(emptyList(), 0L, extended = true)
         val first = List(CHART_BARS) { i -> candle(CACHE_TIME - i * CACHE_STEP) }

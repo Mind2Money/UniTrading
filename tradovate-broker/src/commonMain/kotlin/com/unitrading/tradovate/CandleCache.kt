@@ -20,8 +20,17 @@ internal fun chartBackfillRange(anchor: Long, closest: Long) = buildJsonObject {
     put("closestTimestamp", Instant.fromEpochMilliseconds(closest).toString())
 }
 
-internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>, maxBars: Int = CHART_BARS): List<Candle> =
-    (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(maxBars)
+internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>, maxBars: Int = CHART_BARS): List<Candle> {
+    if (incoming.isEmpty()) return previous
+    // The live stream normally revises only the newest bar; avoid rebuilding a large map on every tick.
+    val latest = previous.lastOrNull()
+    val update = incoming.singleOrNull()
+    if (latest != null && update != null && update.timeMs >= latest.timeMs) {
+        if (latest == update) return previous
+        return (if (update.timeMs == latest.timeMs) previous.dropLast(1) + update else previous + update).takeLast(maxBars)
+    }
+    return (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(maxBars)
+}
 
 /** How far a fresh chart reads back: four chart-widths of wall time cover weekends and holidays. */
 internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0, now - timeframe.millis * CHART_BARS * 4)

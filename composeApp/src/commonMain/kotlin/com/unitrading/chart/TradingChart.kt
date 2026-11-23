@@ -417,7 +417,7 @@ fun TradingChart(
                 DividerLine()
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else chrome.chartTimeZone.label} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
+                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
@@ -987,7 +987,7 @@ fun TradingChart(
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
-                        }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZone.label)
+                        }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
@@ -1045,7 +1045,7 @@ fun TradingChart(
                 Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
             selectedExecution?.let { fill ->
-                Text("选中成交 #${fill.id} · ${chartDateTime(fill.timeMs, zoneId = chrome.chartTimeZone.zoneId)} ${chrome.chartTimeZone.label} · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
+                Text("选中成交 #${fill.id} · ${chartDateTime(fill.timeMs, zoneId = chrome.chartTimeZone.zoneId)} ${chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label} · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
                     Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("selected-execution"), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -1105,6 +1105,7 @@ class ChartChrome(
     val sessionNotice: String? = null,
     val regularSession: Boolean = false,
     val chartTimeZone: com.unitrading.app.ChartTimeZone = com.unitrading.app.ChartTimeZone.SHANGHAI,
+    val chartTimeZoneLabel: String? = null,
     val onOpenSettings: (() -> Unit)? = null,
 )
 
