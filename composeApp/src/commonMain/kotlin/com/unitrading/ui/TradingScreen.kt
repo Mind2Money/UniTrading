@@ -1285,7 +1285,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, showDrawingFavorites = active, views = runtime.chartViews,
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, showDrawingFavorites = active && !shared, views = runtime.chartViews,
                             showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
@@ -1408,7 +1408,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ChartSplitWorkspace(layoutOf(workspace), selected, { id, cellModifier -> chartView(id, cellModifier, true) },
                                     Modifier.weight(1f).fillMaxHeight(), chartId = { id ->
                                         if (id == "main") workspace else cellId(workspace, id.removePrefix("split").toInt())
-                                    }, ratiosOverride = workspaceRatios[workspace])
+                                    }, ratiosOverride = workspaceRatios[workspace], favoriteDrawings = currentDrawings)
                             }
                         }
                     }

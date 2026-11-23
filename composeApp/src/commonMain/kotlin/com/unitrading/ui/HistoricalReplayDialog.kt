@@ -356,7 +356,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
                             onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
                             modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
-                            chrome = ChartChrome(drawings = drawings, showDrawingFavorites = id == activeChart,
+                            chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true,
                                 desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
@@ -368,7 +368,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             Text("券商结算数据 · 仅显示已完成 K 线", Modifier.align(Alignment.BottomStart).padding(8.dp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                     }
-                }, Modifier.weight(1f).fillMaxHeight())
+                }, Modifier.weight(1f).fillMaxHeight(), favoriteDrawings = drawings)
                 }
                 Surface(Modifier.fillMaxWidth().padding(top = 6.dp), shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,

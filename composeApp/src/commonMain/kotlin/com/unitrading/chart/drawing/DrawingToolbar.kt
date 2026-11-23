@@ -13,9 +13,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -24,7 +26,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.DividerLine
 import com.unitrading.ui.TradingColors
@@ -212,15 +216,17 @@ internal fun DrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemo
 
 /** The starred tools in a small bar that can be dragged out of the way. */
 @Composable
-internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = Modifier) {
+internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = Modifier, onDrag: ((Offset) -> Unit)? = null) {
     if (drawings.favorites.isEmpty() || !drawings.favoritesBarVisible) return
     var offset by remember { mutableStateOf(IntOffset.Zero) }
+    val currentOnDrag by rememberUpdatedState(onDrag)
     Surface(modifier.offset { offset }.testTag("drawing-favorites"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(width = 16.dp, height = 36.dp).pointerInput(Unit) {
+            Box(Modifier.size(width = 16.dp, height = 36.dp).testTag("drawing-favorites-drag").pointerInput(Unit) {
                 detectDragGestures { change, amount ->
                     change.consume()
-                    offset = IntOffset(offset.x + amount.x.roundToInt(), offset.y + amount.y.roundToInt())
+                    if (currentOnDrag != null) currentOnDrag?.invoke(amount)
+                    else offset = IntOffset(offset.x + amount.x.roundToInt(), offset.y + amount.y.roundToInt())
                 }
             }, contentAlignment = Alignment.Center) { Icon(AppIcons.DragIndicator, contentDescription = "拖动收藏栏", Modifier.size(14.dp), tint = TradingColors.Muted) }
             drawings.favorites.forEach { tool ->
@@ -230,5 +236,29 @@ internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = M
                 }
             }
         }
+    }
+}
+
+/** A single bar over the complete chart workspace, not clipped to an individual chart. */
+@Composable
+internal fun WorkspaceFavoriteDrawingsBar(drawings: ChartDrawings) {
+    if (drawings.favorites.isEmpty() || !drawings.favoritesBarVisible) return
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        var size by remember { mutableStateOf(IntSize.Zero) }
+        var position by remember { mutableStateOf<Offset?>(null) }
+        val maxX = (constraints.maxWidth - size.width).coerceAtLeast(0).toFloat()
+        val maxY = (constraints.maxHeight - size.height).coerceAtLeast(0).toFloat()
+        val startX = (maxX - with(density) { 92.dp.toPx() }).coerceAtLeast(0f)
+        val startY = (maxY - with(density) { 38.dp.toPx() }).coerceAtLeast(0f)
+        val current = position ?: Offset(startX, startY)
+        val x = current.x.coerceIn(0f, maxX)
+        val y = current.y.coerceIn(0f, maxY)
+        FavoriteDrawingsBar(drawings,
+            Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.onSizeChanged { size = it },
+            onDrag = { delta ->
+                val before = position ?: Offset(startX, startY)
+                position = Offset((before.x + delta.x).coerceIn(0f, maxX), (before.y + delta.y).coerceIn(0f, maxY))
+            })
     }
 }
