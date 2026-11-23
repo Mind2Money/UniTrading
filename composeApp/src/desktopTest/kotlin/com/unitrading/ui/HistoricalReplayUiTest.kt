@@ -76,9 +76,9 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("price-axis-menu-button").performClick()
         compose.onNodeWithText("自动适应屏幕", substring = true).performClick()
         compose.onNodeWithTag("price-axis-menu-button").performClick()
-        compose.onNodeWithText("自动适应屏幕", substring = true).assertTextContains("✓")
+        compose.onNodeWithText("自动适应屏幕", substring = true).assertTextContains("✓", substring = true)
         compose.onNodeWithText("反转价格轴", substring = true).performClick()
-        compose.onNodeWithText("反转价格轴", substring = true).assertTextContains("✓")
+        compose.onNodeWithText("反转价格轴", substring = true).assertTextContains("✓", substring = true)
         compose.onNodeWithText("常规", substring = true).performClick()
         val chart = compose.onNodeWithTag("trading-chart")
         val chartSize = chart.fetchSemanticsNode().size
