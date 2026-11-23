@@ -481,14 +481,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
-        var replayWatch by remember(plugin) { mutableStateOf<Pair<String, Timeframe>?>(null) }
+        var replayWatch by remember(plugin) { mutableStateOf<Set<Pair<String, Timeframe>>>(emptySet()) }
         val watchedCharts = listOf(ChartSlot(activeChart, symbol, timeframe)) + visibleParkedCharts.values.filter { it.id != activeChart }
         val chartSources = watchedCharts.map { slot ->
             val regular = chartPreferences.sessionForChart(slot.id) == ChartSession.REGULAR
             (slot.symbol to chartSessionSource(slot.symbol, slot.timeframe, regular)) to regular
         }
-        val liveSeries = (chartSources.map { it.first } + listOfNotNull(replayWatch)).distinct()
-        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet() + listOfNotNull(replayWatch)
+        val liveSeries = (chartSources.map { it.first } + replayWatch).distinct()
+        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet() + replayWatch.filter { it.second == Timeframe.M1 }
         LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
@@ -1285,7 +1285,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, showDrawingFavorites = active, views = runtime.chartViews,
                             showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
@@ -1375,7 +1375,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (desktopStyle) AssistChip(onClick = {
                                 val regular = chartPreferences.sessionForChart(target) == ChartSession.REGULAR
                                 val source = chartSessionSource(selectedInstrument.symbol, selectedFrame, regular)
-                                replayWatch = selectedInstrument.symbol to Timeframe.M1
+                                replayWatch = setOf(selectedInstrument.symbol to Timeframe.M1)
                                 replayInput = ReplayInput(selectedInstrument, selectedFrame, regular, chartPreferences.chartTimeZone,
                                     plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList(), source,
                                     catalog.instruments, intervals, priceAxis, skipConfirmation)
@@ -1386,8 +1386,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     replayInput?.let { input -> HistoricalReplayDialog(input, market.revision,
                         history = { sym, frame -> plugin.history(sym, frame) },
-                        watch = { sym -> replayWatch = sym to Timeframe.M1 },
-                        onDismiss = { replayWatch = null; replayInput = null }) }
+                        watch = { sym, frame -> replayWatch = replayWatch.filter { it.first == sym }.toSet() + (sym to frame) },
+                        drawingDefaults = runtime.drawingLibrary,
+                        onDismiss = { replayWatch = emptySet(); replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace

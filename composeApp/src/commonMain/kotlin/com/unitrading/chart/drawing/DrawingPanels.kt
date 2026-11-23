@@ -419,13 +419,13 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
 
 /** Everything of the drawing layer that sits over the plot: quick bar, menus, dialogs and the value tooltip. */
 @Composable
-internal fun BoxScope.DrawingChartOverlays(layer: DrawingLayer, compact: Boolean) {
+internal fun BoxScope.DrawingChartOverlays(layer: DrawingLayer, compact: Boolean, showFavorites: Boolean = true) {
     val drawings = layer.controller
     DrawingContextMenu(drawings)
     DrawingValuesTooltip(layer)
     // A phone's legend and toolbar leave no room at the top, so the bar sits above the navigation there.
     DrawingFloatingBar(drawings, if (compact) Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp) else Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 92.dp))
-    FavoriteDrawingsBar(drawings, Modifier.align(Alignment.BottomEnd).padding(bottom = 38.dp, end = 92.dp))
+    if (showFavorites) FavoriteDrawingsBar(drawings, Modifier.align(Alignment.BottomEnd).padding(bottom = 38.dp, end = 92.dp))
     DrawingTextDialog(drawings)
     DrawingSettingsDialog(layer)
     // Phones have no room for the toolbar by default; this tab on the plot's edge brings it in and out.

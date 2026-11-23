@@ -3,15 +3,22 @@ package com.unitrading.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.unitrading.app.ChartTimeZone
+import com.unitrading.app.ChartSession
 import com.unitrading.app.IndicatorController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
@@ -19,6 +26,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.*
 import com.unitrading.chart.drawing.ChartDrawings
 import com.unitrading.chart.drawing.DrawingToolbar
+import com.unitrading.chart.drawing.DrawingLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -38,23 +46,24 @@ private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val pr
 @Composable
 internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
-    watch: (String) -> Unit = {}, onDismiss: () -> Unit) {
+    watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
+    onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
     val fineHistory = remember(revision, selected.symbol) { history(selected.symbol, Timeframe.M1) }
     LaunchedEffect(selected, fineHistory) {
-        if (selected.symbol != input.instrument.symbol && fineSnapshot == null && fineHistory.size >= 2)
+        if ((selected.symbol != input.instrument.symbol || input.raw.size < 2) && fineSnapshot == null && fineHistory.size >= 2)
             fineSnapshot = fineHistory.toList()
     }
     val raw = fineSnapshot ?: if (selected.symbol == input.instrument.symbol) input.raw else emptyList()
     val rawFrame = if (fineSnapshot != null || selected.symbol != input.instrument.symbol) Timeframe.M1 else input.rawFrame
     val prepared = remember(raw, selected, rawFrame) {
-        if (raw.size <= 500) chartSessionCandles(raw.sortedBy(Candle::timeMs), selected.symbol, rawFrame, input.regular)
+        if (raw.size <= 500) raw.sortedBy(Candle::timeMs) to null
         else null
     }
     val loaded by key(raw, selected, rawFrame) { produceState<Pair<List<Candle>, String?>?>(prepared, raw, selected, rawFrame) {
         value = prepared ?: withContext(Dispatchers.Default) {
-            chartSessionCandles(raw.sortedBy(Candle::timeMs), selected.symbol, rawFrame, input.regular)
+            raw.sortedBy(Candle::timeMs) to null
         }
     }
     }
@@ -73,20 +82,22 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 TextButton(onClick = onDismiss) { Text("关闭") }
             } else key(selected.symbol, rawFrame) {
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
-                    fineAvailable = fineSnapshot == null && rawFrame != Timeframe.M1 && fineHistory.size >= 2,
-                    useFine = { fineSnapshot = fineHistory.toList() },
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
-                        selected = it; fineSnapshot = null; watch(symbol)
-                    } }, onDismiss = onDismiss)
+                        selected = it; fineSnapshot = null; watch(symbol, Timeframe.M1)
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, onDismiss = onDismiss)
             }
         }
     }
 }
 
 @Composable
-private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame: Timeframe,
-    fineAvailable: Boolean, useFine: () -> Unit, changeSymbol: (String) -> Unit, onDismiss: () -> Unit) {
+private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
+    changeSymbol: (String) -> Unit,
+    history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
+    revision: Long, drawingDefaults: DrawingLibrary?, onDismiss: () -> Unit) {
     val spec = input.instrument
+    var bars by remember { mutableStateOf(initialBars) }
+    var sourceFrame by remember { mutableStateOf(initialFrame) }
     var start by remember { mutableIntStateOf((bars.size - 100).coerceIn(0, bars.lastIndex - 1)) }
     var state by remember { mutableStateOf(ReplayState(start)) }
     var playing by remember { mutableStateOf(false) }
@@ -113,7 +124,14 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var drawdownMode by remember { mutableStateOf(ReplayDrawdown.STATIC) }
     var riskConfig by remember { mutableStateOf(ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC)) }
     var risk by remember { mutableStateOf(ReplayRiskState.initial(riskConfig)) }
-    var chartFrame by remember { mutableStateOf(if (input.timeframe.seconds >= Timeframe.DAY && sourceFrame != input.timeframe) sourceFrame else input.timeframe) }
+    var layout by remember { mutableStateOf(ChartSplitLayout.SINGLE) }
+    var activeChart by remember { mutableStateOf("main") }
+    val frames = remember { mutableStateMapOf<String, Timeframe>() }
+    val chartFrame = frames[activeChart] ?: input.timeframe
+    val chartSessions = remember { mutableStateMapOf<String, Boolean>() }
+    val regular = chartSessions[activeChart] ?: input.regular
+    var pendingSource by remember { mutableStateOf<Timeframe?>(null) }
+    var requestedRegularChart by remember { mutableStateOf<String?>(null) }
     var priceAxis by remember { mutableStateOf(input.priceAxis) }
     val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
     val selectedStep = stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
@@ -122,8 +140,45 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     val indicatorSettings by indicatorController.settings.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(indicatorController) { indicatorController.apply(IndicatorSettings(input.indicators)) }
-    val drawings = remember { ChartDrawings(MemorySnapshotStore()).also { it.bind(spec.symbol) } }
+    val drawings = remember(drawingDefaults) {
+        val local = DrawingLibrary(MemorySnapshotStore())
+        ChartDrawings(local, drawingDefaults ?: local).also { it.bind(spec.symbol) }
+    }
     val current = bars[state.index]
+    fun useFinerHistory(frame: Timeframe, data: List<Candle>): Boolean {
+        val sorted = data.sortedBy(Candle::timeMs)
+        val end = current.timeMs + sourceFrame.millis
+        val index = sorted.binarySearch { (it.timeMs + frame.millis).compareTo(end) }.let { if (it < 0) -it - 2 else it }
+        if (index !in sorted.indices || sorted[index].timeMs + frame.millis != end) {
+            message = "券商的 ${frame.label} 历史未覆盖当前回放时刻，请选择其他起点"
+            return false
+        }
+        state = state.copy(index = index); start = index.coerceAtMost(sorted.lastIndex - 1)
+        bars = sorted.toList(); sourceFrame = frame; message = null
+        return true
+    }
+    val pendingBars = remember(revision, pendingSource, spec.symbol) {
+        pendingSource?.let { history(spec.symbol, it) }.orEmpty()
+    }
+    LaunchedEffect(pendingSource, pendingBars) {
+        val frame = pendingSource
+        if (frame != null && pendingBars.size >= 2) {
+            pendingSource = null
+            if (useFinerHistory(frame, pendingBars)) requestedRegularChart?.let { chartSessions[it] = true }
+            requestedRegularChart = null
+        }
+    }
+    fun requestFinerHistory(frame: Timeframe, regularChart: String? = null) {
+        playing = false
+        watch(spec.symbol, frame)
+        val cached = history(spec.symbol, frame)
+        if (cached.size >= 2) {
+            if (useFinerHistory(frame, cached) && regularChart != null) chartSessions[regularChart] = true
+        } else {
+            pendingSource = frame; requestedRegularChart = regularChart
+            message = "正在向券商获取 ${frame.label} 历史…"
+        }
+    }
     fun accept(next: ReplayState) {
         val bar = bars[next.index]
         val realized = next.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
@@ -142,6 +197,11 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         val last = replayStepEnd(bars, state.index, selectedStep)
         while (state.index < last) {
             if (state.index >= bars.lastIndex || risk.failed) { playing = false; return }
+            if (regular && sourceFrame.seconds < Timeframe.DAY && !isRegularChartTime(bars[state.index + 1].timeMs)) {
+                state = state.copy(index = state.index + 1)
+                started = true
+                continue
+            }
             val result = runCatching { accept(state.advance(spec, bars[state.index + 1])) }
             if (result.isFailure) { playing = false; message = result.exceptionOrNull()?.message ?: "回放撮合失败"; return }
             started = true
@@ -166,6 +226,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     fun requestOrder(side: Side, kind: OrderKind = orderKind, price: Long? = if (kind == OrderKind.MARKET) null else spec.parsePrice(orderPrice)) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            require(!regular || sourceFrame.seconds >= Timeframe.DAY || isRegularChartTime(current.timeMs)) { "当前回放时间不在常规时段，请前进到开市时间" }
             val qty = spec.parseQuantity(quantity) ?: error("请输入有效数量")
             require(kind == OrderKind.MARKET || price != null) { "请输入挂单价格" }
             ReplayOrderIntent(side, kind, price, qty,
@@ -210,14 +271,20 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
             order.quantity, order.price, order.stop, order.target), createdAtMs = current.timeMs, editable = true, protectionEditable = true)
     } }
-    val visible = remember(bars, state.index, sourceFrame, chartFrame) {
-        runCatching { replayChartBars(bars, state.index, sourceFrame, chartFrame, spec.symbol, input.regular) }.getOrElse { emptyList() }
-    }
     val realized = remember(state.trades) { runCatching { state.trades.fold(0L) { sum, trade -> checkedAdd(sum, trade.pnlMicros) } }.getOrNull() }
     val analysis = remember(state.trades) { runCatching { replayAnalysis(state.trades) }.getOrNull() }
-    val floating = remember(state.positions, current) { runCatching {
+    val regularIndices = remember(bars, regular, sourceFrame) {
+        if (regular && sourceFrame.seconds < Timeframe.DAY) bars.indices.filter { isRegularChartTime(bars[it].timeMs) } else emptyList()
+    }
+    val markPrice = remember(bars, state.index, regular, sourceFrame, regularIndices) {
+        if (regular && sourceFrame.seconds < Timeframe.DAY && !isRegularChartTime(current.timeMs)) {
+            val found = regularIndices.binarySearch(state.index).let { if (it < 0) -it - 2 else it }
+            regularIndices.getOrNull(found)?.let { bars[it].close }
+        } else current.close
+    }
+    val floating = remember(state.positions, markPrice) { if (markPrice == null) null else runCatching {
         state.positions.fold(0L) { sum, p ->
-            val gross = grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, current.close)
+            val gross = grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, markPrice)
             checkedAdd(sum, checkedAdd(gross, -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
         }
     }.getOrNull() }
@@ -234,51 +301,121 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                         if (started) { playing = false; switchTo = sym } else changeSymbol(sym)
                     }
                 }, chartFrame, { frame ->
-                    if (frame.seconds < sourceFrame.seconds || frame.seconds % sourceFrame.seconds != 0 ||
-                        (frame.seconds >= Timeframe.DAY && frame != sourceFrame))
-                        message = "此周期不能由当前回放数据安全生成，请选择可用周期"
-                    else { chartFrame = frame; message = null }
+                    pendingSource = null; requestedRegularChart = null
+                    frames[activeChart] = frame
+                    if (frame.seconds < sourceFrame.seconds && sourceFrame.seconds % frame.seconds == 0) {
+                        requestFinerHistory(frame)
+                    } else message = null
                 }, input.intervals, emptyList(), ChartToggle("指标 ${indicatorSettings.indicators.size}", true) { showIndicators = true },
-                    Modifier.fillMaxWidth(), singleRow = true)
-                if (fineAvailable && !started) TextButton(onClick = useFine) { Text("使用券商 1 分钟历史推进（将重选起点）") }
+                    Modifier.fillMaxWidth(), additionalControls = {
+                        ChartLayoutMenu(layout) { next ->
+                            layout = next
+                            if (activeChart !in listOf("main", "split1", "split2", "split3").take(next.count)) activeChart = "main"
+                        }
+                        ChartSessionControls(if (regular) ChartSession.REGULAR else ChartSession.ELECTRONIC) { selected ->
+                            pendingSource = null; requestedRegularChart = null
+                            val nextRegular = selected == ChartSession.REGULAR
+                            val unavailable = if (nextRegular) chartSessionCandles(emptyList(), spec.symbol, Timeframe.M1, true).second else null
+                            if (unavailable != null) message = unavailable
+                            else if (nextRegular && sourceFrame.seconds in (Timeframe.M1.seconds + 1) until Timeframe.DAY) {
+                                requestFinerHistory(Timeframe.M1, activeChart)
+                            } else { chartSessions[activeChart] = nextRegular; message = null }
+                        }
+                    }, singleRow = true)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                 DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { indicatorController.apply(IndicatorSettings()) } })
-                TradingChart(accountKey = "local-historical-replay", instrument = spec,
-                    quote = Quote(current.close, current.close, current.timeMs), candles = visible, timeframe = chartFrame,
-                    onTimeframe = {}, positions = state.positions, trades = emptyList(), selectedPositionId = null,
-                    focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
-                    onSide = { requestOrder(it, OrderKind.MARKET, null) },
-                    modifier = Modifier.weight(1f).fillMaxHeight(), indicators = indicatorSettings.indicators,
-                    chrome = ChartChrome(drawings = drawings, priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, desktopAxisStyle = true, showNavigation = false,
-                        showWatermark = true, chartTimeZone = input.zone))
+                ChartSplitWorkspace(layout, activeChart, { id, cellModifier ->
+                    val frame = frames[id] ?: input.timeframe
+                    val cellRegular = chartSessions[id] ?: input.regular
+                    val useSource = frame.seconds >= sourceFrame.seconds && frame.seconds % sourceFrame.seconds == 0 &&
+                        (frame.seconds < Timeframe.DAY || frame == sourceFrame) &&
+                        (!cellRegular || frame.seconds >= Timeframe.DAY || sourceFrame == Timeframe.M1)
+                    val brokerFrame = if (cellRegular && frame.seconds < Timeframe.DAY) Timeframe.M1 else frame
+                    LaunchedEffect(spec.symbol, brokerFrame, useSource) { if (!useSource) watch(spec.symbol, brokerFrame) }
+                    val brokerBars = remember(revision, spec.symbol, brokerFrame, useSource) {
+                        if (useSource) emptyList() else history(spec.symbol, brokerFrame)
+                    }
+                    val cutoff = if (current.timeMs > Long.MAX_VALUE - sourceFrame.millis) Long.MAX_VALUE else current.timeMs + sourceFrame.millis
+                    val visible = remember(bars, state.index, sourceFrame, frame, cellRegular, brokerBars, cutoff) {
+                        if (useSource) runCatching { replayChartBars(bars, state.index, sourceFrame, frame, spec.symbol, cellRegular) }.getOrElse { emptyList() }
+                        else {
+                            val completed = replayCompletedBrokerBars(brokerBars, brokerFrame, cutoff)
+                            if (cellRegular && frame.seconds < Timeframe.DAY)
+                                runCatching { chartSessionCandles(completed, spec.symbol, frame, true).first }.getOrElse { emptyList() }
+                            else completed
+                        }
+                    }
+                    val price = if (cellRegular && sourceFrame.seconds < Timeframe.DAY && !isRegularChartTime(current.timeMs))
+                        visible.lastOrNull()?.close else current.close
+                    Box(cellModifier.testTag("replay-chart-$id").semantics { contentDescription = "回放 ${spec.symbol} ${frame.label}" }.pointerInput(id) {
+                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activeChart = id } }
+                    }) {
+                        TradingChart(accountKey = "local-historical-replay-$id", instrument = spec,
+                            quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
+                            onTimeframe = { frames[id] = it }, positions = state.positions, trades = emptyList(), selectedPositionId = null,
+                            focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
+                            onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
+                            modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
+                            chrome = ChartChrome(drawings = drawings, showDrawingFavorites = id == activeChart,
+                                priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true,
+                                desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
+                        if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Text(if (brokerBars.isEmpty()) "正在向券商获取 ${frame.label} 历史…" else "当前回放时刻没有已完成的 ${frame.label} 历史",
+                                Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (!useSource && frame.seconds >= Timeframe.DAY && visible.isNotEmpty())
+                            Text("券商结算数据 · 仅显示已完成 K 线", Modifier.align(Alignment.BottomStart).padding(8.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    }
+                }, Modifier.weight(1f).fillMaxHeight())
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-play")) { Text(if (playing) "暂停" else "播放") }
-                    TextButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-next")) { Text("前进") }
-                    stepChoices.forEach { frame -> TextButton(onClick = { stepFrame = frame }, modifier = Modifier.testTag("replay-step-${frame.id}")) {
-                        Text(replayStepLabel(frame), color = if (selectedStep == frame) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                    } }
-                    listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }) { Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) } }
-                    TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
-                    Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
-                }
-                if (!started) {
-                    Text("选择开始位置（拖动后从该 K 线开始）", style = MaterialTheme.typography.bodySmall)
-                    Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
-                        valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.testTag("replay-start"))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(startTime, { startTime = it }, label = { Text(if (input.timeframe.seconds >= Timeframe.DAY) "起点日期 YYYY-MM-DD" else "起点时间 YYYY-MM-DD HH:mm") },
-                            modifier = Modifier.weight(1f).testTag("replay-start-time"), singleLine = true)
-                        TextButton(onClick = {
-                            val at = if (input.timeframe.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
-                                else parseChartTime(startTime, input.zone.zoneId)
-                            if (at == null) message = "请输入有效的图表时区日期和时间"
-                            else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
-                            else {
-                                val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
-                                start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
+                Surface(Modifier.fillMaxWidth().padding(top = 6.dp), shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            IconButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed,
+                                modifier = Modifier.size(36.dp).testTag("replay-play")) {
+                                Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(20.dp))
                             }
-                        }) { Text("定位") }
+                            IconButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed,
+                                modifier = Modifier.size(36.dp).testTag("replay-next")) {
+                                Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(20.dp))
+                            }
+                            Text("步长", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
+                            stepChoices.forEach { frame -> TextButton(onClick = { stepFrame = frame }, modifier = Modifier.testTag("replay-step-${frame.id}"), contentPadding = PaddingValues(horizontal = 7.dp)) {
+                                Text(replayStepLabel(frame), color = if (selectedStep == frame) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            } }
+                            VerticalDivider(Modifier.height(24.dp).padding(horizontal = 3.dp))
+                            listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            } }
+                            TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
+                            Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (!started) {
+                            HorizontalDivider()
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("回放起点", style = MaterialTheme.typography.labelMedium)
+                                Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
+                                    valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(200.dp).testTag("replay-start"))
+                                OutlinedTextField(startTime, { startTime = it }, label = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm") },
+                                    modifier = Modifier.width(200.dp).testTag("replay-start-time"), singleLine = true)
+                                TextButton(onClick = {
+                                    val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
+                                        else parseChartTime(startTime, input.zone.zoneId)
+                                    if (at == null) message = "请输入有效的图表时区日期和时间"
+                                    else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
+                                    else {
+                                        val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
+                                        start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
+                                    }
+                                }) { Text("定位") }
+                            }
+                        }
                     }
                 }
             }

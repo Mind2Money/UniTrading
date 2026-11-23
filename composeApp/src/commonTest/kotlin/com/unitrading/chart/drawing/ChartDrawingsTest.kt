@@ -7,6 +7,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlin.test.*
 
 class ChartDrawingsTest {
+    @Test fun favoriteToolsAreSharedWhileChartDrawingsStayIndependent() {
+        val shared = DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined)
+        val first = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), shared).apply { bind("MES") }
+        val second = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), shared).apply { bind("MES") }
+        first.toggleFavorite(DrawingTool.TREND_LINE)
+        assertTrue(second.isFavorite(DrawingTool.TREND_LINE))
+        second.favoritesBarVisible = false
+        assertFalse(first.favoritesBarVisible)
+        first.addHorizontalLine(DrawingPoint(START, 40_000.0))
+        assertTrue(second.drawings.isEmpty())
+    }
     private val ctx = testContext()
     private val store = MemorySnapshotStore()
     private val drawings = ChartDrawings(store, Dispatchers.Unconfined).apply { bind("TEST") }

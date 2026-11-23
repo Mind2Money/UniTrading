@@ -12,9 +12,12 @@ internal fun replayChartBars(source: List<Candle>, through: Int, sourceFrame: Ti
     require(through in source.indices)
     require(chartFrame.seconds >= sourceFrame.seconds && chartFrame.seconds % sourceFrame.seconds == 0) { "图表周期必须是回放数据周期的整数倍" }
     val visible = source.subList(0, through + 1)
+    if (regular && chartFrame.seconds < Timeframe.DAY) {
+        require(sourceFrame == Timeframe.M1) { "常规时段需要券商 1 分钟历史数据" }
+        return chartSessionCandles(visible, symbol, chartFrame, true).first
+    }
     if (sourceFrame == chartFrame) return visible
     require(chartFrame.seconds < Timeframe.DAY) { "日线及以上需券商结算数据，暂不能从分钟线安全合成" }
-    if (regular) return chartSessionCandles(visible, symbol, chartFrame, true).first
     val result = ArrayList<Candle>()
     for (bar in visible) {
         val bucket = MathFloorDiv.floor(bar.timeMs, chartFrame.millis) * chartFrame.millis
@@ -29,6 +32,11 @@ internal fun replayChartBars(source: List<Candle>, through: Int, sourceFrame: Ti
     }
     return result
 }
+
+/** Broker candles become visible only after their entire time interval has elapsed in the replay. */
+internal fun replayCompletedBrokerBars(bars: List<Candle>, frame: Timeframe, replayEndMs: Long): List<Candle> =
+    bars.asSequence().filter { bar -> bar.timeMs <= replayEndMs && frame.millis <= replayEndMs - bar.timeMs }
+        .sortedBy(Candle::timeMs).toList()
 
 private object MathFloorDiv {
     fun floor(value: Long, divisor: Long): Long = value / divisor - if (value % divisor < 0) 1 else 0

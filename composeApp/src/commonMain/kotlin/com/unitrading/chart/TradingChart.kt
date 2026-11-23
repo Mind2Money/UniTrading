@@ -1025,7 +1025,7 @@ fun TradingChart(
                         )
                     }
                 }
-                drawingLayer?.let { DrawingChartOverlays(it, compact) }
+                drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
                     chrome.onIndicatorChanges ?: {}, { showObjectTree = false })
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,
@@ -1075,6 +1075,8 @@ class ChartChrome(
     val toolbarEnd: @Composable () -> Unit = {},
     /** The left toolbar's drawings for this chart; null leaves the chart without them. */
     val drawings: ChartDrawings? = null,
+    /** A split workspace shows one shared favorite bar on the currently selected chart. */
+    val showDrawingFavorites: Boolean = true,
     /** Where the chart keeps how it showed each series, so it opens again as it was left; null starts every series afresh. */
     val views: ChartViewMemory? = null,
     /** Locked, the mouse wheel moves the chart through time instead of zooming it. */

@@ -175,6 +175,14 @@ class ChartDrawings internal constructor(
     /** Defaults are global even when each pane keeps its own drawing library. */
     private val defaultsLibrary: DrawingLibrary = library,
 ) {
+    init {
+        // Merge the old per-chart favorites once; subsequent edits use the common library only.
+        if (library !== defaultsLibrary && library.prefs.favorites.isNotEmpty()) {
+            val existing = library.prefs.favorites
+            defaultsLibrary.updatePrefs { it.copy(favorites = (it.favorites + existing).distinct()) }
+            library.updatePrefs { it.copy(favorites = emptyList()) }
+        }
+    }
     /** A chart with a library of its own, for an app that shows one chart. */
     constructor(store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) : this(DrawingLibrary(store, saveDispatcher))
 
@@ -211,9 +219,9 @@ class ChartDrawings internal constructor(
         get() = prefs.removeLocked
         set(value) { updatePrefs { it.copy(removeLocked = value) } }
     var favoritesBarVisible: Boolean
-        get() = prefs.favoritesBarVisible
-        set(value) { updatePrefs { it.copy(favoritesBarVisible = value) } }
-    val favorites: List<DrawingTool> get() = prefs.favorites
+        get() = defaultsLibrary.prefs.favoritesBarVisible
+        set(value) { defaultsLibrary.updatePrefs { it.copy(favoritesBarVisible = value) } }
+    val favorites: List<DrawingTool> get() = defaultsLibrary.prefs.favorites
     var lockDrawings by mutableStateOf(false)
     var lockIndicators by mutableStateOf(false)
     var hideDrawings by mutableStateOf(false)
@@ -225,8 +233,8 @@ class ChartDrawings internal constructor(
     private fun updatePrefs(change: (DrawingToolPrefs) -> DrawingToolPrefs) = library.updatePrefs(change)
 
     internal fun recentTool(group: ToolGroup): DrawingTool = prefs.recent[group.name]?.takeIf { it in group.tools } ?: group.sections.first().tools.first()
-    fun toggleFavorite(value: DrawingTool) = updatePrefs { p -> p.copy(favorites = if (value in p.favorites) p.favorites - value else p.favorites + value) }
-    fun isFavorite(value: DrawingTool) = value in prefs.favorites
+    fun toggleFavorite(value: DrawingTool) = defaultsLibrary.updatePrefs { p -> p.copy(favorites = if (value in p.favorites) p.favorites - value else p.favorites + value) }
+    fun isFavorite(value: DrawingTool) = value in favorites
 
     fun chooseCursor(value: ChartCursor) {
         cancelPlacement()
