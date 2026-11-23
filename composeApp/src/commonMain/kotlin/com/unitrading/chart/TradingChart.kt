@@ -976,7 +976,7 @@ fun TradingChart(
                             removeDrawings = chrome.drawings?.let { drawings -> { drawings.removeAllDrawings() } },
                             drawingCount = chrome.drawings?.drawingCount() ?: 0,
                             keyboardTrading = chrome.keyboardTrading,
-                            settings = { chrome.onOpenSettings?.invoke() },
+                            settings = chrome.onOpenSettings,
                         ))
                 }
                 val bar = visible.getOrNull(readoutIndex)

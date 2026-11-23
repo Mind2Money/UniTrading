@@ -28,7 +28,11 @@ import kotlin.time.Instant
 internal data class ReplayInput(val instrument: Instrument, val timeframe: Timeframe, val regular: Boolean,
     val zone: ChartTimeZone, val raw: List<Candle>, val indicators: List<IndicatorConfig>,
     val rawFrame: Timeframe = timeframe, val instruments: List<Instrument> = listOf(instrument),
-    val intervals: IntervalOptions = IntervalOptions())
+    val intervals: IntervalOptions = IntervalOptions(), val priceAxis: PriceAxisSettings = PriceAxisSettings(),
+    val skipConfirmation: Boolean = false)
+
+private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val price: Long?, val quantity: Long,
+    val stop: Long?, val target: Long?)
 
 /** A separate modal and ledger: no AccountSession is passed into the replay at any point. */
 @Composable
@@ -88,7 +92,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var playing by remember { mutableStateOf(false) }
     var started by remember { mutableStateOf(false) }
     var speed by remember { mutableIntStateOf(1) }
-    var stepBars by remember { mutableIntStateOf(1) }
+    var stepFrame by remember { mutableStateOf(sourceFrame) }
     var quantity by remember { mutableStateOf(spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths))) }
     var stop by remember { mutableStateOf("") }
     var target by remember { mutableStateOf("") }
@@ -100,6 +104,9 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
     var orderPrice by remember { mutableStateOf("") }
     var showAccount by remember { mutableStateOf(false) }
+    var accountError by remember { mutableStateOf<String?>(null) }
+    var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
+    var sideTab by remember { mutableIntStateOf(0) }
     var initialText by remember { mutableStateOf("50000") }
     var drawdownText by remember { mutableStateOf("2000") }
     var targetText by remember { mutableStateOf("3000") }
@@ -107,6 +114,9 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     var riskConfig by remember { mutableStateOf(ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC)) }
     var risk by remember { mutableStateOf(ReplayRiskState.initial(riskConfig)) }
     var chartFrame by remember { mutableStateOf(if (input.timeframe.seconds >= Timeframe.DAY && sourceFrame != input.timeframe) sourceFrame else input.timeframe) }
+    var priceAxis by remember { mutableStateOf(input.priceAxis) }
+    val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
+    val selectedStep = stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
     var showIndicators by remember { mutableStateOf(false) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
     val indicatorSettings by indicatorController.settings.collectAsState()
@@ -129,7 +139,8 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     }
     fun step() {
         if (state.index >= bars.lastIndex) { playing = false; return }
-        repeat(stepBars) {
+        val last = replayStepEnd(bars, state.index, selectedStep)
+        while (state.index < last) {
             if (state.index >= bars.lastIndex || risk.failed) { playing = false; return }
             val result = runCatching { accept(state.advance(spec, bars[state.index + 1])) }
             if (result.isFailure) { playing = false; message = result.exceptionOrNull()?.message ?: "回放撮合失败"; return }
@@ -140,16 +151,30 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     LaunchedEffect(playing, speed, state.index) {
         if (playing) { delay((1000L / speed).coerceAtLeast(50)); step() }
     }
-    fun place(side: Side) {
+    fun executeOrder(order: ReplayOrderIntent) {
+        runCatching {
+            require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            val marketableLimit = order.kind == OrderKind.LIMIT && order.price != null &&
+                if (order.side == Side.BUY) order.price >= current.close else order.price <= current.close
+            val next = if (order.kind == OrderKind.MARKET || marketableLimit)
+                state.open(spec, current, order.side, order.quantity, order.stop, order.target)
+            else state.enqueue(spec, order.side, order.kind, order.quantity, order.price ?: error("请输入挂单价格"), order.stop, order.target, current.close)
+            accept(next)
+        }.onSuccess { started = true }
+            .onFailure { message = it.message ?: "无法模拟下单" }
+    }
+    fun requestOrder(side: Side, kind: OrderKind = orderKind, price: Long? = if (kind == OrderKind.MARKET) null else spec.parsePrice(orderPrice)) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
             val qty = spec.parseQuantity(quantity) ?: error("请输入有效数量")
-            val sl = if (stop.isBlank()) null else spec.parsePrice(stop) ?: error("请输入有效止损价")
-            val tp = if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价")
-            if (orderKind == OrderKind.MARKET) state.open(spec, current, side, qty, sl, tp)
-            else state.enqueue(spec, side, orderKind, qty, spec.parsePrice(orderPrice) ?: error("请输入挂单价格"), sl, tp, current.close)
-        }.onSuccess { message = null; accept(it); started = true }
-            .onFailure { message = it.message ?: "无法模拟下单" }
+            require(kind == OrderKind.MARKET || price != null) { "请输入挂单价格" }
+            ReplayOrderIntent(side, kind, price, qty,
+                if (stop.isBlank()) null else spec.parsePrice(stop) ?: error("请输入有效止损价"),
+                if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价"))
+        }.onSuccess { order ->
+            message = null; playing = false
+            if (input.skipConfirmation) executeOrder(order) else orderToConfirm = order
+        }.onFailure { message = it.message ?: "无法模拟下单" }
     }
     fun pendingId(id: String): Long = id.removePrefix("replay-order-").toLongOrNull() ?: error("模拟挂单不存在")
     fun pendingPreview(id: String, price: Long, sl: Long?, tp: Long?): OrderPreview = runCatching {
@@ -178,6 +203,8 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                 else -> Unit
             }
         }.onFailure { message = it.message } }, addPositionProtection = true, removeProtection = true,
+        entryKinds = OrderKind.entries.toSet(), entryLots = spec.parseQuantity(quantity),
+        onEntryOrder = { side, kind, price -> requestOrder(side, kind, price) },
     )
     val chartOrders = remember(state.pending, spec) { state.pending.map { order ->
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
@@ -197,7 +224,7 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("历史回放 · 本地模拟", style = MaterialTheme.typography.titleMedium)
-            Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${sourceFrame.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
             TextButton(onClick = { playing = false; if (started) confirmExit = true else onDismiss() }, Modifier.testTag("replay-close")) { Text("关闭") }
         }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -220,16 +247,16 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                     quote = Quote(current.close, current.close, current.timeMs), candles = visible, timeframe = chartFrame,
                     onTimeframe = {}, positions = state.positions, trades = emptyList(), selectedPositionId = null,
                     focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
-                    onSide = { place(it) },
+                    onSide = { requestOrder(it, OrderKind.MARKET, null) },
                     modifier = Modifier.weight(1f).fillMaxHeight(), indicators = indicatorSettings.indicators,
-                    chrome = ChartChrome(drawings = drawings, sharedToolbar = true, desktopAxisStyle = true, showNavigation = false,
+                    chrome = ChartChrome(drawings = drawings, priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, desktopAxisStyle = true, showNavigation = false,
                         showWatermark = true, chartTimeZone = input.zone))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-play")) { Text(if (playing) "暂停" else "播放") }
                     TextButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed, modifier = Modifier.testTag("replay-next")) { Text("前进") }
-                    listOf(1, 5).forEach { n -> TextButton(onClick = { stepBars = n }) {
-                        Text("${n}根/步", color = if (stepBars == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    stepChoices.forEach { frame -> TextButton(onClick = { stepFrame = frame }, modifier = Modifier.testTag("replay-step-${frame.id}")) {
+                        Text(replayStepLabel(frame), color = if (selectedStep == frame) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                     } }
                     listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }) { Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) } }
                     TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
@@ -255,65 +282,116 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
                     }
                 }
             }
-            Column(Modifier.widthIn(min = 230.dp, max = 290.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("模拟订单", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    TextButton(onClick = { if (started) message = "请先重选起点再修改模拟账户设置" else showAccount = true }) { Text("账户设置") }
-                }
-                Row { OrderKind.entries.forEach { kind -> TextButton(onClick = { orderKind = kind }, modifier = Modifier.weight(1f)) {
-                    Text(when(kind) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "止损" },
-                        color = if (orderKind == kind) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                } } }
-                Text(if (orderKind == OrderKind.MARKET) "按当前 K 线收盘价成交" else "从下一根回放 K 线开始撮合", style = MaterialTheme.typography.bodySmall)
-                if (orderKind != OrderKind.MARKET) OutlinedTextField(orderPrice, { orderPrice = it }, label = { Text("挂单价格") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（${spec.quantityUnit}）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-quantity"))
-                OutlinedTextField(stop, { stop = it }, label = { Text("止损价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-stop"))
-                OutlinedTextField(target, { target = it }, label = { Text("止盈价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-target"))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { place(Side.BUY) }, modifier = Modifier.weight(1f).testTag("replay-buy")) { Text("买入") }
-                    Button(onClick = { place(Side.SELL) }, modifier = Modifier.weight(1f).testTag("replay-sell")) { Text("卖出") }
-                }
-                message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                HorizontalDivider()
-                Text("模拟资金 ${money(riskConfig.initialMicros)} ${spec.currency}")
-                Text("净值 ${if (realized != null && floating != null) runCatching { money(checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))) }.getOrDefault("—") else "—"}")
-                Text("回撤线 ${money(risk.threshold)} · ${drawdownMode.name}${if (risk.failed) " · 已触及" else ""}", style = MaterialTheme.typography.bodySmall)
-                Text("盈利目标 ${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}", style = MaterialTheme.typography.bodySmall)
-                Text("已实现 ${realized?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-realized"))
-                Text("浮动 ${floating?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-floating"))
-                Text("成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", Modifier.testTag("replay-trade-count"), style = MaterialTheme.typography.bodySmall)
-                val completed = state.trades.size
-                val wins = state.trades.count { it.pnlMicros > 0 }
-                Text("胜率 ${if (completed == 0) "—" else "${wins * 100 / completed}%"} · 平均盈亏 ${if (completed == 0 || realized == null) "—" else money(realized / completed)}", style = MaterialTheme.typography.bodySmall)
-                analysis?.let { stats ->
-                    Text("总盈利 ${money(stats.grossProfit)} · 总亏损 ${money(stats.grossLoss)}", style = MaterialTheme.typography.bodySmall)
-                    Text("平仓权益最大回撤 ${money(stats.maxClosedDrawdown)}", style = MaterialTheme.typography.bodySmall)
-                    Text("最佳 ${stats.best?.let { money(it, true) } ?: "—"} · 最差 ${stats.worst?.let { money(it, true) } ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                }
-                state.pending.forEach { order ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        TextButton(onClick = { state = state.copy(pending = state.pending.filterNot { it.id == order.id }) }) { Text("撤单") }
+            Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight(),
+                shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("本地模拟", style = MaterialTheme.typography.titleMedium)
+                            Text(spec.symbol, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        }
+                        TextButton(onClick = { if (started) message = "请先重选起点再修改模拟账户设置" else { accountError = null; showAccount = true } },
+                            modifier = Modifier.testTag("replay-account-settings")) { Text("账户设置") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("订单", "分析").forEachIndexed { i, label ->
+                            Surface(onClick = { sideTab = i }, modifier = Modifier.weight(1f).testTag("replay-tab-$i"),
+                                shape = MaterialTheme.shapes.small,
+                                color = if (sideTab == i) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
+                                Box(Modifier.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+                                    Text(label, color = if (sideTab == i) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    if (sideTab == 0) {
+                        ReplaySection("模拟订单") {
+                            Row(Modifier.fillMaxWidth()) { OrderKind.entries.forEach { kind -> TextButton(onClick = { orderKind = kind }, modifier = Modifier.weight(1f)) {
+                                Text(when(kind) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "止损" },
+                                    color = if (orderKind == kind) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            } } }
+                            Text(if (orderKind == OrderKind.MARKET) "按当前回放价格成交" else "按回放行情撮合", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            if (orderKind != OrderKind.MARKET) OutlinedTextField(orderPrice, { orderPrice = it }, label = { Text("挂单价格") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（${spec.quantityUnit}）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-quantity"))
+                            OutlinedTextField(stop, { stop = it }, label = { Text("止损价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-stop"))
+                            OutlinedTextField(target, { target = it }, label = { Text("止盈价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-target"))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { requestOrder(Side.SELL) }, modifier = Modifier.weight(1f).testTag("replay-sell"),
+                                    colors = ButtonDefaults.buttonColors(containerColor = TradingColors.Down)) { Text("卖出") }
+                                Button(onClick = { requestOrder(Side.BUY) }, modifier = Modifier.weight(1f).testTag("replay-buy"),
+                                    colors = ButtonDefaults.buttonColors(containerColor = TradingColors.Up)) { Text("买入") }
+                            }
+                        }
+                        ReplaySection("账户概览") {
+                            ReplayMetric("模拟资金", "${money(riskConfig.initialMicros)} ${spec.currency}")
+                            ReplayMetric("净值", if (realized != null && floating != null) runCatching { money(checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))) }.getOrDefault("—") else "—")
+                            ReplayMetric("回撤线 · ${riskConfig.mode.name}", "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
+                            ReplayMetric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
+                            Text("已实现 ${realized?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-realized"), style = MaterialTheme.typography.bodySmall)
+                            Text("浮动 ${floating?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-floating"), style = MaterialTheme.typography.bodySmall)
+                            Text("成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", Modifier.testTag("replay-trade-count"), style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
+                            state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { state = state.copy(pending = state.pending.filterNot { it.id == order.id }) }) { Text("撤单") }
+                            } }
+                        }
+                        if (state.positions.isNotEmpty()) ReplaySection("模拟持仓") {
+                            state.positions.forEach { p ->
+                                Text("${if (p.side == Side.BUY) "买" else "卖"} ${spec.formatQuantity(p.lotsHundredths)} · ${spec.formatPrice(p.entryPrice)}", style = MaterialTheme.typography.bodyMedium)
+                                Text("SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} · TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { runCatching {
+                                    val sl = if (stop.isBlank()) null else spec.parsePrice(stop) ?: error("请输入有效止损价")
+                                    val tp = if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价")
+                                    state.protect(spec, p, current.close, sl, tp)
+                                }.onSuccess { state = it; message = null }.onFailure { message = it.message } }) { Text("更新止损止盈") }
+                                TextButton(onClick = { runCatching { state.close(spec, p, current.close, current.timeMs, "手动平仓") }
+                                    .onSuccess { message = null; accept(it) }.onFailure { message = it.message } }) { Text("模拟平仓") }
+                            }
+                        }
+                    } else {
+                        val completed = state.trades.size
+                        val wins = state.trades.count { it.pnlMicros > 0 }
+                        ReplaySection("交易表现") {
+                            ReplayMetric("平仓次数", "$completed")
+                            ReplayMetric("盈利 / 亏损", "$wins / ${state.trades.count { it.pnlMicros < 0 }}")
+                            ReplayMetric("胜率", if (completed == 0) "—" else "${wins * 100 / completed}%")
+                            ReplayMetric("已实现盈亏", realized?.let { money(it, true) } ?: "—")
+                            ReplayMetric("平均盈亏", if (completed == 0 || realized == null) "—" else money(realized / completed, true))
+                            analysis?.let { stats ->
+                                ReplayMetric("总盈利", money(stats.grossProfit, true))
+                                ReplayMetric("总亏损", money(stats.grossLoss, true))
+                                ReplayMetric("平仓权益最大回撤", money(stats.maxClosedDrawdown))
+                                ReplayMetric("最佳交易", stats.best?.let { money(it, true) } ?: "—")
+                                ReplayMetric("最差交易", stats.worst?.let { money(it, true) } ?: "—")
+                            }
+                        }
+                        ReplaySection("交易记录") {
+                            if (state.trades.isEmpty()) Text("暂无模拟成交", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            state.trades.asReversed().take(30).forEach { t ->
+                                ReplayMetric("${t.reason} · ${spec.formatPrice(t.exit)}", money(t.pnlMicros, true))
+                            }
+                        }
+                        Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根触及止损按保守成交。无点差和滑点；回撤仅在 K 线收盘时检查。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                state.positions.forEach { p ->
-                    Text("${if (p.side == Side.BUY) "买" else "卖"} ${spec.formatQuantity(p.lotsHundredths)} · ${spec.formatPrice(p.entryPrice)}", style = MaterialTheme.typography.bodySmall)
-                    Text("SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} · TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { runCatching {
-                        val sl = if (stop.isBlank()) null else spec.parsePrice(stop) ?: error("请输入有效止损价")
-                        val tp = if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价")
-                        state.protect(spec, p, current.close, sl, tp)
-                    }.onSuccess { state = it; message = null }.onFailure { message = it.message } }) { Text("用上方价格更新止损止盈") }
-                    TextButton(onClick = { runCatching { state.close(spec, p, current.close, current.timeMs, "手动平仓") }
-                        .onSuccess { message = null; accept(it) }.onFailure { message = it.message } }) { Text("模拟平仓") }
-                }
-                state.trades.asReversed().take(30).forEach { t -> Text("${t.reason} ${money(t.pnlMicros, true)} · ${spec.formatPrice(t.exit)}", style = MaterialTheme.typography.bodySmall) }
-                Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根触及止损按保守成交，挂单非开盘成交时同根止盈不计。无点差和滑点；手续费采用合约默认值。回撤仅在 K 线收盘时检查，EOD 以芝加哥 17:00 已实现余额更新；规则与券商实际规定可能不同。", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
     if (showIndicators) IndicatorSettingsDialog(indicatorController) { showIndicators = false }
+    orderToConfirm?.let { order -> AlertDialog(onDismissRequest = { orderToConfirm = null },
+        title = { Text("确认模拟订单") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${spec.symbol} · ${if (order.side == Side.BUY) "买入" else "卖出"} · ${when (order.kind) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "止损" }}")
+            Text("数量 ${spec.formatQuantity(order.quantity)} ${spec.quantityUnit}")
+            order.price?.let { Text("价格 ${spec.formatPrice(it)}") }
+            Text("止损 ${order.stop?.let(spec::formatPrice) ?: "—"} · 止盈 ${order.target?.let(spec::formatPrice) ?: "—"}")
+        } }, confirmButton = { TextButton(onClick = { orderToConfirm = null; executeOrder(order) }, modifier = Modifier.testTag("replay-confirm-order")) { Text("确认模拟下单") } },
+        dismissButton = { TextButton(onClick = { orderToConfirm = null }) { Text("取消") } }) }
     switchTo?.let { symbol -> AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换回放品种？") },
         text = { Text("切换品种会结束当前回放，清除本地模拟仓位、挂单和统计记录。") },
         confirmButton = { TextButton(onClick = { switchTo = null; changeSymbol(symbol) }) { Text("切换品种") } },
@@ -326,23 +404,48 @@ private fun ReplayWorkspace(input: ReplayInput, bars: List<Candle>, sourceFrame:
         text = { Text("本次模拟仓位和交易记录将清除。") }, confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
-    if (showAccount) AlertDialog(onDismissRequest = { showAccount = false }, title = { Text("模拟账户设置") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedTextField(initialText, { initialText = it }, label = { Text("初始资金") }, singleLine = true)
-            OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大回撤额度") }, singleLine = true)
-            OutlinedTextField(targetText, { targetText = it }, label = { Text("总盈利目标") }, singleLine = true)
-            Text("回撤类型")
-            ReplayDrawdown.entries.forEach { mode -> Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = drawdownMode == mode, onClick = { drawdownMode = mode }); Text(when(mode) {
-                    ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "EOD 日终追踪"; ReplayDrawdown.TDD -> "TDD 浮动追踪"
-                })
-            } }
-            Text("本地通用规则，不代表特定交易公司的考核规则。", style = MaterialTheme.typography.bodySmall)
+    if (showAccount) AlertDialog(onDismissRequest = { showAccount = false; drawdownMode = riskConfig.mode }, title = { Text("模拟账户设置") }, text = {
+        Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("设置初始资金、回撤额度和盈利目标。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            ReplaySection("资金与目标 · ${spec.currency}") {
+                OutlinedTextField(initialText, { initialText = it }, label = { Text("初始资金") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大回撤额度") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(targetText, { targetText = it }, label = { Text("总盈利目标") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+            ReplaySection("回撤类型") {
+                ReplayDrawdown.entries.forEach { mode -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = drawdownMode == mode, onClick = { drawdownMode = mode })
+                    Column { Text(when(mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "EOD 日终追踪"; ReplayDrawdown.TDD -> "TDD 浮动追踪" })
+                        Text(when(mode) { ReplayDrawdown.STATIC -> "回撤线固定"; ReplayDrawdown.EOD -> "按日终余额上移"; ReplayDrawdown.TDD -> "按已观察净值高点上移" },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                } }
+            }
+            accountError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Text("本地通用规则，日终使用芝加哥 17:00；不代表特定交易公司的考核规则。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
     }, confirmButton = { TextButton(onClick = {
         runCatching { ReplayRiskConfig(parseFixed(initialText, 6) ?: error("初始资金无效"),
             parseFixed(drawdownText, 6) ?: error("回撤额度无效"), parseFixed(targetText, 6) ?: error("盈利目标无效"), drawdownMode) }
             .onSuccess { riskConfig = it; risk = ReplayRiskState.initial(it); showAccount = false; message = null }
-            .onFailure { message = it.message }
+            .onFailure { accountError = it.message }
     }) { Text("保存") } }, dismissButton = { TextButton(onClick = { showAccount = false; drawdownMode = riskConfig.mode }) { Text("取消") } })
+}
+
+@Composable
+private fun ReplaySection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ReplayMetric(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        Text(value, style = MaterialTheme.typography.bodySmall)
+    }
 }

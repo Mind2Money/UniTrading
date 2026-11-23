@@ -53,7 +53,7 @@ internal class PlotMenuActions(
     val removeDrawings: (() -> Unit)?,
     val drawingCount: Int,
     val keyboardTrading: Boolean,
-    val settings: () -> Unit,
+    val settings: (() -> Unit)?,
 )
 
 /**
@@ -156,9 +156,11 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                 DropdownMenuItem(text = { Text("移除 ${desktopActions.drawingCount} 个绘图") }, enabled = desktopActions.removeDrawings != null && desktopActions.drawingCount > 0,
                     leadingIcon = { PlotMenuIcon(AppIcons.Delete, "remove-drawings") },
                     onClick = { onDismiss(); desktopActions.removeDrawings?.invoke() }, modifier = Modifier.testTag("plot-remove-drawings"))
-                DividerLine()
-                DropdownMenuItem(text = { Text("设置") }, leadingIcon = { PlotMenuIcon(AppIcons.Settings, "settings") },
-                    onClick = { onDismiss(); desktopActions.settings() }, modifier = Modifier.testTag("plot-settings"))
+                desktopActions.settings?.let { settings ->
+                    DividerLine()
+                    DropdownMenuItem(text = { Text("设置") }, leadingIcon = { PlotMenuIcon(AppIcons.Settings, "settings") },
+                        onClick = { onDismiss(); settings() }, modifier = Modifier.testTag("plot-settings"))
+                }
 
             }
         }

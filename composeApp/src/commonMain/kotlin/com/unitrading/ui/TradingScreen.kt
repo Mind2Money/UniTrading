@@ -1378,7 +1378,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 replayWatch = selectedInstrument.symbol to Timeframe.M1
                                 replayInput = ReplayInput(selectedInstrument, selectedFrame, regular, chartPreferences.chartTimeZone,
                                     plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList(), source,
-                                    catalog.instruments, intervals)
+                                    catalog.instruments, intervals, priceAxis, skipConfirmation)
                             }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
                                 leadingIcon = { Icon(AppIcons.History, null, Modifier.size(18.dp)) },
                                 colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
