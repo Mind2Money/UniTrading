@@ -29,6 +29,8 @@ sealed interface LineAction {
     data class RemoveProtection(val position: Position, val stop: Boolean) : LineAction
     data class RemovePendingProtection(val order: PendingOrder, val stop: Boolean) : LineAction
     data class RemoveDraftProtection(val stop: Boolean) : LineAction
+    data object SubmitDraft : LineAction
+    data object EditDraftQuantity : LineAction
     data object CloseDraft : LineAction
 }
 
@@ -227,10 +229,10 @@ internal fun orderLines(
     }
     if (draft != null && draftEntry != null && draftEntry > 0) {
         val pending = draft.kind != OrderKind.MARKET && draft.entryPrice != null
-        add(OrderLine(draftEntry, listOf(LineCell(CellKind.TITLE, draft.side.label())) +
+        add(OrderLine(draftEntry, listOf(LineCell(CellKind.TITLE, draft.side.label(), action = LineAction.SubmitDraft.takeIf { options.directDraftSubmit }, hint = "提交${draft.side.label()}订单")) +
             addButtons(EditableLine.DraftProtection(draft, false, draftEntry).takeIf { draft.takeProfit == null && !options.draftTargetManaged },
                 EditableLine.DraftProtection(draft, true, draftEntry).takeIf { draft.stopLoss == null && !options.draftStopManaged }) +
-            LineCell(CellKind.VALUE, if (draft.lotsHundredths > 0) instrument.formatQuantity(draft.lotsHundredths) else "—") + LineCell(CellKind.VALUE, draft.kind.label()) +
+            LineCell(CellKind.VALUE, if (draft.lotsHundredths > 0) instrument.formatQuantity(draft.lotsHundredths) else "—", action = LineAction.EditDraftQuantity.takeIf { options.inlineDraftQuantity }, hint = "编辑下单数量") + LineCell(CellKind.VALUE, draft.kind.label()) +
             LineCell(CellKind.CLOSE, action = LineAction.CloseDraft, hint = "关闭下单预览"),
             sideTone(draft.side), edit = if (pending) EditableLine.Draft(draft) else null, moving = moving is EditableLine.Draft, preview = true))
         listOf(true to draft.stopLoss, false to draft.takeProfit).forEach { (stop, price) ->
@@ -260,6 +262,8 @@ internal data class OrderLineOptions(
     val addPositionProtection: Boolean = addProtection,
     val draftStopManaged: Boolean = false,
     val draftTargetManaged: Boolean = false,
+    val directDraftSubmit: Boolean = false,
+    val inlineDraftQuantity: Boolean = false,
 )
 
 /**
@@ -288,6 +292,10 @@ class ChartOrderActions(
     val onPendingProtection: (PendingOrder, Long?, Long?) -> Unit,
     val onProtection: (Position, Long?, Long?) -> Unit,
     val onLineAction: (LineAction) -> Unit = {},
+    val draftQuantity: String = "1",
+    val onDraftQuantity: (String) -> Unit = {},
+    val inlineDraftQuantity: Boolean = false,
+    val directDraftSubmit: Boolean = false,
     val addProtection: Boolean = false,
     val removeProtection: Boolean = false,
     val addPositionProtection: Boolean = addProtection,

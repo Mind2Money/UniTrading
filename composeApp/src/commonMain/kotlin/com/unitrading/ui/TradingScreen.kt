@@ -321,9 +321,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
         val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
-        val orderSession = remember(accountKey, symbol, executionSymbol) { orderSessions.getOrPut("$symbol/$executionSymbol") { MobileOrderSession(instrument) } }
+        val orderSession = remember(accountKey, activeChart, symbol, executionSymbol) { orderSessions.getOrPut("$activeChart/$symbol/$executionSymbol") { MobileOrderSession(instrument) } }
         var draft by orderSession.draft
-        var showDraft by remember(accountKey, symbol) { mutableStateOf(false) }
+        val draftVisibility = remember(accountKey) { mutableMapOf<String, MutableState<Boolean>>() }
+        var showDraft by remember(accountKey, activeChart, symbol) { draftVisibility.getOrPut("$activeChart/$symbol") { mutableStateOf(false) } }
         var selectedPositionId by remember(accountKey) { mutableStateOf<String?>(null) }
         var focusedTrade by remember(accountKey) { mutableStateOf<ClosedTrade?>(null) }
         var focusedExecution by remember(accountKey) { mutableStateOf<Execution?>(null) }
@@ -1071,6 +1072,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (sizeByRisk && action.stop) draft.withProtectionPrice(true, "")
                             else draft.withProtectionEnabled(instrument, quote, action.stop, false)
                         )
+                        LineAction.SubmitDraft -> {
+                            val order = request
+                            if (order == null || preview?.valid != true || order.lotsHundredths <= 0L)
+                                showNotice(preview?.errors?.firstOrNull() ?: "订单参数无效，请检查数量与报价", attention = true)
+                            else reviewTrade(Confirmation.Place(order, fromChart = true))
+                        }
+                        LineAction.EditDraftQuantity -> Unit
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }
@@ -1185,6 +1193,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
                         onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
                         onLineAction = { action -> onActive { runLineAction(action) } },
+                        draftQuantity = draft.quantity,
+                        onDraftQuantity = { value -> onActive { changeDraft(draft.copy(quantity = value)) } },
+                        inlineDraftQuantity = desktopStyle && !sizeByRisk,
+                        directDraftSubmit = desktopStyle,
                         addProtection = plugin.capabilities.addProtection,
                         addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
@@ -1192,7 +1204,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // A chart that is not the active one shows the quantity its symbol's order panel was left with.
                         entryLots = if (sizeByRisk) request?.lotsHundredths.takeIf { active }
                         else shownInstrument.parseQuantity(if (active) draft.quantity else
-                            orderSessions["${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
+                            orderSessions["$chartId/${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
                         onEntryOrder = { side, kind, price -> onActive { prepareChartOrder(chartId, side, kind, price) } },
                         onKeyboardEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price, fromKeys = true) } },
                         estimateStandalone = { order, price -> displayedSession?.previewOrderChange(order.id, price, order.request.lotsHundredths) ?: OrderPreview(null) },
@@ -1234,15 +1246,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             openChartOrderEditor(chartId)
                         } },
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
-                        chrome = ChartChrome(chartCompact, chartPreferences.legendCollapsed ?: (compactShort || chartShort),
-                            { folded -> scope.launch { runtime.chartPreferences.setLegendCollapsed(folded) } },
+                        chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
+                            { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
                             ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
                             showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
+                            showWatermark = desktopStyle && chartPreferences.showChartWatermark,
+                            onOpenSettings = { showActivity = false; showSettings = true },
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }

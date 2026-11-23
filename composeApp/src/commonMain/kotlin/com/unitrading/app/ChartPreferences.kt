@@ -29,6 +29,7 @@ data class ChartPreferences(
     val favoriteMinutes: List<Int> = Timeframe.defaultFavorites.map { it.seconds / Timeframe.MINUTE },
     val customMinutes: List<Int> = emptyList(),
     val legendCollapsed: Boolean? = null,
+    val chartLegendCollapsed: Map<String, Boolean> = emptyMap(),
     val indicatorPaneFractions: Map<String, Float> = emptyMap(),
     val lastSymbols: Map<String, String> = emptyMap(),
     val lastTimeframeMinutes: Int? = null,
@@ -51,6 +52,7 @@ data class ChartPreferences(
     /** Whether historical fills and trade markers are shown on charts. */
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
+    val showChartWatermark: Boolean = true,
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -164,6 +166,17 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setChartWatermark(visible: Boolean): Boolean = saveMutex.withLock {
+        preferences.value.showChartWatermark == visible || persist(preferences.value.copy(showChartWatermark = visible))
+    }
+
+    suspend fun setChartLegendCollapsed(chartId: String, collapsed: Boolean): Boolean = saveMutex.withLock {
+        require(chartId.isNotBlank() && chartId.length <= 64)
+        val current = preferences.value
+        current.chartLegendCollapsed[chartId] == collapsed ||
+            persist(current.copy(chartLegendCollapsed = current.chartLegendCollapsed + (chartId to collapsed)))
     }
 
     suspend fun setChartLocked(locked: Boolean): Boolean = saveMutex.withLock {

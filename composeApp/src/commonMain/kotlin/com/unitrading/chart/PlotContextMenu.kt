@@ -160,8 +160,9 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                     leadingIcon = { PlotMenuIcon(AppIcons.Delete, "remove-drawings") },
                     onClick = { onDismiss(); desktopActions.removeDrawings?.invoke() }, modifier = Modifier.testTag("plot-remove-drawings"))
                 DividerLine()
-                DropdownMenuItem(text = { Text("图表设置…") }, leadingIcon = { PlotMenuIcon(AppIcons.Settings, "settings") },
+                DropdownMenuItem(text = { Text("设置") }, leadingIcon = { PlotMenuIcon(AppIcons.Settings, "settings") },
                     onClick = { onDismiss(); desktopActions.settings() }, modifier = Modifier.testTag("plot-settings"))
+
             }
         }
     }

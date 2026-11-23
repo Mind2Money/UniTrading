@@ -1,6 +1,8 @@
 package com.unitrading.chart
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.focusable
@@ -156,6 +158,7 @@ fun TradingChart(
     var showObjectTree by remember { mutableStateOf(false) }
     var showTemplates by remember { mutableStateOf(false) }
     var showChartSettings by remember { mutableStateOf(false) }
+    var quantityMenu by remember(accountKey, instrument.symbol) { mutableStateOf(false) }
     val closeIcon = rememberVectorPainter(AppIcons.Close)
     val density = LocalDensity.current
     val axis = chrome.priceAxis
@@ -295,7 +298,7 @@ fun TradingChart(
     val draftEntry = activeDraft?.let { it.entryPrice ?: activePreview?.entryPrice ?: quote?.let { q -> if (it.side == Side.BUY) q.ask else q.bid } }
     val lines = orderLines(instrument, positions, selectedPosition, orders, activeDraft, activePreview, draftEntry, drag,
         OrderLineOptions(showPositions, showOrders, actions.editPending, actions.editPendingProtection, actions.addProtection, actions.removeProtection,
-            actions.addPositionProtection, actions.draftStopManaged, actions.draftTargetManaged), quote)
+            actions.addPositionProtection, actions.draftStopManaged, actions.draftTargetManaged, actions.directDraftSubmit, actions.inlineDraftQuantity), quote)
     val currentLines by rememberUpdatedState(lines)
     drawingLayer?.bindChart(
         orderLineAt = { point -> currentLines.any { it.edit != null && abs(currentScale.y(it.price) - point.y) <= 8 * density.density } },
@@ -585,7 +588,8 @@ fun TradingChart(
                             detectTapGestures(onTap = { point ->
                                 val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
                                 if (button != null) {
-                                    button.cell.action?.let(currentActions.onLineAction)
+                                    if (button.cell.action == LineAction.EditDraftQuantity) quantityMenu = true
+                                    else button.cell.action?.let(currentActions.onLineAction)
                                     return@detectTapGestures
                                 }
                                 val bars = currentVisible
@@ -725,6 +729,10 @@ fun TradingChart(
                         text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
                     clipRect(left, top, right, plotBottom) {
+                    if (chrome.showWatermark) {
+                        val mark = textMeasurer.measure("${instrument.symbol} · ${timeframe.label}", TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
+                        drawText(mark, topLeft = Offset((left + right - mark.size.width) / 2f, (top + plotBottom - mark.size.height) / 2f))
+                    }
                     if (activeDraft != null && draftEntry != null) {
                         val entryY = scale.y(draftEntry)
                         listOf(activeDraft.stopLoss to colors.Down, activeDraft.takeProfit to colors.Up).forEach { (price, color) ->
@@ -872,6 +880,47 @@ fun TradingChart(
                         drawText(tip, topLeft = Offset(tipLeft + labelPadding, tipTop + labelPadding))
                     }
                 }
+                if (actions.inlineDraftQuantity) orderTags.firstOrNull { it.line.preview && it.cells.any { cell -> cell.cell.action == LineAction.EditDraftQuantity } }
+                    ?.cells?.firstOrNull { it.cell.action == LineAction.EditDraftQuantity }?.let { placed ->
+                        Box(Modifier.offset(x = with(density) { placed.bounds.left.toDp() }, y = with(density) { placed.bounds.bottom.toDp() })) {
+                            DropdownMenu(expanded = quantityMenu, onDismissRequest = { quantityMenu = false }) {
+                                var value by remember(accountKey, instrument.symbol, quantityMenu) { mutableStateOf(actions.draftQuantity) }
+                                fun valid(text: String): Boolean {
+                                    val n = instrument.parseQuantity(text) ?: return false
+                                    return n > 0 && n in instrument.minLotsHundredths..instrument.maxLotsHundredths && instrument.lotStepHundredths > 0 && n % instrument.lotStepHundredths == 0L
+                                }
+                                fun update(text: String) { value = text; if (valid(text)) actions.onDraftQuantity(text) }
+                                fun step(up: Boolean) {
+                                    val current = instrument.parseQuantity(value)?.takeIf { valid(value) } ?: instrument.minLotsHundredths
+                                    val next = if (up) (current + instrument.lotStepHundredths).coerceAtMost(instrument.maxLotsHundredths)
+                                        else (current - instrument.lotStepHundredths).coerceAtLeast(instrument.minLotsHundredths)
+                                    update(instrument.formatQuantity(next))
+                                }
+                                Column(Modifier.width(220.dp).padding(12.dp).onPointerEvent(PointerEventType.Scroll) { event ->
+                                    val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                    if (delta != 0f) { step(delta < 0f); event.changes.forEach { it.consume() } }
+                                }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("订单大小", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                        IconButton(onClick = { quantityMenu = false }, modifier = Modifier.size(28.dp)) {
+                                            Icon(AppIcons.Close, contentDescription = "关闭数量编辑", modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        OutlinedTextField(value = value, onValueChange = { text ->
+                                            val allowed = text.length <= 12 && text.all { it in '0'..'9' || (instrument.quantityDecimals > 0 && it == '.') }
+                                            if (allowed) update(text)
+                                        }, label = { Text("数量（${instrument.quantityUnit}）") }, singleLine = true, isError = !valid(value),
+                                            keyboardOptions = KeyboardOptions(keyboardType = if (instrument.quantityDecimals == 0) KeyboardType.Number else KeyboardType.Decimal),
+                                            textStyle = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).testTag("chart-draft-quantity"))
+                                        Column { TextButton(onClick = { step(true) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(30.dp).testTag("chart-quantity-up")) { Text("+") }
+                                            TextButton(onClick = { step(false) }, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(30.dp).testTag("chart-quantity-down")) { Text("−") } }
+                                    }
+                                    if (!valid(value)) Text("请输入大于零且符合合约步长的数量", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
                 Box(Modifier.align(if (mobilePlatform) {
                     if (axis.left) Alignment.TopStart else Alignment.TopEnd
                 } else {
@@ -916,7 +965,7 @@ fun TradingChart(
                             removeDrawings = chrome.drawings?.let { drawings -> { drawings.removeAllDrawings() } },
                             drawingCount = chrome.drawings?.drawingCount() ?: 0,
                             keyboardTrading = chrome.keyboardTrading,
-                            settings = { showChartSettings = true },
+                            settings = { chrome.onOpenSettings?.invoke() },
                         ))
                 }
                 val bar = visible.getOrNull(readoutIndex)
@@ -931,7 +980,7 @@ fun TradingChart(
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
-                ChartNavigation(
+                if (chrome.showNavigation) ChartNavigation(
                     onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
                     onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
@@ -1040,6 +1089,9 @@ class ChartChrome(
     /** Tablets can use the desktop axis placement while retaining touch input. */
     val desktopAxisStyle: Boolean? = null,
     val tabletCompactAxis: Boolean = false,
+    val showNavigation: Boolean = true,
+    val showWatermark: Boolean = false,
+    val onOpenSettings: (() -> Unit)? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

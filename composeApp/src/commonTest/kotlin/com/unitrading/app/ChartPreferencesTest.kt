@@ -7,6 +7,25 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun watermarkVisibilityPersists() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertTrue(prefs.preferences.value.showChartWatermark)
+        assertTrue(prefs.setChartWatermark(false))
+        assertFalse(ChartPreferencesController(store).preferences.value.showChartWatermark)
+    }
+
+    @Test fun legendCollapseIsStoredIndependentlyForEachChart() = runTest {
+        val store = MemorySnapshotStore()
+        val settings = ChartPreferencesController(store)
+        assertTrue(settings.setChartLegendCollapsed("main", true))
+        assertTrue(settings.setChartLegendCollapsed("split1", false))
+        val restored = ChartPreferencesController(store).preferences.value
+        assertEquals(true, restored.chartLegendCollapsed["main"])
+        assertEquals(false, restored.chartLegendCollapsed["split1"])
+        assertNull(restored.chartLegendCollapsed["c1"])
+    }
+
     @Test fun axisSettingsAreImmediateAndPersistWithOlderChartPreferences() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"favoriteMinutes":[5,15]}""") }
         val controller = ChartPreferencesController(store)
