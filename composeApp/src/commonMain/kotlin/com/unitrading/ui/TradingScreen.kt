@@ -1072,6 +1072,13 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (sizeByRisk && action.stop) draft.withProtectionPrice(true, "")
                             else draft.withProtectionEnabled(instrument, quote, action.stop, false)
                         )
+                        LineAction.SubmitDraft -> {
+                            val order = request
+                            if (order == null || preview?.valid != true || order.lotsHundredths <= 0L)
+                                showNotice(preview?.errors?.firstOrNull() ?: "订单参数无效，请检查数量与报价", attention = true)
+                            else reviewTrade(Confirmation.Place(order, fromChart = true))
+                        }
+                        LineAction.EditDraftQuantity -> Unit
                         LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
                     }
                 }
@@ -1186,6 +1193,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
                         onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
                         onLineAction = { action -> onActive { runLineAction(action) } },
+                        draftQuantity = draft.quantity,
+                        onDraftQuantity = { value -> onActive { changeDraft(draft.copy(quantity = value)) } },
+                        inlineDraftQuantity = desktopStyle && !sizeByRisk,
+                        directDraftSubmit = desktopStyle,
                         addProtection = plugin.capabilities.addProtection,
                         addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
@@ -1244,6 +1255,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
+                            showWatermark = desktopStyle && chartPreferences.showChartWatermark,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }

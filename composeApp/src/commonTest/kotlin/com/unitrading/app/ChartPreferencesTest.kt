@@ -7,6 +7,14 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun watermarkVisibilityPersists() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertTrue(prefs.preferences.value.showChartWatermark)
+        assertTrue(prefs.setChartWatermark(false))
+        assertFalse(ChartPreferencesController(store).preferences.value.showChartWatermark)
+    }
+
     @Test fun legendCollapseIsStoredIndependentlyForEachChart() = runTest {
         val store = MemorySnapshotStore()
         val settings = ChartPreferencesController(store)

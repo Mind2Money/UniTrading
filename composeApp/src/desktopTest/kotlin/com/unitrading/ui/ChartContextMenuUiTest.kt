@@ -13,6 +13,7 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.PriceScale
+import com.unitrading.chart.OrderTagButtons
 import com.unitrading.chart.drawing.DrawingTool
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -332,6 +333,45 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("cancel-order-review").performClick()
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         assertTrue(broker.placed.isEmpty(), "Reviewing or cancelling an invalid order must never send it")
+    }
+
+    private fun clickDraftButton(hint: String) {
+        val at = assertNotNull(chart().fetchSemanticsNode().config[OrderTagButtons][hint]).center
+        chart().performMouseInput { click(at) }
+        compose.waitForIdle()
+    }
+
+    @Test fun chartDraftQuantityAndConfirmation() {
+        render()
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        clickDraftButton("编辑下单数量")
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        compose.onNodeWithContentDescription("关闭数量编辑").performClick()
+        clickDraftButton("提交买入订单")
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty())
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(200L, broker.placed.single().lotsHundredths)
+    }
+
+    @Test fun chartDraftInvalidQuantityIsNotAppliedAndScrollChangesQuantity() {
+        render(skipConfirmation = true)
+        rightClick(549_000)
+        item("BUY-LIMIT").performClick()
+        clickDraftButton("编辑下单数量")
+        val input = compose.onNodeWithTag("chart-draft-quantity")
+        input.performTextReplacement("0")
+        compose.onNodeWithText("请输入大于零且符合合约步长的数量").assertExists()
+        input.performTextReplacement("1")
+        input.performMouseInput { moveTo(center); scroll(-1f) }
+        input.assertTextContains("2")
+        compose.onNodeWithContentDescription("关闭数量编辑").performClick()
+        clickDraftButton("提交买入订单")
+        compose.waitUntil(5000) { broker.placed.size == 1 }
+        assertEquals(200L, broker.placed.single().lotsHundredths)
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
     }
 
     @Test fun underTheMarketItOffersABuyLimitAndASellStopAndTheOrderWaitsForTheConfirmation() {

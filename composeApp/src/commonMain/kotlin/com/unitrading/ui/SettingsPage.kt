@@ -58,6 +58,7 @@ internal fun SettingsPage(
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
     val theme by runtime.theme.settings.collectAsState()
+    val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
     val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
     val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
     val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
@@ -174,6 +175,13 @@ internal fun SettingsPage(
             }
 
             SettingsSection("外观与图表") {
+                ListItem(headlineContent = { Text("商品代码与周期水印") },
+                    supportingContent = { Text("在图表背景显示当前品种和周期") },
+                    leadingContent = { Icon(AppIcons.Candlestick, contentDescription = null) },
+                    trailingContent = { Switch(chartPreferences.showChartWatermark, onCheckedChange = null) },
+                    modifier = Modifier.toggleable(chartPreferences.showChartWatermark, role = Role.Switch,
+                        onValueChange = { value -> preferenceScope.launch { runtime.chartPreferences.setChartWatermark(value) } }).testTag("settings-chart-watermark"),
+                    colors = settingsRowColors())
                 SettingsRow("外观与主题", "${theme.preset.label} · ${if (theme.colors.isEmpty()) "默认配色" else "自定义配色"}",
                     AppIcons.Palette, "open-theme", onTheme, navigates = true) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -52,6 +52,7 @@ data class ChartPreferences(
     /** Whether historical fills and trade markers are shown on charts. */
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
+    val showChartWatermark: Boolean = true,
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -165,6 +166,10 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setChartWatermark(visible: Boolean): Boolean = saveMutex.withLock {
+        preferences.value.showChartWatermark == visible || persist(preferences.value.copy(showChartWatermark = visible))
     }
 
     suspend fun setChartLegendCollapsed(chartId: String, collapsed: Boolean): Boolean = saveMutex.withLock {
