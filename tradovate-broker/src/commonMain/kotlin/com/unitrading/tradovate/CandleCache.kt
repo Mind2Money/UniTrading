@@ -22,14 +22,40 @@ internal fun chartBackfillRange(anchor: Long, closest: Long) = buildJsonObject {
 
 internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>, maxBars: Int = CHART_BARS): List<Candle> {
     if (incoming.isEmpty()) return previous
+    require(maxBars >= 0)
+    if (maxBars == 0) return emptyList()
     // The live stream normally revises only the newest bar; avoid rebuilding a large map on every tick.
     val latest = previous.lastOrNull()
     val update = incoming.singleOrNull()
     if (latest != null && update != null && update.timeMs >= latest.timeMs) {
         if (latest == update) return previous
-        return (if (update.timeMs == latest.timeMs) previous.dropLast(1) + update else previous + update).takeLast(maxBars)
+        val keep = previous.size - if (update.timeMs == latest.timeMs) 1 else 0
+        val from = maxOf(0, keep + 1 - maxBars)
+        val result = ArrayList<Candle>(minOf(maxBars, keep + 1))
+        for (i in from until keep) result.add(previous[i])
+        result.add(update)
+        return result
     }
-    return (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(maxBars)
+    // History pages arrive mostly in order, often older than the existing data. Merge them in linear time
+    // instead of repeatedly building and sorting a map of the entire extended history.
+    val ordered = if ((1 until incoming.size).all { incoming[it - 1].timeMs <= incoming[it].timeMs }) incoming
+        else incoming.sortedBy(Candle::timeMs)
+    val result = ArrayList<Candle>(minOf(maxBars.toLong(), previous.size.toLong() + ordered.size).toInt())
+    var i = previous.lastIndex
+    var j = ordered.lastIndex
+    var lastTime: Long? = null
+    while ((i >= 0 || j >= 0) && result.size < maxBars) {
+        val bar = when {
+            i < 0 -> ordered[j--]
+            j < 0 -> previous[i--]
+            previous[i].timeMs > ordered[j].timeMs -> previous[i--]
+            previous[i].timeMs < ordered[j].timeMs -> ordered[j--]
+            else -> { i--; ordered[j--] } // Incoming wins when a timestamp is revised.
+        }
+        if (bar.timeMs != lastTime) { result.add(bar); lastTime = bar.timeMs }
+    }
+    result.reverse()
+    return result
 }
 
 /** How far a fresh chart reads back: four chart-widths of wall time cover weekends and holidays. */
@@ -89,6 +115,7 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val ext
             complete = false
             nextPageBefore = null
         }
+        val shareHistory = historical && countForBackfill && history === candles && realtime.isEmpty()
         if (historical) {
             if (countForBackfill) {
                 history = mergeCandles(history, incoming, maxBars)
@@ -97,7 +124,7 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val ext
                 }
             }
         } else realtime = mergeCandles(realtime, incoming, maxBars)
-        candles = mergeCandles(mergeCandles(candles, incoming, maxBars), realtime, maxBars)
+        candles = if (shareHistory) history else mergeCandles(mergeCandles(candles, incoming, maxBars), realtime, maxBars)
         if (!historical || !endOfHistory || !countForBackfill || failed) return
 
         if (floor == null || history.firstOrNull()?.let { it.timeMs <= floor } == true || (!extended && history.size >= CHART_BARS)) {

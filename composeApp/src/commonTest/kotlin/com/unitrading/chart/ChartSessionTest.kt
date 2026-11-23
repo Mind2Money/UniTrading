@@ -53,6 +53,11 @@ class ChartSessionTest {
         val bars = listOf(candle("2026-01-15T15:00:00Z"), candle("2026-01-16T14:30:00Z"))
         assertEquals(listOf(bars[1]), chartSessionCandles(bars, "@ES", Timeframe.ofMinutes(60), true).first)
     }
+    @Test fun multipleSessionsAcrossDaylightSavingAndUnorderedHistory() {
+        val bars = listOf(candle("2026-03-06T14:30:00Z"), candle("2026-03-06T21:14:00Z"),
+            candle("2026-03-09T13:30:00Z"), candle("2026-03-09T20:14:00Z"), candle("2026-03-09T20:15:00Z"))
+        assertEquals(bars.dropLast(1), chartSessionCandles(bars.reversed(), "@MES", Timeframe.M1, true).first)
+    }
     @Test fun dailyAndWeeklyUseUnmodifiedElectronicSessionBars() {
         val bars = listOf(candle("2026-01-15T00:00:00Z", open = 10, high = 30, low = 5, close = 25, volume = 100))
         for (symbol in listOf("@MES", "@OTHER")) for (frame in listOf(Timeframe.D1, Timeframe.ofMinutes(7 * 1440))) {

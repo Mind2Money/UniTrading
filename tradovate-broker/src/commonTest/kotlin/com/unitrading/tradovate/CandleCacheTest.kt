@@ -12,6 +12,15 @@ private const val CACHE_TIME = 1_798_589_000_000L
 private const val CACHE_STEP = 5 * 60_000L
 
 class CandleCacheTest {
+    @Test fun historyMergeMatchesTimestampDeduplicationForOverlappingPages() {
+        val random = kotlin.random.Random(27)
+        repeat(100) {
+            val previous = (0 until 100).map { candle(CACHE_TIME + it * CACHE_STEP) }
+            val incoming = List(90) { candle(CACHE_TIME + random.nextInt(-80, 160) * CACHE_STEP).copy(close = random.nextLong(1, 1000)) }
+            val expected = (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(120)
+            assertEquals(expected, mergeCandles(previous, incoming, 120))
+        }
+    }
     @Test fun liveUpdateKeepsOlderBarsAndReplacesTheCurrentBar() {
         val earlier = candle(CACHE_TIME - CACHE_STEP)
         val latest = candle(CACHE_TIME)

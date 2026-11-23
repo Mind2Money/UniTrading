@@ -54,15 +54,25 @@ import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Orders, edits, cancels and history work on Paper Trading; closing a position is unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
+
+/** Compare snapshots by identity: quote-only revisions retain the same immutable candle list. */
+private class CandleSnapshotKey(private val candles: List<Candle>) {
+    override fun equals(other: Any?) = other is CandleSnapshotKey && candles === other.candles
+    override fun hashCode() = 0
+}
+private class SessionResult(val candles: List<Candle>, val notice: String?)
 
 @Composable
 fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
@@ -1170,9 +1180,21 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val regularSession = chartPreferences.sessionForChart(chartId) == ChartSession.REGULAR
                     val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
                     val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }
-                    val sessionResult = remember(rawCandles, shownInstrument.symbol, shownTimeframe, regularSession) {
-                        chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, regularSession)
-                    }
+                    val sessionResult = if (regularSession && shownTimeframe.seconds < Timeframe.DAY) {
+                        // Keep the previous result visible while a new history snapshot is aggregated. Changing chart
+                        // identity resets it immediately, so old candles never appear under another symbol or period.
+                        key(plugin, shownInstrument.symbol, shownTimeframe, regularSession) {
+                            val result by produceState(SessionResult(emptyList(), null), CandleSnapshotKey(rawCandles)) {
+                                val calculated = withContext(Dispatchers.Default) {
+                                    chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, true) {
+                                        coroutineContext.ensureActive()
+                                    }
+                                }
+                                value = SessionResult(calculated.first, calculated.second)
+                            }
+                            result.candles to result.notice
+                        }
+                    } else rawCandles to null
                     val shownCandles = sessionResult.first
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
                     fun onActive(block: () -> Unit) {

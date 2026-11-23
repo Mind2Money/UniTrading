@@ -3,7 +3,9 @@ package com.unitrading.chart
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Timeframe
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
@@ -24,7 +26,8 @@ internal fun chartSessionSource(symbol: String, timeframe: Timeframe, regular: B
         timeframe.seconds >= Timeframe.MINUTE && timeframe.seconds % Timeframe.MINUTE == 0) Timeframe.M1 else timeframe
 
 /** TradingView-style CME regular session. This never constrains orders or indicates market status. */
-internal fun chartSessionCandles(candles: List<Candle>, symbol: String, timeframe: Timeframe, regular: Boolean): Pair<List<Candle>, String?> {
+internal fun chartSessionCandles(candles: List<Candle>, symbol: String, timeframe: Timeframe, regular: Boolean,
+    checkActive: () -> Unit = {}): Pair<List<Candle>, String?> {
     if (!regular) return candles to null
     if (timeframe.seconds >= Timeframe.DAY) return candles to null
     if (!supportedRegularSymbols.matches(symbol.uppercase())) return emptyList<Candle>() to "该品种暂无常规时段模板，请切换电子交易时间。"
@@ -33,14 +36,27 @@ internal fun chartSessionCandles(candles: List<Candle>, symbol: String, timefram
         return emptyList<Candle>() to "秒线暂不支持常规时段，请切换分钟周期或电子交易时间。"
     if (candles.isEmpty()) return emptyList<Candle>() to null
     val zone = TimeZone.of("America/Chicago")
-    val sorted = candles.sortedBy { it.timeMs }
+    var inOrder = true
+    for (i in 1 until candles.size) {
+        if (i % 1024 == 0) checkActive()
+        if (candles[i - 1].timeMs > candles[i].timeMs) { inOrder = false; break }
+    }
+    val sorted = if (inOrder) candles else candles.sortedBy { it.timeMs }
     val first = sorted.first().timeMs
     val result = mutableListOf<Candle>()
-    for (bar in sorted) {
-        val local = Instant.fromEpochMilliseconds(bar.timeMs).toLocalDateTime(zone)
-        val minute = local.hour * 60 + local.minute
-        if (minute < 510 || minute >= 915 || local.second != 0) continue
-        val start = LocalDateTime.parse("${local.date}T08:30:00").toInstant(zone).toEpochMilliseconds()
+    var dayStart = Long.MIN_VALUE
+    var dayEnd = Long.MIN_VALUE
+    var start = Long.MIN_VALUE
+    for ((index, bar) in sorted.withIndex()) {
+        if (index % 1024 == 0) checkActive()
+        if (bar.timeMs < dayStart || bar.timeMs >= dayEnd) {
+            val date = Instant.fromEpochMilliseconds(bar.timeMs).toLocalDateTime(zone).date
+            dayStart = LocalDateTime.parse("${date}T00:00:00").toInstant(zone).toEpochMilliseconds()
+            dayEnd = LocalDateTime.parse("${date.plus(1, DateTimeUnit.DAY)}T00:00:00").toInstant(zone).toEpochMilliseconds()
+            start = LocalDateTime.parse("${date}T08:30:00").toInstant(zone).toEpochMilliseconds()
+        }
+        val minuteOffset = (bar.timeMs % 60_000L + 60_000L) % 60_000L
+        if (bar.timeMs < start || bar.timeMs >= start + 405 * 60_000L || minuteOffset >= 1_000L) continue
         // Do not fabricate a session's opening bar when the loaded history starts inside it.
         if (first > start) continue
         val bucket = start + ((bar.timeMs - start) / timeframe.millis) * timeframe.millis
