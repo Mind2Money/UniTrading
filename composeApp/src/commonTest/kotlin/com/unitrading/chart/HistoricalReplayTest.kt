@@ -42,4 +42,45 @@ class HistoricalReplayTest {
         assertEquals(1_500_000L, closed.trades.single().pnlMicros)
         assertTrue(closed.positions.isEmpty())
     }
+
+    @Test fun pendingLimitAssumesStopFirstWhenSameBarPathIsUnknown() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, 9_900, 10_050, 10_000)
+        assertTrue(queued.positions.isEmpty())
+        val untouched = queued.advance(spec, Candle(2, 10_000, 10_025, 9_975, 10_000))
+        assertEquals(1, untouched.pending.size)
+        val filled = untouched.advance(spec, Candle(3, 10_000, 10_050, 9_875, 9_950))
+        assertTrue(filled.pending.isEmpty())
+        assertTrue(filled.positions.isEmpty())
+        assertEquals(9_950L, filled.trades.single().position.entryPrice)
+        assertEquals("止损", filled.trades.single().reason)
+    }
+
+    @Test fun stopEntryGapsAtOpenAndInvalidBracketIsCancelled() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.STOP, 100, 10_050, 9_950, 10_100, 10_000)
+        val result = queued.advance(spec, Candle(2, 10_125, 10_150, 10_100, 10_125))
+        assertTrue(result.pending.isEmpty())
+        assertTrue(result.positions.isEmpty())
+        assertNotNull(result.lastNotice)
+    }
+
+    @Test fun oppositeOrdersReduceThenReverseTheNetPosition() {
+        val long = ReplayState(0).open(spec, start, Side.BUY, 200, null, null)
+        val reduced = long.open(spec, start.copy(close = 10_050), Side.SELL, 100, 9_950, 10_100)
+        assertEquals(100L, reduced.positions.single().lotsHundredths)
+        assertEquals(Side.BUY, reduced.positions.single().side)
+        assertEquals(1_500_000L, reduced.trades.single().pnlMicros)
+        val reversed = reduced.open(spec, start.copy(close = 10_050), Side.SELL, 200, null, null)
+        assertEquals(Side.SELL, reversed.positions.single().side)
+        assertEquals(100L, reversed.positions.single().lotsHundredths)
+        assertEquals(2, reversed.trades.size)
+    }
+
+    @Test fun pendingEditsValidateWithoutChangingPositionOrOrderIdentity() {
+        val queued = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, 9_900, null, 10_000)
+        val revised = queued.modifyPending(spec, queued.pending.single().id, 9_925, 9_875, null, 10_000)
+        assertEquals(queued.pending.single().id, revised.pending.single().id)
+        assertEquals(9_925L, revised.pending.single().price)
+        assertTrue(revised.positions.isEmpty())
+        assertFailsWith<IllegalArgumentException> { revised.modifyPending(spec, revised.pending.single().id, 10_025, null, null, 10_000) }
+    }
 }

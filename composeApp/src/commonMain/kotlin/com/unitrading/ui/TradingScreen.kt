@@ -481,13 +481,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
+        var replayWatch by remember(plugin) { mutableStateOf<Pair<String, Timeframe>?>(null) }
         val watchedCharts = listOf(ChartSlot(activeChart, symbol, timeframe)) + visibleParkedCharts.values.filter { it.id != activeChart }
         val chartSources = watchedCharts.map { slot ->
             val regular = chartPreferences.sessionForChart(slot.id) == ChartSession.REGULAR
             (slot.symbol to chartSessionSource(slot.symbol, slot.timeframe, regular)) to regular
         }
-        val liveSeries = chartSources.map { it.first }.distinct()
-        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet()
+        val liveSeries = (chartSources.map { it.first } + listOfNotNull(replayWatch)).distinct()
+        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet() + listOfNotNull(replayWatch)
         LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
@@ -1371,14 +1372,22 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                             if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
                                 onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
-                            if (desktopStyle) TextButton(onClick = {
+                            if (desktopStyle) AssistChip(onClick = {
                                 val regular = chartPreferences.sessionForChart(target) == ChartSession.REGULAR
                                 val source = chartSessionSource(selectedInstrument.symbol, selectedFrame, regular)
+                                replayWatch = selectedInstrument.symbol to Timeframe.M1
                                 replayInput = ReplayInput(selectedInstrument, selectedFrame, regular, chartPreferences.chartTimeZone,
-                                    plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList())
-                            }, modifier = Modifier.testTag("open-historical-replay")) { Text("回放") }
+                                    plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList(), source,
+                                    catalog.instruments, intervals)
+                            }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
+                                leadingIcon = { Icon(AppIcons.History, null, Modifier.size(18.dp)) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
                         }, singleRow = singleLine)
-                    replayInput?.let { input -> HistoricalReplayDialog(input) { replayInput = null } }
+                    replayInput?.let { input -> HistoricalReplayDialog(input, market.revision,
+                        history = { sym, frame -> plugin.history(sym, frame) },
+                        watch = { sym -> replayWatch = sym to Timeframe.M1 },
+                        onDismiss = { replayWatch = null; replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace
