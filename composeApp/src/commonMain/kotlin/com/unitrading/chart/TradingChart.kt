@@ -263,7 +263,7 @@ fun TradingChart(
     }
 
     val currentScale by rememberUpdatedState(scale)
-    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
+    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors, chrome.chartTimeZone.zoneId) }
     val currentVisible by rememberUpdatedState(visible)
     val currentCandles by rememberUpdatedState(candles)
     val currentTrades by rememberUpdatedState(trades)
@@ -415,7 +415,7 @@ fun TradingChart(
                 DividerLine()
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else "北京时间"} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
+                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else chrome.chartTimeZone.label} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
@@ -432,7 +432,7 @@ fun TradingChart(
                 toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { EmptyState("暂无行情", "等待交易商提供历史 K 线。", icon = com.unitrading.ui.AppIcons.Candlestick) }
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { EmptyState("暂无行情", chrome.sessionNotice ?: "等待交易商提供历史 K 线。", icon = com.unitrading.ui.AppIcons.Candlestick) }
         } else {
             // The toolbar, legend and navigation float over the plot instead of taking their own banner above it.
             val crosshairState = crosshair?.let { index -> "$index@" + (crosshairY?.takeIf { it in top..plotBottom }?.let { scale.price(it, instrument.tickSize).toString() } ?: "none") } ?: "none"
@@ -1036,7 +1036,7 @@ fun TradingChart(
                 Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
             selectedExecution?.let { fill ->
-                Text("选中成交 #${fill.id} · ${beijingDateTime(fill.timeMs)} 北京时间 · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
+                Text("选中成交 #${fill.id} · ${chartDateTime(fill.timeMs, zoneId = chrome.chartTimeZone.zoneId)} ${chrome.chartTimeZone.label} · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
                     Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("selected-execution"), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -1093,6 +1093,7 @@ class ChartChrome(
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
     val showWatermark: Boolean = false,
+    val sessionNotice: String? = null,
     val chartTimeZone: com.unitrading.app.ChartTimeZone = com.unitrading.app.ChartTimeZone.SHANGHAI,
     val onOpenSettings: (() -> Unit)? = null,
 )
@@ -1101,7 +1102,6 @@ class ChartChrome(
 fun dateTime(timeMs: Long, seconds: Boolean = false): String =
     Instant.fromEpochMilliseconds(timeMs).toString().take(if (seconds) 19 else 16).replace('T', ' ')
 
-private val beijingChartZone = TimeZone.of("Asia/Shanghai")
 
 /** Format an absolute instant as Beijing local time; stored timestamps remain UTC instants. */
 fun beijingDateTime(timeMs: Long, seconds: Boolean = false): String = chartDateTime(timeMs, seconds)
@@ -1119,10 +1119,18 @@ fun chartBarDateTime(timeMs: Long, timeframe: Timeframe, zoneId: String = "Asia/
 }
 
 /** Parse a chart drawing coordinate typed as Beijing local time into the underlying UTC instant. */
-fun parseBeijingChartTime(text: String): Long? = runCatching {
+fun parseBeijingChartTime(text: String): Long? = parseChartTime(text, "Asia/Shanghai")
+
+fun parseChartTime(text: String, zoneId: String): Long? = runCatching {
     val value = text.trim()
     require(value.matches(Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}")))
-    LocalDateTime.parse(value.replace(' ', 'T') + ":00").toInstant(beijingChartZone).toEpochMilliseconds()
+    val local = LocalDateTime.parse(value.replace(' ', 'T') + ":00")
+    val zone = TimeZone.of(zoneId)
+    val instant = local.toInstant(zone)
+    require(instant.toLocalDateTime(zone) == local)
+    val ms = instant.toEpochMilliseconds()
+    require(listOf(-7_200_000L, -3_600_000L, -1_800_000L, 1_800_000L, 3_600_000L, 7_200_000L).none { Instant.fromEpochMilliseconds(ms + it).toLocalDateTime(zone) == local })
+    ms
 }.getOrNull()
 
 /** Chart crosshair: Beijing time intraday, trading date for daily and longer bars. */

@@ -42,6 +42,7 @@ import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import com.unitrading.chart.chartSessionCandles
 import com.unitrading.chart.ChartLayerState
 import com.unitrading.chart.ChartToggle
 import com.unitrading.chart.ChartToolbar
@@ -1159,7 +1160,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val shownTimeframe = parked?.timeframe ?: timeframe
                     val shownExecution = shownInstrument.executionSymbol
                     val shownQuote = if (active) quote else market.quotes[shownExecution]
-                    val shownCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
+                    val rawCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
+                    val sessionResult = remember(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession) {
+                        chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession == ChartSession.REGULAR)
+                    }
+                    val shownCandles = sessionResult.first
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
                     fun onActive(block: () -> Unit) {
                         if (!active) activateChart(chartId)
@@ -1256,7 +1261,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
-                            chartTimeZone = chartPreferences.chartTimeZone,
+                            chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
                             onOpenSettings = { showActivity = false; showSettings = true },
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)

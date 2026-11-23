@@ -164,7 +164,7 @@ internal fun DrawScope.drawDrawingMarks(frame: DrawingFrame, ctx: DrawingContext
         times.forEach { mark ->
             val x = c.x(mark.timeMs)
             if (x !in c.plot.left..c.plot.right) return@forEach
-            val text = measurer.measure(formatDate(mark.timeMs), labelStyle.copy(color = com.unitrading.ui.contentOn(mark.color)))
+            val text = measurer.measure(formatDate(mark.timeMs, ctx.zoneId), labelStyle.copy(color = com.unitrading.ui.contentOn(mark.color)))
             val width = text.size.width + pad * 2
             val left = (x - width / 2).coerceIn(c.plot.left, max(c.plot.left, c.plot.right - width))
             drawRect(mark.color, Offset(left, timeAxisTop), Size(width, height))

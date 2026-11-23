@@ -25,6 +25,9 @@ import kotlinx.serialization.json.Json
 data class SavedChart(val id: String, val symbols: Map<String, String> = emptyMap(), val timeframeSeconds: Int)
 
 @Serializable
+enum class ChartSession(val label: String) { ELECTRONIC("电子交易时间"), REGULAR("常规交易时间") }
+
+@Serializable
 enum class ChartTimeZone(val label: String, val zoneId: String) {
     SHANGHAI("(UTC+8) 上海", "Asia/Shanghai"), UTC("(UTC+0) UTC", "UTC"),
     NEW_YORK("纽约（自动夏令时）", "America/New_York"), CHICAGO("芝加哥（自动夏令时）", "America/Chicago"),
@@ -61,6 +64,7 @@ data class ChartPreferences(
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val showChartWatermark: Boolean = true,
     val chartTimeZone: ChartTimeZone = ChartTimeZone.SHANGHAI,
+    val chartSession: ChartSession = ChartSession.ELECTRONIC,
 ) {
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
@@ -174,6 +178,10 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setChartSession(session: ChartSession): Boolean = saveMutex.withLock {
+        preferences.value.chartSession == session || persist(preferences.value.copy(chartSession = session))
     }
 
     suspend fun setChartTimeZone(zone: ChartTimeZone): Boolean = saveMutex.withLock {

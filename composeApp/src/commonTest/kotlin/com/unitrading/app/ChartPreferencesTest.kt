@@ -15,6 +15,14 @@ class ChartPreferencesTest {
         assertEquals(ChartTimeZone.NEW_YORK, ChartPreferencesController(store).preferences.value.chartTimeZone)
     }
 
+    @Test fun sessionPersistsAndDefaultsToElectronic() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertEquals(ChartSession.ELECTRONIC, prefs.preferences.value.chartSession)
+        assertTrue(prefs.setChartSession(ChartSession.REGULAR))
+        assertEquals(ChartSession.REGULAR, ChartPreferencesController(store).preferences.value.chartSession)
+    }
+
     @Test fun watermarkVisibilityPersists() = runTest {
         val store = MemorySnapshotStore()
         val prefs = ChartPreferencesController(store)

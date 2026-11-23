@@ -27,6 +27,14 @@ class CrosshairTest {
         assertEquals("2026-01-15", crosshairTimeLabel(winter, Timeframe.D1, "America/New_York"))
     }
 
+    @Test fun drawingInputUsesSelectedZoneAndRejectsDstGapsAndOverlaps() {
+        val instant = Instant.parse("2026-07-15T12:00:00Z").toEpochMilliseconds()
+        assertEquals("2026-07-15 08:00", chartDateTime(instant, zoneId = "America/New_York"))
+        assertEquals(instant, parseChartTime("2026-07-15 08:00", "America/New_York"))
+        assertNull(parseChartTime("2026-03-08 02:30", "America/New_York"))
+        assertNull(parseChartTime("2026-11-01 01:30", "America/New_York"))
+    }
+
     @Test fun chartDrawingCoordinateRoundTripsBeijingTime() {
         val instant = Instant.parse("2026-12-31T16:30:00Z").toEpochMilliseconds()
         assertEquals("2027-01-01 00:30", beijingDateTime(instant))

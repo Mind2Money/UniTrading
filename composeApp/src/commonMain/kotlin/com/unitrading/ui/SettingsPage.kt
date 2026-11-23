@@ -79,6 +79,7 @@ internal fun SettingsPage(
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
     var chooseChartTimeZone by remember { mutableStateOf(false) }
+    var chooseChartSession by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -119,6 +120,8 @@ internal fun SettingsPage(
             SettingsSection("交易") {
                 if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
+                SettingsRow("图表交易时段", chartPreferences.chartSession.label, AppIcons.History, "settings-chart-session",
+                    { chooseChartSession = true }, navigates = true)
                 SettingsRow("图表时区", chartPreferences.chartTimeZone.label, AppIcons.History, "settings-chart-timezone",
                     { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
@@ -213,6 +216,17 @@ internal fun SettingsPage(
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
+    if (chooseChartSession) AlertDialog(
+        onDismissRequest = { chooseChartSession = false }, title = { Text("图表交易时段") },
+        text = { Column {
+            Text("常规时段采用 TradingView CME 图表模板（芝加哥 08:30–15:15）；仅支持 ES、NQ、CL、GC 及对应 Micro。日线及以上不变。跨边界周期暂不显示，需选择 1、3、5、15 分钟。此设置不限制下单。", style = MaterialTheme.typography.bodySmall)
+            com.unitrading.app.ChartSession.entries.forEach { value ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(value == chartPreferences.chartSession, role = Role.RadioButton, onClick = {
+                    preferenceScope.launch { if (runtime.chartPreferences.setChartSession(value)) chooseChartSession = false }
+                }), verticalAlignment = Alignment.CenterVertically) { RadioButton(value == chartPreferences.chartSession, onClick = null); Spacer(Modifier.width(12.dp)); Text(value.label) }
+            }
+        } }, confirmButton = { TextButton({ chooseChartSession = false }) { Text("关闭") } },
+    )
     if (chooseChartTimeZone) AlertDialog(
         onDismissRequest = { chooseChartTimeZone = false },
         title = { Text("图表时区") },

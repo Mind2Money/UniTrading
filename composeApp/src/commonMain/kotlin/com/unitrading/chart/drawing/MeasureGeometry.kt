@@ -111,10 +111,10 @@ internal fun SceneBuilder.forecast() {
     val diff = target - source
     val status = forecastStatus(c.candles, c.index(d.points[0].timeMs).roundToInt(), c.index(d.points[1].timeMs).roundToInt(), source, target, d.points[1].timeMs)
     val labelText = Color.White
-    label("${ctx.price(source)}\n${formatDate(d.points[0].timeMs)}", Offset(a.x, a.y + 8f * px), color = labelText, h = HAlign.CENTER, v = VAlign.TOP, background = base, padding = 4f * px, hit = false)
+    label("${ctx.price(source)}\n${formatDate(d.points[0].timeMs, ctx.zoneId)}", Offset(a.x, a.y + 8f * px), color = labelText, h = HAlign.CENTER, v = VAlign.TOP, background = base, padding = 4f * px, hit = false)
     val percent = if (source != 0.0) diff / source * 100 else 0.0
     val up = b.y <= a.y
-    val box = label("${ctx.priceDiff(diff)} (${signed(percent)}%) ${ctx.ticks(diff)}\n${formatDate(d.points[1].timeMs)}\n${(c.index(d.points[1].timeMs) - c.index(d.points[0].timeMs)).roundToInt()} 根K线",
+    val box = label("${ctx.priceDiff(diff)} (${signed(percent)}%) ${ctx.ticks(diff)}\n${formatDate(d.points[1].timeMs, ctx.zoneId)}\n${(c.index(d.points[1].timeMs) - c.index(d.points[0].timeMs)).roundToInt()} 根K线",
         Offset(b.x, b.y + (if (up) -8f else 8f) * px), color = labelText, h = HAlign.CENTER, v = if (up) VAlign.BOTTOM else VAlign.TOP, background = base, padding = 4f * px, hit = false)
     label(status.label, Offset(box.center.x, if (up) box.top - 2f * px else box.bottom + 2f * px), color = status.text, h = HAlign.CENTER, v = if (up) VAlign.BOTTOM else VAlign.TOP, background = status.color, padding = 3f * px, hit = false)
 }

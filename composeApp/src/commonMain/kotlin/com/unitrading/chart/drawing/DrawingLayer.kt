@@ -119,6 +119,7 @@ internal fun rememberDrawingLayer(
     plot: Rect,
     chartBottom: Float,
     palette: TradingPalette,
+    zoneId: String = "Asia/Shanghai",
 ): DrawingLayer {
     DisposableEffect(symbol) { controller.bind(symbol); onDispose { } }
     val layer = remember(controller) { DrawingLayer(controller) }
@@ -128,7 +129,7 @@ internal fun rememberDrawingLayer(
     layer.ctx = DrawingContext(
         DrawingCoordinates(candles, periodMs, viewport, plot, chartBottom, scale), instrument, timeframe, density, palette.Surface, palette.Ink, palette.Up, palette.Down,
         { text, size, bold, italic, maxWidth -> measurer.layout(text, size, bold, italic, maxWidth).size.let { Size(it.width.toFloat(), it.height.toFloat()) } },
-        images.mapValues { (_, bitmap) -> Size(bitmap.width.toFloat(), bitmap.height.toFloat()) },
+        images.mapValues { (_, bitmap) -> Size(bitmap.width.toFloat(), bitmap.height.toFloat()) }, zoneId,
     )
     LaunchedEffect(controller.demoStrokes.any { it.endedAtMs != null }) {
         while (controller.demoStrokes.any { it.endedAtMs != null }) withFrameMillis { controller.tickDemo(currentTimeMs()) }
@@ -279,7 +280,7 @@ internal fun DrawingValuesTooltip(layer: DrawingLayer) {
     Box(Modifier.offset { IntOffset(min(point.x.roundToInt() + 16, max(0, (c.plot.right - 180 * ctx.density).roundToInt())), max(point.y.roundToInt() - 90, c.plot.top.roundToInt())) }) {
         Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.inverseSurface, contentColor = MaterialTheme.colorScheme.inverseOnSurface) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                listOf(chartBarDateTime(bar.timeMs, ctx.timeframe), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
+                listOf(chartBarDateTime(bar.timeMs, ctx.timeframe, ctx.zoneId), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
                     barChange(bar, previous).label(instrument), "量 ${formatVolume(bar.volume)}").forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
             }
         }
