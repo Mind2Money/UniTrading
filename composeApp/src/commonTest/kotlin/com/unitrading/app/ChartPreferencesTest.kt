@@ -4,9 +4,23 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.chart.PriceAxisSettings
 import com.unitrading.chart.PriceScaleMode
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.offsetAt
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun allIntegerUtcOffsetsAreAvailableAndFixed() {
+        val fixed = ChartTimeZone.entries.filter { it.fixedOffsetHours != null }
+        assertEquals((-12..14).toList(), fixed.mapNotNull { it.fixedOffsetHours })
+        val winter = kotlin.time.Instant.parse("2026-01-15T12:00:00Z")
+        val summer = kotlin.time.Instant.parse("2026-07-15T12:00:00Z")
+        for (zone in fixed) {
+            val actual = kotlinx.datetime.TimeZone.of(zone.zoneId)
+            assertEquals(zone.fixedOffsetHours!! * 3600, actual.offsetAt(winter).totalSeconds)
+            assertEquals(zone.fixedOffsetHours!! * 3600, actual.offsetAt(summer).totalSeconds)
+        }
+        assertEquals("Asia/Shanghai", ChartTimeZone.SHANGHAI.zoneId)
+        assertEquals("America/New_York", ChartTimeZone.NEW_YORK.zoneId)
+    }
     @Test fun sessionsAreIndependentForEachChartAndSurviveRestart() = runTest {
         val store = MemorySnapshotStore().apply { write("chart-v1", """{"chartSession":"REGULAR"}""") }
         val controller = ChartPreferencesController(store)

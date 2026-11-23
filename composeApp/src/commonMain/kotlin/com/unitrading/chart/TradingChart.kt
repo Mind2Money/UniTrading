@@ -746,7 +746,7 @@ fun TradingChart(
                     }
                     visible.forEachIndexed { index, candle ->
                         val center = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
-                        val color = if (candle.close >= candle.open) colors.Up else colors.Down
+                        val color = if (candle.close >= candle.open) colors.UpBody else colors.DownBody
                         val width = candleWidth.body
                         val rising = candle.close >= candle.open
                         drawLine(if (rising) colors.UpWick else colors.DownWick, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)

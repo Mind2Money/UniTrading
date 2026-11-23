@@ -69,7 +69,7 @@ class IndicatorSettingsTest {
         assertEquals("#123456", rsi.guideColor(25.5))
         assertEquals(DEFAULT_INDICATOR_GUIDE_COLOR, rsi.guideColor(50.0))
         assertEquals("#ABCDEF", rsi.guideColor(75.25))
-        assertEquals(ThemeSettings(), reopened.theme.settings.value)
+        assertEquals(ThemeSettings().withIndependentCandleParts(), reopened.theme.settings.value)
         assertNull(store.read("atlas-demo"))
         assertEquals(custom, Json.decodeFromString<IndicatorSettings>(store.read("indicators-v1")!!))
     }

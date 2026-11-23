@@ -20,6 +20,7 @@ data class TradingPalette(
     /** Text, icons and thin marks in the theme's colour, readable on every panel: Material's primary role. */
     val Accent: Color,
     val Up: Color, val Down: Color, val Loss: Color, val Profit: Color,
+    val UpBody: Color, val DownBody: Color,
     val UpBorder: Color, val DownBorder: Color, val UpWick: Color, val DownWick: Color,
     val Stop: Color, val Target: Color,
     /** The colour the user picks; every accent tone is derived from it. */
@@ -72,8 +73,9 @@ fun themePalette(settings: com.unitrading.app.ThemeSettings, systemDark: Boolean
         else -> DayBase
     }
     fun color(role: com.unitrading.app.ThemeColor): Color {
-        val fallback = when (role) { UP_BORDER, UP_WICK -> UP; DOWN_BORDER, DOWN_WICK -> DOWN; else -> role }
-        val hex = settings.colors[role.name] ?: settings.colors[fallback.name]
+        val fallback = when (role) { RISE -> PROFIT; FALL -> LOSS; UP_BORDER, UP_WICK -> UP; DOWN_BORDER, DOWN_WICK -> DOWN; else -> role }
+        val useSavedFallback = role !in setOf(RISE, FALL) && !(settings.independentCandleParts && role in setOf(UP_BORDER, DOWN_BORDER, UP_WICK, DOWN_WICK))
+        val hex = settings.colors[role.name] ?: if (useSavedFallback) settings.colors[fallback.name] else null
         return hex?.removePrefix("#")?.toLongOrNull(16)?.let { Color(0xFF000000L or it) } ?: Color(base.roles.getValue(fallback))
     }
     val key = color(ACCENT)
@@ -82,9 +84,9 @@ fun themePalette(settings: com.unitrading.app.ThemeSettings, systemDark: Boolean
     val selection = key.atTone(base.selectionTone, SelectionChroma)
     return TradingPalette(
         color(PAGE), color(SURFACE), Color(base.raised), Color(base.border), color(CHART), color(GRID), color(TEXT), color(MUTED),
-        accent, color(UP), color(DOWN), color(LOSS), color(PROFIT), color(UP_BORDER), color(DOWN_BORDER), color(UP_WICK), color(DOWN_WICK), color(STOP), color(TARGET),
+        accent, color(RISE), color(FALL), color(LOSS), color(PROFIT), color(UP), color(DOWN), color(UP_BORDER), color(DOWN_BORDER), color(UP_WICK), color(DOWN_WICK), color(STOP), color(TARGET),
         Key = key, Brand = brand, OnBrand = contentOn(brand), Selection = selection,
-        UpText = color(UP).readableOn(selection, DirectionTextContrast), DownText = color(DOWN).readableOn(selection, DirectionTextContrast),
+        UpText = color(RISE).readableOn(selection, DirectionTextContrast), DownText = color(FALL).readableOn(selection, DirectionTextContrast),
     )
 }
 

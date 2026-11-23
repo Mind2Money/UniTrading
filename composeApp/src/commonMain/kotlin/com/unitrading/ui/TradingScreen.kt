@@ -1346,10 +1346,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
-                            if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target), chartPreferences.chartTimeZone,
-                                if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null,
-                                onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } },
-                                onTimeZone = { value -> scope.launch { runtime.chartPreferences.setChartTimeZone(value) } })
+                            if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
+                                onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
                         }, singleRow = singleLine)
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {

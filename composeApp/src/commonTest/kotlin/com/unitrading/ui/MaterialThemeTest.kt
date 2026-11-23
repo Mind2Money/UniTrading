@@ -124,7 +124,7 @@ class MaterialThemeTest {
         }
     }
 
-    @Test fun darkOrFaintCustomDirectionColoursStayReadableAsText() = built(mapOf("UP" to "#112233", "DOWN" to "#FFEEEE")).forEach { theme ->
+    @Test fun darkOrFaintCustomDirectionColoursStayReadableAsText() = built(mapOf("RISE" to "#112233", "FALL" to "#FFEEEE")).forEach { theme ->
         with(theme.palette) { listOf(Surface, Selection).forEach { assertReads(UpText, it, "${theme.name} UpText on ${colorHex(it)}") } }
     }
 

@@ -41,6 +41,17 @@ class SettingsPageTest {
         ImageIO.write(compose.onNodeWithTag("settings-page").captureToImage().toAwtImage(), "png", target)
     }
 
+    @Test fun timeZoneMovesToTradingSettingsAndSupportsUtcExtremes() {
+        val runtime = render(width = 1100, height = 900)
+        compose.onNodeWithTag("chart-timezone-menu").assertDoesNotExist()
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("settings-chart-timezone").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-timezone-UTC_MINUS_12").assertExists()
+        compose.onNodeWithTag("settings-timezone-UTC_PLUS_14").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.chartTimeZone == ChartTimeZone.UTC_PLUS_14 }
+        compose.onNodeWithTag("settings-chart-timezone").assertTextContains("UTC+14", substring = true)
+    }
+
     @Test fun phoneGroupsKeepAccountSwitchingAndPreferenceDestinationsAccessible() {
         render()
         compose.onNodeWithTag("nav-3").performClick()

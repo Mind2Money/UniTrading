@@ -49,7 +49,7 @@ class CandleZoomUiTest {
         val center = (12f + (index - start + .5).toFloat() * step).roundToInt()
         val scale = PriceScale(s.getValue("low").toDouble(), s.getValue("high").toDouble(), 18f, s.getValue("plotBottom").toFloat())
         val y = scale.y(10_050).roundToInt()
-        val up = themePalette(ThemeSettings()).Up.toArgb()
+        val up = themePalette(ThemeSettings()).UpBody.toArgb()
         assertEquals(up, image.getRGB(center, y), "sample must be inside the candle body")
         var left = center
         while (left > 0 && image.getRGB(left - 1, y) == up) left--

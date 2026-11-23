@@ -18,32 +18,48 @@ enum class ThemePreset(val label: String) {
 
 enum class ThemeColor(val label: String) {
     PAGE("页面背景"), SURFACE("面板背景"), CHART("图表背景"), GRID("图表网格"),
-    UP("上涨主体"), DOWN("下跌主体"), UP_BORDER("上涨边框"), DOWN_BORDER("下跌边框"), UP_WICK("上涨影线"), DOWN_WICK("下跌影线"), PROFIT("盈利数字"), LOSS("亏损数字"),
+    RISE("上涨颜色"), FALL("下跌颜色"), UP("上涨K线主体"), DOWN("下跌K线主体"),
+    UP_BORDER("上涨K线边框"), DOWN_BORDER("下跌K线边框"), UP_WICK("上涨K线影线"), DOWN_WICK("下跌K线影线"), PROFIT("盈利数字"), LOSS("亏损数字"),
     ACCENT("主题强调色"), TEXT("主要文字"), MUTED("次要文字"), STOP("止损线"), TARGET("止盈线"),
 }
 
 @Serializable
-data class ThemeSettings(val preset: ThemePreset = ThemePreset.DARK, val colors: Map<String, String> = emptyMap()) {
+data class ThemeSettings(val preset: ThemePreset = ThemePreset.DARK, val colors: Map<String, String> = emptyMap(),
+    val independentCandleParts: Boolean = false) {
     fun validate() {
         require(colors.keys.all { name -> ThemeColor.entries.any { it.name == name } })
         require(colors.values.all { it.matches(Regex("#[0-9a-fA-F]{6}")) })
+    }
+
+    /** Older themes used the candle body as the implicit border and wick; freeze those before separating the controls. */
+    fun withIndependentCandleParts(): ThemeSettings {
+        if (independentCandleParts) return this
+        val next = colors.toMutableMap()
+        for ((body, parts) in listOf("UP" to listOf("UP_BORDER", "UP_WICK"), "DOWN" to listOf("DOWN_BORDER", "DOWN_WICK"))) {
+            val old = colors[body] ?: continue
+            parts.forEach { part -> if (part !in next) next[part] = old }
+        }
+        colors["PROFIT"]?.let { if ("RISE" !in next) next["RISE"] = it }
+        colors["LOSS"]?.let { if ("FALL" !in next) next["FALL"] = it }
+        return copy(colors = next, independentCandleParts = true)
     }
 }
 
 class ThemeController(private val store: SnapshotStore) {
     val error = MutableStateFlow<String?>(null)
     val settings = MutableStateFlow(try {
-        store.read("theme-v1")?.let { Json.decodeFromString<ThemeSettings>(it).also(ThemeSettings::validate) } ?: ThemeSettings()
+        (store.read("theme-v1")?.let { Json.decodeFromString<ThemeSettings>(it).also(ThemeSettings::validate) } ?: ThemeSettings()).withIndependentCandleParts()
     } catch (_: Exception) {
         error.value = "主题设置无法读取，已使用默认主题。"
-        ThemeSettings()
+        ThemeSettings().withIndependentCandleParts()
     })
 
     suspend fun apply(value: ThemeSettings): Boolean {
         value.validate()
+        val normalized = value.withIndependentCandleParts()
         return try {
-            withContext(Dispatchers.Default) { store.write("theme-v1", Json.encodeToString(value)) }
-            settings.value = value
+            withContext(Dispatchers.Default) { store.write("theme-v1", Json.encodeToString(normalized)) }
+            settings.value = normalized
             error.value = null
             true
         } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }

@@ -365,9 +365,9 @@ internal fun ChartLegend(
                 }
             }
             if (!compact) Row(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.Loss, Modifier.testTag("legend-sell")) { onSide(Side.SELL) }
+                TradeButton(Side.SELL, quote?.let { instrument.formatPrice(it.bid) } ?: "—", colors.DownText, Modifier.testTag("legend-sell")) { onSide(Side.SELL) }
                 Text(quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—", style = type.labelSmall, color = colors.Muted)
-                TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.Profit, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
+                TradeButton(Side.BUY, quote?.let { instrument.formatPrice(it.ask) } ?: "—", colors.UpText, Modifier.testTag("legend-buy")) { onSide(Side.BUY) }
             }
         }
     }

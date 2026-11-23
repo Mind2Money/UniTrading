@@ -124,7 +124,7 @@ internal fun SettingsPage(
                     { chooseOrderLayout = true }, enabled = !busy)
                 if (showChartSessionControls) SettingsRow("图表交易时段", chartPreferences.sessionForChart("main").label, AppIcons.History, "settings-chart-session",
                     { chooseChartSession = true }, navigates = true)
-                if (showChartSessionControls) SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.History, "settings-chart-timezone",
+                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.Language, "settings-chart-timezone",
                     { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
@@ -233,11 +233,13 @@ internal fun SettingsPage(
         onDismissRequest = { chooseChartTimeZone = false },
         title = { Text("图表时区") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
+            Text("整数 UTC 时区", style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
             com.unitrading.app.ChartTimeZone.entries.forEach { zone ->
+                if (zone == com.unitrading.app.ChartTimeZone.NEW_YORK) Text("地区时区（按当地规则）", style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
                     selected = zone == chartPreferences.chartTimeZone, role = Role.RadioButton,
                     onClick = { preferenceScope.launch { if (runtime.chartPreferences.setChartTimeZone(zone)) chooseChartTimeZone = false } }
-                ).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                ).padding(horizontal = 8.dp).testTag("settings-timezone-${zone.name}"), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(zone == chartPreferences.chartTimeZone, onClick = null)
                     Spacer(Modifier.width(12.dp)); Text(zone.labelAt(marketTime))
                 }
