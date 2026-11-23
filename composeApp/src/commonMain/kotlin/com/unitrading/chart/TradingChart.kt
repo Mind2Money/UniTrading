@@ -927,9 +927,9 @@ fun TradingChart(
                     if (axis.left) Alignment.BottomStart else Alignment.BottomEnd
                 }).padding(start = if (axis.left) 18.dp else 0.dp, end = if (axis.left) 0.dp else 18.dp,
                     bottom = if (mobilePlatform) 0.dp else 2.dp)) {
-                    IconButton(onClick = { if (chrome.desktopAxisStyle == true) showChartSettings = true else { axisPage = 0; axisMenu = true } }, modifier = Modifier.size(if (chrome.desktopAxisStyle == true) 32.dp else 48.dp)
+                    IconButton(onClick = { axisPage = 0; axisMenu = true }, modifier = Modifier.size(48.dp)
                         .background(colors.Surface.copy(alpha = .94f), RoundedCornerShape(10.dp)).testTag("price-axis-menu-button")) {
-                        Icon(AppIcons.Settings, contentDescription = if (chrome.desktopAxisStyle == true) "图表设置" else "价格轴设置", modifier = Modifier.size(if (chrome.desktopAxisStyle == true) 19.dp else 24.dp), tint = colors.Accent)
+                        Icon(AppIcons.Settings, contentDescription = "价格轴设置", modifier = Modifier.size(if (mobilePlatform) 24.dp else 25.dp), tint = colors.Accent)
                     }
                     PriceAxisMenu(axisMenu, axisPage, axis, manualScale == null && axis.fitAllBars, logarithmic || visible.all { it.low > 0 },
                         onPage = { axisPage = it }, onDismiss = { axisMenu = false },
@@ -965,7 +965,7 @@ fun TradingChart(
                             removeDrawings = chrome.drawings?.let { drawings -> { drawings.removeAllDrawings() } },
                             drawingCount = chrome.drawings?.drawingCount() ?: 0,
                             keyboardTrading = chrome.keyboardTrading,
-                            settings = { showChartSettings = true },
+                            settings = { chrome.onOpenSettings?.invoke() },
                         ))
                 }
                 val bar = visible.getOrNull(readoutIndex)
@@ -1091,6 +1091,7 @@ class ChartChrome(
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
     val showWatermark: Boolean = false,
+    val onOpenSettings: (() -> Unit)? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

@@ -341,6 +341,17 @@ class ChartContextMenuUiTest {
         compose.waitForIdle()
     }
 
+    @Test fun chartSettingsMenuOpensSameSettingsAsSidebarAndAxisButtonStaysUnchanged() {
+        render()
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-settings").assertTextContains("设置").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-page").assertIsDisplayed()
+        compose.onNodeWithTag("close-settings").performClick()
+        compose.onNodeWithTag("price-axis-menu-button").performClick()
+        compose.onNodeWithText("标签与线条", substring = true).assertExists()
+        compose.onNodeWithTag("chart-settings-dialog").assertDoesNotExist()
+    }
+
     @Test fun chartDraftQuantityAndConfirmation() {
         render()
         rightClick(549_000)
