@@ -92,8 +92,17 @@ class DemoBrokerTest {
             order().copy(stopLoss = 9_985), order().copy(stopLoss = 10_020),
             order().copy(takeProfit = 10_015), order().copy(takeProfit = 9_970),
             order().copy(stopLoss = 9_973),
-            order(kind = OrderKind.LIMIT, entry = 9_995),
+            order(kind = OrderKind.LIMIT, entry = 10_011),
+            order(kind = OrderKind.LIMIT, lots = 6, entry = 10_010),
+            order(kind = OrderKind.LIMIT, entry = 0),
+            order(kind = OrderKind.LIMIT, entry = null),
+            order(kind = OrderKind.LIMIT, entry = 150_000_000), // On-grid but outside the demo price range.
+            order(kind = OrderKind.LIMIT, entry = Long.MAX_VALUE - 2), // On-grid but notional overflows.
             order(kind = OrderKind.STOP, entry = 10_023),
+            order(kind = OrderKind.STOP, entry = 10_025),
+            order(Side.SELL, OrderKind.STOP, entry = 9_985),
+            order(kind = OrderKind.STOP, entry = 10_000),
+            order(Side.SELL, OrderKind.STOP, entry = 10_010),
             order(kind = OrderKind.STOP, entry = Long.MAX_VALUE),
         )
         for ((index, request) in invalid.withIndex()) {
@@ -110,12 +119,58 @@ class DemoBrokerTest {
     }
 
     @Test
+    fun marketableLimitsFillAtAskOrBidWithLimitPricedPreview() = runTest {
+        val instrument = TEST_CONFIG.instruments.first()
+        for (side in Side.entries) for (through in listOf(false, true)) {
+            val broker = freshBroker()
+            val session = broker.openSession("account-a")
+            val market = broker.market.value
+            val quote = market.quotes.getValue(SYMBOL)
+            val executable = if (side == Side.BUY) quote.ask else quote.bid
+            val direction = if (side == Side.BUY) 1 else -1
+            val limit = executable + if (through) 50L * direction else 0L
+            val request = order(side, OrderKind.LIMIT, entry = limit)
+                .copy(stopLoss = limit - 100L * direction, takeProfit = limit + 150L * direction)
+            val preview = session.preview(request)
+            assertTrue(preview.valid, preview.errors.toString())
+            assertEquals(listOf(MARKETABLE_LIMIT_WARNING), preview.warnings)
+            assertEquals(limit, preview.entryPrice)
+            assertEquals(market.revision, preview.quoteRevision)
+            assertEquals(requiredMargin(instrument, request.lotsHundredths, limit), preview.marginMicros)
+            assertEquals(-104_000_000L, preview.stopLossPnlMicros)
+            assertEquals(146_000_000L, preview.takeProfitPnlMicros)
+
+            val result = session.placeOrder("limit", request)
+            assertTrue(result.accepted, result.message)
+            assertTrue(assertNotNull(result.entityId).startsWith("${TEST_CONFIG.id}:order:"))
+            assertEquals(market, broker.market.value, "Matching must not wait for or generate a tick")
+            val filled = session.state.value
+            assertTrue(filled.orders.isEmpty())
+            val position = filled.positions.single()
+            assertEquals(executable, position.entryPrice)
+            assertEquals(market.simulatedTimeMs, position.openedAtMs)
+            assertEquals(requiredMargin(instrument, request.lotsHundredths, executable), position.marginMicros)
+            assertEquals(TEST_CONFIG.startingBalanceMicros - 2_000_000, filled.balanceMicros)
+            assertEquals(-10_000_000L, filled.floatingPnlMicros)
+            assertEquals(request.stopLoss, position.stopLoss)
+            assertEquals(request.takeProfit, position.takeProfit)
+            assertEquals(result, session.placeOrder("limit", request))
+            assertEquals(filled, session.state.value)
+
+            val resumed = DemoBroker(TEST_CONFIG, broker.exportState()).openSession("account-a")
+            assertEquals(result, resumed.placeOrder("limit", request))
+            assertEquals(filled, resumed.state.value)
+        }
+    }
+
+    @Test
     fun fourPendingDirectionsUseBidAskAndActualGapPrices() = runTest {
         data class Case(val side: Side, val kind: OrderKind, val entry: Long,
             val beforeBid: Long, val beforeAsk: Long, val hitBid: Long, val hitAsk: Long, val fill: Long)
         val cases = listOf(
-            Case(Side.BUY, OrderKind.LIMIT, 9_950, 9_945, 9_960, 9_930, 9_940, 9_940),
-            Case(Side.SELL, OrderKind.LIMIT, 10_060, 10_050, 10_070, 10_070, 10_080, 10_070),
+            // The limits rest inside the old 20-price-unit floor and must ignore the non-executable side.
+            Case(Side.BUY, OrderKind.LIMIT, 10_005, 9_995, 10_015, 9_980, 9_990, 9_990),
+            Case(Side.SELL, OrderKind.LIMIT, 10_005, 9_995, 10_020, 10_020, 10_035, 10_020),
             Case(Side.BUY, OrderKind.STOP, 10_060, 10_040, 10_055, 10_050, 10_075, 10_075),
             Case(Side.SELL, OrderKind.STOP, 9_950, 9_955, 9_970, 9_930, 9_960, 9_930),
         )
@@ -123,8 +178,13 @@ class DemoBrokerTest {
             val broker = freshBroker()
             val session = broker.openSession("account-a")
             val request = order(case.side, case.kind, entry = case.entry)
+            val preview = session.preview(request)
+            assertTrue(preview.valid, preview.errors.toString())
+            assertTrue(preview.warnings.isEmpty())
             val result = session.placeOrder("pending", request)
             assertTrue(result.accepted, result.message)
+            assertEquals(result.entityId, session.state.value.orders.single().id)
+            assertTrue(session.state.value.positions.isEmpty())
             assertEquals(0L, session.state.value.marginMicros)
             assertEquals(TEST_CONFIG.startingBalanceMicros, session.state.value.balanceMicros)
             feed(broker, case.beforeBid, case.beforeAsk)
@@ -152,6 +212,72 @@ class DemoBrokerTest {
         assertEquals(1_000 * MICROS_PER_USD, session.state.value.balanceMicros)
         assertTrue(session.state.value.events.last().message.contains("触发被拒绝"))
         assertTrue(session.state.value.events.last().message.contains("保证金不足"))
+    }
+
+    @Test
+    fun unfundedImmediatePlacementAndModificationAreAtomic() = runTest {
+        val config = TEST_CONFIG.copy(startingBalanceMicros = 1_012 * MICROS_PER_USD)
+        val broker = freshBroker(config)
+        val session = broker.openSession("account-a")
+        val resting = order(kind = OrderKind.LIMIT, entry = 10_005)
+        assertTrue(session.placeOrder("resting", resting).accepted)
+        val before = session.state.value
+        val pending = before.orders.single()
+        val limit = 10_060L
+        val marketable = resting.copy(entryPrice = limit)
+        val nextId = Json.parseToJsonElement(broker.exportState()).jsonObject.getValue("nextId")
+
+        assertFalse(session.preview(marketable).valid)
+        val place = session.placeOrder("cross-place", marketable)
+        assertFalse(place.accepted)
+        assertTrue(place.message.contains("保证金不足"), place.message)
+        assertNull(place.entityId)
+        assertFalse(session.previewOrderModification(pending.id, limit).valid)
+        val modify = session.modifyOrder("cross-edit", pending.id, pending.version, limit)
+        assertFalse(modify.accepted)
+        assertEquals(place.message, modify.message)
+        assertNull(modify.entityId)
+
+        val after = session.state.value
+        assertEquals(before, after.copy(events = before.events))
+        assertEquals(nextId, Json.parseToJsonElement(broker.exportState()).jsonObject.getValue("nextId"))
+        assertEquals(place, session.placeOrder("cross-place", marketable))
+        assertEquals(modify, session.modifyOrder("cross-edit", pending.id, pending.version, limit))
+        assertEquals(after, session.state.value)
+
+        // A better quote now permits the resting order to fill. Funding rejection must not
+        // have removed or repriced it, and retries must not execute against the new quote.
+        feed(broker, 10_000, 10_005)
+        assertEquals(10_005L, session.state.value.positions.single().entryPrice)
+        assertEquals(place, session.placeOrder("cross-place", marketable))
+        assertEquals(modify, session.modifyOrder("cross-edit", pending.id, pending.version, limit))
+        assertEquals(1, session.state.value.positions.size)
+    }
+
+    @Test
+    fun marketableLimitMustClearProtectionAtTheLimitAndAtTheExecutableQuote() = runTest {
+        val broker = freshBroker()
+        val session = broker.openSession("account-a")
+        val request = order(kind = OrderKind.LIMIT, entry = 10_060)
+        val cases = listOf(
+            request.copy(takeProfit = 10_040) to "入场价", // Clears the current quote, but violates the submitted limit.
+            request.copy(stopLoss = 9_995) to "最小距离", // Clears the limit, but the unhit stop is too close to Bid.
+            request.copy(stopLoss = 9_973) to "最小变动单位",
+        )
+        for ((index, case) in cases.withIndex()) {
+            val (invalid, message) = case
+            val preview = session.preview(invalid)
+            assertFalse(preview.valid)
+            assertTrue(preview.errors.single().contains(message), preview.errors.toString())
+            val result = session.placeOrder("protection-$index", invalid)
+            assertFalse(result.accepted)
+            assertEquals(preview.errors.single(), result.message)
+        }
+        val state = session.state.value
+        assertTrue(state.orders.isEmpty())
+        assertTrue(state.positions.isEmpty())
+        assertTrue(state.trades.isEmpty())
+        assertEquals(TEST_CONFIG.startingBalanceMicros, state.balanceMicros)
     }
 
     @Test
@@ -350,9 +476,13 @@ class DemoBrokerTest {
         val session = broker.openSession("account-a")
         val position = session.placeOrder("open", order()).entityId!!
         val pending = session.placeOrder("pending", order(kind = OrderKind.LIMIT, entry = 9_950)).entityId!!
+        val marketable = order(kind = OrderKind.LIMIT, entry = 10_010)
         broker.setConnected(false)
         assertFalse(session.preview(order()).valid)
         assertFalse(session.placeOrder("disconnected", order()).accepted)
+        assertFalse(session.preview(marketable).valid)
+        assertFalse(session.placeOrder("disconnected-cross", marketable).accepted)
+        assertFalse(session.modifyOrder("disconnected-edit", pending, 1, 10_010).accepted)
         assertFalse(session.closePosition("disconnected-close", position).accepted)
         assertFalse(session.modifyProtection("disconnected-modify", position, 1, 9_950, null).accepted)
         assertTrue(session.cancelOrder("cancel", pending).accepted)
@@ -363,6 +493,8 @@ class DemoBrokerTest {
         assertEquals(quoteBefore, broker.market.value.quotes)
         broker.setConnected(true)
         assertFalse(session.placeOrder("stale", order()).accepted)
+        assertFalse(session.preview(marketable).valid)
+        assertFalse(session.placeOrder("stale-cross", marketable).accepted)
         assertFalse(session.closePosition("stale-close", position).accepted)
         assertFalse(session.modifyProtection("stale-modify", position, 1, 9_950, null).accepted)
         feed(broker, 10_000, 10_010)

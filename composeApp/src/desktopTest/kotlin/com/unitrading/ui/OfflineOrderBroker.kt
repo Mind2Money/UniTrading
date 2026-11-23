@@ -34,8 +34,12 @@ internal class OfflineOrderBroker : BrokerPlugin {
     override fun openSession(accountId: String) = object : AccountSession {
         override val account = accounts.single()
         override val state = MutableStateFlow(AccountSnapshot("100", 25_000_000_000))
-        override fun preview(request: OrderRequest) =
-            refusal?.let { OrderPreview(null, errors = listOf(it), marginKnown = false, feesKnown = false) } ?: OrderPreview(request.entryPrice ?: 550025, marginKnown = false, feesKnown = false)
+        override fun preview(request: OrderRequest): OrderPreview {
+            refusal?.let { return OrderPreview(null, errors = listOf(it), marginKnown = false, feesKnown = false) }
+            val marketable = market.value.quotes[request.symbol]?.let(request::isMarketableLimit) == true
+            return OrderPreview(request.entryPrice ?: 550025, marginKnown = false, feesKnown = false,
+                warnings = if (marketable) listOf(MARKETABLE_LIMIT_WARNING) else emptyList())
+        }
         override fun previewOrderModification(orderId: String, entryPrice: Long) = OrderPreview(null, errors = listOf("unused"))
         override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) = TradeResult(false, "unused")
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = TradeResult(false, "unused")

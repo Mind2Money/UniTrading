@@ -1549,11 +1549,11 @@ class RithmicBroker(
         fun refused(message: String) = OrderPreview(null, errors = listOf(message), marginKnown = false, feesKnown = false)
         if (!order.standaloneEditable) return refused("这张订单不能单独修改，请刷新后重试")
         if (lotsHundredths != order.request.lotsHundredths) return refused("Rithmic 这里只能单独改价格，数量请在 R | Trader 修改")
-        val estimate = estimate(accountId, order.request.copy(entryPrice = price, stopLoss = null, takeProfit = null), modifying = true)
-        return estimate.copy(errors = estimate.errors.map { if (it == "Limit/Stop 入场方向或距离无效") CROSSED_ORDER_PRICE else it })
+        return estimate(accountId, order.request.copy(entryPrice = price, stopLoss = null, takeProfit = null),
+            modifying = true, restingOnly = true)
     }
 
-    private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false): OrderPreview = try {
+    private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false, restingOnly: Boolean = false): OrderPreview = try {
         require(!request.symbol.startsWith("@")) { "连续合约不能直接下单，请等待主力合约解析" }
         request.sourceSymbol?.let { source ->
             val route = continuousRoutes[source] ?: errorArgument("连续合约映射尚未加载")
@@ -1571,14 +1571,18 @@ class RithmicBroker(
         val tick = spec.instrument.tickSize
         val entry = if (request.kind == OrderKind.MARKET) if (request.side == Side.BUY) quote.ask else quote.bid else requireNotNull(request.entryPrice)
         require(entry > 0 && entry % tick == 0L) { "入场价不符合最小变动单位" }
-        if (request.kind != OrderKind.MARKET) {
-            val above = (request.side == Side.BUY) == (request.kind == OrderKind.STOP)
-            val reference = if (request.side == Side.BUY) quote.ask else quote.bid
-            require(if (above) entry >= reference + tick else entry <= reference - tick) { "Limit/Stop 入场方向或距离无效" }
+        val marketableLimit = request.isMarketableLimit(quote)
+        if (request.kind == OrderKind.STOP) {
+            require(if (request.side == Side.BUY) entry > quote.ask else entry < quote.bid) {
+                if (restingOnly) CROSSED_ORDER_PRICE else "突破入场方向或距离无效"
+            }
         }
+        // Standalone protection edits must not turn a resting exit into an immediate fill.
+        require(!restingOnly || !marketableLimit) { CROSSED_ORDER_PRICE }
         entryProtectionError(spec.instrument, request, quote)?.let { errorArgument(it) }
         if (!modifying && (request.stopLoss != null || request.takeProfit != null)) require(accountFlows[accountId]?.value?.positions?.none { it.symbol == request.symbol } != false) { "该合约已有净仓，不能再叠加括号保护" }
         val warnings = mutableListOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Rithmic / FCM 为准")
+        if (marketableLimit) warnings.add(MARKETABLE_LIMIT_WARNING)
         if (request.kind == OrderKind.MARKET && (request.stopLoss != null || request.takeProfit != null)) warnings.add("市价单的括号保护按实际成交价加减相同 tick 数生成，实际 SL/TP 价位可能与输入不同")
         // The rate is per fill, so one lot in and out pays it twice.
         val commission = spec.productCode?.let { productRms[accountId to it]?.commissionMicros }

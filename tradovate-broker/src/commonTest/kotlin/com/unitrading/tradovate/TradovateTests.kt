@@ -394,6 +394,34 @@ class TradovateTests {
         assertFalse(account.preview(request.copy(lotsHundredths = 1)).valid)
         assertFalse(account.preview(request.copy(stopLoss = 5_499_900_000)).valid)
     }
+    @Test fun marketableLimitsKeepTheUserPriceAndWireType() = runTest {
+        for ((side, opposite) in listOf(Side.BUY to 5_500_250_000L, Side.SELL to 5_500_000_000L)) {
+            val (broker, wire) = ready()
+            val account = broker.openSession("100")
+            val limit = opposite + if (side == Side.BUY) 500_000 else -500_000
+            val request = OrderRequest("MESZ6", side, OrderKind.LIMIT, 100, limit)
+            val atQuote = account.preview(request.copy(entryPrice = opposite))
+            assertTrue(atQuote.valid, atQuote.errors.toString())
+            assertContains(atQuote.warnings, MARKETABLE_LIMIT_WARNING)
+            assertFalse(account.placeOrder("wrong-stop", request.copy(kind = OrderKind.STOP, entryPrice = opposite)).accepted)
+            assertFalse(account.placeOrder("off-grid", request.copy(entryPrice = limit + 1)).accepted)
+
+            val preview = account.preview(request)
+            assertTrue(preview.valid, preview.errors.toString())
+            assertEquals(limit, preview.entryPrice)
+            assertContains(preview.warnings, MARKETABLE_LIMIT_WARNING)
+            val placed = account.placeOrder("crossing-limit", request)
+            assertTrue(placed.accepted, placed.message)
+            val sent = wire.requests.single { it.path.startsWith("order/") }
+            assertEquals("order/placeorder", sent.path)
+            val body = sent.body!!
+            assertEquals("Limit", body.str("orderType"))
+            assertEquals(if (side == Side.BUY) "Buy" else "Sell", body.str("action"))
+            assertEquals(limit, body.priceValue("price"))
+            assertNull(body["stopPrice"])
+        }
+    }
+
     @Test fun bracketOrderIsOneServerOsoRequestNotTwoIndependentOrders() = runTest {
         val (broker, wire) = ready()
         val account = broker.openSession("100")
@@ -494,6 +522,31 @@ class TradovateTests {
         assertTrue(broker.market.value.tradingReady)
         assertEquals(5_511_000_000, account.state.value.orders.single().request.entryPrice)
     }
+    @Test fun aRestingEntryCanBeRepricedToACrossingLimit() = runTest {
+        val (broker, wire) = ready()
+        wire.account.entity("order", obj("""{"id":710,"accountId":100,"contractId":200,"action":"Sell","ordStatus":"Working","timestamp":"$TEST_INSTANT"}"""))
+        wire.account.entity("orderVersion", obj("""{"id":1110,"orderId":710,"orderQty":1,"orderType":"Limit","price":5510}"""))
+        runCurrent()
+        val account = broker.openSession("100")
+        val order = account.state.value.orders.single()
+        val price = 5_499_500_000L
+        val preview = account.previewOrderModification(order.id, price)
+        assertTrue(preview.valid, preview.errors.toString())
+        assertEquals(price, preview.entryPrice)
+        assertContains(preview.warnings, MARKETABLE_LIMIT_WARNING)
+        val result = account.modifyOrder("crossing-modify", order.id, order.version, price)
+        assertTrue(result.accepted, result.message)
+        val sent = wire.requests.single { it.path == "order/modifyorder" }.body!!
+        assertEquals(710L, sent.long("orderId"))
+        assertEquals("Limit", sent.str("orderType"))
+        assertEquals(price, sent.priceValue("price"))
+
+        wire.account.entity("order", obj("""{"id":710,"ordStatus":"Filled"}"""))
+        runCurrent()
+        assertTrue(broker.market.value.tradingReady, broker.market.value.statusMessage)
+        assertTrue(account.state.value.orders.isEmpty())
+    }
+
     @Test fun protectiveOrdersRequireAnUnambiguousServerBracket() = runTest {
         val (broker, wire) = ready()
         wire.account.entity("position", obj("""{"id":900,"accountId":100,"contractId":200,"netPos":1,"netPrice":5500,"timestamp":"$TEST_INSTANT"}"""))

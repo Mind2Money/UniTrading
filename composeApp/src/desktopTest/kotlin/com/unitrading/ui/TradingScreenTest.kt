@@ -227,6 +227,21 @@ class TradingScreenTest {
     }
     @Test fun limitOrderDragWaitsForConfirmation() = pendingEntryDrag(OrderKind.LIMIT)
     @Test fun stopOrderDragWaitsForConfirmation() = pendingEntryDrag(OrderKind.STOP)
+
+    @Test fun pendingLimitEntryConfirmationWarnsWhenTheNewPriceIsMarketable() {
+        val quote = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = quote.ask - 500
+        runBlocking { assertTrue(session.placeOrder("ui-pending-marketable", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry)).accepted) }
+        val order = session.state.value.orders.single()
+        render()
+        dragLine(entry, 1)
+        compose.onNodeWithTag("pending-entry-warning").assertDoesNotExist()
+        compose.onNodeWithTag("pending-entry").performTextReplacement(instrument.formatPrice(quote.ask))
+        compose.onNodeWithTag("pending-entry-warning").assertTextEquals(MARKETABLE_LIMIT_WARNING)
+        compose.onNodeWithTag("confirm-pending-entry").assertIsEnabled()
+        assertEquals(order, session.state.value.orders.single(), "editing the price has not sent a modification")
+    }
+
     @Test fun draftStopLossDragShowsItsResultAndOnlyChangesTheTicket() {
         render()
         val before = session.state.value
