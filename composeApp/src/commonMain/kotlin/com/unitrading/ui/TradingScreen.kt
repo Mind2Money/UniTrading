@@ -1340,6 +1340,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 // A toolbar follows the last-selected chart in its own workspace.
                 @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
+                    var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
                     val target = workspaceSelected[workspace] ?: workspace
                     val slot = shownCharts[target]
                     val selectedInstrument = if (target == workingChart) instrument else
@@ -1370,7 +1371,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                             if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
                                 onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
+                            if (desktopStyle) TextButton(onClick = {
+                                val regular = chartPreferences.sessionForChart(target) == ChartSession.REGULAR
+                                val source = chartSessionSource(selectedInstrument.symbol, selectedFrame, regular)
+                                replayInput = ReplayInput(selectedInstrument, selectedFrame, regular, chartPreferences.chartTimeZone,
+                                    plugin.history(selectedInstrument.symbol, source), indicatorSettings.indicators.toList())
+                            }, modifier = Modifier.testTag("open-historical-replay")) { Text("回放") }
                         }, singleRow = singleLine)
+                    replayInput?.let { input -> HistoricalReplayDialog(input) { replayInput = null } }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace
