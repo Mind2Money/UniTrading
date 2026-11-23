@@ -47,6 +47,17 @@ class ThemePaletteTest {
         assertEquals(colorHex(light.Chart), colorHex(themePalette(ThemeSettings(ThemePreset.SYSTEM), systemDark = false).Chart))
     }
 
+    @Test fun candlePartsCanBeCustomizedIndependentlyAndOldColorsRemainCompatible() {
+        val old = themePalette(ThemeSettings(ThemePreset.LIGHT, mapOf("UP" to "#112233", "DOWN" to "#445566")))
+        assertEquals("#112233", colorHex(old.UpBorder))
+        assertEquals("#112233", colorHex(old.UpWick))
+        assertEquals("#445566", colorHex(old.DownWick))
+        val custom = themePalette(ThemeSettings(ThemePreset.LIGHT, mapOf("UP" to "#112233", "UP_BORDER" to "#ABCDEF", "UP_WICK" to "#123456")))
+        assertEquals("#112233", colorHex(custom.Up))
+        assertEquals("#ABCDEF", colorHex(custom.UpBorder))
+        assertEquals("#123456", colorHex(custom.UpWick))
+    }
+
     /** The accent the panels show is a tone of the key colour; the key colour itself stays what the user picked. */
     @Test fun accentToneIsDerivedFromTheKeyColour() {
         val palette = themePalette(ThemeSettings(ThemePreset.DARK, mapOf("ACCENT" to "#7F00FF")))

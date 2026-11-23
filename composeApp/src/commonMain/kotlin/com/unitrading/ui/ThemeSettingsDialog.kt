@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 
 fun TradingPalette.color(role: ThemeColor): Color = when (role) {
     ThemeColor.PAGE -> Shell; ThemeColor.SURFACE -> Surface; ThemeColor.CHART -> Chart; ThemeColor.GRID -> Grid
-    ThemeColor.UP -> Up; ThemeColor.DOWN -> Down; ThemeColor.PROFIT -> Profit; ThemeColor.LOSS -> Loss
+    ThemeColor.UP -> Up; ThemeColor.DOWN -> Down; ThemeColor.UP_BORDER -> UpBorder; ThemeColor.DOWN_BORDER -> DownBorder; ThemeColor.UP_WICK -> UpWick; ThemeColor.DOWN_WICK -> DownWick; ThemeColor.PROFIT -> Profit; ThemeColor.LOSS -> Loss
     ThemeColor.ACCENT -> Key; ThemeColor.TEXT -> Ink; ThemeColor.MUTED -> Muted; ThemeColor.STOP -> Stop; ThemeColor.TARGET -> Target
 }
 fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
@@ -36,7 +36,7 @@ fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toStri
 /** Colours by what they paint, so a role is found by where it shows up. */
 private val themeColorGroups = listOf(
     "界面" to listOf(ThemeColor.PAGE, ThemeColor.SURFACE, ThemeColor.TEXT, ThemeColor.MUTED, ThemeColor.ACCENT),
-    "图表" to listOf(ThemeColor.CHART, ThemeColor.GRID, ThemeColor.UP, ThemeColor.DOWN, ThemeColor.STOP, ThemeColor.TARGET),
+    "图表" to listOf(ThemeColor.CHART, ThemeColor.GRID, ThemeColor.UP, ThemeColor.DOWN, ThemeColor.UP_BORDER, ThemeColor.DOWN_BORDER, ThemeColor.UP_WICK, ThemeColor.DOWN_WICK, ThemeColor.STOP, ThemeColor.TARGET),
     "盈亏数字" to listOf(ThemeColor.PROFIT, ThemeColor.LOSS),
 )
 
@@ -72,8 +72,10 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
                             val x = size.width * i / 8
                             val y = size.height * (if (i % 2 == 0) .45f else .3f)
                             val ink = if (i % 2 == 0) colors.Down else colors.Up
-                            drawLine(ink, Offset(x, y - 8.dp.toPx()), Offset(x, y + 28.dp.toPx()), 1.5.dp.toPx())
+                            val up = i % 2 != 0
+                            drawLine(if (up) colors.UpWick else colors.DownWick, Offset(x, y - 8.dp.toPx()), Offset(x, y + 28.dp.toPx()), 1.5.dp.toPx())
                             drawRect(ink, Offset(x - body / 2, y), Size(body, 18.dp.toPx()))
+                            drawRect(if (up) colors.UpBorder else colors.DownBorder, Offset(x - body / 2, y), Size(body, 18.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

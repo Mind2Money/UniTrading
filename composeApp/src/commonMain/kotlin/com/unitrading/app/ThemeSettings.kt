@@ -18,7 +18,7 @@ enum class ThemePreset(val label: String) {
 
 enum class ThemeColor(val label: String) {
     PAGE("页面背景"), SURFACE("面板背景"), CHART("图表背景"), GRID("图表网格"),
-    UP("上涨 K 线"), DOWN("下跌 K 线"), PROFIT("盈利数字"), LOSS("亏损数字"),
+    UP("上涨主体"), DOWN("下跌主体"), UP_BORDER("上涨边框"), DOWN_BORDER("下跌边框"), UP_WICK("上涨影线"), DOWN_WICK("下跌影线"), PROFIT("盈利数字"), LOSS("亏损数字"),
     ACCENT("主题强调色"), TEXT("主要文字"), MUTED("次要文字"), STOP("止损线"), TARGET("止盈线"),
 }
 

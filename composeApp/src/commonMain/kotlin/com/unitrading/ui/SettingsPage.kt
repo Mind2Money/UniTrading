@@ -54,6 +54,7 @@ internal fun SettingsPage(
     onConnectRithmic: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
     updates: AppUpdates? = null,
+    showOrderLayout: Boolean = true,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
@@ -115,7 +116,7 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
-                SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
+                if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
