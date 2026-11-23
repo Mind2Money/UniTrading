@@ -6,6 +6,25 @@ import kotlin.test.*
 import kotlin.time.Instant
 
 class ChartSessionTest {
+    @Test fun priceSessionFollowsChicagoTimeAndWeekends() {
+        fun active(value: String) = isRegularChartTime(Instant.parse(value).toEpochMilliseconds())
+        assertFalse(active("2026-01-15T14:29:59Z"))
+        assertTrue(active("2026-01-15T14:30:00Z"))
+        assertFalse(active("2026-01-15T21:15:00Z"))
+        assertTrue(active("2026-07-15T13:30:00Z"))
+        assertFalse(active("2026-07-18T13:30:00Z"))
+    }
+    @Test fun offsetsUseTheSuppliedNetworkTimestamp() {
+        val winter = Instant.parse("2026-01-15T12:00:00Z").toEpochMilliseconds()
+        val summer = Instant.parse("2026-07-15T12:00:00Z").toEpochMilliseconds()
+        assertEquals("(UTC-5) 纽约", com.unitrading.app.ChartTimeZone.NEW_YORK.labelAt(winter))
+        assertEquals("(UTC-4) 纽约", com.unitrading.app.ChartTimeZone.NEW_YORK.labelAt(summer))
+        assertEquals("(UTC-6) 芝加哥", com.unitrading.app.ChartTimeZone.CHICAGO.labelAt(winter))
+        assertEquals("(UTC-5) 芝加哥", com.unitrading.app.ChartTimeZone.CHICAGO.labelAt(summer))
+        assertEquals("(UTC+0) 伦敦", com.unitrading.app.ChartTimeZone.LONDON.labelAt(winter))
+        assertEquals("(UTC+1) 伦敦", com.unitrading.app.ChartTimeZone.LONDON.labelAt(summer))
+        assertEquals("纽约（等待行情时间）", com.unitrading.app.ChartTimeZone.NEW_YORK.labelAt(null))
+    }
     private fun candle(time: String, open: Long = 10, high: Long = 12, low: Long = 9, close: Long = 11, volume: Long? = 2) =
         Candle(Instant.parse(time).toEpochMilliseconds(), open, high, low, close, volume)
 

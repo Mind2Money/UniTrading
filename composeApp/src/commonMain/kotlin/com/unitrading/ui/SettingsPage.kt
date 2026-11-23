@@ -60,6 +60,7 @@ internal fun SettingsPage(
     val scheme = MaterialTheme.colorScheme
     val theme by runtime.theme.settings.collectAsState()
     val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
+    val marketTime = if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null
     val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
     val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
     val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
@@ -122,7 +123,7 @@ internal fun SettingsPage(
                     { chooseOrderLayout = true }, enabled = !busy)
                 SettingsRow("图表交易时段", chartPreferences.chartSession.label, AppIcons.History, "settings-chart-session",
                     { chooseChartSession = true }, navigates = true)
-                SettingsRow("图表时区", chartPreferences.chartTimeZone.label, AppIcons.History, "settings-chart-timezone",
+                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.History, "settings-chart-timezone",
                     { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
@@ -237,7 +238,7 @@ internal fun SettingsPage(
                     onClick = { preferenceScope.launch { if (runtime.chartPreferences.setChartTimeZone(zone)) chooseChartTimeZone = false } }
                 ).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(zone == chartPreferences.chartTimeZone, onClick = null)
-                    Spacer(Modifier.width(12.dp)); Text(zone.label)
+                    Spacer(Modifier.width(12.dp)); Text(zone.labelAt(marketTime))
                 }
             }
         } },

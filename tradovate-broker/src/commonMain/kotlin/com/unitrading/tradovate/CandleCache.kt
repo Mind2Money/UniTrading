@@ -20,8 +20,8 @@ internal fun chartBackfillRange(anchor: Long, closest: Long) = buildJsonObject {
     put("closestTimestamp", Instant.fromEpochMilliseconds(closest).toString())
 }
 
-internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>): List<Candle> =
-    (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(CHART_BARS)
+internal fun mergeCandles(previous: List<Candle>, incoming: List<Candle>, maxBars: Int = CHART_BARS): List<Candle> =
+    (previous + incoming).associateBy(Candle::timeMs).values.sortedBy(Candle::timeMs).takeLast(maxBars)
 
 /** How far a fresh chart reads back: four chart-widths of wall time cover weekends and holidays. */
 internal fun chartHistoryFloor(timeframe: Timeframe, now: Long): Long = maxOf(0, now - timeframe.millis * CHART_BARS * 4)
@@ -50,7 +50,8 @@ internal const val PRELOAD_EMPTY_RETRY_MS = 60 * 60_000L
  * a month of intraday bars, so a fresh chart pages backward to [freshFloor] as well. It stays uncached until it
  * ends, because a cached series only ever grows at its end and a shallow one would stay shallow.
  */
-internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null) {
+internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null, val extended: Boolean = false) {
+    private val maxBars = if (extended) Int.MAX_VALUE else CHART_BARS
     val anchor = cached.lastOrNull()?.timeMs
     val floor = anchor ?: freshFloor
     var candles = cached
@@ -81,16 +82,16 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null) {
         }
         if (historical) {
             if (countForBackfill) {
-                history = mergeCandles(history, incoming)
+                history = mergeCandles(history, incoming, maxBars)
                 incoming.minOfOrNull(Candle::timeMs)?.let { oldest ->
                     pageOldest = minOf(pageOldest ?: oldest, oldest)
                 }
             }
-        } else realtime = mergeCandles(realtime, incoming)
-        candles = mergeCandles(mergeCandles(candles, incoming), realtime)
+        } else realtime = mergeCandles(realtime, incoming, maxBars)
+        candles = mergeCandles(mergeCandles(candles, incoming, maxBars), realtime, maxBars)
         if (!historical || !endOfHistory || !countForBackfill || failed) return
 
-        if (floor == null || history.firstOrNull()?.let { it.timeMs <= floor } == true || history.size >= CHART_BARS) {
+        if (floor == null || history.firstOrNull()?.let { it.timeMs <= floor } == true || (!extended && history.size >= CHART_BARS)) {
             complete = true
             nextPageBefore = null
         } else {
@@ -98,7 +99,7 @@ internal class ChartLoad(cached: List<Candle>, freshFloor: Long? = null) {
             val oldest = pageOldest
             val previous = previousPageOldest
             val advanced = oldest != null && (previous == null || oldest < previous)
-            if (advanced && (anchor != null || ++freshPages < MAX_FRESH_HISTORY_PAGES)) {
+            if (advanced && (anchor != null || ++freshPages < if (extended) 240 else MAX_FRESH_HISTORY_PAGES)) {
                 nextPageBefore = oldest
                 previousPageOldest = oldest
             } else {

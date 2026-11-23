@@ -12,6 +12,20 @@ private const val CACHE_TIME = 1_798_589_000_000L
 private const val CACHE_STEP = 5 * 60_000L
 
 class CandleCacheTest {
+    @Test fun extendedHistoryKeepsPagingBeyondNormalChartLimit() {
+        val load = ChartLoad(emptyList(), 0L, extended = true)
+        val first = List(CHART_BARS) { i -> candle(CACHE_TIME - i * CACHE_STEP) }
+        load.accept(first, historical = true, endOfHistory = true, validPacket = true)
+        assertFalse(load.complete)
+        assertNotNull(load.nextPageBefore)
+        load.beginPage()
+        load.accept(listOf(candle(CACHE_TIME - CHART_BARS * CACHE_STEP)), historical = true, endOfHistory = true, validPacket = true)
+        assertEquals(CHART_BARS + 1, load.candles.size)
+        assertFalse(load.complete)
+        load.beginPage()
+        load.accept(emptyList(), historical = true, endOfHistory = true, validPacket = true)
+        assertTrue(load.complete)
+    }
     @Test fun liveSubscriptionSnapshotDoesNotCountAsHistoricalBackfill() {
         val seed = Candle(1, 100, 110, 90, 100)
         val load = ChartLoad(listOf(seed))

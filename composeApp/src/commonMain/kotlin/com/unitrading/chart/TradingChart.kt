@@ -194,9 +194,21 @@ fun TradingChart(
     val plotBottom = paneLayout.firstOrNull()?.top ?: bottom
     val currentPlotBottom by rememberUpdatedState(plotBottom)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
+    val remote = environment != BrokerEnvironment.LOCAL_DEMO
+    var wallClockMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(remote, candles.isEmpty()) {
+        if (remote && candles.isNotEmpty()) while (true) {
+            wallClockMs = Clock.System.now().toEpochMilliseconds()
+            delay(1_000)
+        }
+    }
+    val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
+    val chartQuote = if (chrome.regularSession && (nowMs == null || !isRegularChartTime(nowMs))) {
+        candles.lastOrNull()?.close?.let { close -> quote?.copy(bid = close, ask = close) }
+    } else quote
     /** Prices the automatic axis keeps in view: the quote, the position and its protection, orders and the draft. */
     val tradingPrices = buildList {
-        quote?.let { add(it.bid); add(it.ask) }
+        chartQuote?.let { add(it.bid); add(it.ask) }
         if (showPositions) selectedPosition?.let { p -> add(p.entryPrice); p.stopLoss?.let(::add); p.takeProfit?.let(::add) }
         if (showOrders) orders.forEach { order ->
             order.request.entryPrice?.let(::add)
@@ -222,7 +234,7 @@ fun TradingChart(
     }
     val fitted = PriceScale.from(visible, extras, top, plotBottom)
     // While the newest bar is on screen the automatic axis keeps the current price in the middle of the plot.
-    val livePrice = quote?.bid?.takeIf { it > 0 } ?: candles.lastOrNull()?.close
+    val livePrice = chartQuote?.bid?.takeIf { it > 0 } ?: candles.lastOrNull()?.close
     val autoMiddle = livePrice?.takeIf { !axis.chartOnly && !axis.fitAllBars && candles.isNotEmpty() && range.last == candles.lastIndex }
         ?.let { PriceScale.followedCenter(autoCenter[0].takeUnless { c -> c.isNaN() }, it, fitted.high - fitted.low) }
     SideEffect { autoCenter[0] = autoMiddle ?: Double.NaN }
@@ -374,16 +386,6 @@ fun TradingChart(
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
     var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
-    val remote = environment != BrokerEnvironment.LOCAL_DEMO
-    var wallClockMs by remember { mutableStateOf(0L) }
-    LaunchedEffect(remote, candles.isEmpty()) {
-        if (remote && candles.isNotEmpty()) while (true) {
-            wallClockMs = Clock.System.now().toEpochMilliseconds()
-            delay(1_000)
-        }
-    }
-    // Local demo bars advance on the simulated clock carried by their quotes; server bars count down on the wall clock.
-    val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
     val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val layers = listOf(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
@@ -755,7 +757,7 @@ fun TradingChart(
                     }
                     drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
                     drawingLayer?.let { drawLayerDrawings(it, textMeasurer, colors.Chart) }
-                    quote?.let {
+                    chartQuote?.let {
                         val y = scale.y(it.bid)
                         if (axis.showPriceLine) drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
                         if (axis.showBidAsk) drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
@@ -1101,6 +1103,7 @@ class ChartChrome(
     val showNavigation: Boolean = true,
     val showWatermark: Boolean = false,
     val sessionNotice: String? = null,
+    val regularSession: Boolean = false,
     val chartTimeZone: com.unitrading.app.ChartTimeZone = com.unitrading.app.ChartTimeZone.SHANGHAI,
     val onOpenSettings: (() -> Unit)? = null,
 )

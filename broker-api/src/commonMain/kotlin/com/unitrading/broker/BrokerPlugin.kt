@@ -26,6 +26,8 @@ interface BrokerPlugin {
      * [history] already has.
      */
     fun watchAll(series: List<Pair<String, Timeframe>>) { series.firstOrNull()?.let { watch(it.first, it.second) } }
+    /** Request deeper broker history for the specified series when supported. */
+    fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
     /**
      * Series to read whole and cache in the background, most wanted first; each call replaces the list. A chart
      * that opens one of them then only fetches the bars since. Never changes the chart or sends trade commands.

@@ -10,6 +10,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.offsetAt
+import kotlin.time.Instant
 
 /**
  * Chart state saved per device: starred intervals shown inline on the chart toolbar, user-added custom intervals, and
@@ -28,10 +31,20 @@ data class SavedChart(val id: String, val symbols: Map<String, String> = emptyMa
 enum class ChartSession(val label: String) { ELECTRONIC("电子交易时间"), REGULAR("常规交易时间") }
 
 @Serializable
-enum class ChartTimeZone(val label: String, val zoneId: String) {
-    SHANGHAI("(UTC+8) 上海", "Asia/Shanghai"), UTC("(UTC+0) UTC", "UTC"),
-    NEW_YORK("纽约（自动夏令时）", "America/New_York"), CHICAGO("芝加哥（自动夏令时）", "America/Chicago"),
-    LONDON("伦敦（自动夏令时）", "Europe/London"), TOKYO("(UTC+9) 东京", "Asia/Tokyo")
+enum class ChartTimeZone(val region: String, val zoneId: String) {
+    SHANGHAI("上海", "Asia/Shanghai"), UTC("UTC", "UTC"),
+    NEW_YORK("纽约", "America/New_York"), CHICAGO("芝加哥", "America/Chicago"),
+    LONDON("伦敦", "Europe/London"), TOKYO("东京", "Asia/Tokyo");
+
+    val label: String get() = labelAt(null)
+
+    /** The offset is derived from the broker's quote timestamp; never infer it from the local clock. */
+    fun labelAt(networkTimeMs: Long?): String {
+        val fixed = when (this) { SHANGHAI -> 8; UTC -> 0; TOKYO -> 9; else -> null }
+        val offset = if (networkTimeMs != null && networkTimeMs > 0)
+            TimeZone.of(zoneId).offsetAt(Instant.fromEpochMilliseconds(networkTimeMs)).totalSeconds / 3600 else fixed
+        return if (offset == null) "$region（等待行情时间）" else "(UTC${if (offset >= 0) "+" else ""}$offset) $region"
+    }
 }
 
 @Serializable

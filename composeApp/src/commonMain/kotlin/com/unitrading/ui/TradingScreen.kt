@@ -474,7 +474,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
         val regularSession = chartPreferences.chartSession == ChartSession.REGULAR
         val liveSeries = (listOf(symbol to timeframe) + parkedSeries).map { (s, frame) -> s to chartSessionSource(s, frame, regularSession) }.distinct()
-        LaunchedEffect(plugin, executionSymbol, liveSeries) { plugin.watchAll(liveSeries) }
+        val extendedSeries = if (regularSession) liveSeries.filter { it.second == Timeframe.M1 }.toSet() else emptySet()
+        LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
         val mainDomActive = focusedDetached == null && (showOrderFlow || showDom)
@@ -1266,6 +1267,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
                             chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
+                            regularSession = regularSession && shownTimeframe.seconds < Timeframe.DAY && sessionResult.second == null,
                             onOpenSettings = { showActivity = false; showSettings = true },
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)

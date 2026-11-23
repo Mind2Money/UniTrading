@@ -10,6 +10,14 @@ import kotlin.time.Instant
 
 private val supportedRegularSymbols = Regex("^@?(MES|MNQ|MCL|MGC|ES|NQ|CL|GC)([FGHJKMNQUVXZ][0-9]{1,4})?$")
 
+/** The chart template's local session boundary, independent of the selected display time zone. */
+internal fun isRegularChartTime(timeMs: Long): Boolean {
+    val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(TimeZone.of("America/Chicago"))
+    val day = local.date.dayOfWeek
+    val minute = local.hour * 60 + local.minute
+    return day.name != "SATURDAY" && day.name != "SUNDAY" && minute in 510 until 915
+}
+
 /** Regular intraday charts need one-minute source bars, because a broker's hourly ETH bars straddle the RTH boundary. */
 internal fun chartSessionSource(symbol: String, timeframe: Timeframe, regular: Boolean): Timeframe =
     if (regular && supportedRegularSymbols.matches(symbol.uppercase()) && timeframe.seconds < Timeframe.DAY &&

@@ -21,7 +21,7 @@ jobs:
       - run: sdkmanager --install "platforms;android-37.0" "platforms;android-37.2"
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - name: Run focused tests
-        run: ./gradlew.bat :composeApp:desktopTest --tests "*ChartSessionTest*" --tests "*CrosshairTest*" --tests "*ThemePaletteTest*" --tests "*ChartPreferencesTest*" --no-daemon
+        run: ./gradlew.bat :composeApp:desktopTest --tests "*ChartSessionTest*" --tests "*CrosshairTest*" --tests "*ThemePaletteTest*" --tests "*ChartPreferencesTest*" :tradovate-broker:desktopTest --tests "*CandleCacheTest*" --no-daemon
       - name: Build Windows application
         run: ./gradlew.bat :composeApp:createDistributable --no-daemon
       - name: Archive application

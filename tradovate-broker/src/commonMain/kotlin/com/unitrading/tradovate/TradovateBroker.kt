@@ -959,16 +959,21 @@ class TradovateBroker(
     }
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
-    override fun watchAll(series: List<Pair<String, Timeframe>>) {
+    private var extendedHistory = emptySet<Pair<String, Timeframe>>()
+    override fun watchAll(series: List<Pair<String, Timeframe>>) = watchAllWithExtendedHistory(series, emptySet())
+
+    override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) {
         if (stopped) return
         val next = series.distinct()
         val previous = watched
+        val changedDepth = (extendedHistory - extended) + (extended - extendedHistory)
+        extendedHistory = extended.intersect(next.toSet())
         if (previous.firstOrNull()?.first != next.firstOrNull()?.first) { continuousJob?.cancel(); continuousJob = null }
         watched = next
         (previous - next.toSet()).forEach(::stopWatch)
         // The chart the user works on is asked for again on every call, as before; the others only when they are new.
         next.forEachIndexed { index, one ->
-            if (index == 0 || one !in previous) startWatch(one, forceRefresh = index == 0 && previous.isNotEmpty() && previous.first() != one)
+            if (index == 0 || one !in previous || one in changedDepth) startWatch(one, forceRefresh = one in changedDepth || index == 0 && previous.isNotEmpty() && previous.first() != one)
         }
     }
 
@@ -1005,7 +1010,8 @@ class TradovateBroker(
                     return@watchLock
                 }
                 val cacheSeries = chartCacheKey(series, source)
-                val cached = lock.withLock { cachedHistory[cacheSeries] } ?: candleCache.read(cacheSeries, now()).also { bars ->
+                val deep = series in extendedHistory
+                val cached = if (deep) emptyList() else lock.withLock { cachedHistory[cacheSeries] } ?: candleCache.read(cacheSeries, now()).also { bars ->
                     lock.withLock { cachedHistory[cacheSeries] = bars }
                 }
                 lock.withLock {
@@ -1033,7 +1039,7 @@ class TradovateBroker(
                         // This series' own stale charts, and those of series that no chart shows any more.
                         cancelCharts(socket, keep = watched.filter { it != series })
                         if (series !in watched || stopped || !marketReady || (symbol == "@MCL" && verifiedMclSource() != source)) return@withContext
-                        val load = ChartLoad(cached, chartHistoryFloor(timeframe, now()))
+                        val load = ChartLoad(cached, if (deep) 0L else chartHistoryFloor(timeframe, now()), extended = deep)
                         requestChart(socket, ChartPage(series, load, now(), liveOnly = cached.isNotEmpty(), historyOnly = false, sourceSymbol = source), chartTimeRange(cached))
                         if (cached.isNotEmpty() && series in watched && !stopped) {
                             lock.withLock { load.beginPage() }
@@ -1521,7 +1527,7 @@ class TradovateBroker(
         val joining = page.load.anchor != null && !page.load.complete && !page.load.failed && now() - page.startedAt < CHART_JOIN_HOLD_MS
         // The server replays a page newest day first; shown packet by packet, a chart would fill from right to left.
         if (!joining && (chart.str("s") != "db" || chart.bool("eoh") == true)) history = history + (key to bars)
-        if (page.load.complete && bars.isNotEmpty()) {
+        if (page.load.complete && bars.isNotEmpty() && !page.load.extended) {
             val cacheKey = chartCacheKey(key, page.sourceSymbol)
             cachedHistory[cacheKey] = bars
             dirtyHistory[cacheKey] = bars
