@@ -1256,7 +1256,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
-                            onOpenSettings = { onActive { showActivity = false; showSettings = true } },
+                            onOpenSettings = { showActivity = false; showSettings = true },
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
