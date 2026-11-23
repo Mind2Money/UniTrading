@@ -898,9 +898,16 @@ fun TradingChart(
                                         else (current - instrument.lotStepHundredths).coerceAtLeast(instrument.minLotsHundredths)
                                     update(instrument.formatQuantity(next))
                                 }
-                                Column(Modifier.width(220.dp).padding(12.dp).onPointerEvent(PointerEventType.Scroll) { event ->
-                                    val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
-                                    if (delta != 0f) { step(delta < 0f); event.changes.forEach { it.consume() } }
+                                Column(Modifier.width(220.dp).padding(12.dp).pointerInput(instrument) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (event.type == PointerEventType.Scroll) {
+                                                val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                                if (delta != 0f) { step(delta < 0f); event.changes.forEach { it.consume() } }
+                                            }
+                                        }
+                                    }
                                 }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                         Text("订单大小", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
