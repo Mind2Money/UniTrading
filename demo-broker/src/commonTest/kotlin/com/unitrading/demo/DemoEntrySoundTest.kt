@@ -34,6 +34,35 @@ class DemoEntrySoundTest {
         }
     }
 
+    @Test fun marketableLimitCanHitItsStopLossAtTheCurrentQuoteWithoutAnotherTick() = runTest {
+        val broker = DemoBroker(DemoConfigs.all.first(), seedTrades = false)
+        val spec = broker.instruments.first()
+        val session = broker.openSession(broker.accounts.first().id)
+        val quote = broker.market.value.quotes.getValue(spec.symbol)
+        val distance = spec.minStopTicks * spec.tickSize
+        val limit = quote.ask + distance + spec.tickSize
+        val request = OrderRequest(spec.symbol, Side.BUY, OrderKind.LIMIT, spec.minLotsHundredths,
+            limit, stopLoss = quote.ask + spec.tickSize)
+        val events = mutableListOf<TradeFill>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { broker.tradeFills.collect { events.add(it) } }
+
+        val result = session.placeOrder("cross", request)
+        assertTrue(result.accepted, result.message)
+        val filled = session.state.value
+        assertTrue(filled.orders.isEmpty())
+        assertTrue(filled.positions.isEmpty())
+        val trade = filled.trades.single()
+        assertEquals("止损", trade.reason)
+        assertEquals(quote.ask, trade.entryPrice)
+        assertEquals(quote.bid, trade.exitPrice)
+        assertEquals(quote.timeMs, trade.openedAtMs)
+        assertEquals(trade.openedAtMs, trade.closedAtMs)
+        assertEquals(listOf(OrderRole.ENTRY, OrderRole.STOP_LOSS), events.map { it.role })
+        assertEquals(result, session.placeOrder("cross", request))
+        assertEquals(2, events.size)
+        assertEquals(filled, session.state.value)
+    }
+
     @Test fun entryAndProtectionInSameTransactionAreDistinctEvents() = runTest {
         val broker = DemoBroker(DemoConfigs.all.first(), seedTrades = false)
         val spec = broker.instruments.first()

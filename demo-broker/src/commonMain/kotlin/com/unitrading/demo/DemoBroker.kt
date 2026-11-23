@@ -86,7 +86,7 @@ class DemoBroker(
             override fun previewOrderModification(orderId: String, entryPrice: Long) =
                 previewPending(accountId, orderId) { it.copy(entryPrice = entryPrice) }
             override fun previewOrderProtection(orderId: String, stopLoss: Long?, takeProfit: Long?) =
-                previewPending(accountId, orderId) { it.copy(stopLoss = stopLoss, takeProfit = takeProfit) }
+                previewPending(accountId, orderId, fillMarketableLimit = false) { it.copy(stopLoss = stopLoss, takeProfit = takeProfit) }
             override suspend fun modifyOrder(requestId: String, orderId: String, expectedVersion: Long, entryPrice: Long) =
                 submit(accountId, requestId, Command(CommandKind.MODIFY_ORDER, entityId = orderId,
                     expectedVersion = expectedVersion, entryPrice = entryPrice))
@@ -106,24 +106,30 @@ class DemoBroker(
         }
     }
 
-    private fun estimate(request: OrderRequest, account: AccountSnapshot, market: MarketSnapshot): OrderPreview = try {
-        val terms = terms(request, account, market)
+    private fun estimate(
+        request: OrderRequest, account: AccountSnapshot, market: MarketSnapshot, fillMarketableLimit: Boolean = true,
+    ): OrderPreview = try {
+        val (terms, fill) = submissionTerms(request, account, market, fillMarketableLimit)
         val fees = checkedMultiply(terms.fee, 2)
         OrderPreview(terms.entry, terms.margin, fees,
             request.stopLoss?.let { checkedAdd(grossPnl(terms.instrument, request.side, request.lotsHundredths, terms.entry, it), -fees) },
             request.takeProfit?.let { checkedAdd(grossPnl(terms.instrument, request.side, request.lotsHundredths, terms.entry, it), -fees) },
-            quoteRevision = market.revision)
+            quoteRevision = market.revision,
+            warnings = if (fill != null) listOf(MARKETABLE_LIMIT_WARNING) else emptyList())
     } catch (error: IllegalArgumentException) {
         OrderPreview(null, errors = listOf(error.message ?: "无效订单"), quoteRevision = market.revision)
     }
 
     /** Estimates a pending order as [change] would leave it, without counting the order itself against the account. */
-    private fun previewPending(accountId: String, orderId: String, change: (OrderRequest) -> OrderRequest): OrderPreview {
+    private fun previewPending(
+        accountId: String, orderId: String, fillMarketableLimit: Boolean = true, change: (OrderRequest) -> OrderRequest,
+    ): OrderPreview {
         val saved = committed.value!!
         val state = saved.accounts.first { it.state.accountId == accountId }.state
         val order = state.orders.firstOrNull { it.id == orderId }
             ?: return OrderPreview(null, errors = listOf("挂单已成交、已撤销或不属于当前账户"))
-        return estimate(change(order.request), state.copy(orders = state.orders.filterNot { it.id == orderId }), saved.market)
+        return estimate(change(order.request), state.copy(orders = state.orders.filterNot { it.id == orderId }),
+            saved.market, fillMarketableLimit)
     }
 
     override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
@@ -240,10 +246,18 @@ class DemoBroker(
                     val updated = if (entry) order.request.copy(entryPrice = requireNotNull(command.entryPrice))
                         else order.request.copy(stopLoss = command.stopLoss, takeProfit = command.takeProfit)
                     val available = accountSnapshot(working).copy(orders = working.orders.filterNot { it.id == order.id })
-                    terms(updated, available, currentMarket())
-                    working.orders[index] = order.copy(request = updated, version = checkedAdd(order.version, 1))
+                    val (_, fill, quote) = submissionTerms(updated, available, currentMarket(), fillMarketableLimit = entry)
+                    val amended = order.copy(request = updated, version = checkedAdd(order.version, 1))
                     event(working, "${if (entry) "修改挂单入场价" else "修改挂单止损/止盈"} ${order.id}")
-                    TradeResult(true, if (entry) "挂单入场价已更新" else "挂单止损/止盈已更新", order.id)
+                    if (fill != null) {
+                        working.orders.removeAt(index)
+                        val position = fillOrder(working, amended, fill)
+                        protect(working, position, quote)
+                        TradeResult(true, "挂单入场价已更新并成交", order.id)
+                    } else {
+                        working.orders[index] = amended
+                        TradeResult(true, if (entry) "挂单入场价已更新" else "挂单止损/止盈已更新", order.id)
+                    }
                 }
                 CommandKind.PROTECT -> {
                     val index = working.positions.indexOfFirst { it.id == command.entityId }
@@ -277,17 +291,31 @@ class DemoBroker(
     }
 
     private fun place(ledger: Ledger, request: OrderRequest): TradeResult {
-        val terms = terms(request, accountSnapshot(ledger), currentMarket())
-        return if (request.kind == OrderKind.MARKET) {
+        val (terms, fill, quote) = submissionTerms(request, accountSnapshot(ledger), currentMarket())
+        if (request.kind == OrderKind.MARKET) {
             val position = open(ledger, request, terms)
-            TradeResult(true, "市价单已成交", position.id)
-        } else {
-            require(ledger.orders.size < MAX_ACTIVE) { "挂单数量达到演示上限" }
-            val order = PendingOrder(id("order"), request, now)
-            ledger.orders.add(order)
-            event(ledger, "挂单 ${order.id} ${request.symbol} ${request.kind}（不预占保证金）")
-            TradeResult(true, "挂单已提交，触发时重新校验保证金", order.id)
+            return TradeResult(true, "市价单已成交", position.id)
         }
+        val order = PendingOrder(id("order"), request, now)
+        if (fill != null) {
+            val position = fillOrder(ledger, order, fill)
+            protect(ledger, position, quote)
+            return TradeResult(true, "限价单已成交", order.id)
+        }
+        ledger.orders.add(order)
+        event(ledger, "挂单 ${order.id} ${request.symbol} ${request.kind}（不预占保证金）")
+        return TradeResult(true, "挂单已提交，触发时重新校验保证金", order.id)
+    }
+
+    private fun submissionTerms(
+        request: OrderRequest, account: AccountSnapshot, market: MarketSnapshot, fillMarketableLimit: Boolean = true,
+    ): SubmissionTerms {
+        // Validate and estimate the requested limit first; the actual fill has its own price and funding check.
+        val quoted = terms(request, account, market)
+        val quote = market.quotes.getValue(request.symbol)
+        val fill = if (fillMarketableLimit && request.isMarketableLimit(quote))
+            terms(request, account, market, filling = true) else null
+        return SubmissionTerms(quoted, fill, quote)
     }
 
     private fun terms(request: OrderRequest, account: AccountSnapshot, market: MarketSnapshot, filling: Boolean = false): Terms {
@@ -295,19 +323,17 @@ class DemoBroker(
         validateVolume(instrument, request.lotsHundredths)
         val quote = freshQuote(request.symbol, market)
         val executable = entryPrice(request.side, quote)
-        val distance = checkedMultiply(instrument.minStopTicks, instrument.tickSize)
         val pending = request.kind != OrderKind.MARKET
         if (!pending) require(request.entryPrice == null) { "市价单不可指定入场价" }
         val requested = if (pending) request.entryPrice ?: throw IllegalArgumentException("挂单必须指定入场价") else executable
         validatePrice(instrument, requested)
         if (pending && !filling) {
-            val valid = when {
-                request.side == Side.BUY && request.kind == OrderKind.LIMIT -> requested <= checkedAdd(quote.ask, -distance)
-                request.side == Side.SELL && request.kind == OrderKind.LIMIT -> requested >= checkedAdd(quote.bid, distance)
-                request.side == Side.BUY -> requested >= checkedAdd(quote.ask, distance)
-                else -> requested <= checkedAdd(quote.bid, -distance)
+            if (request.kind == OrderKind.STOP) {
+                val distance = checkedMultiply(instrument.minStopTicks, instrument.tickSize)
+                val valid = if (request.side == Side.BUY) requested >= checkedAdd(executable, distance)
+                    else requested <= checkedAdd(executable, -distance)
+                require(valid) { "挂单方向或最小距离无效" }
             }
-            require(valid) { "挂单方向或最小距离无效" }
             require(account.orders.size < MAX_ACTIVE) { "挂单数量达到演示上限" }
         }
         val entry = if (filling) executable else requested
@@ -387,6 +413,12 @@ class DemoBroker(
         return trade
     }
 
+    private fun fillOrder(ledger: Ledger, order: PendingOrder, terms: Terms): Position {
+        val position = open(ledger, order.request, terms)
+        event(ledger, "挂单 ${order.id} 触发为 ${position.id}")
+        return position
+    }
+
     private fun match(updated: Set<String>) {
         if (!connected) return
         for (ledger in ledgers.values) {
@@ -396,19 +428,17 @@ class DemoBroker(
                 if (request.symbol !in updated) continue
                 val quote = quotes.getValue(request.symbol)
                 if (!fresh(quote)) continue
-                val price = request.entryPrice!!
-                val triggered = when {
-                    request.side == Side.BUY && request.kind == OrderKind.LIMIT -> quote.ask <= price
-                    request.side == Side.SELL && request.kind == OrderKind.LIMIT -> quote.bid >= price
-                    request.side == Side.BUY -> quote.ask >= price
-                    else -> quote.bid <= price
+                val triggered = when (request.kind) {
+                    OrderKind.LIMIT -> request.isMarketableLimit(quote)
+                    OrderKind.STOP -> if (request.side == Side.BUY) quote.ask >= request.entryPrice!!
+                        else quote.bid <= request.entryPrice!!
+                    OrderKind.MARKET -> false
                 }
                 if (!triggered) continue
                 ledger.orders.remove(order)
                 try {
                     val terms = terms(request, accountSnapshot(ledger), currentMarket(), filling = true)
-                    val position = open(ledger, request, terms)
-                    event(ledger, "挂单 ${order.id} 触发为 ${position.id}")
+                    fillOrder(ledger, order, terms)
                 } catch (e: IllegalArgumentException) {
                     event(ledger, "挂单 ${order.id} 触发被拒绝：${e.message}")
                 }
@@ -422,12 +452,15 @@ class DemoBroker(
         for (position in ledger.positions.toList()) {
             if (position.symbol !in updated) continue
             val quote = quotes.getValue(position.symbol)
-            if (!fresh(quote)) continue
-            val exit = closePrice(position.side, quote)
-            val stop = position.stopLoss?.let { if (position.side == Side.BUY) exit <= it else exit >= it } == true
-            val target = position.takeProfit?.let { if (position.side == Side.BUY) exit >= it else exit <= it } == true
-            if (stop || target) close(ledger, position, exit, if (stop) "止损" else "止盈")
+            if (fresh(quote)) protect(ledger, position, quote)
         }
+    }
+
+    private fun protect(ledger: Ledger, position: Position, quote: Quote) {
+        val exit = closePrice(position.side, quote)
+        val stop = position.stopLoss?.let { if (position.side == Side.BUY) exit <= it else exit >= it } == true
+        val target = position.takeProfit?.let { if (position.side == Side.BUY) exit >= it else exit <= it } == true
+        if (stop || target) close(ledger, position, exit, if (stop) "止损" else "止盈")
     }
 
     private fun stopOut(ledger: Ledger) {
@@ -779,6 +812,7 @@ private val SNAPSHOT_JSON = Json { encodeDefaults = true; ignoreUnknownKeys = fa
 private fun entryPrice(side: Side, quote: Quote) = if (side == Side.BUY) quote.ask else quote.bid
 private fun closePrice(side: Side, quote: Quote) = if (side == Side.BUY) quote.bid else quote.ask
 private data class Terms(val instrument: Instrument, val entry: Long, val margin: Long, val fee: Long)
+private data class SubmissionTerms(val quoted: Terms, val fill: Terms?, val quote: Quote)
 
 @Serializable
 private enum class CommandKind { PLACE, CLOSE, CANCEL, PROTECT, MODIFY_ORDER, PROTECT_ORDER }

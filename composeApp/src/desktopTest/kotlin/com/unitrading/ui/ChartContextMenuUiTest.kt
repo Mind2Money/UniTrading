@@ -22,7 +22,7 @@ import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
 
-/** A right click on the empty plot opens the chart's own menu: a horizontal line and the entry orders that can rest at that price. */
+/** A right click or long press on the empty plot offers entry orders, including both limits at the clicked price. */
 @OptIn(ExperimentalTestApi::class)
 class ChartContextMenuUiTest {
     @get:Rule val compose = createComposeRule()
@@ -197,23 +197,23 @@ class ChartContextMenuUiTest {
         assertTrue(broker.placed.isEmpty())
     }
 
-    @Test fun sellLimitShortcutRequiresKeyboardTradingAndUsesConfirmation() {
+    @Test fun marketableSellLimitShortcutStillRequiresPermissionAndConfirmation() {
         render()
-        val at = pointAt(551_000)
-        chart().performMouseInput { moveTo(at); press(); release() }
-        fun shortcut() = compose.onAllNodes(isRoot()).onLast().performKeyInput {
-            withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.S) } }
+        fun shortcut() {
+            val at = pointAt(549_000)
+            chart().performMouseInput { moveTo(at); press(); release() }
+            chart().performKeyInput { withKeyDown(Key.AltLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.S) } } }
+            compose.waitForIdle()
         }
         shortcut()
-        compose.waitForIdle()
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         assertTrue(broker.placed.isEmpty())
         runBlocking { assertTrue(runtime.tradingPreferences.setKeyboardTrading(true)) }
         compose.waitForIdle()
-        chart().performMouseInput { moveTo(at); press(); release() }
         shortcut()
-        compose.waitForIdle()
-        compose.onNodeWithTag("confirm-action").assertExists()
+        compose.onNodeWithText("TESTZ6 · 卖出限价 · 1 张").assertExists()
+        compose.onNodeWithTag("confirm-action").assertIsEnabled()
+        compose.onNodeWithTag("confirm-warning").assertTextEquals(MARKETABLE_LIMIT_WARNING)
         assertTrue(broker.placed.isEmpty(), "the shortcut still follows confirmation")
     }
 
@@ -245,12 +245,13 @@ class ChartContextMenuUiTest {
         item("horizontal-line").assertTextContains("在 5490.00 画水平线")
         item("BUY-MARKET").assertExists()
         item("SELL-STOP").assertExists()
-        item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00").performClick()
+        item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00")
+        item("SELL-LIMIT").assertTextContains("卖出限价 1 张 @ 5490.00").performClick()
         compose.onNodeWithTag("order-entry").assertTextContains("5490.00")
         assertTrue(broker.placed.isEmpty(), "A long press cannot send an order")
         compose.onNodeWithTag("review-order").performClick()
         compose.waitUntil(5000) { broker.placed.size == 1 }
-        assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.LIMIT, 100, 549_000), broker.placed.single())
+        assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.LIMIT, 100, 549_000), broker.placed.single())
         assertTrue(runtime.drawings.drawings.isEmpty(), "the press that opened the menu drew nothing")
     }
 
@@ -298,7 +299,7 @@ class ChartContextMenuUiTest {
     @Test fun desktopContextMenuHasDistinctIconsWithoutRestoringRemovedItems() {
         render()
         rightClick(549_000)
-        listOf("reset", "BUY-MARKET", "SELL-MARKET", "BUY-LIMIT", "SELL-STOP", "open-order", "objects", "templates", "remove-indicators", "remove-drawings", "settings")
+        listOf("reset", "BUY-MARKET", "SELL-MARKET", "BUY-LIMIT", "SELL-LIMIT", "SELL-STOP", "open-order", "objects", "templates", "remove-indicators", "remove-drawings", "settings")
             .forEach { compose.onNodeWithTag("plot-icon-$it", useUnmergedTree = true).assertExists() }
         compose.onNodeWithTag("plot-copy-price").assertDoesNotExist()
         compose.onNodeWithTag("plot-paste-drawing").assertDoesNotExist()
@@ -385,37 +386,39 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
     }
 
-    @Test fun underTheMarketItOffersABuyLimitAndASellStopAndTheOrderWaitsForTheConfirmation() {
+    @Test fun belowTheBidBothLimitsAreOfferedAndAMarketableSellLimitKeepsItsPriceThroughConfirmation() {
         render()
         rightClick(549_000)
         val folder = File("../artifacts").also { it.mkdirs() }
         ImageIO.write(compose.onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", File(folder, "chart-context-menu-chart.png"))
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(folder, "chart-context-menu.png"))
-        item("SELL-LIMIT").assertDoesNotExist()
         item("BUY-STOP").assertDoesNotExist()
         item("SELL-STOP").assertTextContains("卖出突破 1 张 @ 5490.00")
-        item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00").performClick()
-        compose.waitForIdle()
-        item("BUY-LIMIT").assertDoesNotExist()
+        item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00")
+        item("SELL-LIMIT").assertTextContains("卖出限价 1 张 @ 5490.00").performClick()
+        item("SELL-LIMIT").assertDoesNotExist()
+        compose.onNodeWithTag("order-side-SELL").assertIsSelected()
+        compose.onNodeWithTag("order-kind-LIMIT").assertIsSelected()
         compose.onNodeWithTag("order-entry").assertTextContains("5490.00")
         assertTrue(broker.placed.isEmpty(), "A menu selection cannot send an order")
         compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithText("确认 Tradovate Demo 下单").assertExists()
-        compose.onNodeWithText("TESTZ6 · 买入限价 · 1 张").assertExists()
+        compose.onNodeWithText("TESTZ6 · 卖出限价 · 1 张").assertExists()
+        compose.onNodeWithTag("confirm-warning").assertTextEquals(MARKETABLE_LIMIT_WARNING)
         assertTrue(broker.placed.isEmpty(), "Nothing reaches the broker before the confirmation")
-        compose.onNodeWithTag("confirm-action").performClick()
+        compose.onNodeWithTag("confirm-action").assertIsEnabled().performClick()
         compose.waitUntil(5000) { broker.placed.size == 1 }
-        assertEquals(OrderRequest("TESTZ6", Side.BUY, OrderKind.LIMIT, 100, 549_000), broker.placed.single(), "the panel's quantity at the clicked price, without protection")
+        assertEquals(OrderRequest("TESTZ6", Side.SELL, OrderKind.LIMIT, 100, 549_000), broker.placed.single(), "the exact limit, not a market order or the current bid")
         assertTrue(runtime.drawings.drawings.isEmpty())
     }
 
-    @Test fun overTheMarketItOffersASellLimitAndABuyStopWithThePanelQuantityAndSkipsTheConfirmationWhenToldTo() {
+    @Test fun aboveTheAskBothLimitsAreOfferedAndABuyStopStillUsesThePanelQuantity() {
         render(skipConfirmation = true)
         compose.onNodeWithTag("order-quantity").performTextReplacement("3")
         compose.waitForIdle()
         rightClick(551_000)
-        item("BUY-LIMIT").assertDoesNotExist()
         item("SELL-STOP").assertDoesNotExist()
+        item("BUY-LIMIT").assertTextContains("买入限价 3 张 @ 5510.00")
         item("SELL-LIMIT").assertTextContains("卖出限价 3 张 @ 5510.00")
         item("BUY-STOP").assertTextContains("买入突破 3 张 @ 5510.00").performClick()
         compose.onNodeWithTag("order-entry").assertTextContains("5510.00")
@@ -428,7 +431,7 @@ class ChartContextMenuUiTest {
 
     @Test fun anOrderTheBrokerRefusesNeverGoesOutEvenWithConfirmationsSkipped() {
         render(skipConfirmation = true)
-        broker.refusal = "Limit/Stop 入场方向或距离无效"
+        broker.refusal = "突破入场方向或距离无效"
         rightClick(549_000)
         item("SELL-STOP").performClick()
         compose.waitForIdle()
@@ -455,6 +458,6 @@ class ChartContextMenuUiTest {
         rightClick(549_000)
         item("horizontal-line").assertDoesNotExist()
         compose.onNodeWithTag("plot-reset").assertExists()
-        for (name in listOf("BUY-LIMIT", "SELL-LIMIT", "BUY-STOP", "SELL-STOP")) item(name).assertDoesNotExist()
+        for (name in listOf("BUY-MARKET", "SELL-MARKET", "BUY-LIMIT", "SELL-LIMIT", "BUY-STOP", "SELL-STOP")) item(name).assertDoesNotExist()
     }
 }

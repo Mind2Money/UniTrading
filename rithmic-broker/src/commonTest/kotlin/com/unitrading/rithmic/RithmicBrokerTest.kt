@@ -105,6 +105,32 @@ class RithmicBrokerTest {
         assertEquals(1, server.requests(Rt.REQUEST_NEW_ORDER).size)
     }
 
+    @Test fun marketableLimitsKeepTheUserPriceAndWireType() = runTest {
+        for ((side, opposite) in listOf(Side.BUY to 550_025L, Side.SELL to 550_000L)) {
+            val server = FakeRithmicServer()
+            val session = ready(server).openSession("ACC1")
+            val limit = opposite + if (side == Side.BUY) 50 else -50
+            val request = OrderRequest("MESZ6", side, OrderKind.LIMIT, 100, limit)
+            val atQuote = session.preview(request.copy(entryPrice = opposite))
+            assertTrue(atQuote.valid, atQuote.errors.toString())
+            assertContains(atQuote.warnings, MARKETABLE_LIMIT_WARNING)
+            assertFalse(session.placeOrder("wrong-stop", request.copy(kind = OrderKind.STOP, entryPrice = opposite)).accepted)
+            assertFalse(session.placeOrder("off-grid", request.copy(entryPrice = limit + 1)).accepted)
+
+            val preview = session.preview(request)
+            assertTrue(preview.valid, preview.errors.toString())
+            assertEquals(limit, preview.entryPrice)
+            assertContains(preview.warnings, MARKETABLE_LIMIT_WARNING)
+            val placed = session.placeOrder("crossing-limit", request)
+            assertTrue(placed.accepted, placed.message)
+            val sent = server.requests(Rt.REQUEST_NEW_ORDER).single()
+            assertEquals(RithmicEnums.PRICE_LIMIT, sent.int(Rf.PRICE_TYPE))
+            assertEquals(if (side == Side.BUY) RithmicEnums.BUY else RithmicEnums.SELL, sent.int(Rf.TRANSACTION_TYPE))
+            assertEquals(limit / 100.0, sent.double(Rf.PRICE))
+            assertNull(sent.double(Rf.TRIGGER_PRICE))
+        }
+    }
+
     @Test fun limitOrderWithProtectionBecomesAStaticBracketInTicks() = runTest {
         val server = FakeRithmicServer()
         val broker = ready(server)
@@ -233,6 +259,29 @@ class RithmicBrokerTest {
         assertTrue(broker.market.value.tradingReady)
     }
 
+    @Test fun aRestingEntryCanBeRepricedToACrossingLimit() = runTest {
+        val server = FakeRithmicServer().apply { openOrders += limitEntry("E1", RithmicEnums.BUY, 1, 5490.0) }
+        val broker = ready(server)
+        val session = broker.openSession("ACC1")
+        val order = session.state.value.orders.single()
+        val price = 550_075L
+        val preview = session.previewOrderModification(order.id, price)
+        assertTrue(preview.valid, preview.errors.toString())
+        assertEquals(price, preview.entryPrice)
+        assertContains(preview.warnings, MARKETABLE_LIMIT_WARNING)
+        val result = session.modifyOrder("crossing-modify", order.id, order.version, price)
+        assertTrue(result.accepted, result.message)
+        val sent = server.requests(Rt.REQUEST_MODIFY_ORDER).single()
+        assertEquals(order.id, sent.str(Rf.BASKET_ID))
+        assertEquals(RithmicEnums.PRICE_LIMIT, sent.int(Rf.PRICE_TYPE))
+        assertEquals(5500.75, sent.double(Rf.PRICE))
+
+        server.fill(order.id, "F1", RithmicEnums.BUY, 1, 5500.25, priceType = RithmicEnums.PRICE_LIMIT)
+        runCurrent()
+        assertTrue(broker.market.value.tradingReady, broker.market.value.statusMessage)
+        assertTrue(session.state.value.orders.isEmpty())
+    }
+
     /** PnL updates arrive all the time on the real server; one must not invalidate a protection edit the user has open. */
     @Test fun aPnlUpdateKeepsThePositionVersionSoProtectionStaysEditable() = runTest {
         val server = FakeRithmicServer().apply {
@@ -303,6 +352,7 @@ class RithmicBrokerTest {
         assertEquals(mapOf("S1" to "E1", "S2" to "E9", "T1" to "E1"), orders.mapValues { it.value.ocoGroup })
         assertFalse(broker.capabilities.modifyOrderQuantity)
         assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("S2", 550000, 100).errors, "a sell stop at the bid would trigger at once")
+        assertEquals(listOf(CROSSED_ORDER_PRICE), session.previewOrderChange("T1", 550000, 100).errors, "a take-profit edit still must rest")
         assertFalse(session.previewOrderChange("S2", 548500, 200).valid, "the size stays")
         assertTrue(session.previewOrderChange("S2", 548500, 100).valid)
         val result = session.changeOrder("req-70", "S2", orders.getValue("S2").version, 548500, 100)

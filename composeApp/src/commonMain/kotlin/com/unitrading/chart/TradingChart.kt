@@ -687,7 +687,7 @@ fun TradingChart(
                             else if (chrome.keyboardTrading && event.isAltPressed && event.isShiftPressed && !event.isCtrlPressed && !event.isMetaPressed && event.key == Key.S) {
                                 if (heldTradingKeys.add(event.key)) hoverPoint?.takeIf { it.x in left..right && it.y in top..plotBottom }?.let { point ->
                                     val price = scale.price(point.y, instrument.tickSize)
-                                    if (PlotOrder(Side.SELL, OrderKind.LIMIT) in plotOrders(price, quote, actions.entryKinds)) actions.onKeyboardEntryOrder(Side.SELL, OrderKind.LIMIT, price)
+                                    if (quote != null && OrderKind.LIMIT in actions.entryKinds) actions.onKeyboardEntryOrder(Side.SELL, OrderKind.LIMIT, price)
                                 }
                                 true
                             }
@@ -900,14 +900,14 @@ fun TradingChart(
                                         else (current - instrument.lotStepHundredths).coerceAtLeast(instrument.minLotsHundredths)
                                     update(instrument.formatQuantity(next))
                                 }
-                                Column(Modifier.width(220.dp).padding(12.dp).pointerInput(instrument) {
+                                val stepQuantity by rememberUpdatedState<(Boolean) -> Unit>(::step)
+                                Column(Modifier.width(220.dp).padding(12.dp).pointerInput(Unit) {
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent()
-                                            if (event.type == PointerEventType.Scroll) {
-                                                val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
-                                                if (delta != 0f) { step(delta < 0f); event.changes.forEach { it.consume() } }
-                                            }
+                                            if (event.type != PointerEventType.Scroll) continue
+                                            val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                            if (delta != 0f) { stepQuantity(delta < 0f); event.changes.forEach { it.consume() } }
                                         }
                                     }
                                 }, verticalArrangement = Arrangement.spacedBy(8.dp)) {

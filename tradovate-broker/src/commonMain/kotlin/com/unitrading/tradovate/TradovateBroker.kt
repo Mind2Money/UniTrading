@@ -1951,14 +1951,14 @@ class TradovateBroker(
         fun refused(message: String) = OrderPreview(null, errors = listOf(message), marginKnown = false, feesKnown = false)
         if (!order.standaloneEditable) return refused("这张订单不能单独修改，请刷新后重试")
         if (lotsHundredths <= order.filledLotsHundredths) return refused("数量须大于已成交的 ${order.filledLotsHundredths / 100} 张")
-        val estimate = estimate(accountId, order.request.copy(entryPrice = price, lotsHundredths = lotsHundredths, stopLoss = null, takeProfit = null), modifying = true)
+        val estimate = estimate(accountId, order.request.copy(entryPrice = price, lotsHundredths = lotsHundredths, stopLoss = null, takeProfit = null),
+            modifying = true, restingOnly = true)
         val position = accountFlows[accountId]?.value?.positions?.firstOrNull { it.symbol == order.request.symbol }
         val reverses = position != null && position.side != order.request.side && lotsHundredths > position.lotsHundredths
-        return estimate.copy(errors = estimate.errors.map { if (it == "Limit/Stop 入场方向或距离无效") CROSSED_ORDER_PRICE else it },
-            warnings = estimate.warnings + listOfNotNull(position?.takeIf { reverses }?.let { "数量大于当前净仓 ${it.lotsHundredths / 100} 张，全部成交后会反向持仓" }))
+        return estimate.copy(warnings = estimate.warnings + listOfNotNull(position?.takeIf { reverses }?.let { "数量大于当前净仓 ${it.lotsHundredths / 100} 张，全部成交后会反向持仓" }))
     }
 
-    private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false): OrderPreview = try {
+    private fun estimate(accountId: String, request: OrderRequest, modifying: Boolean = false, restingOnly: Boolean = false): OrderPreview = try {
         validateContinuous(request)
         require(market.value.tradingReady) { market.value.statusMessage.ifBlank { "交易连接未就绪" } }
         require(accounts.first { it.id == accountId }.readOnly.not()) { "该账户只有读取权限" }
@@ -1970,17 +1970,21 @@ class TradovateBroker(
         quote!!
         val entry = if (request.kind == OrderKind.MARKET) if (request.side == Side.BUY) quote.ask else quote.bid else requireNotNull(request.entryPrice)
         require(entry > 0 && entry % spec.tickSize == 0L) { "入场价不符合最小变动单位" }
-        if (request.kind != OrderKind.MARKET) {
-            val above = (request.side == Side.BUY) == (request.kind == OrderKind.STOP)
-            val reference = if (request.side == Side.BUY) quote.ask else quote.bid
-            require(if (above) entry >= reference + spec.tickSize else entry <= reference - spec.tickSize) { "Limit/Stop 入场方向或距离无效" }
+        val marketableLimit = request.isMarketableLimit(quote)
+        if (request.kind == OrderKind.STOP) {
+            require(if (request.side == Side.BUY) entry > quote.ask else entry < quote.bid) {
+                if (restingOnly) CROSSED_ORDER_PRICE else "突破入场方向或距离无效"
+            }
         }
+        // Standalone protection edits must not turn a resting exit into an immediate fill.
+        require(!restingOnly || !marketableLimit) { CROSSED_ORDER_PRICE }
         entryProtectionError(spec, request, quote)?.let { errorArgument(it) }
         if (!modifying && (request.stopLoss != null || request.takeProfit != null)) require(accountFlows.getValue(accountId).value.positions.none { it.symbol == request.symbol }) { "该合约已有净仓，不能再叠加括号保护" }
         OrderPreview(entry, stopLossPnlMicros = request.stopLoss?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             takeProfitPnlMicros = request.takeProfit?.let { grossPnl(spec, request.side, request.lotsHundredths, entry, it) },
             quoteRevision = market.value.revision, marginKnown = false, feesKnown = false,
-            warnings = listOf("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Tradovate 为准"))
+            warnings = listOfNotNull("盈亏按合约价值估算，未扣手续费。手续费、保证金和最终成交以 Tradovate 为准",
+                MARKETABLE_LIMIT_WARNING.takeIf { marketableLimit }))
     } catch (e: IllegalArgumentException) { OrderPreview(null, errors = listOf(safeMessage(e.message ?: "订单无效")), marginKnown = false, feesKnown = false) }
 
     private fun orderBody(accountId: String, requestId: String, request: OrderRequest, spec: Instrument): JsonObject = buildJsonObject {

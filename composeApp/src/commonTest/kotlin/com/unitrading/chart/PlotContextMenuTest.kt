@@ -10,35 +10,29 @@ import kotlin.test.*
 class PlotContextMenuTest {
     private val quote = Quote(bid = 550_500, ask = 550_525, timeMs = 0)
     private val market = listOf(Side.BUY to OrderKind.MARKET, Side.SELL to OrderKind.MARKET)
+    private val limits = listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.LIMIT)
     private fun orders(price: Long, kinds: Set<OrderKind> = OrderKind.entries.toSet(), at: Quote? = quote) =
         plotOrders(price, at, kinds).map { it.side to it.kind }
-    /** The orders that rest at the price, without the market buy and sell offered everywhere. */
-    private fun resting(price: Long, kinds: Set<OrderKind> = OrderKind.entries.toSet(), at: Quote? = quote) =
-        orders(price, kinds, at).filter { it.second != OrderKind.MARKET }
 
-    @Test fun aMarketBuyAndSellComeFirstWhereverTheMenuOpens() {
-        for (price in listOf(550_000L, 550_500, 550_525, 551_000)) assertEquals(market, orders(price).take(2), "at $price")
-        assertEquals(market, orders(550_500, at = Quote(550_500, 550_500, 0)), "a quote without a spread still trades at the market")
+    @Test fun belowTheBidBothLimitsComeAfterTheMarketOrdersAndBeforeTheSellStop() {
+        assertEquals(market + limits + (Side.SELL to OrderKind.STOP), orders(550_000))
     }
 
-    @Test fun aPriceUnderTheMarketOffersABuyLimitAndASellStop() {
-        assertEquals(market + listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.STOP), orders(550_000))
+    @Test fun aboveTheAskBothLimitsComeAfterTheMarketOrdersAndBeforeTheBuyStop() {
+        assertEquals(market + limits + (Side.BUY to OrderKind.STOP), orders(551_000))
     }
 
-    @Test fun aPriceOverTheMarketOffersASellLimitAndABuyStop() {
-        assertEquals(market + listOf(Side.SELL to OrderKind.LIMIT, Side.BUY to OrderKind.STOP), orders(551_000))
-    }
-
-    @Test fun aLimitMayRestOnItsOwnEdgeOfTheSpreadAndAStopHasToBeBeyondIt() {
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT), resting(550_500), "at the bid")
-        assertEquals(listOf(Side.SELL to OrderKind.LIMIT), resting(550_525), "at the ask")
-        assertEquals(listOf(Side.BUY to OrderKind.LIMIT, Side.SELL to OrderKind.LIMIT), resting(550_550, at = Quote(550_500, 550_600, 0)), "inside a wide spread")
-        assertTrue(resting(550_500, at = Quote(550_500, 550_500, 0)).isEmpty(), "on a quote without a spread nothing can rest")
+    @Test fun bothLimitsAreOfferedAtTheBidAndAskButStopsMustBeStrictlyBeyondTheSpread() {
+        assertEquals(market + limits, orders(550_500), "at the bid")
+        assertEquals(market + limits, orders(550_525), "at the ask")
+        assertEquals(market + limits, orders(550_550, at = Quote(550_500, 550_600, 0)), "inside a wide spread")
+        assertEquals(market + limits, orders(550_500, at = Quote(550_500, 550_500, 0)), "on a quote without a spread")
     }
 
     @Test fun nothingIsOfferedWithoutAQuoteOrOfAKindTheBrokerLacks() {
-        assertTrue(orders(550_000, at = null).isEmpty(), "not even a market order, whose side of the market is unknown")
-        assertEquals(market + listOf(Side.BUY to OrderKind.LIMIT), orders(550_000, setOf(OrderKind.MARKET, OrderKind.LIMIT)))
+        assertTrue(orders(550_000, at = null).isEmpty(), "not even a market order")
+        assertEquals(market + limits, orders(550_000, setOf(OrderKind.MARKET, OrderKind.LIMIT)))
+        assertEquals(limits, orders(551_000, setOf(OrderKind.LIMIT)))
         assertEquals(listOf(Side.BUY to OrderKind.STOP), orders(551_000, setOf(OrderKind.STOP)), "a broker without market orders gets none")
         assertEquals(market, orders(550_000, setOf(OrderKind.MARKET)))
         assertTrue(orders(550_000, emptySet()).isEmpty())

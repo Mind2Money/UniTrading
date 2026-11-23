@@ -991,8 +991,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun placePreview(order: OrderRequest): OrderPreview {
                     val checked = session.preview(order).withCapacity(order, capacityFor(order))
-                    // A market order was priced from the quote a moment ago, and the guard prices it once more as it goes out. Only a
-                    // resting entry has to meet the amounts as it stands; an order that just reduces the position has none to meet.
+                    // A market order is repriced by the guard as it goes out. A priced entry has to meet the amounts as it
+                    // stands; an order that just reduces the position has none to meet.
                     if (!checked.valid || order.kind == OrderKind.MARKET || !orderRule.bracketsApply(account, hedging, order)) return checked
                     val error = brackets.refusal(order, instrument, session.account.currency, checked.entryPrice)
                     return if (error == null) checked else checked.copy(errors = listOf(error))
@@ -1091,8 +1091,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     }
                 }
                 /**
-                 * An order asked for on the chart: a limit or stop entry picked from its context menu at the clicked [price], or
-                 * a market order from the trading keys. It uses the same quantity, account brackets and checks as the order panel.
+                 * An order requested by a trading shortcut. It uses the same quantity, account brackets and checks as the
+                 * order panel; unlike a market order, a limit carries the hovered [price].
                  */
                 fun orderFromChart(side: Side, kind: OrderKind, price: Long?, fromKeys: Boolean = false) {
                     val entry = price?.let(instrument::formatPrice).orEmpty()
@@ -1542,6 +1542,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
                             if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
                             estimate?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                            estimate?.warnings?.forEach { Text(it, Modifier.testTag("pending-entry-warning"), color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
                         } },
                         confirmButton = { Button({
                             val newPrice = price ?: return@Button
