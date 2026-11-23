@@ -219,7 +219,7 @@ internal fun SettingsPage(
     if (chooseChartSession) AlertDialog(
         onDismissRequest = { chooseChartSession = false }, title = { Text("图表交易时段") },
         text = { Column {
-            Text("常规时段采用 TradingView CME 图表模板（芝加哥 08:30–15:15）；仅支持 ES、NQ、CL、GC 及对应 Micro。日线及以上不变。跨边界周期暂不显示，需选择 1、3、5、15 分钟。此设置不限制下单。", style = MaterialTheme.typography.bodySmall)
+            Text("常规时段采用 TradingView CME 图表模板（芝加哥 08:30–15:15）；仅支持 ES、NQ、CL、GC 及对应 Micro。日线及以上直接使用券商的电子交易时段 K 线。分钟及小时周期由 1 分钟数据合成，历史深度受券商数据限制；秒线暂不支持。此设置不限制下单。", style = MaterialTheme.typography.bodySmall)
             com.unitrading.app.ChartSession.entries.forEach { value ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(value == chartPreferences.chartSession, role = Role.RadioButton, onClick = {
                     preferenceScope.launch { if (runtime.chartPreferences.setChartSession(value)) chooseChartSession = false }

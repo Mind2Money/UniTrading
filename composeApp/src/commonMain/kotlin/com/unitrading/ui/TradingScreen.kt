@@ -43,6 +43,7 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
 import com.unitrading.chart.chartSessionCandles
+import com.unitrading.chart.chartSessionSource
 import com.unitrading.chart.ChartLayerState
 import com.unitrading.chart.ChartToggle
 import com.unitrading.chart.ChartToolbar
@@ -471,7 +472,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
         val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
-        LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
+        val regularSession = chartPreferences.chartSession == ChartSession.REGULAR
+        val liveSeries = (listOf(symbol to timeframe) + parkedSeries).map { (s, frame) -> s to chartSessionSource(s, frame, regularSession) }.distinct()
+        LaunchedEffect(plugin, executionSymbol, liveSeries) { plugin.watchAll(liveSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
         val mainDomActive = focusedDetached == null && (showOrderFlow || showDom)
@@ -1160,7 +1163,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val shownTimeframe = parked?.timeframe ?: timeframe
                     val shownExecution = shownInstrument.executionSymbol
                     val shownQuote = if (active) quote else market.quotes[shownExecution]
-                    val rawCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
+                    val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
+                    val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }
                     val sessionResult = remember(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession) {
                         chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, chartPreferences.chartSession == ChartSession.REGULAR)
                     }
