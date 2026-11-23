@@ -168,7 +168,7 @@ internal fun WorkspaceTabStrip(
                 index in target until held.from -> held.widths[held.from] + spacing
                 else -> 0f
             }
-            Row(Modifier.height(if (touchSized) 42.dp else 32.dp).widthIn(min = 150.dp, max = 300.dp)
+            Row(Modifier.height(if (touchSized) 38.dp else 32.dp).widthIn(min = 150.dp, max = 300.dp)
                 .onGloballyPositioned { placements[tab.id] = it }.zIndex(if (mine != null) 1f else 0f)
                 .graphicsLayer { translationX = shift; if (mine != null) shadowElevation = 5.dp.toPx() }
                 .clip(shape).background(if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
@@ -219,13 +219,13 @@ internal fun WorkspaceTabStrip(
                 if (canDetach) IconButton({ onDetach(tab.id) }, Modifier.size(25.dp).testTag("detach-workspace-${tab.id}")) {
                     Icon(AppIcons.OpenInNew, "拖出图表布局", Modifier.size(15.dp))
                 }
-                if (tab.id != "main") IconButton({ onClose(tab.id) }, Modifier.size(if (touchSized) 40.dp else 25.dp).testTag("close-workspace-${tab.id}")) {
+                if (tab.id != "main") IconButton({ onClose(tab.id) }, Modifier.size(if (touchSized) 36.dp else 25.dp).testTag("close-workspace-${tab.id}")) {
                     Icon(AppIcons.Close, "关闭图表布局", Modifier.size(15.dp))
                 }
             }
         } }
         if (onAdd != null) IconButton(onClick = onAdd, enabled = canAdd,
-            modifier = Modifier.size(if (touchSized) 42.dp else 32.dp).testTag("chart-new-workspace")) {
+            modifier = Modifier.size(if (touchSized) 40.dp else 32.dp).testTag("chart-new-workspace")) {
             Icon(AppIcons.Add, "新建窗口", Modifier.size(20.dp))
         }
     }

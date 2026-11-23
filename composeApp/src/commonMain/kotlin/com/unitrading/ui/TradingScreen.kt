@@ -887,7 +887,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
-                val desktopPickerWidth = if (maxWidth >= 1200.dp && (!tablet || maxWidth >= 1400.dp)) 340.dp else 280.dp
+                val desktopPickerWidth = if (tablet) 264.dp else if (maxWidth >= 1200.dp) 340.dp else 280.dp
                 val tabletWorkspaces = tablet
                 SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
                 val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
@@ -1242,7 +1242,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet,
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
                                 scope.launch { runtime.chartPreferences.savePriceAxis() }
@@ -1725,7 +1725,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             val flattenButtons: @Composable () -> Unit = {
                                 // Keep destructive actions distinct from the two account selectors; both still open their original confirmations.
                                 Row(Modifier.testTag("desktop-flatten-actions"), verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(if (tablet) 16.dp else 12.dp)) {
+                                    horizontalArrangement = Arrangement.spacedBy(if (tablet) 8.dp else 12.dp)) {
                                     val actionColors = ButtonDefaults.outlinedButtonColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                                         contentColor = MaterialTheme.colorScheme.error,
@@ -1737,7 +1737,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             targetSession != null && selectionStillCurrent())
                                             flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
                                     },
-                                        modifier = Modifier.height(if (tablet) 48.dp else 36.dp).testTag("flatten-selected-account"),
+                                        modifier = (if (tablet) Modifier.width(128.dp) else Modifier).height(if (tablet) 40.dp else 36.dp).testTag("flatten-selected-account"),
                                         enabled = accountActionsReady && targetSession != null && !targetSession.account.readOnly &&
                                             (targetSnapshot?.positions?.isNotEmpty() == true || targetSnapshot?.orders?.isNotEmpty() == true),
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
@@ -1748,7 +1748,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             val (targets, skipped) = bulkFlattenTargets(registry.plugins)
                                             if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
                                         }
-                                    }, modifier = Modifier.height(if (tablet) 48.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady && targetSession != null,
+                                    }, modifier = (if (tablet) Modifier.width(128.dp) else Modifier).height(if (tablet) 40.dp else 36.dp).testTag("flatten-all-accounts"), enabled = accountActionsReady && targetSession != null,
                                         shape = shape, border = outline, colors = actionColors, contentPadding = PaddingValues(horizontal = 10.dp)) {
                                         Text("平仓全部账户", maxLines = 1)
                                     }
@@ -1769,13 +1769,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                     }
                     if (tabletWorkspaces && (desktop || chartFirst)) {
-                        Row(Modifier.fillMaxWidth().height(48.dp).background(colors.Surface)
+                        Row(Modifier.fillMaxWidth().height(44.dp).background(colors.Surface)
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
                             desktopControls(null, true, false)
+                            Spacer(Modifier.width(40.dp))
                         }
                         DividerLine()
                     }
@@ -1803,7 +1804,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } else if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                         }
                         Column(Modifier.fillMaxWidth().background(colors.Surface).testTag("app-toolbar")) {
-                            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 6.dp, end = 4.dp),
+                            Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 48.dp else 56.dp).padding(start = 6.dp, end = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
@@ -1949,6 +1950,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
                             DesktopWorkspace(runtime.desktopLayout, wide || contextOrderSidebar, Modifier.weight(1f).fillMaxWidth(),
                             contextOrderRequest = contextOrderRequest,
+                            tablet = tablet,
+                            tabletAccountBar = if (tablet) { { m -> AccountStrip(mainAccount, m,
+                                note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
+                                    else "状态以服务器为准 · ${environment.label}", connected = market.connected, compact = true) } } else null,
                             onCompactOrderOpen = if (tablet && !wide && !contextOrderSidebar) ({
                                 contextOrderSidebar = true
                                 contextOrderRequest++
@@ -2185,7 +2190,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     }
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
-                    else if (desktop) {
+                    else if (desktop && !tablet) {
                         DividerLine()
                         AccountStrip(mainAccount, note = if (localDemo) "${if (paused) "模拟已暂停" else "模拟行情 ×15"} · 报价 ${clockLabel(market.simulatedTimeMs, true)} UTC · 无真实资金"
                             else "状态以服务器为准 · ${environment.label}", connected = market.connected)

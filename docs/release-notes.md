@@ -2,9 +2,13 @@
 
 ## 简体中文
 
+- 优化 Android 平板和 iPad 图表空间：缩小顶部和右侧控件，账户资金信息并入交易栏，价格轴根据文字宽度自适应；保留平仓确认。
+
 - 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
 
 ## English
+
+- Give Android tablets and iPad more chart space with compact controls, an integrated account and trade bar, and a content-aware price axis. Flatten confirmation remains in place.
 
 - Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and put the order button on the right rail between DOM and trading.
 
