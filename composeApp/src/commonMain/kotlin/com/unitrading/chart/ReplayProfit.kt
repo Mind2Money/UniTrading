@@ -86,3 +86,19 @@ internal fun replayProfitPrecedesTakeProfit(spec: Instrument, config: ReplayRisk
         if (side == Side.BUY) trigger.price <= takeProfit else trigger.price >= takeProfit
     }
 }
+
+/** The opening price is known to occur before later intrabar extremes. */
+internal fun replayProfitAtOpen(spec: Instrument, config: ReplayRiskConfig, risk: ReplayRiskState,
+    before: ReplayState, bar: Candle): Boolean {
+    if (before.positions.isEmpty() || before.pending.isNotEmpty()) return false
+    // An existing protection order already marketable at the open takes precedence.
+    if (before.positions.any { p ->
+        p.stopLoss?.let { if (p.side == Side.BUY) bar.open <= it else bar.open >= it } == true ||
+            p.takeProfit?.let { if (p.side == Side.BUY) bar.open >= it else bar.open <= it } == true
+    }) return false
+    val balance = checkedAdd(config.initialMicros, before.trades.fold(0L) { sum, trade -> checkedAdd(sum, trade.pnlMicros) })
+    val equity = before.closingEquity(spec, config, bar.open)
+    val observed = risk.observe(config, bar.timeMs, balance, equity)
+    val openingBar = bar.copy(high = bar.open, low = bar.open, close = bar.open)
+    return replayProfitTrigger(spec, config, observed, before, before.copy(index = before.index + 1), openingBar) != null
+}

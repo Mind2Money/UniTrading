@@ -80,6 +80,22 @@ class ReplayConsistencyUiTest {
         }
     }
 
+    @Test fun gapToGoalClosesBeforeLaterIntrabarLoss() {
+        val bars = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
+            Candle(start + 60_000, 10_100, 10_100, 9_900, 9_975))
+        val records = ReplayRecords(MemorySnapshotStore())
+        val exited = AtomicBoolean()
+        open(bars, config(5_000_000).copy(maxDailyLossMicros = 1_000_000), records, exited)
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-success").assertIsDisplayed()
+        compose.onNodeWithTag("replay-success-save").performClick()
+        compose.runOnIdle {
+            assertTrue(exited.get())
+            assertEquals(5_000_000L, records.list().single().trades.single().netPnlMicros)
+        }
+    }
+
     @Test fun discardAlsoRemovesEarlierAutosavesBeforeExit() {
         val bars = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
             Candle(start + 60_000, 10_000, 10_050, 10_000, 10_050),

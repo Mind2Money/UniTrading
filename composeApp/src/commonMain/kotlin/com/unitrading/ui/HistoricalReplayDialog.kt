@@ -202,8 +202,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             message = "正在向券商获取 ${frame.label} 历史…"
         }
     }
-    fun accept(next: ReplayState) {
-        val bar = bars[next.index]
+    fun accept(next: ReplayState, evaluationBar: Candle? = null) {
+        val bar = evaluationBar ?: bars[next.index]
         val realized = next.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
         val floating = next.positions.fold(0L) { n, p -> checkedAdd(n,
             checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, bar.close),
@@ -282,7 +282,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             if (action == ReplayCutoffAction.BEFORE_NEXT) {
                 val closed = runCatching { flattenBeforeOvernight() }
                 if (closed.isFailure) { playing = false; message = closed.exceptionOrNull()?.message; return }
-                if (risk.failed) return
+                if (risk.failed || risk.targetReached) { playing = false; return }
             }
             if (regular && sourceFrame.seconds < Timeframe.DAY && !isRegularChartTime(bars[state.index + 1].timeMs)) {
                 state = state.copy(index = state.index + 1)
@@ -295,9 +295,14 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
             val result = runCatching {
                 val nextBar = bars[state.index + 1]
-                val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
-                    state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
-                accept(nextState)
+                if (replayProfitAtOpen(spec, riskConfig, risk, state, nextBar)) {
+                    val openingBar = nextBar.copy(high = nextBar.open, low = nextBar.open, close = nextBar.open)
+                    accept(state.copy(index = state.index + 1, lastNotice = null), openingBar)
+                } else {
+                    val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
+                        state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
+                    accept(nextState)
+                }
             }
             if (result.isFailure) { playing = false; message = result.exceptionOrNull()?.message ?: "回放撮合失败"; return }
             if (action == ReplayCutoffAction.AFTER_NEXT) {
