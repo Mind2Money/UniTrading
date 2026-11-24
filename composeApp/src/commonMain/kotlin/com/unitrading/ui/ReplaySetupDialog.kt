@@ -67,7 +67,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
         .toLocalDateTime(TimeZone.of(zone.zoneId)).date }
     var start by remember { mutableStateOf(today.minus(30, DateTimeUnit.DAY).toString()) }
     var end by remember { mutableStateOf(today.toString()) }
-    val frame = initialFrame
+    val frame = if (initialRegular && initialFrame.isSeconds) Timeframe.M1 else initialFrame
     var initialText by remember { mutableStateOf("50000") }
     var customBalance by remember { mutableStateOf(false) }
     var drawdownText by remember { mutableStateOf("2000") }

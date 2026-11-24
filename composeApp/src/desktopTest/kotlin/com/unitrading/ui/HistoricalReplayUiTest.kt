@@ -113,7 +113,7 @@ class HistoricalReplayUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
         awaitReplay()
-        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 1分钟")
+        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 5分钟")
         compose.onNode(hasTestTag("chart-layers") and hasAnyAncestor(hasTestTag("historical-replay"))).assertDoesNotExist()
         compose.onNodeWithTag("replay-history-toggle").assertExists()
         compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
