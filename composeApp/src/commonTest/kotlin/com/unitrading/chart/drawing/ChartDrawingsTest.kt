@@ -7,6 +7,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlin.test.*
 
 class ChartDrawingsTest {
+    @Test fun closingOneSplitChartKeepsTheOtherLayerHandlerConnected() {
+        val first = Any()
+        val second = Any()
+        var handledBy = ""
+        drawings.attachOrderHandler(first) { _, _ -> handledBy = "first" }
+        drawings.attachOrderHandler(second) { _, _ -> handledBy = "second" }
+        drawings.moveOrder("line", 1)
+        assertEquals("second", handledBy)
+        drawings.detachOrderHandler(second)
+        drawings.moveOrder("line", 1)
+        assertEquals("first", handledBy)
+    }
     @Test fun overlappingDrawingsAreHitInTheSameOrderTheyArePainted() {
         drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
         drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
