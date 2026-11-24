@@ -27,8 +27,8 @@ class ReplayDailyLossUiTest {
             maxDailyLossMicros = 5_000_000, dailyLossMode = mode)
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
     }
     @Test fun hardStopCanDiscardTheSession() {
@@ -49,7 +49,7 @@ class ReplayDailyLossUiTest {
         val records = ReplayRecords(MemorySnapshotStore())
         open(ReplayDailyLoss.SOFT, records)
         compose.onNodeWithText("回放考核失败").assertDoesNotExist()
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
     }
 }

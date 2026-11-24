@@ -101,9 +101,15 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
         Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth().testTag("replay-setup"), shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.heightIn(max = 860.dp).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("创建回放", style = MaterialTheme.typography.titleLarge)
-                Text("选择本次回放使用的品种和日期。分钟行情按所选图表时区读取；日线使用券商交易日。",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AppLogo(36.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text("创建回放", style = MaterialTheme.typography.headlineSmall)
+                        Text("设置模拟账户、期货品种和历史日期", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text("分钟行情按图表时区读取，日线使用券商交易日。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 Text("账户资金", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("5000" to "5K", "10000" to "10K", "25000" to "25K", "50000" to "50K", "100000" to "100K", "250000" to "250K").forEach { (amount, label) ->
@@ -140,6 +146,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     ReplayDateField(start, "开始日期", "replay-range-start", !loading, Modifier.weight(1f)) { calendarForStart = true }
                     ReplayDateField(end, "结束日期（含当天）", "replay-range-end", !loading, Modifier.weight(1f)) { calendarForStart = false }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("考核规则（美元）", style = MaterialTheme.typography.titleSmall)
                 OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-target-amount"))
                 OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
@@ -181,7 +188,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { job?.cancel(); progress = null; onDismiss() }) { Text(if (loading) "取消加载" else "取消") }
-                    if (prepared != null) Button(onClick = { runCatching { accountConfig() }.onSuccess { onReady(requireNotNull(prepared).copy(riskConfig = it)) }.onFailure { error = it.message } }, Modifier.testTag("replay-begin"), enabled = !loading) { Text("开始回放") }
+                    if (prepared != null) Button(onClick = { runCatching { accountConfig() }.onSuccess { onReady(requireNotNull(prepared).copy(riskConfig = it)) }.onFailure { error = it.message } }, Modifier.testTag("replay-begin"), enabled = !loading, colors = brandButtonColors()) { Text("开始回放") }
                     else Button(onClick = {
                         if (runCatching { accountConfig() }.onFailure { error = it.message }.isFailure) return@Button
                         val range = replayDateRange(start, end, zone)
@@ -216,7 +223,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                             catch (failure: Exception) { error = failure.message ?: "历史数据读取失败" }
                             finally { progress = null }
                         }
-                    }, Modifier.testTag("replay-load"), enabled = !loading) { Text("读取历史数据") }
+                    }, Modifier.testTag("replay-load"), enabled = !loading, colors = brandButtonColors()) { Text("读取历史数据") }
                 }
             }
         }

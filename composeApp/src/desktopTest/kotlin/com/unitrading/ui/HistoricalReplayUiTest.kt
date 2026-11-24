@@ -26,7 +26,7 @@ import kotlin.test.assertTrue
 class HistoricalReplayUiTest {
     @get:Rule val compose = createComposeRule()
     private fun awaitReplay() {
-        try { compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() } }
+        try { compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() } }
         catch (error: Throwable) {
             val dialog = compose.onAllNodesWithTag("historical-replay").fetchSemanticsNodes().size
             val loading = compose.onAllNodesWithText("正在准备历史数据…").fetchSemanticsNodes().size
@@ -44,11 +44,11 @@ class HistoricalReplayUiTest {
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true,
             riskConfig = ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC, allowOvernight = false))) {} } }
         awaitReplay()
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-trade-count").performScrollTo().assertTextContains("成交 1 笔", substring = true)
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
-        compose.onNodeWithText("禁止过夜：当前处于平仓后至下一交易日开始的限制时段").assertExists()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("当前处于禁止过夜限制时段").assertExists()
     }
 
     @Test fun replayTradesOnlyLocallyAndAppliesStopOnNextBar() {
@@ -62,9 +62,11 @@ class HistoricalReplayUiTest {
         val chart = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
             .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
         assertTrue(chart.getValue("high").toDouble() < 50_000, "Future bars must not enter the visible chart scale")
-        compose.onNodeWithTag("replay-stop").performTextInput("99.50")
-        compose.onNodeWithTag("replay-target").performTextInput("100.50")
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-sl").performTextClearance().performTextInput("99.50")
+        compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-tp").performTextClearance().performTextInput("100.50")
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 0 笔", substring = true)
         assertTrue(compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription].endsWith(";history:1"))
@@ -90,7 +92,7 @@ class HistoricalReplayUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
         awaitReplay()
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         assertTrue(broker.placed.isEmpty(), "Replay must never use the connected broker account")
@@ -153,12 +155,12 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("plot-settings").assertDoesNotExist()
         compose.onNodeWithTag("plot-menu-BUY-MARKET").performClick()
         compose.onNodeWithTag("replay-confirm-order").assertDoesNotExist()
-        compose.onNodeWithTag("replay-draft-side").assertTextContains("买入", substring = true)
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("order-side-BUY").assertIsSelected()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
         compose.onNodeWithTag("replay-tab-1").performScrollTo().performClick()
-        compose.onNodeWithText("交易表现").assertExists()
+        compose.onNodeWithText("回放分析").assertExists()
     }
 
     @Test fun rightClickCanSubmitDirectlyWhenConfirmationIsSkipped() {
@@ -176,8 +178,8 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("plot-menu-SELL-MARKET").performClick()
         compose.onNodeWithTag("replay-confirm-order").assertDoesNotExist()
         compose.onNodeWithText("模拟持仓").assertDoesNotExist()
-        compose.onNodeWithTag("replay-draft-side").assertTextContains("卖出", substring = true)
-        compose.onNodeWithTag("replay-sell").performScrollTo().performClick()
+        compose.onNodeWithTag("order-side-SELL").assertIsSelected()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
     }
 
@@ -215,7 +217,7 @@ class HistoricalReplayUiTest {
             history = { _, frame -> if (available && frame == Timeframe.M1) fine else emptyList() },
             watch = { symbol, frame -> requested.add(symbol to frame) }) {} } }
         awaitReplay()
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithText("模拟持仓").assertExists()
         compose.onNodeWithTag("interval-inline-1").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M1) in requested); available = true; revision++ }
@@ -237,7 +239,7 @@ class HistoricalReplayUiTest {
             history = { _, frame -> if (available && frame == Timeframe.M5) fine else emptyList() },
             watch = { symbol, frame -> requested.add(symbol to frame) }) {} } }
         awaitReplay()
-        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("interval-inline-5").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M5) in requested); available = true; revision++ }
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-5").fetchSemanticsNodes().isNotEmpty() }

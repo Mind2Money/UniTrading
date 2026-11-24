@@ -24,6 +24,7 @@ import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ReplayRecord
 import com.unitrading.app.ReplayRecords
+import com.unitrading.app.ReplayEquityPoint
 import com.unitrading.broker.*
 import com.unitrading.chart.*
 import com.unitrading.chart.drawing.ChartDrawings
@@ -111,9 +112,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var started by remember { mutableStateOf(false) }
     var speed by remember { mutableIntStateOf(1) }
     var stepFrame by remember { mutableStateOf(sourceFrame) }
-    var quantity by remember { mutableStateOf(spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths))) }
-    var stop by remember { mutableStateOf("") }
-    var target by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf(OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))) }
+    var showDraft by remember { mutableStateOf(false) }
+    var lineToConfirm by remember { mutableStateOf<LineAction?>(null) }
+    val quantity = draft.quantity
+    val stop = draft.stopLoss.takeIf { draft.stopLossEnabled }.orEmpty()
+    val target = draft.takeProfit.takeIf { draft.takeProfitEnabled }.orEmpty()
     var message by remember { mutableStateOf<String?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmExit by remember { mutableStateOf(false) }
@@ -122,11 +126,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var startCalendar by remember { mutableStateOf(false) }
     var recordId by remember { mutableStateOf("${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}") }
     var report by remember { mutableStateOf<ReplayRecord?>(null) }
+    var description by remember { mutableStateOf("") }
+    val equityPoints = remember { mutableStateListOf<ReplayEquityPoint>() }
     var savedRecords by remember { mutableStateOf<List<ReplayRecord>>(emptyList()) }
     var recordsExpanded by remember { mutableStateOf(false) }
-    var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
-    var draftSide by remember { mutableStateOf<Side?>(null) }
-    var orderPrice by remember { mutableStateOf("") }
+    val orderKind = draft.kind
+    val orderPrice = draft.entry
     var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
     var sideTab by remember { mutableIntStateOf(0) }
     val riskConfig = input.riskConfig
@@ -199,6 +204,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths)))) }
         val balance = checkedAdd(riskConfig.initialMicros, realized)
         val equity = checkedAdd(balance, floating)
+        var observedEquity = equity
         val wasDailyHit = risk.dailyLossHit
         risk = risk.observe(riskConfig, bar.timeMs, balance, equity)
         // Intrabar prices can cross a risk line and recover before the candle closes.
@@ -208,9 +214,17 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, price),
                     -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
             }
-            risk = risk.observe(riskConfig, bar.timeMs, balance, checkedAdd(balance, worstFloating)).copy(lastEquity = equity)
+            observedEquity = minOf(equity, checkedAdd(balance, worstFloating))
+            risk = risk.observe(riskConfig, bar.timeMs, balance, observedEquity).copy(lastEquity = equity)
         }
         val softLocked = risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT
+        val tradeChanged = next.trades.size != state.trades.size
+        if (equityPoints.isEmpty() || tradeChanged || bar.timeMs - equityPoints.last().timeMs >= 900_000L || risk.failed) {
+            val sampled = if (risk.failed && next.index > state.index) observedEquity else equity
+            val point = ReplayEquityPoint(bar.timeMs, sampled)
+            if (equityPoints.lastOrNull()?.timeMs == bar.timeMs) equityPoints[equityPoints.lastIndex] = point else equityPoints.add(point)
+            if (equityPoints.size > 5_000) equityPoints.removeAt(0)
+        }
         state = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next
         if (softLocked && !wasDailyHit) message = "触及每日软止损：已撤销挂单，下一交易日前禁止开仓。"
         if (!risk.dailyLossHit && wasDailyHit) message = "新交易日开始，已解除每日软止损限制。"
@@ -303,9 +317,52 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         state.modifyPending(spec, pendingId(id), price, sl, tp, current.close)
         OrderPreview(price)
     }.getOrElse { OrderPreview(null, errors = listOf(it.message ?: "模拟挂单修改无效")) }
+    val ticketSpec = if (spec.isContinuous && spec.executionSymbol == null) spec.copy(isContinuous = false) else spec
+    val replayQuote = Quote(current.close, current.close, current.timeMs)
+    fun previewOrder(order: OrderRequest): OrderPreview = runCatching {
+        require(!risk.failed) { "已触及回撤限制" }
+        require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
+        require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "当前处于禁止过夜限制时段" }
+        require(!regular || sourceFrame.seconds >= Timeframe.DAY || isRegularChartTime(current.timeMs)) { "当前回放时间不在常规时段" }
+        val price = order.entryPrice ?: current.close
+        val marketable = order.kind == OrderKind.MARKET || order.kind == OrderKind.LIMIT &&
+            if (order.side == Side.BUY) price >= current.close else price <= current.close
+        if (marketable) state.open(spec, current, order.side, order.lotsHundredths, order.stopLoss, order.takeProfit)
+        else state.enqueue(spec, order.side, order.kind, order.lotsHundredths, price, order.stopLoss, order.takeProfit, current.close)
+        OrderPreview(if (marketable) current.close else price, feesKnown = false, marginKnown = false)
+    }.getOrElse { OrderPreview(null, errors = listOf(it.message ?: "模拟订单无效")) }
+    val draftRequest = draft.request(ticketSpec)
+    val draftPreview = draftRequest?.let(::previewOrder)
+    fun prepareDraft(side: Side, kind: OrderKind, price: Long?) {
+        playing = false; sideTab = 0; showDraft = true
+        draft = OrderDraft(side, kind, draft.quantity, price?.takeUnless { kind == OrderKind.MARKET }?.let(spec::formatPrice).orEmpty())
+        message = null
+    }
+    fun executeLine(action: LineAction) {
+        runCatching {
+            when (action) {
+                is LineAction.ClosePosition -> accept(state.close(spec, action.position, current.close, current.timeMs, "手动平仓"))
+                is LineAction.CancelOrder -> state = state.copy(pending = state.pending.filterNot { "replay-order-${it.id}" == action.order.id })
+                is LineAction.RemoveProtection -> state = state.protect(spec, action.position, current.close,
+                    if (action.stop) null else action.position.stopLoss, if (action.stop) action.position.takeProfit else null)
+                is LineAction.RemovePendingProtection -> state = state.modifyPending(spec, pendingId(action.order.id), action.order.request.entryPrice ?: error("挂单价格无效"),
+                    if (action.stop) null else action.order.request.stopLoss, if (action.stop) action.order.request.takeProfit else null, current.close)
+                is LineAction.RemoveDraftProtection -> draft = draft.withProtectionEnabled(ticketSpec, replayQuote, action.stop, false)
+                LineAction.SubmitDraft -> requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry))
+                LineAction.CloseDraft -> showDraft = false
+                LineAction.EditDraftQuantity -> Unit
+            }
+        }.onFailure { message = it.message }
+    }
+    fun requestLine(action: LineAction) {
+        if (!input.skipConfirmation && (action is LineAction.ClosePosition || action is LineAction.CancelOrder)) {
+            playing = false; lineToConfirm = action
+        } else executeLine(action)
+    }
     val localChartActions = ChartOrderActions(
-        estimateDraft = { it to OrderPreview(null, errors = listOf("回放请使用模拟订单面板")) },
-        onDraftEntry = {}, onDraftProtection = { _, _ -> }, editPending = true,
+        estimateDraft = { it to previewOrder(it) },
+        onDraftEntry = { price -> draft = draft.copy(entry = ticketSpec.formatPrice(price)); showDraft = true },
+        onDraftProtection = { isStop, price -> draft = draft.withProtectionPrice(isStop, ticketSpec.formatPrice(price)); showDraft = true }, editPending = true,
         estimatePending = { id, price -> state.pending.firstOrNull { "replay-order-${it.id}" == id }?.let { pendingPreview(id, price, it.stop, it.target) } ?: OrderPreview(null) },
         onPendingEntry = { order, price -> runCatching { state.modifyPending(spec, pendingId(order.id), price, order.request.stopLoss, order.request.takeProfit, current.close) }
             .onSuccess { state = it; message = null }.onFailure { message = it.message } }, editPendingProtection = true,
@@ -314,25 +371,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             .onSuccess { state = it; message = null }.onFailure { message = it.message } },
         onProtection = { position, sl, tp -> runCatching { state.protect(spec, position, current.close, sl, tp) }
             .onSuccess { state = it; message = null }.onFailure { message = it.message } },
-        onLineAction = { action -> runCatching {
-            when (action) {
-                is LineAction.ClosePosition -> accept(state.close(spec, action.position, current.close, current.timeMs, "手动平仓"))
-                is LineAction.CancelOrder -> state = state.copy(pending = state.pending.filterNot { "replay-order-${it.id}" == action.order.id })
-                is LineAction.RemoveProtection -> state = state.protect(spec, action.position, current.close,
-                    if (action.stop) null else action.position.stopLoss, if (action.stop) action.position.takeProfit else null)
-                is LineAction.RemovePendingProtection -> state = state.modifyPending(spec, pendingId(action.order.id), action.order.request.entryPrice ?: error("挂单价格无效"),
-                    if (action.stop) null else action.order.request.stopLoss, if (action.stop) action.order.request.takeProfit else null, current.close)
-                else -> Unit
-            }
-        }.onFailure { message = it.message } }, addPositionProtection = true, removeProtection = true,
+        onLineAction = { action -> requestLine(action) }, addPositionProtection = true, removeProtection = true,
+        addProtection = true, draftQuantity = draft.quantity, onDraftQuantity = { draft = draft.copy(quantity = it) },
         entryKinds = OrderKind.entries.toSet(), entryLots = spec.parseQuantity(quantity),
-        onEntryOrder = { side, kind, price ->
-            playing = false; sideTab = 0; orderKind = kind
-            orderPrice = price?.takeUnless { kind == OrderKind.MARKET }?.let(spec::formatPrice).orEmpty()
-            stop = ""; target = ""
-            message = "已准备${if (side == Side.BUY) "买入" else "卖出"}订单，请在下单栏检查并提交。"
-            draftSide = side
-        },
+        onEntryOrder = { side, kind, price -> prepareDraft(side, kind, price) },
     )
     val chartOrders = remember(state.pending, spec) { state.pending.map { order ->
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
@@ -343,12 +385,34 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         ClosedTrade("replay-trade-$index", p.id, p.symbol, p.side, p.lotsHundredths, p.entryPrice, trade.exit,
             p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
     } }
+    fun currentRecord(status: String = if (risk.failed) "失败" else "进行中"): ReplayRecord {
+        val equity = runCatching {
+            val realized = state.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
+            val floating = state.positions.fold(0L) { n, position -> checkedAdd(n,
+                checkedAdd(grossPnl(spec, position.side, position.lotsHundredths, position.entryPrice, current.close),
+                    -checkedAdd(position.entryFeeMicros, commission(spec, position.lotsHundredths)))) }
+            checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))
+        }.getOrNull()
+        val samples = listOf(ReplayEquityPoint(bars[start].timeMs, riskConfig.initialMicros)) + equityPoints.toList()
+        return ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
+            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, equity, samples, spec.priceDecimals, description)
+    }
     LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
-        if (started && records != null) {
-            val record = ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
-                Clock.System.now().toEpochMilliseconds(), historyTrades)
-            runCatching { records.save(record) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
+        if (started && historyTrades.isNotEmpty() && records != null) {
+            runCatching { records.save(currentRecord()) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }
+    }
+    fun restartReplay() {
+        playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
+        equityPoints.clear(); description = ""; showFailure = false; message = null
+        draft = OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))
+        showDraft = false; orderToConfirm = null; lineToConfirm = null
+        recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
+    }
+    fun finishReplay(after: () -> Unit) {
+        if (records == null || historyTrades.isEmpty()) { after(); return }
+        runCatching { records.save(currentRecord("已结束")) }.onSuccess { after() }
+            .onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
     }
     val openExecutions = remember(state.positions) { state.positions.map { p ->
         Execution("replay-execution-${p.id}", p.symbol, p.side, p.lotsHundredths, p.entryPrice, p.openedAtMs, p.id)
@@ -441,9 +505,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         TradingChart(accountKey = "local-historical-replay-$id", instrument = spec,
                             quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
                             onTimeframe = { frames[id] = it }, positions = state.positions, trades = historyTrades, selectedPositionId = null,
-                            focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
+                            focusedTrade = null, draft = draftRequest.takeIf { showDraft }, preview = draftPreview.takeIf { showDraft }, orders = chartOrders, actions = localChartActions,
                             executions = openExecutions,
-                            onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
+                            onSide = { side -> activeChart = id; playing = false; sideTab = 0; showDraft = true; draft = draft.withSide(side, ticketSpec, replayQuote) },
                             modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, showHistory = showHistory,
@@ -520,37 +584,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             Text(spec.symbol, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("下单", "分析").forEachIndexed { i, label ->
-                            Surface(onClick = { sideTab = i }, modifier = Modifier.weight(1f).testTag("replay-tab-$i"),
-                                shape = MaterialTheme.shapes.small,
-                                color = if (sideTab == i) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
-                                Box(Modifier.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
-                                    Text(label, color = if (sideTab == i) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                    }
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     if (sideTab == 0) {
-                        ReplaySection("模拟订单") {
-                            Row(Modifier.fillMaxWidth()) { OrderKind.entries.forEach { kind -> TextButton(onClick = { orderKind = kind }, modifier = Modifier.weight(1f)) {
-                                Text(when(kind) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "止损" },
-                                    color = if (orderKind == kind) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                            } } }
-                            draftSide?.let { Text("右键选择：${if (it == Side.BUY) "买入" else "卖出"}", modifier = Modifier.testTag("replay-draft-side"), color = MaterialTheme.colorScheme.primary) }
-                            Text(if (orderKind == OrderKind.MARKET) "按当前回放价格成交" else "按回放行情撮合", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                            if (orderKind != OrderKind.MARKET) OutlinedTextField(orderPrice, { orderPrice = it }, label = { Text("挂单价格") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（${spec.quantityUnit}）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-quantity"))
-                            OutlinedTextField(stop, { stop = it }, label = { Text("止损价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-stop"))
-                            OutlinedTextField(target, { target = it }, label = { Text("止盈价（可选）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-target"))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { requestOrder(Side.SELL) }, modifier = Modifier.weight(1f).testTag("replay-sell"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = TradingColors.Down)) { Text("卖出") }
-                                Button(onClick = { requestOrder(Side.BUY) }, modifier = Modifier.weight(1f).testTag("replay-buy"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = TradingColors.Up)) { Text("买入") }
-                            }
-                        }
+                        OrderTicket(ticketSpec, replayQuote, BrokerCapabilities(hedging = false), draft,
+                            onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
+                            onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
+                            modifier = Modifier.fillMaxWidth().height(630.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
+                            accountName = "回放模拟账户")
                         ReplaySection("账户概览") {
                             ReplayMetric("模拟资金", "${money(riskConfig.initialMicros)} ${spec.currency}")
                             ReplayMetric("净值", if (realized != null && floating != null) runCatching { money(checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))) }.getOrDefault("—") else "—")
@@ -565,7 +605,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
                             state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = { state = state.copy(pending = state.pending.filterNot { it.id == order.id }) }) { Text("撤单") }
+                                TextButton(onClick = { chartOrders.firstOrNull { it.id == "replay-order-${order.id}" }?.let { requestLine(LineAction.CancelOrder(it)) } }) { Text("撤单") }
                             } }
                         }
                         if (state.positions.isNotEmpty()) ReplaySection("模拟持仓") {
@@ -577,49 +617,34 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                     val tp = if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价")
                                     state.protect(spec, p, current.close, sl, tp)
                                 }.onSuccess { state = it; message = null }.onFailure { message = it.message } }) { Text("更新止损止盈") }
-                                TextButton(onClick = { runCatching { state.close(spec, p, current.close, current.timeMs, "手动平仓") }
-                                    .onSuccess { message = null; accept(it) }.onFailure { message = it.message } }) { Text("模拟平仓") }
+                                TextButton(onClick = { requestLine(LineAction.ClosePosition(p)) }) { Text("模拟平仓") }
                             }
                         }
                     } else {
-                        val completed = state.trades.size
-                        val wins = state.trades.count { it.pnlMicros > 0 }
-                        ReplaySection("本地回放记录") {
-                            Button(onClick = {
-                                runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
-                                    .onSuccess { savedRecords = it; recordsExpanded = true }
-                                    .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
-                            }, enabled = records != null) { Text("选择本地记录分析") }
-                            DropdownMenu(expanded = recordsExpanded, onDismissRequest = { recordsExpanded = false }) {
-                                if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
-                                savedRecords.forEach { saved -> DropdownMenuItem(text = {
-                                    Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
-                                }, onClick = { report = saved; recordsExpanded = false }) }
-                            }
+                        Text("回放分析", style = MaterialTheme.typography.titleLarge)
+                        Text("查看本次回放或选择已保存的记录。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { playing = false; report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
+                        OutlinedButton(onClick = {
+                            runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
+                                .onSuccess { savedRecords = it; recordsExpanded = true }
+                                .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
+                        }, enabled = records != null, modifier = Modifier.fillMaxWidth().testTag("replay-records-picker")) { Text("选择已保存的回放") }
+                        DropdownMenu(expanded = recordsExpanded, onDismissRequest = { recordsExpanded = false }) {
+                            if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
+                            savedRecords.forEach { saved -> DropdownMenuItem(text = {
+                                Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
+                            }, onClick = { playing = false; report = saved; recordsExpanded = false }) }
                         }
-                        ReplaySection("交易表现") {
-                            ReplayMetric("平仓次数", "$completed")
-                            ReplayMetric("盈利 / 亏损", "$wins / ${state.trades.count { it.pnlMicros < 0 }}")
-                            ReplayMetric("胜率", if (completed == 0) "—" else "${wins * 100 / completed}%")
-                            ReplayMetric("已实现盈亏", realized?.let { money(it, true) } ?: "—")
-                            ReplayMetric("平均盈亏", if (completed == 0 || realized == null) "—" else money(realized / completed, true))
-                            analysis?.let { stats ->
-                                ReplayMetric("总盈利", money(stats.grossProfit, true))
-                                ReplayMetric("总亏损", money(stats.grossLoss, true))
-                                ReplayMetric("平仓权益最大回撤", money(stats.maxClosedDrawdown))
-                                ReplayMetric("最佳交易", stats.best?.let { money(it, true) } ?: "—")
-                                ReplayMetric("最差交易", stats.worst?.let { money(it, true) } ?: "—")
-                            }
-                        }
-                        ReplaySection("交易记录") {
-                            if (state.trades.isEmpty()) Text("暂无模拟成交", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                            state.trades.asReversed().take(30).forEach { t ->
-                                ReplayMetric("${t.reason} · ${spec.formatPrice(t.exit)}", money(t.pnlMicros, true))
-                            }
-                        }
-                        Text("净持仓按先开先平抵消反向订单。仅使用 K 线 OHLC；同根触及止损按保守成交。无点差和滑点；回撤仅在 K 线收盘时检查。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+
                     }
                 }
+            }
+            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            NavigationRail(Modifier.width(72.dp).fillMaxHeight().testTag("replay-panel-rail"), windowInsets = WindowInsets(0, 0, 0, 0)) {
+                NavigationRailItem(selected = sideTab == 0, onClick = { sideTab = 0 }, icon = { Icon(AppIcons.OrderEntry, null) },
+                    label = { Text("下单") }, modifier = Modifier.testTag("replay-tab-0"))
+                NavigationRailItem(selected = sideTab == 1, onClick = { sideTab = 1 }, icon = { Icon(AppIcons.Analytics, null) },
+                    label = { Text("分析") }, modifier = Modifier.testTag("replay-tab-1"))
             }
         }
     }
@@ -642,11 +667,22 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
             Column(Modifier.fillMaxSize()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { report = null }) { Text("关闭") } }
-                AccountAnalyticsPage(AccountInfo("replay", "本地回放 · ${saved.symbol}", saved.currency), saved.trades, Modifier.weight(1f).fillMaxWidth(), replayMode = true)
+                ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth()) { text ->
+                    val updated = saved.copy(description = text)
+                    runCatching { records?.save(updated) }.onSuccess {
+                        if (saved.id == recordId) description = text
+                        report = updated
+                    }.onFailure { message = "保存备注失败：${it.message ?: "请检查存储"}" }
+                }
             }
         }
     } }
     if (showIndicators) IndicatorSettingsDialog(indicatorController) { showIndicators = false }
+    lineToConfirm?.let { action -> AlertDialog(onDismissRequest = { lineToConfirm = null },
+        title = { Text(if (action is LineAction.ClosePosition) "确认平仓" else "确认撤单") },
+        text = { Text(if (action is LineAction.ClosePosition) "按当前回放价格平仓？" else "撤销此模拟挂单？") },
+        confirmButton = { TextButton(onClick = { lineToConfirm = null; executeLine(action) }, Modifier.testTag("replay-confirm-line")) { Text("确认") } },
+        dismissButton = { TextButton(onClick = { lineToConfirm = null }) { Text("取消") } }) }
     orderToConfirm?.let { order -> AlertDialog(onDismissRequest = { orderToConfirm = null },
         title = { Text("确认模拟订单") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -658,32 +694,29 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         dismissButton = { TextButton(onClick = { orderToConfirm = null }) { Text("取消") } }) }
     switchTo?.let { symbol -> AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换回放品种？") },
         text = { Text("切换品种会结束当前回放，模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") },
-        confirmButton = { TextButton(onClick = { switchTo = null; changeSymbol(symbol) }) { Text("切换品种") } },
+        confirmButton = { TextButton(onClick = { finishReplay { switchTo = null; changeSymbol(symbol) } }) { Text("切换品种") } },
         dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = { confirmReset = false; playing = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig); started = false; recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}" }) { Text("重选起点") }
+            TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }) { Text("重选起点") }
         }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭回放") }
+            TextButton(onClick = { finishReplay(onDismiss) }) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
     if (showFailure) AlertDialog(onDismissRequest = {}, title = { Text("回放考核失败") },
         text = { Column { Text(if (risk.dailyFailure) "账户触及最大日亏损。" else "账户触及最大总亏损。")
             message?.takeIf { it.contains("失败：") }?.let { Text(it, color = MaterialTheme.colorScheme.error) } } },
         confirmButton = { TextButton(onClick = {
             runCatching {
-                records?.save(ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
-                    Clock.System.now().toEpochMilliseconds(), historyTrades))
+                records?.save(currentRecord("失败"))
             }.onSuccess {
-                showFailure = false; playing = false; started = false; state = ReplayState(start)
-                risk = ReplayRiskState.initial(riskConfig); recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"; message = null
+                restartReplay()
             }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }, modifier = Modifier.testTag("replay-failure-save"), enabled = records != null) { Text("保存记录并重新开始") } },
         dismissButton = { TextButton(onClick = {
             runCatching { records?.delete(recordId) }.onSuccess {
-                showFailure = false; playing = false; started = false; state = ReplayState(start)
-                risk = ReplayRiskState.initial(riskConfig); recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"; message = null
+                restartReplay()
             }.onFailure { message = "回放记录删除失败：${it.message ?: "请检查存储"}" }
         }, modifier = Modifier.testTag("replay-failure-discard")) { Text("不保存并重新开始") } })
 
