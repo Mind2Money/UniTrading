@@ -8,18 +8,22 @@ import kotlin.time.Instant
 
 /** Generic local rules, not a representation of a particular firm's evaluation contract. */
 internal enum class ReplayDrawdown { STATIC, EOD, TDD }
+internal enum class ReplayDailyLoss { SOFT, HARD }
 
 internal data class ReplayRiskConfig(val initialMicros: Long, val maxDrawdownMicros: Long, val targetMicros: Long,
-    val mode: ReplayDrawdown, val allowOvernight: Boolean = true, val overnightCutoffMinutes: Int = 15 * 60 + 59) {
+    val mode: ReplayDrawdown, val allowOvernight: Boolean = true, val overnightCutoffMinutes: Int = 15 * 60 + 59,
+    val maxDailyLossMicros: Long? = null, val dailyLossMode: ReplayDailyLoss = ReplayDailyLoss.HARD) {
     init {
         require(initialMicros > 0 && maxDrawdownMicros > 0 && targetMicros > 0) { "资金、回撤额度和盈利目标必须大于零" }
         require(initialMicros > maxDrawdownMicros) { "最大回撤额度必须小于初始资金" }
+        require(maxDailyLossMicros == null || maxDailyLossMicros > 0) { "最大日亏损必须大于零" }
         require(overnightCutoffMinutes in 0 until 24 * 60) { "禁止过夜的平仓时间无效" }
     }
 }
 
 internal data class ReplayRiskState(val threshold: Long, val highWater: Long, val tradingDay: String? = null,
-    val lastBalance: Long, val failed: Boolean = false, val targetReached: Boolean = false) {
+    val lastBalance: Long, val failed: Boolean = false, val targetReached: Boolean = false,
+    val dayOpeningBalance: Long = lastBalance, val dailyLossHit: Boolean = false, val dailyFailure: Boolean = false) {
     companion object {
         fun initial(config: ReplayRiskConfig) = ReplayRiskState(config.initialMicros - config.maxDrawdownMicros,
             config.initialMicros, lastBalance = config.initialMicros)
@@ -35,8 +39,13 @@ internal data class ReplayRiskState(val threshold: Long, val highWater: Long, va
             ReplayDrawdown.EOD -> if (tradingDay != null && tradingDay != day) maxOf(highWater, lastBalance) else highWater
         }
         val limit = maxOf(threshold, high - config.maxDrawdownMicros)
+        val newDay = tradingDay != null && tradingDay != day
+        val opening = if (newDay) lastBalance else dayOpeningBalance
+        val hit = (!newDay && dailyLossHit) || (config.maxDailyLossMicros?.let { equity <= opening - it } == true)
+        val hard = hit && config.dailyLossMode == ReplayDailyLoss.HARD
         return copy(threshold = limit, highWater = high, tradingDay = day, lastBalance = balance,
-            failed = failed || equity <= limit,
+            dayOpeningBalance = opening, dailyLossHit = hit, dailyFailure = dailyFailure || hard,
+            failed = failed || equity <= limit || hard,
             targetReached = targetReached || balance - config.initialMicros >= config.targetMicros)
     }
 }

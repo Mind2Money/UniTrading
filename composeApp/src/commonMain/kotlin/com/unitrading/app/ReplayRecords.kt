@@ -23,5 +23,7 @@ internal class ReplayRecords(private val store: SnapshotStore) {
         store.write(KEY, Json.encodeToString(rows))
     }
 
+    fun delete(id: String) { store.write(KEY, Json.encodeToString(list().filterNot { it.id == id })) }
+
     companion object { internal const val KEY = "replay-records-v1" }
 }

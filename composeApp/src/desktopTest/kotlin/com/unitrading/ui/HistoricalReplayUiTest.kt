@@ -16,6 +16,8 @@ import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
+import com.unitrading.chart.ReplayRiskConfig
+import com.unitrading.chart.ReplayDrawdown
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertTrue
@@ -39,11 +41,9 @@ class HistoricalReplayUiTest {
         val start = java.time.Instant.parse("2026-01-05T21:57:00Z").toEpochMilli()
         val bars = (0..3).map { Candle(start + it * 60_000, 10_000, 10_025, 9_975, 10_000) }
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
-            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true)) {} } }
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true,
+            riskConfig = ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC, allowOvernight = false))) {} } }
         awaitReplay()
-        compose.onNodeWithTag("replay-account-settings").performClick()
-        compose.onNodeWithTag("replay-overnight-disallow").performScrollTo().performClick()
-        compose.onNodeWithTag("replay-account-save").performClick()
         compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-trade-count").performScrollTo().assertTextContains("成交 1 笔", substring = true)
@@ -106,14 +106,14 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-calendar-2026-12-29").performClick()
         compose.onNodeWithTag("replay-range-end").performScrollTo().performClick()
         compose.onNodeWithTag("replay-calendar-2026-12-30").performClick()
-        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).performScrollTo().performClick()
-        compose.onNodeWithTag("interval-option-15").performScrollTo().performClick()
+        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).assertDoesNotExist()
+        compose.onNodeWithTag("replay-assets").performScrollTo().performClick()
         compose.onNodeWithTag("replay-select-OTHRZ6").performScrollTo().performClick()
         compose.onNodeWithTag("replay-load").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
         awaitReplay()
-        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 15分钟")
+        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 1分钟")
         compose.onNode(hasTestTag("chart-layers") and hasAnyAncestor(hasTestTag("historical-replay"))).assertDoesNotExist()
         compose.onNodeWithTag("replay-history-toggle").assertExists()
         compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("historical-replay"))).performClick()
@@ -126,21 +126,6 @@ class HistoricalReplayUiTest {
             it.config.getOrNull(SemanticsProperties.ContentDescription)?.any { value -> value.contains("OTHRZ6") } == true
         } }
         assertTrue(broker.placed.isEmpty())
-    }
-
-    @Test fun setupLoadsSelectedSecondIntervalForReplay() {
-        val broker = OfflineOrderBroker()
-        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
-        compose.setContent { TradingScreen(runtime) }
-        compose.onNodeWithTag("open-historical-replay").performScrollTo().performClick()
-        compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).performScrollTo().performClick()
-        compose.onNodeWithTag("interval-option-30s").performScrollTo().performClick()
-        compose.onNodeWithTag("replay-load").performScrollTo().performClick()
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-begin").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
-        awaitReplay()
-        compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 TESTZ6 30秒")
-        compose.onNodeWithTag("replay-step-30s").assertExists()
     }
 
     @Test fun replayAxisMenuRetainsSelectionsAndRightClickUsesLocalConfirmation() {
@@ -167,6 +152,9 @@ class HistoricalReplayUiTest {
         }
         compose.onNodeWithTag("plot-settings").assertDoesNotExist()
         compose.onNodeWithTag("plot-menu-BUY-MARKET").performClick()
+        compose.onNodeWithTag("replay-confirm-order").assertDoesNotExist()
+        compose.onNodeWithTag("replay-draft-side").assertTextContains("买入", substring = true)
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
         compose.onNodeWithTag("replay-tab-1").performScrollTo().performClick()
@@ -187,6 +175,9 @@ class HistoricalReplayUiTest {
         }
         compose.onNodeWithTag("plot-menu-SELL-MARKET").performClick()
         compose.onNodeWithTag("replay-confirm-order").assertDoesNotExist()
+        compose.onNodeWithText("模拟持仓").assertDoesNotExist()
+        compose.onNodeWithTag("replay-draft-side").assertTextContains("卖出", substring = true)
+        compose.onNodeWithTag("replay-sell").performScrollTo().performClick()
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
     }
 

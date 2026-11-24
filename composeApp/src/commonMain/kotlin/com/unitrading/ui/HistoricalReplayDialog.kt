@@ -41,7 +41,8 @@ internal data class ReplayInput(val instrument: Instrument, val timeframe: Timef
     val zone: ChartTimeZone, val raw: List<Candle>, val indicators: List<IndicatorConfig>,
     val rawFrame: Timeframe = timeframe, val instruments: List<Instrument> = listOf(instrument),
     val intervals: IntervalOptions = IntervalOptions(), val priceAxis: PriceAxisSettings = PriceAxisSettings(),
-    val skipConfirmation: Boolean = false)
+    val skipConfirmation: Boolean = false,
+    val riskConfig: ReplayRiskConfig = ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC))
 
 private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val price: Long?, val quantity: Long,
     val stop: Long?, val target: Long?)
@@ -124,18 +125,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var savedRecords by remember { mutableStateOf<List<ReplayRecord>>(emptyList()) }
     var recordsExpanded by remember { mutableStateOf(false) }
     var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
+    var draftSide by remember { mutableStateOf<Side?>(null) }
     var orderPrice by remember { mutableStateOf("") }
-    var showAccount by remember { mutableStateOf(false) }
-    var accountError by remember { mutableStateOf<String?>(null) }
     var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
     var sideTab by remember { mutableIntStateOf(0) }
-    var initialText by remember { mutableStateOf("50000") }
-    var drawdownText by remember { mutableStateOf("2000") }
-    var targetText by remember { mutableStateOf("3000") }
-    var drawdownMode by remember { mutableStateOf(ReplayDrawdown.STATIC) }
-    var allowOvernight by remember { mutableStateOf(true) }
-    var cutoffText by remember { mutableStateOf("15:59") }
-    var riskConfig by remember { mutableStateOf(ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC)) }
+    val riskConfig = input.riskConfig
+    var showFailure by remember { mutableStateOf(false) }
     var risk by remember { mutableStateOf(ReplayRiskState.initial(riskConfig)) }
     var layout by remember { mutableStateOf(ChartSplitLayout.SINGLE) }
     var activeChart by remember { mutableStateOf("main") }
@@ -204,9 +199,22 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths)))) }
         val balance = checkedAdd(riskConfig.initialMicros, realized)
         val equity = checkedAdd(balance, floating)
+        val wasDailyHit = risk.dailyLossHit
         risk = risk.observe(riskConfig, bar.timeMs, balance, equity)
-        state = if (risk.failed) next.copy(pending = emptyList()) else next
-        if (risk.failed) { playing = false; message = "触及模拟回撤限额，已停止回放并禁止新开仓；现有仓位可手动平仓。" }
+        // Intrabar prices can cross a risk line and recover before the candle closes.
+        if (next.index > state.index && next.positions.isNotEmpty()) {
+            val worstFloating = next.positions.fold(0L) { n, p ->
+                val price = if (p.side == Side.BUY) bar.low else bar.high
+                checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, price),
+                    -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
+            }
+            risk = risk.observe(riskConfig, bar.timeMs, balance, checkedAdd(balance, worstFloating))
+        }
+        val softLocked = risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT
+        state = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next
+        if (softLocked && !wasDailyHit) message = "触及每日软止损：已撤销挂单，下一交易日前禁止开仓。"
+        if (!risk.dailyLossHit && wasDailyHit) message = "新交易日开始，已解除每日软止损限制。"
+        if (risk.failed) { playing = false; showFailure = true; message = if (risk.dailyFailure) "触及最大日亏损，考核失败。" else "触及最大总亏损，考核失败。" }
         next.lastNotice?.let { message = it }
     }
     fun flattenBeforeOvernight() {
@@ -263,6 +271,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     fun executeOrder(order: ReplayOrderIntent) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
             require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "禁止过夜：当前处于平仓后至下一交易日开始的限制时段" }
             val marketableLimit = order.kind == OrderKind.LIMIT && order.price != null &&
                 if (order.side == Side.BUY) order.price >= current.close else order.price <= current.close
@@ -276,6 +285,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     fun requestOrder(side: Side, kind: OrderKind = orderKind, price: Long? = if (kind == OrderKind.MARKET) null else spec.parsePrice(orderPrice)) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
             require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "禁止过夜：当前处于平仓后至下一交易日开始的限制时段" }
             require(!regular || sourceFrame.seconds >= Timeframe.DAY || isRegularChartTime(current.timeMs)) { "当前回放时间不在常规时段，请前进到开市时间" }
             val qty = spec.parseQuantity(quantity) ?: error("请输入有效数量")
@@ -316,7 +326,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
         }.onFailure { message = it.message } }, addPositionProtection = true, removeProtection = true,
         entryKinds = OrderKind.entries.toSet(), entryLots = spec.parseQuantity(quantity),
-        onEntryOrder = { side, kind, price -> requestOrder(side, kind, price) },
+        onEntryOrder = { side, kind, price ->
+            playing = false; sideTab = 0; orderKind = kind
+            orderPrice = price?.takeUnless { kind == OrderKind.MARKET }?.let(spec::formatPrice).orEmpty()
+            stop = ""; target = ""
+            message = "已准备${if (side == Side.BUY) "买入" else "卖出"}订单，请在下单栏检查并提交。"
+            draftSide = side
+        },
     )
     val chartOrders = remember(state.pending, spec) { state.pending.map { order ->
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
@@ -503,11 +519,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             Text("本地模拟", style = MaterialTheme.typography.titleMedium)
                             Text(spec.symbol, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
-                        TextButton(onClick = { if (started) message = "请先重选起点再修改模拟账户设置" else { accountError = null; showAccount = true } },
-                            modifier = Modifier.testTag("replay-account-settings")) { Text("账户设置") }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("订单", "分析").forEachIndexed { i, label ->
+                        listOf("下单", "分析").forEachIndexed { i, label ->
                             Surface(onClick = { sideTab = i }, modifier = Modifier.weight(1f).testTag("replay-tab-$i"),
                                 shape = MaterialTheme.shapes.small,
                                 color = if (sideTab == i) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
@@ -524,6 +538,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 Text(when(kind) { OrderKind.MARKET -> "市价"; OrderKind.LIMIT -> "限价"; OrderKind.STOP -> "止损" },
                                     color = if (orderKind == kind) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                             } } }
+                            draftSide?.let { Text("右键选择：${if (it == Side.BUY) "买入" else "卖出"}", modifier = Modifier.testTag("replay-draft-side"), color = MaterialTheme.colorScheme.primary) }
                             Text(if (orderKind == OrderKind.MARKET) "按当前回放价格成交" else "按回放行情撮合", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                             if (orderKind != OrderKind.MARKET) OutlinedTextField(orderPrice, { orderPrice = it }, label = { Text("挂单价格") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                             OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（${spec.quantityUnit}）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-quantity"))
@@ -540,6 +555,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             ReplayMetric("模拟资金", "${money(riskConfig.initialMicros)} ${spec.currency}")
                             ReplayMetric("净值", if (realized != null && floating != null) runCatching { money(checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))) }.getOrDefault("—") else "—")
                             ReplayMetric("回撤线 · ${riskConfig.mode.name}", "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
+                            ReplayMetric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
                             ReplayMetric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
                             ReplayMetric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")
                             Text("已实现 ${realized?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-realized"), style = MaterialTheme.typography.bodySmall)
@@ -652,49 +668,25 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
-    if (showAccount) AlertDialog(onDismissRequest = { showAccount = false; drawdownMode = riskConfig.mode; allowOvernight = riskConfig.allowOvernight; cutoffText = replayCutoffText(riskConfig.overnightCutoffMinutes) }, title = { Text("模拟账户设置") }, text = {
-        Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("设置初始资金、回撤额度和盈利目标。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            ReplaySection("资金与目标 · ${spec.currency}") {
-                OutlinedTextField(initialText, { initialText = it }, label = { Text("初始资金") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大回撤额度") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(targetText, { targetText = it }, label = { Text("总盈利目标") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            }
-            ReplaySection("回撤类型") {
-                ReplayDrawdown.entries.forEach { mode -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = drawdownMode == mode, onClick = { drawdownMode = mode })
-                    Column { Text(when(mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "EOD 日终追踪"; ReplayDrawdown.TDD -> "TDD 浮动追踪" })
-                        Text(when(mode) { ReplayDrawdown.STATIC -> "回撤线固定"; ReplayDrawdown.EOD -> "按日终余额上移"; ReplayDrawdown.TDD -> "按已观察净值高点上移" },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-                } }
-            }
-            ReplaySection("持仓过夜") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = allowOvernight, onClick = { allowOvernight = true }, modifier = Modifier.testTag("replay-overnight-allow"))
-                    Text("允许持仓过夜")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = !allowOvernight, onClick = { allowOvernight = false }, modifier = Modifier.testTag("replay-overnight-disallow"))
-                    Text("不允许持仓过夜")
-                }
-                if (!allowOvernight) {
-                    OutlinedTextField(cutoffText, { cutoffText = it }, label = { Text("每日平仓时间（芝加哥）") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("replay-overnight-cutoff"))
-                    Text("截止时按最后一根可用 K 线的收盘价自动平仓并撤销挂单，芝加哥 17:00 后可重新下单。未模拟节假日或滑点。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            accountError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            Text("本地通用规则，日终使用芝加哥 17:00；不代表特定交易公司的考核规则。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-    }, confirmButton = { TextButton(onClick = {
-        runCatching {
-            require(allowOvernight || sourceFrame.seconds < Timeframe.DAY) { "禁止过夜需要券商提供日线以下的历史数据" }
-            ReplayRiskConfig(parseFixed(initialText, 6) ?: error("初始资金无效"),
-                parseFixed(drawdownText, 6) ?: error("回撤额度无效"), parseFixed(targetText, 6) ?: error("盈利目标无效"), drawdownMode,
-                allowOvernight, parseReplayCutoff(cutoffText) ?: error("请输入有效的平仓时间，例如 15:59"))
-        }
-            .onSuccess { riskConfig = it; risk = ReplayRiskState.initial(it); showAccount = false; message = null }
-            .onFailure { accountError = it.message }
-    }, modifier = Modifier.testTag("replay-account-save")) { Text("保存") } }, dismissButton = { TextButton(onClick = { showAccount = false; drawdownMode = riskConfig.mode; allowOvernight = riskConfig.allowOvernight; cutoffText = replayCutoffText(riskConfig.overnightCutoffMinutes) }) { Text("取消") } })
+    if (showFailure) AlertDialog(onDismissRequest = {}, title = { Text("回放考核失败") },
+        text = { Column { Text(if (risk.dailyFailure) "账户触及最大日亏损。" else "账户触及最大总亏损。")
+            message?.takeIf { it.contains("失败：") }?.let { Text(it, color = MaterialTheme.colorScheme.error) } } },
+        confirmButton = { TextButton(onClick = {
+            runCatching {
+                records?.save(ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
+                    Clock.System.now().toEpochMilliseconds(), historyTrades))
+            }.onSuccess {
+                showFailure = false; playing = false; started = false; state = ReplayState(start)
+                risk = ReplayRiskState.initial(riskConfig); recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"; message = null
+            }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
+        }, modifier = Modifier.testTag("replay-failure-save"), enabled = records != null) { Text("保存记录并重新开始") } },
+        dismissButton = { TextButton(onClick = {
+            runCatching { records?.delete(recordId) }.onSuccess {
+                showFailure = false; playing = false; started = false; state = ReplayState(start)
+                risk = ReplayRiskState.initial(riskConfig); recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"; message = null
+            }.onFailure { message = "回放记录删除失败：${it.message ?: "请检查存储"}" }
+        }, modifier = Modifier.testTag("replay-failure-discard")) { Text("不保存并重新开始") } })
+
 }
 
 @Composable
