@@ -110,7 +110,6 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("分钟行情按图表时区读取，日线使用券商交易日。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 Text("账户资金", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("5000" to "5K", "10000" to "10K", "25000" to "25K", "50000" to "50K", "100000" to "100K", "250000" to "250K").forEach { (amount, label) ->
@@ -177,7 +176,6 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                         modifier = Modifier.testTag("replay-drawdown-${mode.name}"),
                         label = { Text(when(mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "日终追踪"; ReplayDrawdown.TDD -> "浮动追踪" }) }) }
                 }
-                Text(if (dailyMode == ReplayDailyLoss.SOFT) "触及日亏损后暂停开仓并撤销挂单，下一交易日恢复。" else "触及日亏损后，本次考核失败。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     @Composable fun OvernightOption(modifier: Modifier) {
                         ReplayOptionCard("允许持仓过夜", if (allowOvernight) "可以跨交易日持仓" else "截止时间自动平仓并撤单", allowOvernight,
@@ -194,7 +192,6 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     }
                 }
                 if (!allowOvernight) OutlinedTextField(cutoffText, { cutoffText = it }, label = { Text("每日平仓时间（芝加哥）") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-overnight-cutoff"))
-                Text("交易日按芝加哥时间 17:00 切换；回放后的图表周期可以调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 progress?.let { Text(it, Modifier.testTag("replay-load-progress"), color = MaterialTheme.colorScheme.primary) }
                 error?.let { Text(it, Modifier.testTag("replay-load-error"), color = MaterialTheme.colorScheme.error) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

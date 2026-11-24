@@ -91,21 +91,22 @@ internal class DrawingFrame(
     val demoStrokes: List<DemoStroke>,
 )
 
-/** Paints the drawings of [frame] inside the price pane, under the order lines. */
-internal fun DrawScope.drawDrawings(frame: DrawingFrame, plot: Rect, measurer: TextMeasurer, chartColor: Color) {
-    fun paint(scene: DrawingScene) {
-        clipRect(plot.left, plot.top, plot.right, plot.bottom) {
-            scene.parts.forEach { part ->
-                when (part) {
-                    is PolyPart -> drawPoly(part)
-                    is TextPart -> drawTextPart(part, measurer)
-                    is ImagePart -> drawImagePart(part, frame.images)
-                }
+/** Paint a single object so it can be ordered together with candles and indicators. */
+internal fun DrawScope.drawDrawingScene(scene: DrawingScene, frame: DrawingFrame, plot: Rect, measurer: TextMeasurer) {
+    clipRect(plot.left, plot.top, plot.right, plot.bottom) {
+        scene.parts.forEach { part ->
+            when (part) {
+                is PolyPart -> drawPoly(part)
+                is TextPart -> drawTextPart(part, measurer)
+                is ImagePart -> drawImagePart(part, frame.images)
             }
         }
     }
-    frame.scenes.forEach(::paint)
-    frame.draft?.let(::paint)
+}
+
+/** Temporary placement and editing controls stay accessible above the objects. */
+internal fun DrawScope.drawDrawingControls(frame: DrawingFrame, plot: Rect, measurer: TextMeasurer, chartColor: Color) {
+    frame.draft?.let { drawDrawingScene(it, frame, plot, measurer) }
     clipRect(plot.left, plot.top, plot.right, plot.bottom) {
         frame.scenes.forEach { scene ->
             val selected = scene.drawing.id == frame.selectedId
@@ -126,12 +127,23 @@ internal fun DrawScope.drawDrawings(frame: DrawingFrame, plot: Rect, measurer: T
     }
 }
 
+/** Paints the drawings of [frame] inside the price pane, under the order lines. */
+internal fun DrawScope.drawDrawings(frame: DrawingFrame, plot: Rect, measurer: TextMeasurer, chartColor: Color) {
+    frame.scenes.forEach { drawDrawingScene(it, frame, plot, measurer) }
+    drawDrawingControls(frame, plot, measurer, chartColor)
+}
+
+/** Draw selected full-height objects through one indicator pane, respecting its layer. */
+internal fun DrawScope.drawFullHeightScenes(scenes: List<DrawingScene>, plot: Rect, top: Float, bottom: Float) {
+    if (bottom <= top) return
+    clipRect(plot.left, top, plot.right, bottom) {
+        scenes.forEach { scene -> scene.parts.forEach { if (it is PolyPart && it.fullHeight) drawPoly(it) } }
+    }
+}
+
 /** Continues full-height lines down through the indicator panes, which are painted after the price pane. */
 internal fun DrawScope.drawFullHeightParts(frame: DrawingFrame, plot: Rect, chartBottom: Float) {
-    if (chartBottom <= plot.bottom) return
-    clipRect(plot.left, plot.bottom, plot.right, chartBottom) {
-        (frame.scenes + listOfNotNull(frame.draft)).forEach { scene -> scene.parts.forEach { if (it is PolyPart && it.fullHeight) drawPoly(it) } }
-    }
+    drawFullHeightScenes(frame.scenes + listOfNotNull(frame.draft), plot, plot.bottom, chartBottom)
 }
 
 /** Axis tags: every `always` mark, plus the anchors of the selected or just-placed drawing with a band between them. */

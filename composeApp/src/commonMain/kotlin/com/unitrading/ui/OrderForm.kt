@@ -53,6 +53,7 @@ internal fun OrderForm(
     brackets: AccountBrackets = AccountBrackets(),
     bracketOrder: OrderRequest? = null,
     orderNotice: @Composable () -> Unit = {},
+    showPriceExplanation: Boolean = true,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -147,7 +148,7 @@ internal fun OrderForm(
                         formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—")
                     EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} $currency" } ?: "未知 / 服务器校验")
                     EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} $currency" } ?: "未知")
-                    Text(when (draft.kind) {
+                    if (showPriceExplanation) Text(when (draft.kind) {
                         OrderKind.MARKET -> "按当前报价估算，成交价可能变化。"
                         OrderKind.LIMIT -> "限价是最高买入价或最低卖出价，不是突破触发价；若当前报价已满足限价，可能立即成交。"
                         OrderKind.STOP -> "按当前报价估算；挂单不预占保证金，触发时重新校验资金与止损/止盈。"

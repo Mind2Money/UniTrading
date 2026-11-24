@@ -1311,6 +1311,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } },
                             onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                             allIndicators = chartIndicatorSettings.indicators,
+                            objectLayers = runtime.objectLayersForChart(chartId),
                             keyboardTrading = tradingPreferences.keyboardTrading,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
                                 changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))

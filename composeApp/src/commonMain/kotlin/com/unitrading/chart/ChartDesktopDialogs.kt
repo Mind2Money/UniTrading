@@ -14,26 +14,53 @@ import com.unitrading.chart.drawing.ChartDrawings
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<IndicatorConfig>, onIndicators: (List<IndicatorConfig>) -> Unit, onDismiss: () -> Unit) {
+internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<IndicatorConfig>, layers: ChartObjectLayers,
+    onIndicators: ((List<IndicatorConfig>) -> Unit)?, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val ranks = layers.forSymbol(drawings.symbol)
+    @Composable fun LayerMenu(key: String) {
+        var expanded by remember(key) { mutableStateOf(false) }
+        Box {
+            TextButton(onClick = { expanded = true }, contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.testTag("object-layer-menu-$key")) { Text("层级") }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                listOf(true to "置于顶层", false to "置于底层").forEach { (front, label) ->
+                    DropdownMenuItem(text = { Text(label) }, modifier = Modifier.testTag("object-layer-${if (front) "front" else "back"}-$key"), onClick = {
+                        expanded = false
+                        scope.launch { layers.move(drawings.symbol, key, indicators.map { it.id }, drawings.drawings.map { it.id }, front) }
+                    })
+                }
+            }
+        }
+    }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("对象树") }, text = {
         Column(Modifier.widthIn(min = 300.dp).heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            layers.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Text("绘图 · ${drawings.drawings.size}", style = MaterialTheme.typography.titleSmall)
             if (drawings.drawings.isEmpty()) Text("当前品种没有绘图", style = MaterialTheme.typography.bodySmall)
-            drawings.drawings.asReversed().forEach { drawing ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(onClick = { drawings.select(drawing.id); onDismiss() }, modifier = Modifier.weight(1f)) { Text(drawing.tool.label, maxLines = 1) }
-                    TextButton(onClick = { drawings.update(drawing.copy(hidden = !drawing.hidden)) }) { Text(if (drawing.hidden) "显示" else "隐藏") }
-                    TextButton(onClick = { drawings.update(drawing.copy(locked = !drawing.locked)) }) { Text(if (drawing.locked) "解锁" else "锁定") }
-                    TextButton(onClick = { drawings.remove(drawing.id) }, enabled = !drawing.locked) { Text("删除") }
+            drawings.drawings.asReversed().sortedByDescending { ranks[drawingLayerKey(it.id)] ?: 0L }.forEach { drawing ->
+                Column(Modifier.fillMaxWidth().testTag("object-drawing-${drawing.id}")) {
+                    TextButton(onClick = { drawings.select(drawing.id); onDismiss() }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(drawing.tool.label, maxLines = 1) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        LayerMenu(drawingLayerKey(drawing.id))
+                        TextButton(onClick = { drawings.update(drawing.copy(hidden = !drawing.hidden)) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-visibility-${drawing.id}")) { Text(if (drawing.hidden) "显示" else "隐藏") }
+                        TextButton(onClick = { drawings.update(drawing.copy(locked = !drawing.locked)) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (drawing.locked) "解锁" else "锁定") }
+                        TextButton(onClick = { drawings.remove(drawing.id) }, enabled = !drawing.locked, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-delete-${drawing.id}")) { Text("删除") }
+                    }
                 }
             }
             HorizontalDivider()
             Text("指标 · ${indicators.size}", style = MaterialTheme.typography.titleSmall)
-            indicators.forEach { indicator ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(indicator.label, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { onIndicators(indicators.map { if (it.id == indicator.id) it.copy(visible = !it.visible) else it }) }) { Text(if (indicator.visible) "隐藏" else "显示") }
-                    TextButton(onClick = { onIndicators(indicators.filterNot { it.id == indicator.id }) }) { Text("删除") }
+            indicators.sortedByDescending { ranks[indicatorLayerKey(it.id)] ?: 0L }.forEach { indicator ->
+                Column(Modifier.fillMaxWidth().testTag("object-indicator-${indicator.id}")) {
+                    Text(indicator.label, modifier = Modifier.padding(horizontal = 8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        LayerMenu(indicatorLayerKey(indicator.id))
+                        TextButton(onClick = { onIndicators?.invoke(indicators.map { if (it.id == indicator.id) it.copy(visible = !it.visible) else it }) }, enabled = onIndicators != null,
+                            contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-indicator-visibility-${indicator.id}")) { Text(if (indicator.visible) "隐藏" else "显示") }
+                        TextButton(onClick = { onIndicators?.invoke(indicators.filterNot { it.id == indicator.id }) }, enabled = onIndicators != null,
+                            contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-indicator-delete-${indicator.id}")) { Text("删除") }
+                    }
                 }
             }
         }

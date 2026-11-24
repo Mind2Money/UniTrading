@@ -489,10 +489,10 @@ class ChartDrawings internal constructor(
     // Frame ----------------------------------------------------------------------------------------------------------
 
     /** What the chart paints this frame; hit tests use the same scenes. */
-    internal fun frame(ctx: DrawingContext): DrawingFrame {
+    internal fun frame(ctx: DrawingContext, layer: (String) -> Long = { 0L }): DrawingFrame {
         val bucket = IntervalBucket.of(ctx.timeframe)
         val list = if (hideDrawings) emptyList() else drawings.filter { !it.hidden && bucket !in it.hiddenIntervals }
-        val built = list.map { buildScene(it, ctx, expanded = it.id == hoveredId || it.id == selectedId) }
+        val built = list.sortedBy { layer(it.id) }.map { buildScene(it, ctx, expanded = it.id == hoveredId || it.id == selectedId) }
         scenes = built
         val transient = draft ?: measured
         return DrawingFrame(built, selectedId, hoveredId, images, transient?.let { buildScene(it, ctx, expanded = true) }, zoomBox, demoStrokes)

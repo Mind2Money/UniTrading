@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
+import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.chart.drawing.*
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
@@ -63,6 +64,11 @@ import kotlin.time.Instant
 
 private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
 private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
+private sealed interface PriceObject {
+    val rank: Long
+    data class Indicator(val item: ComputedIndicator, override val rank: Long) : PriceObject
+    data class Drawing(val scene: DrawingScene, override val rank: Long) : PriceObject
+}
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -186,8 +192,11 @@ fun TradingChart(
     val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
     // Indicators use every loaded bar; separate panes take the bottom of the drawable area, above the time axis.
     val computedIndicators = remember(candles, indicators, timeframe) { computeIndicators(indicators, candles, timeframe) }
+    val localObjectLayers = remember { ChartObjectLayers(MemorySnapshotStore()) }
+    val objectLayers = chrome.objectLayers ?: localObjectLayers
+    val objectRanks = objectLayers.forSymbol(instrument.symbol)
     val overlays = computedIndicators.filter { it.overlay }
-    val panes = computedIndicators.filterNot { it.overlay }
+    val panes = computedIndicators.filterNot { it.overlay }.sortedByDescending { objectRanks[indicatorLayerKey(it.config.id)] ?: 0L }
     var paneFractions by remember(indicatorPaneFractions) { mutableStateOf(indicatorPaneFractions) }
     val minimumPaneHeight = with(density) { 56.dp.toPx() }
     val paneLayout = indicatorPaneLayout(top, bottom, panes.map { it.config.id }, paneFractions, minimumPaneHeight)
@@ -730,6 +739,20 @@ fun TradingChart(
                         drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
                         text(axisTimeLabel(visible[index].timeMs, timeframe, chrome.chartTimeZone.zoneId), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
                     }
+                    val drawingFrame = drawingLayer?.let { prepareLayerFrame(it) { id -> objectRanks[drawingLayerKey(id)] ?: 0L } }
+                    val plotRect = Rect(left, top, right, plotBottom)
+                    val priceObjects = buildList<PriceObject> {
+                        overlays.forEach { add(PriceObject.Indicator(it, objectRanks[indicatorLayerKey(it.config.id)] ?: 0L)) }
+                        drawingFrame?.scenes?.forEach { add(PriceObject.Drawing(it, objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L)) }
+                    }.sortedBy { it.rank }
+                    fun paintPriceObjects(behindCandles: Boolean) {
+                        priceObjects.forEach { item ->
+                            if ((item.rank < 0L) == behindCandles) when (item) {
+                                is PriceObject.Indicator -> drawIndicatorOverlays(listOf(item.item), range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
+                                is PriceObject.Drawing -> if (drawingFrame != null) drawDrawingScene(item.scene, drawingFrame, plotRect, textMeasurer)
+                            }
+                        }
+                    }
                     clipRect(left, top, right, plotBottom) {
                     if (chrome.showWatermark) {
                         val mark = textMeasurer.measure("${instrument.symbol} · ${timeframe.label}", TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
@@ -744,6 +767,7 @@ fun TradingChart(
                             }
                         }
                     }
+                    paintPriceObjects(true)
                     visible.forEachIndexed { index, candle ->
                         val center = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         val color = if (candle.close >= candle.open) colors.UpBody else colors.DownBody
@@ -755,8 +779,8 @@ fun TradingChart(
                         drawRect(color, Offset(center - width / 2, y), Size(width, height))
                         drawRect(if (rising) colors.UpBorder else colors.DownBorder, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
                     }
-                    drawIndicatorOverlays(overlays, range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
-                    drawingLayer?.let { drawLayerDrawings(it, textMeasurer, colors.Chart) }
+                    paintPriceObjects(false)
+                    drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }
                     chartQuote?.let {
                         val y = scale.y(it.bid)
                         if (axis.showPriceLine) drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
@@ -814,8 +838,14 @@ fun TradingChart(
                     val tagStyle = OrderTagStyle(colors, 3.dp.toPx(), 13.dp.toPx(), closeIcon) { tagText(it) }
                     orderTags.forEach { drawOrderTag(it, tagStyle, right, hoveredButton) }
                     }
-                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, candles, range, range.first + readoutIndex, instrument, left, right, paneLayout, step,
-                        textMeasurer, labelStyle, colors, axis.left) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
+                    panes.forEachIndexed { index, pane ->
+                        val bounds = paneLayout[index]
+                        val paneRank = objectRanks[indicatorLayerKey(pane.config.id)] ?: 0L
+                        drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) < paneRank }, plotRect, bounds.top, bounds.bottom) }
+                        drawIndicatorPanes(listOf(pane), candles, range, range.first + readoutIndex, instrument, left, right, listOf(bounds), step,
+                            textMeasurer, labelStyle, colors, axis.left) { bar -> left + (bar - viewport.start(candles.size) + .5).toFloat() * step }
+                        drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) >= paneRank } + listOfNotNull(frame.draft), plotRect, bounds.top, bounds.bottom) }
+                    }
                     drawLine(colors.Border, Offset(if (axis.left) left else right, top), Offset(if (axis.left) left else right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
                     drawingLayer?.let { drawLayerMarks(it, labelStyle, textMeasurer, if (axis.left) 0f else right + 4.dp.toPx(), if (axis.left) left - 4.dp.toPx() else this.size.width, bottom + 1f) { price -> axisPrice(price.roundToLong()) } }
@@ -1027,7 +1057,7 @@ fun TradingChart(
                 }
                 drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
-                    chrome.onIndicatorChanges ?: {}, { showObjectTree = false })
+                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false })
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,
                     chrome.allIndicators ?: indicators, axis, { template ->
                         chrome.onApplyTemplate.invoke(template)
@@ -1109,6 +1139,7 @@ class ChartChrome(
     val chartTimeZone: com.unitrading.app.ChartTimeZone = com.unitrading.app.ChartTimeZone.SHANGHAI,
     val chartTimeZoneLabel: String? = null,
     val onOpenSettings: (() -> Unit)? = null,
+    val objectLayers: ChartObjectLayers? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

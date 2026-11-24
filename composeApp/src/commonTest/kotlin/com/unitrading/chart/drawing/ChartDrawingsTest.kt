@@ -7,6 +7,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlin.test.*
 
 class ChartDrawingsTest {
+    @Test fun overlappingDrawingsAreHitInTheSameOrderTheyArePainted() {
+        drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
+        drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
+        val first = drawings.drawings.first().id
+        val second = drawings.drawings.last().id
+        drawings.select(null)
+        val point = at(40, 39_500)
+        drawings.frame(ctx) { if (it == first) 1L else 0L }
+        assertEquals(first, assertIs<DrawingHit.Body>(drawings.hitAt(point, 6f, 6f)).drawing.id)
+        drawings.frame(ctx) { if (it == second) 1L else 0L }
+        assertEquals(second, assertIs<DrawingHit.Body>(drawings.hitAt(point, 6f, 6f)).drawing.id)
+    }
     @Test fun favoriteToolsAreSharedWhileChartDrawingsStayIndependent() {
         val shared = DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined)
         val first = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), shared).apply { bind("MES") }

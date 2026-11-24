@@ -57,6 +57,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     // Each chart has separate indicator settings and a separate drawing library, including when symbols match.
     private val chartIndicatorControllers = mutableMapOf<String, IndicatorController>()
     private val chartDrawingControllers = mutableMapOf<String, com.unitrading.chart.drawing.ChartDrawings>()
+    private val chartObjectLayers = mutableMapOf<String, com.unitrading.chart.ChartObjectLayers>()
     private val chartUndoControllers = mutableMapOf<String, ChartUndoCoordinator>()
     private fun chartStore(id: String): SnapshotStore {
         val safeId = id.encodeToByteArray().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
@@ -68,6 +69,8 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     }
     fun indicatorsForChart(id: String): IndicatorController = if (id == "main") indicators else
         chartIndicatorControllers.getOrPut(id) { IndicatorController(chartStore(id)) }
+    internal fun objectLayersForChart(id: String): com.unitrading.chart.ChartObjectLayers =
+        chartObjectLayers.getOrPut(id) { com.unitrading.chart.ChartObjectLayers(if (id == "main") store else chartStore(id)) }
     fun drawingsForChart(id: String): com.unitrading.chart.drawing.ChartDrawings = if (id == "main") drawings else
         chartDrawingControllers.getOrPut(id) {
             com.unitrading.chart.drawing.ChartDrawings(com.unitrading.chart.drawing.DrawingLibrary(chartStore(id)), drawingLibrary)

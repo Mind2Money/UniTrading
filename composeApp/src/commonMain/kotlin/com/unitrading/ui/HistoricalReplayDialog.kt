@@ -151,6 +151,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var showIndicators by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(true) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
+    val objectLayers = remember { ChartObjectLayers(MemorySnapshotStore()) }
     val indicatorSettings by indicatorController.settings.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(indicatorController) { indicatorController.apply(IndicatorSettings(input.indicators)) }
@@ -521,9 +522,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             focusedTrade = null, draft = draftRequest.takeIf { showDraft }, preview = draftPreview.takeIf { showDraft }, orders = chartOrders, actions = localChartActions,
                             executions = openExecutions,
                             onSide = { side -> activeChart = id; playing = false; sideTab = 0; showDraft = true; draft = draft.withSide(side, ticketSpec, replayQuote) },
-                            modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
+                            modifier = Modifier.fillMaxSize(), indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, showHistory = showHistory,
+                                allIndicators = indicatorSettings.indicators,
+                                onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
+                                objectLayers = objectLayers,
                                 desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -613,7 +617,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
                             modifier = Modifier.fillMaxWidth().height(630.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
-                            accountName = "回放模拟账户")
+                            accountName = "回放模拟账户", showPriceExplanation = false)
                         if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
                             state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)

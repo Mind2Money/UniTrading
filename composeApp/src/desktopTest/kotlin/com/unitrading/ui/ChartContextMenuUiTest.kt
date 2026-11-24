@@ -182,6 +182,29 @@ class ChartContextMenuUiTest {
         assertTrue(broker.placed.isEmpty())
     }
 
+    @Test fun objectTreeMovesIndicatorsAndDrawingsInClickOrder() {
+        render()
+        runBlocking { assertTrue(runtime.indicators.apply(com.unitrading.app.IndicatorSettings(listOf(com.unitrading.chart.IndicatorConfig("ma", com.unitrading.chart.IndicatorKind.MA))))) }
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        val id = runtime.drawings.drawings.single().id
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        val drawing = "drawing:$id"
+        val indicator = "indicator:ma"
+        compose.onNodeWithTag("object-layer-menu-$drawing").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-front-$drawing").performClick()
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) > 0 }
+        compose.onNodeWithTag("object-layer-menu-$indicator").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-front-$indicator").performClick()
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[indicator] ?: 0) > (ranks[drawing] ?: 0)
+        }
+        compose.onNodeWithTag("object-layer-menu-$drawing").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-back-$drawing").performClick()
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
+    }
+
     @Test fun menuRemovesAndRestoresDrawings() {
         render()
         compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }

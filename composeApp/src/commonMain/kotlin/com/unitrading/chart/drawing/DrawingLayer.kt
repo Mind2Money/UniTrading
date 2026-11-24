@@ -139,19 +139,18 @@ internal fun rememberDrawingLayer(
 
 private fun currentTimeMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
-/** Draws the layer's drawings inside the plot, below the order lines and the crosshair. */
-internal fun DrawScope.drawLayerDrawings(layer: DrawingLayer, measurer: androidx.compose.ui.text.TextMeasurer, chartColor: androidx.compose.ui.graphics.Color) {
-    val ctx = layer.ctx ?: return
-    val frame = layer.controller.frame(ctx)
+/** Computes the scene in paint order; pointer hit tests use this same order. */
+internal fun prepareLayerFrame(layer: DrawingLayer, order: (String) -> Long): DrawingFrame? {
+    val ctx = layer.ctx ?: return null
+    val frame = layer.controller.frame(ctx, order)
     layer.frame = frame
-    drawDrawings(frame, ctx.coords.plot, measurer, chartColor)
+    return frame
 }
 
 /** Axis tags, outside the plot's clip. */
 internal fun DrawScope.drawLayerMarks(layer: DrawingLayer, labelStyle: TextStyle, measurer: androidx.compose.ui.text.TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float, axisPrice: (Double) -> String) {
     val ctx = layer.ctx ?: return
     val frame = layer.frame ?: return
-    drawFullHeightParts(frame, ctx.coords.plot, ctx.coords.chartBottom)
     drawDrawingMarks(frame, ctx, labelStyle, measurer, axisLeft, axisRight, timeAxisTop, axisPrice)
     if (layer.controller.cursor == ChartCursor.DOT && !layer.showsCrosshairLines) layer.hoverPoint?.let { drawCircle(ctx.ink, 3f * density, it) }
 }

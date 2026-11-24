@@ -18,6 +18,8 @@ import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.ReplayDrawdown
+import com.unitrading.chart.IndicatorConfig
+import com.unitrading.chart.IndicatorKind
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertTrue
@@ -33,6 +35,53 @@ class HistoricalReplayUiTest {
             val missing = compose.onAllNodesWithText("当前图表没有足够的历史 K 线，请等待数据加载后重试。").fetchSemanticsNodes().size
             throw AssertionError("Replay not ready: dialog=$dialog loading=$loading missing=$missing", error)
         }
+    }
+
+    @Test fun replayObjectTreeActuallyHidesShowsAndDeletesIndicators() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..30).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, listOf(IndicatorConfig("replay-ma", IndicatorKind.MA)))) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("order-estimates").performScrollTo().assertExists()
+        compose.onNodeWithText("按当前报价估算，成交价可能变化。").assertDoesNotExist()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val chartSize = chart.fetchSemanticsNode().size
+        chart.performMouseInput { moveTo(Offset(chartSize.width * .7f, chartSize.height * .7f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        compose.onNodeWithTag("object-indicator-visibility-replay-ma").performScrollTo().assertTextContains("隐藏").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("object-indicator-visibility-replay-ma") and hasText("显示")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("object-indicator-visibility-replay-ma").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("object-indicator-visibility-replay-ma") and hasText("隐藏")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("object-layer-menu-indicator:replay-ma").performClick()
+        compose.onNodeWithTag("object-layer-front-indicator:replay-ma").performClick()
+        compose.onNodeWithTag("object-layer-menu-indicator:replay-ma").performClick()
+        compose.onNodeWithTag("object-layer-back-indicator:replay-ma").performClick()
+        compose.onNodeWithTag("object-indicator-delete-replay-ma").performScrollTo().performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("object-indicator-replay-ma").fetchSemanticsNodes().isEmpty() }
+        compose.onNodeWithText("指标 · 0").assertExists()
+    }
+
+    @Test fun replayObjectTreeHidesAndDeletesDrawings() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..30).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("drawing-group-TREND").performClick()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val chartSize = chart.fetchSemanticsNode().size
+        chart.performMouseInput { click(Offset(chartSize.width * .3f, chartSize.height * .4f)); click(Offset(chartSize.width * .5f, chartSize.height * .5f)) }
+        chart.performMouseInput { moveTo(Offset(chartSize.width * .7f, chartSize.height * .75f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        compose.onNodeWithText("绘图 · 1").assertExists()
+        fun item(label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("chart-object-tree")))
+        item("隐藏").performClick()
+        item("显示").assertExists().performClick()
+        item("删除").performClick()
+        compose.onNodeWithText("绘图 · 0").assertExists()
     }
 
     @Test fun disallowedOvernightClosesAtTheCutoff() {

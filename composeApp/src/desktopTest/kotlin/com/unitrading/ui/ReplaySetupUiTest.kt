@@ -18,6 +18,19 @@ import kotlin.test.assertFalse
 @OptIn(ExperimentalTestApi::class)
 class ReplaySetupUiTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun setupOmitsOnlyTheRequestedExplanations() {
+        val broker = OfflineOrderBroker()
+        compose.setContent { TradingTheme {
+            ReplaySetupDialog(broker, ReplayHistoryCache(MemorySnapshotStore()), false, broker.instruments, broker.spec,
+                ChartTimeZone.SHANGHAI, broker.time, Timeframe.M5, IntervalOptions(), false, onDismiss = {}, onReady = {})
+        } }
+        compose.onNodeWithText("分钟行情按图表时区读取，日线使用券商交易日。", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("触及日亏损后，本次考核失败。", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("触及日亏损后暂停开仓并撤销挂单，下一交易日恢复。", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("交易日按芝加哥时间 17:00 切换", substring = true).assertDoesNotExist()
+        compose.onNodeWithTag("replay-overnight-allow").performScrollTo().assertExists()
+        compose.onNodeWithTag("replay-use-cache").performScrollTo().assertExists()
+    }
     @Test fun failedLoadStaysOnSetupAndAllowsRetry() {
         val base = OfflineOrderBroker()
         val broker = object : BrokerPlugin by base {
