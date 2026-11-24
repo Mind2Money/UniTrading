@@ -43,7 +43,7 @@ internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<Indica
                     TextButton(onClick = { drawings.select(drawing.id); onDismiss() }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(drawing.tool.label, maxLines = 1) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         LayerMenu(drawingLayerKey(drawing.id))
-                        TextButton(onClick = { drawings.update(drawing.copy(hidden = !drawing.hidden)) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-visibility-${drawing.id}")) { Text(if (drawing.hidden) "显示" else "隐藏") }
+                        TextButton(onClick = { if (drawing.hidden) drawings.update(drawing.copy(hidden = false)) else drawings.hide(drawing.id) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-visibility-${drawing.id}")) { Text(if (drawing.hidden) "显示" else "隐藏") }
                         TextButton(onClick = { drawings.update(drawing.copy(locked = !drawing.locked)) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (drawing.locked) "解锁" else "锁定") }
                         TextButton(onClick = { drawings.remove(drawing.id) }, enabled = !drawing.locked, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-delete-${drawing.id}")) { Text("删除") }
                     }

@@ -150,6 +150,7 @@ class ChartContextMenuUiTest {
         treeItem("隐藏").performClick()
         compose.waitForIdle()
         assertTrue(runtime.drawings.drawings.single().hidden)
+        assertNull(runtime.drawings.selectedId, "A hidden drawing must not leave its editing toolbar selected")
         treeItem("锁定").performClick()
         compose.waitForIdle()
         assertTrue(runtime.drawings.drawings.single().locked)
