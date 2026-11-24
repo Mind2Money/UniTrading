@@ -1386,14 +1386,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
                     if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
-                        market.simulatedTimeMs, onDismiss = { replaySetup = false }, onReady = { ready ->
+                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
                             val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
-                            replayInput = ReplayInput(chosen, selectedFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
-                                chartPreferences.chartTimeZone, ready.data[chosen.symbol to Timeframe.M1].orEmpty(), indicatorSettings.indicators.toList(),
-                                Timeframe.M1, ready.instruments, intervals, priceAxis, skipConfirmation)
+                            val replaySourceFrame = if (ready.initialFrame.isSeconds) ready.initialFrame else Timeframe.M1
+                            replayInput = ReplayInput(chosen, ready.initialFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
+                                chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
+                                replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation)
                         })
                     replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision,
                         history = { sym, frame -> replaySeries[sym to frame].orEmpty() },

@@ -115,7 +115,7 @@ internal fun ChartToolbar(
         SymbolChip(instrument, instruments, onSymbol)
         IntervalControl(timeframe, onTimeframe, intervals)
         indicators?.let { IndicatorChip(it, compact) }
-        LayerMenu(layers, compact)
+        if (layers.isNotEmpty()) LayerMenu(layers, compact)
         additionalControls()
     }
     if (compact || singleRow) Row(modifier.height(48.dp).padding(start = 8.dp, end = 4.dp).testTag("chart-toolbar"),
@@ -209,7 +209,7 @@ private val Timeframe.shortLabel: String get() = when {
 
 /** Starred intervals inline plus a dropdown with second / minute / hour / day presets, favourites and custom intervals. */
 @Composable
-private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
+internal fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     var expanded by remember { mutableStateOf(false) }

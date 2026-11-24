@@ -51,13 +51,13 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
-    val fineHistory = remember(revision, selected.symbol) { history(selected.symbol, Timeframe.M1) }
+    val fineHistory = remember(revision, selected.symbol, input.rawFrame) { history(selected.symbol, input.rawFrame) }
     LaunchedEffect(selected, fineHistory) {
         if ((selected.symbol != input.instrument.symbol || input.raw.size < 2) && fineSnapshot == null && fineHistory.size >= 2)
             fineSnapshot = fineHistory.toList()
     }
     val raw = fineSnapshot ?: if (selected.symbol == input.instrument.symbol) input.raw else emptyList()
-    val rawFrame = if (fineSnapshot != null || selected.symbol != input.instrument.symbol) Timeframe.M1 else input.rawFrame
+    val rawFrame = input.rawFrame
     val prepared = remember(raw, selected, rawFrame) {
         if (raw.size <= 500) raw.sortedBy(Candle::timeMs) to null
         else null
@@ -84,7 +84,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
             } else key(selected.symbol, rawFrame) {
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
-                        selected = it; fineSnapshot = null; watch(symbol, Timeframe.M1)
+                        selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
                     } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError, onDismiss = onDismiss)
             }
         }
@@ -139,6 +139,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
     val selectedStep = stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
     var showIndicators by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(true) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
     val indicatorSettings by indicatorController.settings.collectAsState()
     val scope = rememberCoroutineScope()
@@ -311,6 +312,14 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         PendingOrder("replay-order-${order.id}", OrderRequest(spec.executionSymbol ?: spec.symbol, order.side, order.kind,
             order.quantity, order.price, order.stop, order.target), createdAtMs = current.timeMs, editable = true, protectionEditable = true)
     } }
+    val historyTrades = remember(state.trades) { state.trades.mapIndexed { index, trade ->
+        val p = trade.position
+        ClosedTrade("replay-trade-$index", p.id, p.symbol, p.side, p.lotsHundredths, p.entryPrice, trade.exit,
+            p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
+    } }
+    val openExecutions = remember(state.positions) { state.positions.map { p ->
+        Execution("replay-execution-${p.id}", p.symbol, p.side, p.lotsHundredths, p.entryPrice, p.openedAtMs, p.id)
+    } }
     val realized = remember(state.trades) { runCatching { state.trades.fold(0L) { sum, trade -> checkedAdd(sum, trade.pnlMicros) } }.getOrNull() }
     val analysis = remember(state.trades) { runCatching { replayAnalysis(state.trades) }.getOrNull() }
     val markPrice = remember(bars, state.index, regular, sourceFrame, regularIndices) {
@@ -339,13 +348,20 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         if (started) { playing = false; switchTo = sym } else changeSymbol(sym)
                     }
                 }, chartFrame, { frame ->
-                    pendingSource = null; requestedRegularChart = null
-                    frames[activeChart] = frame
-                    if (frame.seconds < sourceFrame.seconds && sourceFrame.seconds % frame.seconds == 0) {
-                        requestFinerHistory(frame)
-                    } else message = null
+                    if (regular && frame.isSeconds) message = "秒线暂不支持常规时段，请先切换 ETH"
+                    else {
+                        pendingSource = null; requestedRegularChart = null
+                        frames[activeChart] = frame
+                        if (frame.seconds < sourceFrame.seconds && sourceFrame.seconds % frame.seconds == 0) {
+                            requestFinerHistory(frame)
+                        } else message = null
+                    }
                 }, input.intervals, emptyList(), ChartToggle("指标 ${indicatorSettings.indicators.size}", true) { showIndicators = true },
                     Modifier.fillMaxWidth(), additionalControls = {
+                        AssistChip(onClick = { showHistory = !showHistory }, modifier = Modifier.testTag("replay-history-toggle"),
+                            label = { Text("历史订单") }, leadingIcon = { Icon(AppIcons.History, null, Modifier.size(18.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = if (showHistory) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
                         ChartLayoutMenu(layout) { next ->
                             layout = next
                             if (activeChart !in listOf("main", "split1", "split2", "split3").take(next.count)) activeChart = "main"
@@ -355,7 +371,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             val nextRegular = selected == ChartSession.REGULAR
                             val unavailable = if (nextRegular) chartSessionCandles(emptyList(), spec.symbol, Timeframe.M1, true).second else null
                             if (unavailable != null) message = unavailable
-                            else if (nextRegular && sourceFrame.seconds in (Timeframe.M1.seconds + 1) until Timeframe.DAY) {
+                            else if (nextRegular && chartFrame.isSeconds) message = "秒线暂不支持常规时段，请先切换分钟周期"
+                            else if (nextRegular && sourceFrame != Timeframe.M1 && sourceFrame.seconds < Timeframe.DAY) {
                                 requestFinerHistory(Timeframe.M1, activeChart)
                             } else { chartSessions[activeChart] = nextRegular; message = null }
                         }
@@ -390,12 +407,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }) {
                         TradingChart(accountKey = "local-historical-replay-$id", instrument = spec,
                             quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
-                            onTimeframe = { frames[id] = it }, positions = state.positions, trades = emptyList(), selectedPositionId = null,
+                            onTimeframe = { frames[id] = it }, positions = state.positions, trades = historyTrades, selectedPositionId = null,
                             focusedTrade = null, draft = null, preview = null, orders = chartOrders, actions = localChartActions,
+                            executions = openExecutions,
                             onSide = { side -> if (id != activeChart) activeChart = id else requestOrder(side, OrderKind.MARKET, null) },
                             modifier = Modifier.fillMaxSize(), indicators = indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
-                                priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true,
+                                priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, showHistory = showHistory,
                                 desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh) {
