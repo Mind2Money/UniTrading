@@ -185,6 +185,25 @@ class HistoricalReplayUiTest {
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
     }
 
+    @Test fun replayCloseUsesConfirmationAndRecordsTheClosedTrade() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..3).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-confirm-order").performClick()
+        compose.onNodeWithText("模拟平仓").performScrollTo().performClick()
+        compose.onNodeWithText("确认平仓").assertIsDisplayed()
+        compose.onNodeWithTag("replay-confirm-line").performClick()
+        compose.onNodeWithTag("replay-trade-count").performScrollTo().assertTextContains("成交 1 笔", substring = true)
+        compose.onNodeWithTag("replay-tab-1").performClick()
+        compose.onNodeWithTag("replay-current-report").performClick()
+        compose.onNodeWithTag("replay-dashboard").performScrollToNode(hasTestTag("replay-report-trade-count"))
+        compose.onNodeWithTag("replay-report-trade-count").assertTextContains("1 笔", substring = true)
+    }
+
     @Test fun replayLayoutHasIndependentFramesAndSessionChoice() {
         val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
