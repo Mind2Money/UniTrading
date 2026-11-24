@@ -11,6 +11,7 @@ import com.unitrading.app.SnapshotStore
 import com.unitrading.broker.*
 import com.unitrading.chart.ReplayDrawdown
 import com.unitrading.chart.ReplayRiskConfig
+import com.unitrading.chart.OrderTagButtons
 import org.junit.Rule
 import org.junit.Test
 import java.time.Instant
@@ -22,6 +23,11 @@ import kotlin.test.*
 @OptIn(ExperimentalTestApi::class)
 class ReplayConsistencyUiTest {
     @get:Rule val compose = createComposeRule()
+    private fun chartButtons() = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+    private fun closePositionOnChart() {
+        val at = chartButtons().entries.first { it.key.startsWith("平仓 ") }.value.center
+        compose.onNodeWithTag("trading-chart").performMouseInput { click(at) }
+    }
     private val instrument = Instrument("MES", "MES future", "期货", 2, tickSize = 25,
         tickValueMicrosPerLot = 1_250_000, minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
     private val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
@@ -50,7 +56,7 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("replay-realized").assertTextContains("+20.00", substring = true)
         compose.onNodeWithTag("replay-consistency-status").assertTextContains("已触及", substring = true)
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔", substring = true)
-        compose.onNodeWithText("模拟持仓").assertDoesNotExist()
+        assertFalse(chartButtons().keys.any { it.startsWith("平仓 ") })
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
@@ -105,7 +111,7 @@ class ReplayConsistencyUiTest {
         open(bars, config(10_000_000), records, exited)
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithText("模拟平仓").performScrollTo().performClick()
+        closePositionOnChart()
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(1, records.list().single().trades.size) }
         compose.onNodeWithTag("review-order").performScrollTo().performClick()

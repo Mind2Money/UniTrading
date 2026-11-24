@@ -9,6 +9,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.ReplayDailyLoss
 import com.unitrading.chart.ReplayDrawdown
 import com.unitrading.chart.ReplayRiskConfig
+import com.unitrading.chart.OrderTagButtons
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -16,6 +17,11 @@ import kotlin.test.assertEquals
 @OptIn(ExperimentalTestApi::class)
 class ReplayDailyLossUiTest {
     @get:Rule val compose = createComposeRule()
+    private fun closePositionOnChart() {
+        val chart = compose.onNodeWithTag("trading-chart")
+        val at = chart.fetchSemanticsNode().config[OrderTagButtons].entries.first { it.key.startsWith("平仓 ") }.value.center
+        chart.performMouseInput { click(at) }
+    }
     private val instrument = Instrument("MES", "MES future", "期货", 2, tickSize = 25,
         tickValueMicrosPerLot = 1_250_000, minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
     private val bars = listOf(
@@ -60,7 +66,7 @@ class ReplayDailyLossUiTest {
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
-        compose.onNodeWithText("模拟平仓").performScrollTo().performClick()
+        closePositionOnChart()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-failure-save").performClick()

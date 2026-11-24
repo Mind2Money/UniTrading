@@ -20,13 +20,24 @@ import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.ReplayDrawdown
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
+import com.unitrading.chart.OrderTagButtons
 import org.junit.Rule
 import org.junit.Test
 import kotlin.test.assertTrue
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertEquals
 
 @OptIn(ExperimentalTestApi::class)
 class HistoricalReplayUiTest {
     @get:Rule val compose = createComposeRule()
+    private fun chartButtons() = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+    private fun clickChartButton(hint: String) {
+        val at = assertNotNull(chartButtons()[hint], "Missing chart button $hint; available: ${chartButtons().keys}").center
+        compose.onNodeWithTag("trading-chart").performMouseInput { click(at) }
+    }
+    private fun hasPosition() = chartButtons().keys.any { it.startsWith("平仓 ") }
+    private fun closePosition() = clickChartButton(chartButtons().keys.first { it.startsWith("平仓 ") })
     private fun awaitReplay() {
         try { compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() } }
         catch (error: Throwable) {
@@ -228,7 +239,9 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("order-side-BUY").assertIsSelected()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
-        compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
+        assertTrue(hasPosition())
+        assertFalse("提交买入订单" in chartButtons(), "Accepted orders must clear the draft")
+        compose.onNodeWithText("模拟持仓").assertDoesNotExist()
         compose.onNodeWithTag("replay-tab-1").performClick()
         compose.onNodeWithText("回放分析").assertExists()
     }
@@ -249,8 +262,9 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-confirm-order").assertDoesNotExist()
         compose.onNodeWithText("模拟持仓").assertDoesNotExist()
         compose.onNodeWithTag("order-side-SELL").assertIsSelected()
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
-        compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
+        clickChartButton("提交卖出订单")
+        assertTrue(hasPosition())
+        assertFalse("提交卖出订单" in chartButtons(), "Accepted orders must clear the draft")
     }
 
     @Test fun replayCloseUsesConfirmationAndRecordsTheClosedTrade() {
@@ -262,7 +276,7 @@ class HistoricalReplayUiTest {
         awaitReplay()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").performClick()
-        compose.onNodeWithText("模拟平仓").performScrollTo().performClick()
+        closePosition()
         compose.onNodeWithText("确认平仓").assertIsDisplayed()
         compose.onNodeWithTag("replay-confirm-line").performClick()
         compose.onNodeWithTag("replay-trade-count").performScrollTo().assertTextContains("成交 1 笔", substring = true)
@@ -307,11 +321,11 @@ class HistoricalReplayUiTest {
             watch = { symbol, frame -> requested.add(symbol to frame) }) {} } }
         awaitReplay()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
-        compose.onNodeWithText("模拟持仓").assertExists()
+        assertTrue(hasPosition())
         compose.onNodeWithTag("interval-inline-1").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M1) in requested); available = true; revision++ }
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-1").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("模拟持仓").assertExists()
+        assertTrue(hasPosition())
         compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 1分钟")
     }
 
@@ -332,7 +346,57 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("interval-inline-5").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M5) in requested); available = true; revision++ }
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-5").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("模拟持仓").assertExists()
+        assertTrue(hasPosition())
         compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 5分钟")
+    }
+
+    @Test fun replayCountdownUsesTheEndOfTheCompletedSourceBar() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val start = java.time.Instant.parse("2026-11-24T00:00:00Z").toEpochMilli()
+        val bars = (0..6).map { Candle(start + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M5, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), rawFrame = Timeframe.M1)) {} } }
+        awaitReplay()
+        fun countdown() = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+            .split(';').first { it.startsWith("countdown:") }.substringAfter(':')
+        assertEquals("04:00", countdown())
+        repeat(4) { compose.onNodeWithTag("replay-next").performClick() }
+        assertEquals("00:00", countdown())
+        compose.onNodeWithTag("replay-next").performClick()
+        assertEquals("04:00", countdown())
+    }
+
+    @Test fun replaySidebarTogglesAndChartDraftQuantityCanBeEditedAndSubmitted() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..3).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-tab-0").performClick()
+        compose.onNodeWithTag("replay-side-panel").assertDoesNotExist()
+        compose.onNodeWithTag("replay-tab-0").performClick()
+        compose.onNodeWithTag("replay-side-panel").assertExists()
+        compose.onNodeWithTag("replay-order-collapse").performClick()
+        compose.onNodeWithTag("replay-side-panel").assertDoesNotExist()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val size = chart.fetchSemanticsNode().size
+        chart.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .65f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-menu-BUY-MARKET").performClick()
+        compose.onNodeWithTag("replay-side-panel").assertExists()
+        clickChartButton("编辑下单数量")
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        compose.onNodeWithContentDescription("关闭数量编辑").performClick()
+        compose.onNodeWithTag("order-quantity").assertTextContains("2", substring = true)
+        clickChartButton("提交买入订单")
+        compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
+        assertTrue(chartButtons().keys.any { it.startsWith("平仓 买入 2 ") })
+        assertFalse("提交买入订单" in chartButtons())
+        assertFalse("编辑下单数量" in chartButtons())
+        compose.onNodeWithText("模拟持仓").assertDoesNotExist()
+        closePosition()
+        compose.onNodeWithTag("replay-confirm-line").performClick()
+        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔", substring = true)
     }
 }

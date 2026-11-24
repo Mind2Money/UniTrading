@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
+
 - 回放支持每日一致性盈利上限；触及上限自动平仓并暂停当日开仓，达到盈利目标后可保存或丢弃记录并退出。精简回放下单面板并调整标题栏。
 
 - 修复回放对象树的指标隐藏和删除；主界面与回放均可调整绘图、指标与 K 线的前后层级，精简回放入口和下单说明。
@@ -19,6 +21,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
 
 - Add a replay daily consistency cap, automatic flattening and a save-or-discard success dialog; simplify the replay order panel and header.
 

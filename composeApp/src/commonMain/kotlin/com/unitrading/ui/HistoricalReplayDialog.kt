@@ -137,6 +137,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val orderPrice = draft.entry
     var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
     var sideTab by remember { mutableIntStateOf(0) }
+    var panelOpen by remember { mutableStateOf(true) }
     val riskConfig = input.riskConfig
     var showFailure by remember { mutableStateOf(false) }
     var showSuccess by remember { mutableStateOf(false) }
@@ -329,7 +330,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 state.open(spec, current, order.side, order.quantity, order.stop, order.target)
             else state.enqueue(spec, order.side, order.kind, order.quantity, order.price ?: error("请输入挂单价格"), order.stop, order.target, current.close)
             accept(next)
-        }.onSuccess { started = true }
+        }.onSuccess { started = true; showDraft = false }
             .onFailure { message = it.message ?: "无法模拟下单" }
     }
     fun requestOrder(side: Side, kind: OrderKind = orderKind, price: Long? = if (kind == OrderKind.MARKET) null else spec.parsePrice(orderPrice)) {
@@ -374,7 +375,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val draftRequest = draft.request(ticketSpec)
     val draftPreview = draftRequest?.let(::previewOrder)
     fun prepareDraft(side: Side, kind: OrderKind, price: Long?) {
-        playing = false; sideTab = 0; showDraft = true
+        playing = false; sideTab = 0; panelOpen = true; showDraft = true
         draft = OrderDraft(side, kind, draft.quantity, price?.takeUnless { kind == OrderKind.MARKET }?.let(spec::formatPrice).orEmpty())
         message = null
     }
@@ -413,6 +414,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             .onSuccess { state = it; message = null }.onFailure { message = it.message } },
         onLineAction = { action -> requestLine(action) }, addPositionProtection = true, removeProtection = true,
         addProtection = true, draftQuantity = draft.quantity, onDraftQuantity = { draft = draft.copy(quantity = it) },
+        inlineDraftQuantity = true, directDraftSubmit = true,
         entryKinds = OrderKind.entries.toSet(), entryLots = spec.parseQuantity(quantity),
         onEntryOrder = { side, kind, price -> prepareDraft(side, kind, price) },
     )
@@ -556,11 +558,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activeChart = id } }
                     }) {
                         TradingChart(accountKey = "local-historical-replay-$id", instrument = spec,
-                            quote = price?.let { Quote(it, it, current.timeMs) }, candles = visible, timeframe = frame,
+                            quote = price?.let { Quote(it, it, cutoff) }, candles = visible, timeframe = frame,
                             onTimeframe = { frames[id] = it }, positions = state.positions, trades = historyTrades, selectedPositionId = null,
                             focusedTrade = null, draft = draftRequest.takeIf { showDraft }, preview = draftPreview.takeIf { showDraft }, orders = chartOrders, actions = localChartActions,
                             executions = openExecutions,
-                            onSide = { side -> activeChart = id; playing = false; sideTab = 0; showDraft = true; draft = draft.withSide(side, ticketSpec, replayQuote) },
+                            onSide = { side -> activeChart = id; playing = false; sideTab = 0; panelOpen = true; showDraft = true; draft = draft.withSide(side, ticketSpec, replayQuote) },
                             modifier = Modifier.fillMaxSize(), indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators,
                             chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, showHistory = showHistory,
@@ -639,7 +641,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
             }
 
-            Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight(),
+            if (panelOpen) Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight().testTag("replay-side-panel"),
                 shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -656,24 +658,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
                             modifier = Modifier.fillMaxWidth().height(500.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
-                            accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false)
+                            accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false,
+                            onClose = { panelOpen = false }, closeLabel = "收起下单面板", closeTag = "replay-order-collapse")
                         if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
                             state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                                 TextButton(onClick = { chartOrders.firstOrNull { it.id == "replay-order-${order.id}" }?.let { requestLine(LineAction.CancelOrder(it)) } }) { Text("撤单") }
                             } }
-                        }
-                        if (state.positions.isNotEmpty()) ReplaySection("模拟持仓") {
-                            state.positions.forEach { p ->
-                                Text("${if (p.side == Side.BUY) "买" else "卖"} ${spec.formatQuantity(p.lotsHundredths)} · ${spec.formatPrice(p.entryPrice)}", style = MaterialTheme.typography.bodyMedium)
-                                Text("SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} · TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = { runCatching {
-                                    val sl = if (stop.isBlank()) null else spec.parsePrice(stop) ?: error("请输入有效止损价")
-                                    val tp = if (target.isBlank()) null else spec.parsePrice(target) ?: error("请输入有效止盈价")
-                                    state.protect(spec, p, current.close, sl, tp)
-                                }.onSuccess { state = it; message = null }.onFailure { message = it.message } }) { Text("更新止损止盈") }
-                                TextButton(onClick = { requestLine(LineAction.ClosePosition(p)) }) { Text("模拟平仓") }
-                            }
                         }
                     } else {
                         Text("回放分析", style = MaterialTheme.typography.titleLarge)
@@ -691,9 +682,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             NavigationRail(Modifier.width(72.dp).fillMaxHeight().testTag("replay-panel-rail"), windowInsets = WindowInsets(0, 0, 0, 0)) {
-                NavigationRailItem(selected = sideTab == 0, onClick = { sideTab = 0 }, icon = { Icon(AppIcons.OrderEntry, null) },
+                NavigationRailItem(selected = panelOpen && sideTab == 0, onClick = { panelOpen = !panelOpen || sideTab != 0; sideTab = 0 }, icon = { Icon(AppIcons.OrderEntry, null) },
                     label = { Text("下单") }, modifier = Modifier.testTag("replay-tab-0"))
-                NavigationRailItem(selected = sideTab == 1, onClick = { sideTab = 1 }, icon = { Icon(AppIcons.Analytics, null) },
+                NavigationRailItem(selected = panelOpen && sideTab == 1, onClick = { panelOpen = !panelOpen || sideTab != 1; sideTab = 1 }, icon = { Icon(AppIcons.Analytics, null) },
                     label = { Text("分析") }, modifier = Modifier.testTag("replay-tab-1"))
             }
         }
