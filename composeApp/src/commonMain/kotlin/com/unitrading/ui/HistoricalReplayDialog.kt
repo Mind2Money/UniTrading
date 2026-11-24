@@ -632,12 +632,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 .onSuccess { savedRecords = it; recordsExpanded = true }
                                 .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
                         }, enabled = records != null, modifier = Modifier.fillMaxWidth().testTag("replay-records-picker")) { Text("选择已保存的回放") }
-                        DropdownMenu(expanded = recordsExpanded, onDismissRequest = { recordsExpanded = false }) {
-                            if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
-                            savedRecords.forEach { saved -> DropdownMenuItem(text = {
-                                Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
-                            }, onClick = { playing = false; report = saved; recordsExpanded = false }) }
-                        }
+
 
                     }
                 }
@@ -666,6 +661,26 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         }
         startCalendar = false
     }
+    if (recordsExpanded) AlertDialog(onDismissRequest = { recordsExpanded = false },
+        title = { Text("选择回放记录") },
+        text = { Column(Modifier.widthIn(min = 320.dp, max = 500.dp).heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (savedRecords.isEmpty()) Text("暂无已保存的回放记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            savedRecords.forEach { saved ->
+                Surface(onClick = { playing = false; report = saved; recordsExpanded = false },
+                    modifier = Modifier.fillMaxWidth().testTag("replay-record-${saved.id}"), shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${saved.symbol} · ${saved.trades.size} 笔", style = MaterialTheme.typography.titleSmall)
+                            Text("${saved.status} · ${Instant.fromEpochMilliseconds(saved.savedAtMs).toString().replace('T', ' ').take(16)} UTC",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(AppIcons.ChevronRight, null)
+                    }
+                }
+            }
+        } }, confirmButton = { TextButton(onClick = { recordsExpanded = false }) { Text("关闭") } })
     report?.let { saved -> Dialog(onDismissRequest = { report = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
             Column(Modifier.fillMaxSize()) {

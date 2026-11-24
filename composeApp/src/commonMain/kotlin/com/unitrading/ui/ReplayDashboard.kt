@@ -42,6 +42,8 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
     val dayGroups = remember(dated) { dated.groupBy { it.first } }
     val weekGroups = remember(dated) { dated.groupBy { it.first.minus(it.first.dayOfWeek.ordinal, DateTimeUnit.DAY) } }
     val weekdays = remember(dated) { (0..6).map { i -> dated.filter { it.first.dayOfWeek.ordinal == i }.sumOf { it.second } } }
+    val hours = remember(ordered) { (0..5).map { bucket -> ordered.filter { Instant.fromEpochMilliseconds(it.closedAtMs).toLocalDateTime(zone).hour / 4 == bucket }.sumOf { it.netPnlMicros ?: 0L } } }
+    val frequency = remember(dated) { (0..6).map { day -> dated.count { it.first.dayOfWeek.ordinal == day }.toLong() } }
     val average = { count: Int -> stats.netMicros?.takeIf { count > 0 }?.div(count) }
     val balance = record.finalEquityMicros ?: stats.netMicros?.let { runCatching { checkedAdd(record.initialMicros, it) }.getOrNull() } ?: record.initialMicros
     val winRate = stats.winRate?.let { formatFixed((it * 100).toLong(), 2) + "%" } ?: "—"
@@ -53,37 +55,46 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
             listOf(v) + ordered.map { trade -> v = runCatching { checkedAdd(v, trade.netPnlMicros ?: 0L) }.getOrDefault(v); v }
         }
     }
-    LazyColumn(modifier.background(MaterialTheme.colorScheme.surfaceContainerLow).testTag("replay-dashboard"),
-        contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
-                Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text(record.symbol, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                        Text("${record.status} · ${ordered.size} 笔已平仓交易", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val first = ordered.firstOrNull()?.openedAtMs
-                        val last = record.endedAtMs ?: ordered.lastOrNull()?.closedAtMs
-                        if (first != null && last != null) Text("${date(first)} — ${date(last)} · 芝加哥时间", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Column {
-                        Text("账户净值 · ${record.currency}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(money(balance), style = MaterialTheme.typography.headlineSmall)
-                    }
+    @Composable fun SummaryCard(modifier: Modifier) {
+        Surface(modifier, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+            Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(record.symbol, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                    Text("${record.status} · ${ordered.size} 笔已平仓交易", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val first = ordered.firstOrNull()?.openedAtMs
+                    val last = record.endedAtMs ?: ordered.lastOrNull()?.closedAtMs
+                    if (first != null && last != null) Text("${date(first)} — ${date(last)} · 芝加哥时间", style = MaterialTheme.typography.bodySmall)
+                }
+                Column {
+                    Text("账户净值 · ${record.currency}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(money(balance), style = MaterialTheme.typography.headlineSmall)
                 }
             }
         }
+    }
+    @Composable fun DescriptionCard(modifier: Modifier) {
+        Surface(modifier, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.padding(16.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("回放备注", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = {
+                        if (editingDescription) onDescriptionChange(descriptionDraft)
+                        editingDescription = !editingDescription
+                    }, modifier = Modifier.testTag("replay-description-edit")) { Text(if (editingDescription) "保存" else "编辑") }
+                }
+                if (editingDescription) OutlinedTextField(descriptionDraft, { descriptionDraft = it }, Modifier.fillMaxWidth().testTag("replay-description"), label = { Text("策略或复盘备注") })
+                else Text(record.description.ifBlank { "暂无备注" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    LazyColumn(modifier.background(MaterialTheme.colorScheme.surfaceContainerLow).testTag("replay-dashboard"),
+        contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("回放备注", style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = {
-                            if (editingDescription) onDescriptionChange(descriptionDraft)
-                            editingDescription = !editingDescription
-                        }, modifier = Modifier.testTag("replay-description-edit")) { Text(if (editingDescription) "保存" else "编辑") }
-                    }
-                    if (editingDescription) OutlinedTextField(descriptionDraft, { descriptionDraft = it }, Modifier.fillMaxWidth().testTag("replay-description"), label = { Text("策略或复盘备注") })
-                    else Text(record.description.ifBlank { "暂无备注" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 800.dp) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SummaryCard(Modifier.weight(2f)); DescriptionCard(Modifier.weight(1f))
+                } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SummaryCard(Modifier.fillMaxWidth()); DescriptionCard(Modifier.fillMaxWidth())
                 }
             }
         }
@@ -97,6 +108,17 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
                     ReplayPlotCard("净值曲线", Modifier.fillMaxWidth()) { EquityPlot(equity) }
                     ReplayPlotCard("月度表现", Modifier.fillMaxWidth()) { MonthlyPlot(monthGroups.mapValues { (_, rows) -> rows.map { it.second } }) }
                     ReplayPlotCard("星期表现", Modifier.fillMaxWidth()) { WeekdayPlot(weekdays) }
+                }
+            }
+        }
+        item {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 700.dp) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ReplayPlotCard("分时段表现", Modifier.weight(1f)) { WeekdayPlot(hours, listOf("0–4", "4–8", "8–12", "12–16", "16–20", "20–24"), "按平仓时间汇总 · 芝加哥时间") }
+                    ReplayPlotCard("交易频率", Modifier.weight(1f)) { WeekdayPlot(frequency, listOf("一", "二", "三", "四", "五", "六", "日"), "各星期的已平仓交易笔数") }
+                } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ReplayPlotCard("分时段表现", Modifier.fillMaxWidth()) { WeekdayPlot(hours, listOf("0–4", "4–8", "8–12", "12–16", "16–20", "20–24"), "按平仓时间汇总 · 芝加哥时间") }
+                    ReplayPlotCard("交易频率", Modifier.fillMaxWidth()) { WeekdayPlot(frequency, listOf("一", "二", "三", "四", "五", "六", "日"), "各星期的已平仓交易笔数") }
                 }
             }
         }
@@ -189,9 +211,10 @@ private fun MonthlyPlot(months: Map<String, List<Long>>) {
 }
 
 @Composable
-private fun ColumnScope.WeekdayPlot(values: List<Long>) {
+private fun ColumnScope.WeekdayPlot(values: List<Long>, labels: List<String> = listOf("一", "二", "三", "四", "五", "六", "日"),
+    note: String = "按平仓日汇总 · 芝加哥时间") {
     val scale = values.maxOfOrNull { abs(it.toDouble()) }?.coerceAtLeast(1.0) ?: 1.0
-    Canvas(Modifier.fillMaxWidth().weight(1f).testTag("replay-weekday-plot")) {
+    Canvas(Modifier.fillMaxWidth().weight(1f).then(if (note == "按平仓日汇总 · 芝加哥时间") Modifier.testTag("replay-weekday-plot") else Modifier)) {
         val mid = size.height / 2f
         drawLine(Color.Gray, Offset(0f, mid), Offset(size.width, mid), 1f)
         val slot = size.width / values.size
@@ -200,6 +223,8 @@ private fun ColumnScope.WeekdayPlot(values: List<Long>) {
             drawRect(if (value >= 0) ReplayBlue else ReplayRed, Offset(i * slot + slot * .18f, if (value >= 0) mid - h else mid), Size(slot * .64f, h))
         }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) { listOf("一", "二", "三", "四", "五", "六", "日").forEach { Text(it, style = MaterialTheme.typography.labelSmall) } }
-    Text("按平仓日汇总 · 芝加哥时间", style = MaterialTheme.typography.labelSmall)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) { labels.forEachIndexed { index, label ->
+        Text(if (note.startsWith("各星期")) "$label ${values.getOrElse(index) { 0 }}" else label, style = MaterialTheme.typography.labelSmall)
+    } }
+    Text(note, style = MaterialTheme.typography.labelSmall)
 }

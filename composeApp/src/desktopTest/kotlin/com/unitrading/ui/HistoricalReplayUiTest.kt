@@ -63,9 +63,11 @@ class HistoricalReplayUiTest {
             .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
         assertTrue(chart.getValue("high").toDouble() < 50_000, "Future bars must not enter the visible chart scale")
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
-        compose.onNodeWithTag("order-sl").performTextClearance().performTextInput("99.50")
+        compose.onNodeWithTag("order-sl").performTextClearance()
+        compose.onNodeWithTag("order-sl").performTextInput("99.50")
         compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick()
-        compose.onNodeWithTag("order-tp").performTextClearance().performTextInput("100.50")
+        compose.onNodeWithTag("order-tp").performTextClearance()
+        compose.onNodeWithTag("order-tp").performTextInput("100.50")
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 0 笔", substring = true)
