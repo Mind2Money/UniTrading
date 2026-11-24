@@ -111,7 +111,7 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-success-save").performClick()
-        compose.onNodeWithText("回放记录保存失败", substring = true).assertExists()
+        compose.onNodeWithTag("replay-success-error").assertTextContains("回放记录保存失败", substring = true)
         compose.onNodeWithTag("replay-success").assertExists()
         assertFalse(exited.get())
     }

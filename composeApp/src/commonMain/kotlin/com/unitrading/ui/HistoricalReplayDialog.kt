@@ -808,7 +808,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("盈利目标 ${money(riskConfig.targetMicros)} ${spec.currency}", style = MaterialTheme.typography.titleMedium,
                     color = TradingColors.Profit)
-                message?.takeIf { it.contains("失败：") }?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                message?.takeIf { it.contains("失败：") }?.let {
+                    Text(it, Modifier.testTag("replay-success-error"), color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 Button(onClick = {
                     runCatching { requireNotNull(records).save(currentRecord("已达成")) }
                         .onSuccess { onDismiss() }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
