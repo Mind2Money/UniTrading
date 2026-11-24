@@ -22,7 +22,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
       - run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: Test failure save and discard workflows
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*HistoricalReplayUiTest*' --tests '*ReplayRecordsTest*' --tests '*ReplayRiskTest*' --tests '*HistoricalReplayTest*' --tests '*ReplayAnalysisTest*' --no-daemon
+        run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests '*HistoricalReplayUiTest*' --tests '*ReplayDailyLossUiTest*' --tests '*ReplayRecordsTest*' --tests '*ReplayRiskTest*' --tests '*HistoricalReplayTest*' --tests '*ReplayAnalysisTest*' --no-daemon
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

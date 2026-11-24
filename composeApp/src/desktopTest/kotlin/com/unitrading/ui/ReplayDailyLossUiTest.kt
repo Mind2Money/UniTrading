@@ -1,0 +1,55 @@
+package com.unitrading.ui
+
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import com.unitrading.app.ChartTimeZone
+import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.ReplayRecords
+import com.unitrading.broker.*
+import com.unitrading.chart.ReplayDailyLoss
+import com.unitrading.chart.ReplayDrawdown
+import com.unitrading.chart.ReplayRiskConfig
+import org.junit.Rule
+import org.junit.Test
+import kotlin.test.assertEquals
+
+@OptIn(ExperimentalTestApi::class)
+class ReplayDailyLossUiTest {
+    @get:Rule val compose = createComposeRule()
+    private val instrument = Instrument("MES", "MES future", "期货", 2, tickSize = 25,
+        tickValueMicrosPerLot = 1_250_000, minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+    private val bars = listOf(
+        Candle(1_700_000_000_000, 10_000, 10_025, 9_975, 10_000),
+        Candle(1_700_000_060_000, 10_000, 10_025, 9_000, 10_000),
+        Candle(1_700_000_120_000, 10_000, 10_025, 9_975, 10_000))
+    private fun open(mode: ReplayDailyLoss, records: ReplayRecords) {
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = mode)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("replay-buy").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+    }
+    @Test fun hardStopCanDiscardTheSession() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        open(ReplayDailyLoss.HARD, records)
+        compose.onNodeWithText("回放考核失败").assertIsDisplayed()
+        compose.onNodeWithTag("replay-failure-discard").performClick()
+        compose.onNodeWithText("回放考核失败").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(0, records.list().size) }
+    }
+    @Test fun hardStopCanSaveTheSession() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        open(ReplayDailyLoss.HARD, records)
+        compose.onNodeWithTag("replay-failure-save").performClick()
+        compose.runOnIdle { assertEquals(1, records.list().size) }
+    }
+    @Test fun softStopBlocksOpeningWithoutFailing() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        open(ReplayDailyLoss.SOFT, records)
+        compose.onNodeWithText("回放考核失败").assertDoesNotExist()
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
+    }
+}

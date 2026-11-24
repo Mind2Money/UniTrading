@@ -208,7 +208,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, price),
                     -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
             }
-            risk = risk.observe(riskConfig, bar.timeMs, balance, checkedAdd(balance, worstFloating))
+            risk = risk.observe(riskConfig, bar.timeMs, balance, checkedAdd(balance, worstFloating)).copy(lastEquity = equity)
         }
         val softLocked = risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT
         state = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next

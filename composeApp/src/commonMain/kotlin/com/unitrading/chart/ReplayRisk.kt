@@ -23,7 +23,8 @@ internal data class ReplayRiskConfig(val initialMicros: Long, val maxDrawdownMic
 
 internal data class ReplayRiskState(val threshold: Long, val highWater: Long, val tradingDay: String? = null,
     val lastBalance: Long, val failed: Boolean = false, val targetReached: Boolean = false,
-    val dayOpeningBalance: Long = lastBalance, val dailyLossHit: Boolean = false, val dailyFailure: Boolean = false) {
+    val dayOpeningBalance: Long = lastBalance, val dailyLossHit: Boolean = false, val dailyFailure: Boolean = false,
+    val lastEquity: Long = lastBalance) {
     companion object {
         fun initial(config: ReplayRiskConfig) = ReplayRiskState(config.initialMicros - config.maxDrawdownMicros,
             config.initialMicros, lastBalance = config.initialMicros)
@@ -40,11 +41,11 @@ internal data class ReplayRiskState(val threshold: Long, val highWater: Long, va
         }
         val limit = maxOf(threshold, high - config.maxDrawdownMicros)
         val newDay = tradingDay != null && tradingDay != day
-        val opening = if (newDay) lastBalance else dayOpeningBalance
+        val opening = if (newDay) lastEquity else dayOpeningBalance
         val hit = (!newDay && dailyLossHit) || (config.maxDailyLossMicros?.let { equity <= opening - it } == true)
         val hard = hit && config.dailyLossMode == ReplayDailyLoss.HARD
         return copy(threshold = limit, highWater = high, tradingDay = day, lastBalance = balance,
-            dayOpeningBalance = opening, dailyLossHit = hit, dailyFailure = dailyFailure || hard,
+            dayOpeningBalance = opening, dailyLossHit = hit, dailyFailure = dailyFailure || hard, lastEquity = equity,
             failed = failed || equity <= limit || hard,
             targetReached = targetReached || balance - config.initialMicros >= config.targetMicros)
     }

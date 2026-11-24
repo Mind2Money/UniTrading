@@ -44,4 +44,13 @@ class ReplayDailyRiskTest {
         assertFalse(next.dailyLossHit)
         assertEquals(49_000L, next.dayOpeningBalance)
     }
+    @Test fun overnightFloatingGainIsNotCountedAgainNextDay() {
+        val cfg = ReplayRiskConfig(50_000, 5_000, 3_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 1_000, dailyLossMode = ReplayDailyLoss.HARD)
+        val before = ReplayRiskState.initial(cfg).observe(cfg, at("2026-11-23T22:59:00Z"), 50_000, 52_000)
+        val after = before.observe(cfg, at("2026-11-23T23:01:00Z"), 50_000, 50_999)
+        assertEquals(52_000L, after.dayOpeningBalance)
+        assertTrue(after.failed)
+    }
+
 }
