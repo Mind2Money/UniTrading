@@ -54,6 +54,7 @@ internal fun OrderForm(
     bracketOrder: OrderRequest? = null,
     orderNotice: @Composable () -> Unit = {},
     showPriceExplanation: Boolean = true,
+    showEstimates: Boolean = true,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -130,29 +131,31 @@ internal fun OrderForm(
                         enabled = !busy && (draft.stopLossEnabled || draft.takeProfitEnabled || draft.stopLoss.isNotBlank() || draft.takeProfit.isNotBlank()),
                         modifier = Modifier.testTag("clear-protection")) { Text("清除") }
                 }
-                DividerLine()
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { details = !details }
-                    .testTag("order-estimates-toggle"), verticalAlignment = Alignment.CenterVertically) {
-                    Text("预估与合约信息", Modifier.weight(1f), style = type.titleSmall)
-                    Icon(if (details) AppIcons.ExpandLess else AppIcons.ExpandMore, contentDescription = if (details) "收起" else "展开", tint = colors.Muted)
-                }
-                if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val currency = instrument.currency
-                    EstimateRow("可下单上限 / 步长", "${capacity.maximum?.let(instrument::formatQuantity) ?: "未知"} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
-                    EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
-                    EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
-                    EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
-                    val risk = preview?.stopLossPnlMicros
-                    val reward = preview?.takeProfitPnlMicros
-                    EstimateRow("收益 / 风险", if (risk != null && reward != null && risk < 0 && reward > 0)
-                        formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—")
-                    EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} $currency" } ?: "未知 / 服务器校验")
-                    EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} $currency" } ?: "未知")
-                    if (showPriceExplanation) Text(when (draft.kind) {
-                        OrderKind.MARKET -> "按当前报价估算，成交价可能变化。"
-                        OrderKind.LIMIT -> "限价是最高买入价或最低卖出价，不是突破触发价；若当前报价已满足限价，可能立即成交。"
-                        OrderKind.STOP -> "按当前报价估算；挂单不预占保证金，触发时重新校验资金与止损/止盈。"
-                    }, color = colors.Muted, style = type.bodySmall)
+                if (showEstimates) {
+                    DividerLine()
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(MaterialTheme.shapes.small).clickable(role = Role.Button) { details = !details }
+                        .testTag("order-estimates-toggle"), verticalAlignment = Alignment.CenterVertically) {
+                        Text("预估与合约信息", Modifier.weight(1f), style = type.titleSmall)
+                        Icon(if (details) AppIcons.ExpandLess else AppIcons.ExpandMore, contentDescription = if (details) "收起" else "展开", tint = colors.Muted)
+                    }
+                    if (details) Column(Modifier.testTag("order-estimates"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val currency = instrument.currency
+                        EstimateRow("可下单上限 / 步长", "${capacity.maximum?.let(instrument::formatQuantity) ?: "未知"} / ${instrument.formatQuantity(instrument.lotStepHundredths)} ${instrument.quantityUnit}")
+                        EstimateRow("点差", quote?.let { instrument.formatPrice(it.ask - it.bid) } ?: "—")
+                        EstimateRow(if (instrument.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", preview?.stopLossPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
+                        EstimateRow(if (instrument.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", preview?.takeProfitPnlMicros?.let { "${money(it, true)} $currency" } ?: "未设置")
+                        val risk = preview?.stopLossPnlMicros
+                        val reward = preview?.takeProfitPnlMicros
+                        EstimateRow("收益 / 风险", if (risk != null && reward != null && risk < 0 && reward > 0)
+                            formatFixed((reward.toDouble() / -risk * 100).toLong(), 2) else "—")
+                        EstimateRow("预计保证金", preview?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} $currency" } ?: "未知 / 服务器校验")
+                        EstimateRow("双边手续费", preview?.takeIf { it.feesKnown }?.let { "${money(it.feesMicros)} $currency" } ?: "未知")
+                        if (showPriceExplanation) Text(when (draft.kind) {
+                            OrderKind.MARKET -> "按当前报价估算，成交价可能变化。"
+                            OrderKind.LIMIT -> "限价是最高买入价或最低卖出价，不是突破触发价；若当前报价已满足限价，可能立即成交。"
+                            OrderKind.STOP -> "按当前报价估算；挂单不预占保证金，触发时重新校验资金与止损/止盈。"
+                        }, color = colors.Muted, style = type.bodySmall)
+                    }
                 }
             }
             preview?.warnings?.forEach { Text(it, color = colors.Muted, style = type.bodySmall) }

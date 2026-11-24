@@ -75,6 +75,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     var drawdownText by remember { mutableStateOf("2000") }
     var dailyText by remember { mutableStateOf("1000") }
     var targetText by remember { mutableStateOf("3000") }
+    var consistencyPercent by remember { mutableIntStateOf(0) }
     var drawdownMode by remember { mutableStateOf(ReplayDrawdown.STATIC) }
     var dailyMode by remember { mutableStateOf(ReplayDailyLoss.HARD) }
     var allowOvernight by remember { mutableStateOf(true) }
@@ -85,7 +86,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
         parseFixed(drawdownText, 6) ?: error("请输入有效的最大总亏损"),
         parseFixed(targetText, 6) ?: error("请输入有效的盈利目标"), drawdownMode,
         allowOvernight, parseReplayCutoff(cutoffText) ?: error("请输入有效的平仓时间"),
-        parseFixed(dailyText, 6) ?: error("请输入有效的最大日亏损"), dailyMode)
+        parseFixed(dailyText, 6) ?: error("请输入有效的最大日亏损"), dailyMode, consistencyPercent)
 
     var calendarForStart by remember { mutableStateOf<Boolean?>(null) }
     var query by remember { mutableStateOf("") }
@@ -155,14 +156,30 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("考核规则（美元）", style = MaterialTheme.typography.titleSmall)
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    if (maxWidth >= 480.dp) Row(Modifier.fillMaxWidth().testTag("replay-risk-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    @Composable fun ConsistencyField(modifier: Modifier) {
+                        var expanded by remember { mutableStateOf(false) }
+                        Box(modifier) {
+                            OutlinedTextField("$consistencyPercent%", {}, readOnly = true, label = { Text("一致性") }, singleLine = true, enabled = !loading,
+                                trailingIcon = { Icon(AppIcons.ExpandMore, null) }, modifier = Modifier.fillMaxWidth())
+                            Box(Modifier.matchParentSize().testTag("replay-consistency").clickable(enabled = !loading) { expanded = true })
+                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                listOf(0, 20, 30, 40, 50).forEach { value ->
+                                    DropdownMenuItem(text = { Text("$value%") }, modifier = Modifier.testTag("replay-consistency-$value"),
+                                        onClick = { consistencyPercent = value; expanded = false })
+                                }
+                            }
+                        }
+                    }
+                    if (maxWidth >= 560.dp) Row(Modifier.fillMaxWidth().testTag("replay-risk-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-target-amount"))
                         OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-daily-loss"))
                         OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-total-loss"))
+                        ConsistencyField(Modifier.weight(1f))
                     } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-target-amount"))
                         OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
                         OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-total-loss"))
+                        ConsistencyField(Modifier.fillMaxWidth())
                     }
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("replay-rule-row"),

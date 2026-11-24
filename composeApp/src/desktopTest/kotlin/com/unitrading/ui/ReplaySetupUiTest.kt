@@ -3,6 +3,7 @@ package com.unitrading.ui
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.graphics.toAwtImage
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ReplayHistoryCache
@@ -13,6 +14,8 @@ import org.junit.Rule
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.io.File
+import javax.imageio.ImageIO
 import kotlin.test.assertFalse
 
 @OptIn(ExperimentalTestApi::class)
@@ -30,6 +33,13 @@ class ReplaySetupUiTest {
         compose.onNodeWithText("交易日按芝加哥时间 17:00 切换", substring = true).assertDoesNotExist()
         compose.onNodeWithTag("replay-overnight-allow").performScrollTo().assertExists()
         compose.onNodeWithTag("replay-use-cache").performScrollTo().assertExists()
+        compose.onNodeWithText("0%").assertExists()
+        compose.onNodeWithTag("replay-consistency").performScrollTo().performClick()
+        listOf(0, 20, 30, 40, 50).forEach { compose.onNodeWithTag("replay-consistency-$it").assertExists() }
+        compose.onNodeWithTag("replay-consistency-40").performClick()
+        compose.onNodeWithText("40%").assertExists()
+        val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/replay-consistency-ui").also { it.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("replay-setup").captureToImage().toAwtImage(), "png", File(folder, "setup.png"))
     }
     @Test fun failedLoadStaysOnSetupAndAllowsRetry() {
         val base = OfflineOrderBroker()

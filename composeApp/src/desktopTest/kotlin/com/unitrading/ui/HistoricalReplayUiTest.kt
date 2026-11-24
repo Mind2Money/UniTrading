@@ -44,7 +44,8 @@ class HistoricalReplayUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, listOf(IndicatorConfig("replay-ma", IndicatorKind.MA)))) {} } }
         awaitReplay()
-        compose.onNodeWithTag("order-estimates").performScrollTo().assertExists()
+        compose.onNodeWithTag("order-estimates-toggle").assertDoesNotExist()
+        compose.onNodeWithTag("order-estimates").assertDoesNotExist()
         compose.onNodeWithText("按当前报价估算，成交价可能变化。").assertDoesNotExist()
         val chart = compose.onNodeWithTag("trading-chart")
         val chartSize = chart.fetchSemanticsNode().size
@@ -177,7 +178,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-overnight-allow").performScrollTo().performClick().assertIsOn()
         compose.onNodeWithTag("replay-use-cache").performScrollTo().assertIsOn().performClick().assertIsOff().performClick().assertIsOn()
         compose.onNodeWithTag("replay-risk-row").performScrollTo().assertExists()
-        val y = listOf("replay-target-amount", "replay-daily-loss", "replay-total-loss").map { compose.onNodeWithTag(it).fetchSemanticsNode().boundsInRoot.top }
+        val y = listOf("replay-target-amount", "replay-daily-loss", "replay-total-loss", "replay-consistency").map { compose.onNodeWithTag(it).fetchSemanticsNode().boundsInRoot.top }
         assertTrue(y.max() - y.min() < 2f, "Risk fields should appear in one row on desktop")
         compose.onNodeWithTag("replay-assets").performScrollTo().performClick()
         compose.onNodeWithTag("replay-assets-panel").assertExists()

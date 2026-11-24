@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 回放支持每日一致性盈利上限；触及上限自动平仓并暂停当日开仓，达到盈利目标后可保存或丢弃记录并退出。精简回放下单面板并调整标题栏。
+
 - 修复回放对象树的指标隐藏和删除；主界面与回放均可调整绘图、指标与 K 线的前后层级，精简回放入口和下单说明。
 
 - 将回放账户状态移至窗口底部，合并播放与起点定位控制，调整回放入口的考核规则和开关布局。
@@ -17,6 +19,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Add a replay daily consistency cap, automatic flattening and a save-or-discard success dialog; simplify the replay order panel and header.
 
 - Fix indicator visibility and removal in replay; allow chart objects to be moved above or below candles in both workspaces, and simplify replay text.
 

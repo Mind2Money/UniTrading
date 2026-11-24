@@ -101,6 +101,7 @@ internal fun OrderTicket(
     onDiscard: (() -> Unit)? = null,
     accountName: String? = null,
     showPriceExplanation: Boolean = true,
+    showEstimates: Boolean = true,
 ) {
     Column(modifier) {
         PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
@@ -115,7 +116,7 @@ internal fun OrderTicket(
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
-            showPriceExplanation = showPriceExplanation)
+            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates)
     }
 }
 

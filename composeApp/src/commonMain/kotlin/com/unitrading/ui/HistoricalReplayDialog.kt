@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -137,6 +139,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var sideTab by remember { mutableIntStateOf(0) }
     val riskConfig = input.riskConfig
     var showFailure by remember { mutableStateOf(false) }
+    var showSuccess by remember { mutableStateOf(false) }
     var risk by remember { mutableStateOf(ReplayRiskState.initial(riskConfig)) }
     var layout by remember { mutableStateOf(ChartSplitLayout.SINGLE) }
     var activeChart by remember { mutableStateOf("main") }
@@ -209,6 +212,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         val equity = checkedAdd(balance, floating)
         var observedEquity = equity
         val wasDailyHit = risk.dailyLossHit
+        val wasConsistencyHit = risk.consistencyHit
         risk = risk.observe(riskConfig, bar.timeMs, balance, equity)
         // Intrabar prices can cross a risk line and recover before the candle closes.
         if (next.index > state.index && next.positions.isNotEmpty()) {
@@ -221,18 +225,35 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             risk = risk.observe(riskConfig, bar.timeMs, balance, observedEquity).copy(lastEquity = equity)
         }
         val softLocked = risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT
-        val tradeChanged = next.trades.size != state.trades.size
+        var accepted = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next
+        val profitTrigger = replayProfitTrigger(spec, riskConfig, risk, state, accepted, bar)
+        if (profitTrigger != null) {
+            accepted = accepted.copy(pending = emptyList())
+            val reason = if (profitTrigger.kind == ReplayProfitKind.TARGET) "盈利目标自动平仓" else "一致性自动平仓"
+            accepted.positions.toList().forEach { position ->
+                accepted = accepted.close(spec, position, profitTrigger.price, bar.timeMs, reason)
+            }
+            val settled = accepted.closingEquity(spec, riskConfig, profitTrigger.price)
+            risk = risk.observe(riskConfig, bar.timeMs, settled, settled).copy(
+                targetReached = profitTrigger.kind == ReplayProfitKind.TARGET,
+                consistencyHit = profitTrigger.kind == ReplayProfitKind.CONSISTENCY)
+        }
+        val tradeChanged = accepted.trades.size != state.trades.size
         if (equityPoints.isEmpty() || tradeChanged || bar.timeMs - equityPoints.last().timeMs >= 900_000L || risk.failed) {
-            val sampled = if (risk.failed && next.index > state.index) observedEquity else equity
+            val sampled = if (risk.failed && next.index > state.index) observedEquity
+                else if (profitTrigger != null) risk.lastEquity else equity
             val point = ReplayEquityPoint(bar.timeMs, sampled)
             if (equityPoints.lastOrNull()?.timeMs == bar.timeMs) equityPoints[equityPoints.lastIndex] = point else equityPoints.add(point)
             if (equityPoints.size > 5_000) equityPoints.removeAt(0)
         }
-        state = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next
+        state = accepted
         if (softLocked && !wasDailyHit) message = "触及每日软止损：已撤销挂单，下一交易日前禁止开仓。"
         if (!risk.dailyLossHit && wasDailyHit) message = "新交易日开始，已解除每日软止损限制。"
+        if (risk.consistencyHit && !wasConsistencyHit) message = "达到今日一致性盈利上限：已自动平仓并撤销挂单，下一交易日恢复开仓。"
+        if (!risk.consistencyHit && wasConsistencyHit) message = "新交易日开始，已解除一致性开仓限制。"
         if (risk.failed) { playing = false; showFailure = true; message = if (risk.dailyFailure) "触及最大日亏损，考核失败。" else "触及最大总亏损，考核失败。" }
-        next.lastNotice?.let { message = it }
+        else if (risk.targetReached) { playing = false; showSuccess = true; message = null; orderToConfirm = null; lineToConfirm = null }
+        if (!risk.failed && !risk.targetReached && profitTrigger == null) next.lastNotice?.let { message = it }
     }
     fun flattenBeforeOvernight() {
         if (state.positions.isEmpty() && state.pending.isEmpty()) return
@@ -250,7 +271,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         if (state.index >= bars.lastIndex) { playing = false; return }
         val last = replayStepEnd(bars, state.index, selectedStep)
         while (state.index < last) {
-            if (state.index >= bars.lastIndex || risk.failed) { playing = false; return }
+            if (state.index >= bars.lastIndex || risk.failed || risk.targetReached) { playing = false; return }
             val previous = bars[state.index]
             val next = bars[state.index + 1]
             val action = try {
@@ -272,7 +293,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 started = true
                 continue
             }
-            val result = runCatching { accept(state.advance(spec, bars[state.index + 1])) }
+            val result = runCatching {
+                val nextBar = bars[state.index + 1]
+                val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
+                    state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
+                accept(nextState)
+            }
             if (result.isFailure) { playing = false; message = result.exceptionOrNull()?.message ?: "回放撮合失败"; return }
             if (action == ReplayCutoffAction.AFTER_NEXT) {
                 val closed = runCatching { flattenBeforeOvernight() }
@@ -288,7 +314,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     fun executeOrder(order: ReplayOrderIntent) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            require(!risk.targetReached) { "已达到盈利目标，不能新开仓" }
             require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
+            require(!risk.consistencyHit) { "已达到今日一致性盈利上限，下一交易日前禁止开仓" }
             require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "禁止过夜：当前处于平仓后至下一交易日开始的限制时段" }
             val marketableLimit = order.kind == OrderKind.LIMIT && order.price != null &&
                 if (order.side == Side.BUY) order.price >= current.close else order.price <= current.close
@@ -302,7 +330,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     fun requestOrder(side: Side, kind: OrderKind = orderKind, price: Long? = if (kind == OrderKind.MARKET) null else spec.parsePrice(orderPrice)) {
         runCatching {
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
+            require(!risk.targetReached) { "已达到盈利目标，不能新开仓" }
             require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
+            require(!risk.consistencyHit) { "已达到今日一致性盈利上限，下一交易日前禁止开仓" }
             require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "禁止过夜：当前处于平仓后至下一交易日开始的限制时段" }
             require(!regular || sourceFrame.seconds >= Timeframe.DAY || isRegularChartTime(current.timeMs)) { "当前回放时间不在常规时段，请前进到开市时间" }
             val qty = spec.parseQuantity(quantity) ?: error("请输入有效数量")
@@ -324,7 +354,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val replayQuote = Quote(current.close, current.close, current.timeMs)
     fun previewOrder(order: OrderRequest): OrderPreview = runCatching {
         require(!risk.failed) { "已触及回撤限制" }
+        require(!risk.targetReached) { "已达到盈利目标，不能新开仓" }
         require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
+        require(!risk.consistencyHit) { "已达到今日一致性盈利上限，下一交易日前禁止开仓" }
         require(riskConfig.allowOvernight || !replayOvernightBlocked(current.timeMs + sourceFrame.millis, riskConfig.overnightCutoffMinutes)) { "当前处于禁止过夜限制时段" }
         require(!regular || sourceFrame.seconds >= Timeframe.DAY || isRegularChartTime(current.timeMs)) { "当前回放时间不在常规时段" }
         val price = order.entryPrice ?: current.close
@@ -404,14 +436,14 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description,
             startedAtMs = bars[start].timeMs)
     }
-    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
-        if (started && historyTrades.isNotEmpty() && records != null) {
+    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId, showSuccess, showFailure) {
+        if (started && !showSuccess && !showFailure && historyTrades.isNotEmpty() && records != null) {
             runCatching { records.save(currentRecord()) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }
     }
     fun restartReplay() {
         playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
-        equityPoints.clear(); description = ""; showFailure = false; message = null
+        equityPoints.clear(); description = ""; showFailure = false; showSuccess = false; message = null
         draft = OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))
         showDraft = false; orderToConfirm = null; lineToConfirm = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
@@ -438,12 +470,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             checkedAdd(sum, checkedAdd(gross, -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
         }
     }.getOrNull() }
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 2.dp)) {
         Surface(Modifier.fillMaxWidth().testTag("replay-header"), shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                AppLogo(26.dp, Modifier.testTag("replay-header-logo"))
+            Row(Modifier.fillMaxWidth().heightIn(min = 38.dp).padding(start = 4.dp, end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AppLogo(24.dp, Modifier.testTag("replay-header-logo"))
                 Text("历史回放 · 本地模拟", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                 Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -452,7 +484,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         historyError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -547,11 +579,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     @Composable fun PlaybackControls() {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            IconButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed,
+                            IconButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
                                 modifier = Modifier.size(36.dp).testTag("replay-play")) {
                                 Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(20.dp))
                             }
-                            IconButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed,
+                            IconButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
                                 modifier = Modifier.size(36.dp).testTag("replay-next")) {
                                 Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(20.dp))
                             }
@@ -618,8 +650,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         OrderTicket(ticketSpec, replayQuote, BrokerCapabilities(hedging = false), draft,
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
-                            modifier = Modifier.fillMaxWidth().height(630.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
-                            accountName = "回放模拟账户", showPriceExplanation = false)
+                            modifier = Modifier.fillMaxWidth().height(500.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
+                            accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false)
                         if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
                             state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -676,6 +708,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
                 Metric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
                 Metric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
+                Metric("一致性 · ${riskConfig.consistencyPercent}%", riskConfig.consistencyLimitMicros?.let { "每日 ${money(it)}${if (risk.consistencyHit) " · 已触及" else ""}" } ?: "关闭", valueTag = "replay-consistency-status")
                 Metric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")
                 Metric("交易统计", "成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", valueTag = "replay-trade-count")
             }
@@ -757,6 +790,37 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
             TextButton(onClick = { finishReplay(onDismiss) }) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
+    if (showSuccess) Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+        Surface(Modifier.widthIn(max = 460.dp).fillMaxWidth(.94f).testTag("replay-success"),
+            shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shadowElevation = 8.dp) {
+            Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(AppIcons.Star, null, Modifier.size(18.dp), tint = Color(0xFFE6A23C))
+                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                        Icon(AppIcons.Star, null, Modifier.padding(16.dp).size(34.dp), tint = Color(0xFFE6A23C))
+                    }
+                    Icon(AppIcons.Star, null, Modifier.size(18.dp), tint = Color(0xFFE6A23C))
+                }
+                Text("恭喜达成盈利目标！", style = MaterialTheme.typography.headlineSmall)
+                Text("本次回放已自动平仓并撤销挂单。", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("盈利目标 ${money(riskConfig.targetMicros)} ${spec.currency}", style = MaterialTheme.typography.titleMedium,
+                    color = TradingColors.Profit)
+                message?.takeIf { it.contains("失败：") }?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                Button(onClick = {
+                    runCatching { requireNotNull(records).save(currentRecord("已达成")) }
+                        .onSuccess { onDismiss() }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
+                }, modifier = Modifier.fillMaxWidth().testTag("replay-success-save"), enabled = records != null,
+                    colors = brandButtonColors()) { Text("保存本次回放并退出") }
+                OutlinedButton(onClick = {
+                    runCatching { records?.delete(recordId) }.onSuccess { onDismiss() }
+                        .onFailure { message = "回放记录删除失败：${it.message ?: "请检查存储"}" }
+                }, modifier = Modifier.fillMaxWidth().testTag("replay-success-discard")) { Text("不保存本次回放并退出") }
+            }
+        }
+    }
     if (showFailure) AlertDialog(onDismissRequest = {}, title = { Text("回放考核失败") },
         text = { Column { Text(if (risk.dailyFailure) "账户触及最大日亏损。" else "账户触及最大总亏损。")
             message?.takeIf { it.contains("失败：") }?.let { Text(it, color = MaterialTheme.colorScheme.error) } } },
