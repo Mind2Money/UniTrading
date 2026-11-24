@@ -2,9 +2,6 @@
 
 ## 简体中文
 
-- Tradovate 和 Rithmic 的连续合约图表改为读取已确认主力合约的 K 线，和报价、下单合约保持一致；换月时隔离旧缓存。图表历史只包含当前合约，不自动拼接或复权旧合约。
-- 回放起点支持日历选择，模拟平仓记录可保存到本机并在分析页重新查看。该功能仍在测试中；本地记录不恢复回放进度、挂单或持仓。
-
 - 优化 Android 平板和 iPad 图表空间：缩小顶部和右侧控件，账户资金信息并入交易栏，价格轴根据文字宽度自适应；保留平仓确认。
 
 - 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
@@ -12,9 +9,6 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
-
-- Load continuous-chart candles from the verified Tradovate or Rithmic execution contract, matching the contract used for quotes and orders. Isolate cached bars across rolls. History covers the current contract only; older months are not stitched or adjusted.
-- Select a replay start date on a calendar and save simulated closed trades locally for later analysis. Replay remains under test; saved records do not restore playback progress, pending orders or positions.
 
 - Give Android tablets and iPad more chart space with compact controls, an integrated account and trade bar, and a content-aware price axis. Flatten confirmation remains in place.
 
