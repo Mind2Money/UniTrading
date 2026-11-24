@@ -4,19 +4,25 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.ReplayRecord
+import com.unitrading.app.ReplayEquityPoint
 import com.unitrading.app.tradeStatistics
 import com.unitrading.broker.*
 import kotlinx.datetime.*
@@ -49,10 +55,13 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
     val winRate = stats.winRate?.let { formatFixed((it * 100).toLong(), 2) + "%" } ?: "—"
     val rr = stats.averageWinLoss?.let { formatFixed((it * 100).toLong(), 2) } ?: "—"
     val equity = remember(record) {
-        if (record.equity.isNotEmpty()) record.equity.map { it.equityMicros }
+        if (record.equity.isNotEmpty()) record.equity.sortedBy { it.timeMs }
         else {
             var v = record.initialMicros
-            listOf(v) + ordered.map { trade -> v = runCatching { checkedAdd(v, trade.netPnlMicros ?: 0L) }.getOrDefault(v); v }
+            listOf(ReplayEquityPoint(ordered.firstOrNull()?.openedAtMs ?: record.savedAtMs, v)) + ordered.map { trade ->
+                v = runCatching { checkedAdd(v, trade.netPnlMicros ?: 0L) }.getOrDefault(v)
+                ReplayEquityPoint(trade.closedAtMs, v)
+            }
         }
     }
     @Composable fun SummaryCard(modifier: Modifier) {
@@ -61,7 +70,7 @@ internal fun ReplayDashboard(record: ReplayRecord, modifier: Modifier = Modifier
                 Column(Modifier.weight(1f)) {
                     Text(record.symbol, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
                     Text("${record.status} · ${ordered.size} 笔已平仓交易", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val first = ordered.firstOrNull()?.openedAtMs
+                    val first = record.startedAtMs ?: ordered.firstOrNull()?.openedAtMs
                     val last = record.endedAtMs ?: ordered.lastOrNull()?.closedAtMs
                     if (first != null && last != null) Text("${date(first)} — ${date(last)} · 芝加哥时间", style = MaterialTheme.typography.bodySmall)
                 }
@@ -171,29 +180,49 @@ private fun ReplayPlotCard(title: String, modifier: Modifier, content: @Composab
 }
 
 @Composable
-private fun ColumnScope.EquityPlot(values: List<Long>) {
+private fun ColumnScope.EquityPlot(points: List<ReplayEquityPoint>) {
+    val values = points.map { it.equityMicros }
     if (values.isEmpty()) { Text("暂无数据"); return }
     val low = values.minOrNull() ?: 0L; val high = values.maxOrNull() ?: 0L
     Text("${money(low)} — ${money(high)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Canvas(Modifier.fillMaxWidth().weight(1f).testTag("replay-equity-plot")) {
         val spread = (high.toDouble() - low.toDouble()).coerceAtLeast(1.0)
-        val path = Path()
-        values.forEachIndexed { i, value ->
-            val x = if (values.size == 1) 0f else size.width * i / (values.size - 1)
-            val y = size.height - ((value.toDouble() - low.toDouble()) / spread).toFloat() * size.height
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        val padding = 4.dp.toPx()
+        repeat(5) { line ->
+            val y = padding + (size.height - padding * 2) * line / 4f
+            drawLine(Color.Gray.copy(alpha = .25f), Offset(0f, y), Offset(size.width, y), 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx())))
         }
+        val path = Path()
+        val area = Path()
+        values.forEachIndexed { i, value ->
+            val firstTime = points.first().timeMs
+            val duration = points.last().timeMs - firstTime
+            val x = if (duration <= 0L) { if (values.size == 1) 0f else size.width * i / (values.size - 1) }
+                else size.width * ((points[i].timeMs - firstTime).toDouble() / duration).toFloat()
+            val y = size.height - padding - ((value.toDouble() - low.toDouble()) / spread).toFloat() * (size.height - padding * 2)
+            if (i == 0) { path.moveTo(x, y); area.moveTo(x, size.height); area.lineTo(x, y) }
+            else { path.lineTo(x, y); area.lineTo(x, y) }
+        }
+        area.lineTo(size.width, size.height); area.close()
+        drawPath(area, Brush.verticalGradient(listOf(ReplayBlue.copy(alpha = .25f), ReplayBlue.copy(alpha = .025f))))
         drawPath(path, ReplayBlue, style = Stroke(width = 2.dp.toPx()))
     }
-    Text("回放时间 →", style = MaterialTheme.typography.labelSmall)
+    val zone = remember { TimeZone.of("America/Chicago") }
+    val first = Instant.fromEpochMilliseconds(points.first().timeMs).toLocalDateTime(zone).date
+    val last = Instant.fromEpochMilliseconds(points.last().timeMs).toLocalDateTime(zone).date
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(first.toString(), style = MaterialTheme.typography.labelSmall)
+        Text(last.toString(), style = MaterialTheme.typography.labelSmall)
+    }
 }
 
 @Composable
 private fun MonthlyPlot(months: Map<String, List<Long>>) {
-    val rows = months.entries.toList().takeLast(8)
+    val rows = months.entries.toList()
     if (rows.isEmpty()) { Text("暂无平仓交易"); return }
     val maxValue = rows.maxOf { (_, values) -> maxOf(values.filter { it > 0 }.sum().toDouble(), -values.filter { it < 0 }.sum().toDouble()) }.coerceAtLeast(1.0)
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEach { (month, values) ->
             val positive = values.filter { it > 0 }.sum().toDouble(); val negative = -values.filter { it < 0 }.sum().toDouble()
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -202,8 +231,8 @@ private fun MonthlyPlot(months: Map<String, List<Long>>) {
                     val mid = size.width / 2f
                     drawLine(Color.Gray, Offset(mid, 0f), Offset(mid, size.height), 1f)
                     val red = (mid * negative / maxValue).toFloat(); val green = (mid * positive / maxValue).toFloat()
-                    drawRect(ReplayRed, Offset(mid - red, 0f), Size(red, size.height))
-                    drawRect(ReplayGreen, Offset(mid, 0f), Size(green, size.height))
+                    if (red > 0f) drawRoundRect(Brush.horizontalGradient(listOf(ReplayRed, ReplayRed.copy(alpha = .25f))), Offset(mid - red, 0f), Size(red, size.height), CornerRadius(4.dp.toPx()))
+                    if (green > 0f) drawRoundRect(Brush.horizontalGradient(listOf(ReplayGreen, ReplayGreen.copy(alpha = .25f))), Offset(mid, 0f), Size(green, size.height), CornerRadius(4.dp.toPx()))
                 }
             }
         }
@@ -220,7 +249,9 @@ private fun ColumnScope.WeekdayPlot(values: List<Long>, labels: List<String> = l
         val slot = size.width / values.size
         values.forEachIndexed { i, value ->
             val h = (mid * abs(value.toDouble()) / scale).toFloat()
-            drawRect(if (value >= 0) ReplayBlue else ReplayRed, Offset(i * slot + slot * .18f, if (value >= 0) mid - h else mid), Size(slot * .64f, h))
+            val ink = if (value >= 0) ReplayBlue else ReplayRed
+            if (h > 0f) drawRoundRect(Brush.verticalGradient(listOf(ink, ink.copy(alpha = .35f)), startY = if (value >= 0) mid - h else mid, endY = if (value >= 0) mid else mid + h),
+                Offset(i * slot + slot * .18f, if (value >= 0) mid - h else mid), Size(slot * .64f, h), CornerRadius(4.dp.toPx()))
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) { labels.forEachIndexed { index, label ->

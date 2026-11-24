@@ -398,7 +398,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             if (finalEquity == null || points.lastOrNull()?.timeMs == current.timeMs) points else points + ReplayEquityPoint(current.timeMs, finalEquity)
         }
         return ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
-            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description)
+            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description,
+            startedAtMs = bars[start].timeMs)
     }
     LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
         if (started && historyTrades.isNotEmpty() && records != null) {

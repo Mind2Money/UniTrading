@@ -22,6 +22,7 @@ internal data class ReplayRecord(
     val equity: List<ReplayEquityPoint> = emptyList(),
     val priceDecimals: Int? = null,
     val description: String = "",
+    val startedAtMs: Long? = null,
 )
 
 internal class ReplayRecords(private val store: SnapshotStore) {

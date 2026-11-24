@@ -161,7 +161,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithText("模拟持仓").performScrollTo().assertExists()
-        compose.onNodeWithTag("replay-tab-1").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-tab-1").performClick()
         compose.onNodeWithText("回放分析").assertExists()
     }
 
