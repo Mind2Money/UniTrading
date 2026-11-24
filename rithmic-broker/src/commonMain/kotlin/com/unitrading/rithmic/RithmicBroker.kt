@@ -956,7 +956,7 @@ class RithmicBroker(
             from = until
         }
         return HistoricalRangeResult(bars.associateBy { it.timeMs }.values.sortedBy { it.timeMs },
-            if (symbol.startsWith("@") && route == null) "券商未提供连续合约路由，历史只包含当前合约" else null)
+            if (symbol.startsWith("@") && route == null) "券商未提供连续合约路由，历史只包含当前合约" else null, cacheable = true)
     }
 
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))

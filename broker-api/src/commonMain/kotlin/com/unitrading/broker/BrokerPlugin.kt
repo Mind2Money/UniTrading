@@ -5,7 +5,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 
 /** A separate, bounded replay download. End is exclusive; no live order account is involved. */
-data class HistoricalRangeResult(val candles: List<Candle>, val warning: String? = null)
+data class HistoricalRangeResult(val candles: List<Candle>, val warning: String? = null,
+    /** True only when the broker completed the requested history read; cache is not a completeness guarantee. */
+    val cacheable: Boolean = false)
 
 interface BrokerPlugin {
     val descriptor: BrokerDescriptor

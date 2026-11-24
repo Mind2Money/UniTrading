@@ -82,6 +82,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
     internal val accountRisk by lazy { AccountRiskController(store) }
     internal val analyticsCache by lazy { AnalyticsTradeCache(store) }
+    internal val replayHistory by lazy { ReplayHistoryCache(store) }
     /** System notice (Android Live Update, iOS Live Activity) with the displayed account; the platform runs it with its presenter. */
     val livePnl: LivePnlController by lazy { LivePnlController(store, names = accountAliases.aliases) }
     val brokers: List<DemoBroker> = (if (includeDemoBrokers) DemoConfigs.all else emptyList()).map { config ->

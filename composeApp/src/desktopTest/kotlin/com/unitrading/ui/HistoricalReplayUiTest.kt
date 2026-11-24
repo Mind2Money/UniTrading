@@ -33,6 +33,24 @@ class HistoricalReplayUiTest {
         }
     }
 
+    @Test fun disallowedOvernightClosesAtTheCutoff() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val start = java.time.Instant.parse("2026-01-05T21:57:00Z").toEpochMilli()
+        val bars = (0..3).map { Candle(start + it * 60_000, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true)) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-account-settings").performClick()
+        compose.onNodeWithTag("replay-overnight-disallow").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-account-save").performClick()
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-trade-count").performScrollTo().assertTextContains("成交 1 笔", substring = true)
+        compose.onNodeWithTag("replay-buy").performScrollTo().performClick()
+        compose.onNodeWithText("禁止过夜：当前处于平仓后至下一交易日开始的限制时段").assertExists()
+    }
+
     @Test fun replayTradesOnlyLocallyAndAppliesStopOnNextBar() {
         val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0, quantityUnit = "张")

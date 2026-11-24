@@ -86,6 +86,8 @@ class TradovateBroker(
     private val continuousLocks = mutableMapOf<String, Mutex>()
     private val continuousResolutionSlots = Semaphore(2)
     private val volumeSlots = Semaphore(3)
+    // History reads can overlap; a cleanup must never cancel another read's pending IDs twice.
+    private val chartCancelLock = Mutex()
     private val continuousEvidenceSaveLock = Mutex()
     private var continuousJob: Job? = null
     private var mclChartResolutionJob: Job? = null
@@ -976,7 +978,7 @@ class TradovateBroker(
         }
         val bars = lock.withLock { load.candles.filter { it.timeMs in startMs until endMs } }
         val warning = if (symbol == "@MCL") "MCL 历史取当前确认的主力合约，未自动拼接旧合约" else null
-        return HistoricalRangeResult(bars, warning)
+        return HistoricalRangeResult(bars, warning, cacheable = true)
     }
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
@@ -1143,7 +1145,7 @@ class TradovateBroker(
      * Cancels chart subscriptions: those of [page] alone, those of [series] alone, or otherwise every one whose series is not
      * in [keep].
      */
-    private suspend fun cancelCharts(socket: TradovateSocket, page: ChartPage? = null, series: Pair<String, Timeframe>? = null, keep: List<Pair<String, Timeframe>> = emptyList()) {
+    private suspend fun cancelCharts(socket: TradovateSocket, page: ChartPage? = null, series: Pair<String, Timeframe>? = null, keep: List<Pair<String, Timeframe>> = emptyList()) = chartCancelLock.withLock {
         val pending = lock.withLock {
             val retired = charts.filterValues { when {
                 page != null -> it.page === page
@@ -1360,7 +1362,7 @@ class TradovateBroker(
      * Retires a background page's subscriptions and says whether the server confirmed it. What it did not confirm
      * stays pending for the next cleanup, here or the chart's; the connection the quotes use is not reset for it.
      */
-    private suspend fun cancelPreloadCharts(socket: TradovateSocket, ids: List<JsonPrimitive>): Boolean {
+    private suspend fun cancelPreloadCharts(socket: TradovateSocket, ids: List<JsonPrimitive>): Boolean = chartCancelLock.withLock {
         val pending = lock.withLock {
             for (id in ids) {
                 val key = chartSubscriptionKey(id) ?: continue
@@ -1380,7 +1382,7 @@ class TradovateBroker(
                 catch (_: Exception) { /* Stays pending. */ }
             }
         }
-        return lock.withLock { ids.none { chartSubscriptionKey(it) in pendingChartCancellations } }
+        lock.withLock { ids.none { chartSubscriptionKey(it) in pendingChartCancellations } }
     }
 
     /** Coalesce streaming updates; failed writes stay dirty for the next update or disconnect. */

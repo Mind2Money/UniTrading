@@ -12,11 +12,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.unitrading.app.ChartTimeZone
+import com.unitrading.app.ReplayHistoryCache
 import com.unitrading.broker.*
 import com.unitrading.chart.chartBarDateTime
 import com.unitrading.chart.parseChartTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -41,11 +45,12 @@ internal fun replayDateRange(start: String, end: String, zone: ChartTimeZone): R
 }.getOrNull()
 
 internal data class ReplayPrepared(val instruments: List<Instrument>, val range: ReplayDateRange,
-    val data: Map<Pair<String, Timeframe>, List<Candle>>, val warnings: List<String>)
+    val data: Map<Pair<String, Timeframe>, List<Candle>>, val warnings: List<String>, val cacheEnabled: Boolean = true,
+    val cacheHits: Int = 0, val downloaded: Int = 0)
 
 /** Select the complete replay universe and fetch its range before opening the local simulator. */
 @Composable
-internal fun ReplaySetupDialog(broker: BrokerPlugin, instruments: List<Instrument>, initial: Instrument,
+internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, persistentCache: Boolean, instruments: List<Instrument>, initial: Instrument,
     zone: ChartTimeZone, referenceTime: Long, onDismiss: () -> Unit, onReady: (ReplayPrepared) -> Unit) {
     val today = remember(referenceTime, zone) { Instant.fromEpochMilliseconds(referenceTime.takeIf { it > 0 } ?: Clock.System.now().toEpochMilliseconds())
         .toLocalDateTime(TimeZone.of(zone.zoneId)).date }
@@ -56,6 +61,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, instruments: List<Instrumen
     var prepared by remember { mutableStateOf<ReplayPrepared?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf<String?>(null) }
+    var useCache by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     var job by remember { mutableStateOf<Job?>(null) }
     val loading = progress != null
@@ -91,10 +97,18 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, instruments: List<Instrumen
                         }
                     }
                 }
+                Row(Modifier.fillMaxWidth().clickable(enabled = !loading) { useCache = !useCache; prepared = null }, verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = useCache, onCheckedChange = null, enabled = !loading, modifier = Modifier.testTag("replay-use-cache"))
+                    Column {
+                        Text(if (persistentCache) "使用本地历史缓存" else "使用本次运行的历史缓存", style = MaterialTheme.typography.bodyMedium)
+                        Text("最近两天重新读取；取消勾选可强制重读。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 progress?.let { Text(it, Modifier.testTag("replay-load-progress"), color = MaterialTheme.colorScheme.primary) }
                 error?.let { Text(it, Modifier.testTag("replay-load-error"), color = MaterialTheme.colorScheme.error) }
                 prepared?.let { ready ->
                     Column(Modifier.heightIn(max = 110.dp).verticalScroll(rememberScrollState())) {
+                        Text("缓存 ${ready.cacheHits} 段 · 券商读取 ${ready.downloaded} 段", style = MaterialTheme.typography.bodySmall)
                         ready.instruments.forEach { instrument ->
                             val bars = ready.data[instrument.symbol to Timeframe.M1].orEmpty()
                             if (bars.isNotEmpty()) Text("${instrument.symbol}：${bars.size} 根 1 分钟 K 线 · ${chartBarDateTime(bars.first().timeMs, Timeframe.M1, zone.zoneId)} 至 ${chartBarDateTime(bars.last().timeMs, Timeframe.M1, zone.zoneId)}", style = MaterialTheme.typography.bodySmall)
@@ -114,20 +128,24 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, instruments: List<Instrumen
                         progress = "正在准备历史数据…"
                         job = scope.launch {
                             try {
+                                val values = coroutineScope { chosen.flatMap { instrument -> listOf(Timeframe.M1, Timeframe.D1).map { frame -> async {
+                                    val (from, until) = range.forFrame(frame)
+                                    val loaded = cache.load(broker, instrument.symbol, frame, from, until, enabled = useCache, persistent = persistentCache) { done, total, cached ->
+                                        progress = "正在读取 ${instrument.symbol} · ${frame.label} · $done/$total 段（缓存 $cached）"
+                                    }
+                                    Triple(instrument, frame, loaded)
+                                } } }.awaitAll() }
                                 val data = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
                                 val warnings = mutableListOf<String>()
-                                chosen.forEachIndexed { index, instrument ->
-                                    for (frame in listOf(Timeframe.M1, Timeframe.D1)) {
-                                        progress = "正在读取 ${index + 1}/${chosen.size} · ${instrument.symbol} · ${frame.label}"
-                                        val (from, until) = range.forFrame(frame)
-                                        val result = broker.historicalRange(instrument.symbol, frame, from, until)
-                                        if (frame == Timeframe.M1 && result.candles.size < 2) throw IllegalStateException("${instrument.symbol} 在所选范围内没有足够的 1 分钟数据")
-                                        if (frame == Timeframe.D1 && result.candles.isEmpty()) warnings += "${instrument.symbol}：券商没有返回该日期范围的日线"
-                                        data[instrument.symbol to frame] = result.candles.sortedBy { it.timeMs }
-                                        result.warning?.let { warnings += "${instrument.symbol}：$it" }
-                                    }
+                                values.forEach { (instrument, frame, loaded) ->
+                                    val result = loaded.result
+                                    if (frame == Timeframe.M1 && result.candles.size < 2) throw IllegalStateException("${instrument.symbol} 在所选范围内没有足够的 1 分钟数据")
+                                    if (frame == Timeframe.D1 && result.candles.isEmpty()) warnings += "${instrument.symbol}：券商没有返回该日期范围的日线"
+                                    data[instrument.symbol to frame] = result.candles
+                                    result.warning?.let { warnings += "${instrument.symbol}：$it" }
                                 }
-                                prepared = ReplayPrepared(chosen, range, data, warnings.distinct())
+                                prepared = ReplayPrepared(chosen, range, data, warnings.distinct(), useCache,
+                                    values.sumOf { it.third.cacheHits }, values.sumOf { it.third.downloaded })
                             } catch (cancel: CancellationException) { throw cancel }
                             catch (failure: Exception) { error = failure.message ?: "历史数据读取失败" }
                             finally { progress = null }

@@ -10,10 +10,11 @@ import kotlin.time.Instant
 internal enum class ReplayDrawdown { STATIC, EOD, TDD }
 
 internal data class ReplayRiskConfig(val initialMicros: Long, val maxDrawdownMicros: Long, val targetMicros: Long,
-    val mode: ReplayDrawdown) {
+    val mode: ReplayDrawdown, val allowOvernight: Boolean = true, val overnightCutoffMinutes: Int = 15 * 60 + 59) {
     init {
         require(initialMicros > 0 && maxDrawdownMicros > 0 && targetMicros > 0) { "资金、回撤额度和盈利目标必须大于零" }
         require(initialMicros > maxDrawdownMicros) { "最大回撤额度必须小于初始资金" }
+        require(overnightCutoffMinutes in 0 until 24 * 60) { "禁止过夜的平仓时间无效" }
     }
 }
 

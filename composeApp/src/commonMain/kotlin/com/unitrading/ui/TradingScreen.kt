@@ -1384,7 +1384,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
                         }, singleRow = singleLine)
-                    if (replaySetup) ReplaySetupDialog(plugin, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
+                    val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
+                    if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
                         market.simulatedTimeMs, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
@@ -1405,7 +1406,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                                     try {
                                         val (from, until) = ready.range.forFrame(frame)
-                                        val result = plugin.historicalRange(sym, frame, from, until)
+                                        val result = runtime.replayHistory.load(plugin, sym, frame, from, until,
+                                            enabled = ready.cacheEnabled, persistent = persistentReplayCache).result
                                         if (generation == replayGeneration) {
                                             replaySeries[series] = result.candles.sortedBy { it.timeMs }
                                             replayError = result.warning ?: if (result.candles.isEmpty()) "券商没有 $sym ${frame.label} 的历史数据" else null
