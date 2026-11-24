@@ -436,11 +436,20 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         }
     }.getOrNull() }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("历史回放 · 本地模拟", style = MaterialTheme.typography.titleMedium)
-            Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = { playing = false; if (started) confirmExit = true else onDismiss() }, Modifier.testTag("replay-close")) { Text("关闭") }
+        Surface(Modifier.fillMaxWidth().testTag("replay-header"), shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppLogo(26.dp, Modifier.testTag("replay-header-logo"))
+                Text("历史回放 · 本地模拟", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                ActionIcon(AppIcons.Close, "关闭回放", "replay-close", iconSize = 20.dp) {
+                    playing = false; if (started) confirmExit = true else onDismiss()
+                }
+            }
         }
+        Spacer(Modifier.height(8.dp))
         historyError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {

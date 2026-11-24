@@ -15,7 +15,6 @@ import androidx.compose.ui.window.Dialog
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.ReplayHistoryCache
 import com.unitrading.broker.*
-import com.unitrading.chart.chartBarDateTime
 import com.unitrading.chart.parseChartTime
 import com.unitrading.chart.IntervalOptions
 import com.unitrading.chart.ReplayRiskConfig
@@ -88,7 +87,6 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     var calendarForStart by remember { mutableStateOf<Boolean?>(null) }
     var query by remember { mutableStateOf("") }
     val selected = remember { mutableStateMapOf<String, Instrument>().also { if (isReplayFuture(initial)) it[initial.symbol] = initial } }
-    var prepared by remember { mutableStateOf<ReplayPrepared?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf<String?>(null) }
     var useCache by remember { mutableStateOf(true) }
@@ -119,24 +117,30 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 }
                 if (customBalance) OutlinedTextField(initialText, { initialText = it }, label = { Text("自定义资金（美元）") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-initial-balance"))
                 Text("资产 · 期货", style = MaterialTheme.typography.titleSmall)
-                OutlinedButton(onClick = { assetsExpanded = !assetsExpanded }, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-assets")) {
-                    Text(if (selected.isEmpty()) "选择期货品种" else "已选 ${selected.size} 个：${selected.keys.joinToString("、")}")
+                OutlinedButton(onClick = { assetsExpanded = !assetsExpanded }, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-assets"),
+                    shape = MaterialTheme.shapes.medium, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+                    Text(if (selected.isEmpty()) "选择期货品种" else "已选 ${selected.size} 个：${selected.keys.joinToString("、")}", Modifier.weight(1f), maxLines = 1)
+                    Icon(if (assetsExpanded) AppIcons.ExpandLess else AppIcons.ExpandMore, contentDescription = if (assetsExpanded) "收起资产" else "展开资产")
                 }
-                if (assetsExpanded) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(query, { query = it }, Modifier.weight(1f).testTag("replay-symbol-filter"),
-                            label = { Text("搜索期货") }, singleLine = true, enabled = !loading)
-                        TextButton(onClick = { scope.launch { runCatching { broker.searchInstruments(query) }.onFailure { error = "合约搜索失败" } } }, enabled = !loading && query.isNotBlank()) { Text("查询") }
-                    }
-                    Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                        choices.take(100).forEach { item ->
-                            Row(Modifier.fillMaxWidth().testTag("replay-select-${item.symbol}").clickable(enabled = !loading) {
-                                if (selected.containsKey(item.symbol)) selected.remove(item.symbol) else selected[item.symbol] = item
-                                prepared = null
-                            }, verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = selected.containsKey(item.symbol), onCheckedChange = null, enabled = !loading)
-                                Column(Modifier.weight(1f)) { Text(item.symbol); Text(item.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                Text(item.category, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (assetsExpanded) Surface(Modifier.fillMaxWidth().testTag("replay-assets-panel"), shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("选择期货", style = MaterialTheme.typography.titleSmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(query, { query = it }, Modifier.weight(1f).testTag("replay-symbol-filter"),
+                                label = { Text("搜索期货") }, singleLine = true, enabled = !loading)
+                            TextButton(onClick = { scope.launch { runCatching { broker.searchInstruments(query) }.onFailure { error = "合约搜索失败" } } }, enabled = !loading && query.isNotBlank()) { Text("查询") }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                            choices.take(100).forEach { item ->
+                                Row(Modifier.fillMaxWidth().testTag("replay-select-${item.symbol}").clickable(enabled = !loading) {
+                                    if (selected.containsKey(item.symbol)) selected.remove(item.symbol) else selected[item.symbol] = item
+                                }, verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = selected.containsKey(item.symbol), onCheckedChange = null, enabled = !loading)
+                                    Column(Modifier.weight(1f)) { Text(item.symbol); Text(item.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    Text(item.category, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
@@ -148,14 +152,23 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("考核规则（美元）", style = MaterialTheme.typography.titleSmall)
-                OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-target-amount"))
-                OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = dailyMode == ReplayDailyLoss.SOFT, onClick = { dailyMode = ReplayDailyLoss.SOFT }, label = { Text("软止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-soft"))
-                    FilterChip(selected = dailyMode == ReplayDailyLoss.HARD, onClick = { dailyMode = ReplayDailyLoss.HARD }, label = { Text("硬止损：触及即失败") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-hard"))
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth >= 480.dp) Row(Modifier.fillMaxWidth().testTag("replay-risk-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-target-amount"))
+                        OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-daily-loss"))
+                        OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-total-loss"))
+                    } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-target-amount"))
+                        OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
+                        OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-total-loss"))
+                    }
                 }
-                Text("软止损触及后撤销挂单并暂停开仓，下一交易日恢复；现有持仓可平仓。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-total-loss"))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("日亏损规则", style = MaterialTheme.typography.labelMedium)
+                    FilterChip(selected = dailyMode == ReplayDailyLoss.SOFT, onClick = { dailyMode = ReplayDailyLoss.SOFT }, label = { Text("软止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-soft"))
+                    FilterChip(selected = dailyMode == ReplayDailyLoss.HARD, onClick = { dailyMode = ReplayDailyLoss.HARD }, label = { Text("硬止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-hard"))
+                }
+                Text(if (dailyMode == ReplayDailyLoss.SOFT) "触及日亏损后暂停开仓并撤销挂单，下一交易日恢复。" else "触及日亏损后，本次考核失败。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("回撤类型", style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ReplayDrawdown.entries.forEach { mode -> FilterChip(selected = drawdownMode == mode, onClick = { drawdownMode = mode }, enabled = !loading,
@@ -167,7 +180,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 }
                 if (!allowOvernight) OutlinedTextField(cutoffText, { cutoffText = it }, label = { Text("每日平仓时间（芝加哥）") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-overnight-cutoff"))
                 Text("交易日按芝加哥时间 17:00 切换；回放后的图表周期可以调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth().clickable(enabled = !loading) { useCache = !useCache; prepared = null }, verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable(enabled = !loading) { useCache = !useCache }, verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = useCache, onCheckedChange = null, enabled = !loading, modifier = Modifier.testTag("replay-use-cache"))
                     Column {
                         Text(if (persistentCache) "使用本地历史缓存" else "使用本次运行的历史缓存", style = MaterialTheme.typography.bodyMedium)
@@ -176,27 +189,16 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 }
                 progress?.let { Text(it, Modifier.testTag("replay-load-progress"), color = MaterialTheme.colorScheme.primary) }
                 error?.let { Text(it, Modifier.testTag("replay-load-error"), color = MaterialTheme.colorScheme.error) }
-                prepared?.let { ready ->
-                    Column(Modifier.heightIn(max = 110.dp).verticalScroll(rememberScrollState())) {
-                        Text("缓存 ${ready.cacheHits} 段 · 券商读取 ${ready.downloaded} 段", style = MaterialTheme.typography.bodySmall)
-                        ready.instruments.forEach { instrument ->
-                            val bars = ready.data[instrument.symbol to Timeframe.M1].orEmpty()
-                            if (bars.isNotEmpty()) Text("${instrument.symbol}：${bars.size} 根 1 分钟 K 线 · ${chartBarDateTime(bars.first().timeMs, Timeframe.M1, zone.zoneId)} 至 ${chartBarDateTime(bars.last().timeMs, Timeframe.M1, zone.zoneId)}", style = MaterialTheme.typography.bodySmall)
-                        }
-                        ready.warnings.forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    }
-                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { job?.cancel(); progress = null; onDismiss() }) { Text(if (loading) "取消加载" else "取消") }
-                    if (prepared != null) Button(onClick = { runCatching { accountConfig() }.onSuccess { onReady(requireNotNull(prepared).copy(riskConfig = it)) }.onFailure { error = it.message } }, Modifier.testTag("replay-begin"), enabled = !loading, colors = brandButtonColors()) { Text("开始回放") }
-                    else Button(onClick = {
-                        if (runCatching { accountConfig() }.onFailure { error = it.message }.isFailure) return@Button
+                    Button(onClick = {
+                        val config = runCatching { accountConfig() }.onFailure { error = it.message }.getOrNull() ?: return@Button
                         val range = replayDateRange(start, end, zone)
                         if (range == null) { error = "请输入有效日期，结束日期不能早于开始日期"; return@Button }
                         if (selected.isEmpty()) { error = "请至少选择一个品种"; return@Button }
                         if (initialRegular && frame.isSeconds) { error = "秒线暂不支持常规时段，请切换分钟周期，或先在主图切换 ETH"; return@Button }
                         val chosen = selected.values.toList()
-                        error = null; prepared = null
+                        error = null
                         progress = "正在准备历史数据…"
                         job = scope.launch {
                             try {
@@ -217,13 +219,13 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                                     data[instrument.symbol to frame] = result.candles
                                     result.warning?.let { warnings += "${instrument.symbol}：$it" }
                                 }
-                                prepared = ReplayPrepared(chosen, range, data, warnings.distinct(), useCache,
-                                    values.sumOf { it.third.cacheHits }, values.sumOf { it.third.downloaded }, frame)
+                                onReady(ReplayPrepared(chosen, range, data, warnings.distinct(), useCache,
+                                    values.sumOf { it.third.cacheHits }, values.sumOf { it.third.downloaded }, frame, config))
                             } catch (cancel: CancellationException) { throw cancel }
                             catch (failure: Exception) { error = failure.message ?: "历史数据读取失败" }
                             finally { progress = null }
                         }
-                    }, Modifier.testTag("replay-load"), enabled = !loading, colors = brandButtonColors()) { Text("读取历史数据") }
+                    }, Modifier.testTag("replay-begin"), enabled = !loading, colors = brandButtonColors()) { Text(if (loading) "正在加载…" else "开始回放") }
                 }
             }
         }
@@ -231,7 +233,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     calendarForStart?.let { isStart ->
         ReplayCalendarDialog(if (isStart) start else end, onDismiss = { calendarForStart = null }) { date ->
             if (isStart) start = date else end = date
-            prepared = null; calendarForStart = null
+            calendarForStart = null
         }
     }
 }
