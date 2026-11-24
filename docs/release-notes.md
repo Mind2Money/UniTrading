@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 改进历史回放入口、图表下单与平仓操作，新增净值、月度、星期、分时段和交易频率分析；可保存或丢弃止损失败后的已平仓记录。
+
 - 优化 Android 平板和 iPad 图表空间：缩小顶部和右侧控件，账户资金信息并入交易栏，价格轴根据文字宽度自适应；保留平仓确认。
 
 - 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
@@ -9,6 +11,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Refine replay setup, chart orders and position closing; add equity, monthly, weekday, intraday and trade-frequency analysis, with save-or-discard options after a risk failure.
 
 - Give Android tablets and iPad more chart space with compact controls, an integrated account and trade bar, and a content-aware price axis. Flatten confirmation remains in place.
 
