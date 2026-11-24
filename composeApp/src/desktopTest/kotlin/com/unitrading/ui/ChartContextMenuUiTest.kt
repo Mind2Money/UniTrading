@@ -203,6 +203,20 @@ class ChartContextMenuUiTest {
         compose.onNodeWithTag("object-layer-menu-$drawing").performScrollTo().performClick()
         compose.onNodeWithTag("object-layer-back-$drawing").performClick()
         compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
+        compose.onNode(hasText("关闭") and hasAnyAncestor(hasTestTag("chart-object-tree"))).performClick()
+        rightClick(548_500)
+        compose.onNodeWithTag("drawing-menu-front").performScrollTo().performClick()
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)
+        }
+        compose.runOnIdle { runtime.drawings.requestUndo() }
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
+        compose.runOnIdle { runtime.drawings.requestRedo() }
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)
+        }
     }
 
     @Test fun menuRemovesAndRestoresDrawings() {

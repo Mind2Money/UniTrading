@@ -45,4 +45,19 @@ class ChartObjectLayersTest {
         assertNotNull(layers.error)
         Unit
     }
+
+    @Test fun singleStepLayerChangesCanBeUndoneAndRedone() = runBlocking {
+        val layers = ChartObjectLayers(MemorySnapshotStore())
+        val a = drawingLayerKey("a")
+        val b = indicatorLayerKey("b")
+        assertTrue(layers.move("MES", a, listOf("b"), listOf("a"), false))
+        assertTrue(layers.forSymbol("MES").getValue(a) < 0)
+        assertTrue(layers.moveBy("MES", a, listOf("b"), listOf("a"), 1))
+        assertTrue(layers.forSymbol("MES").getValue(a) > 0)
+        assertTrue(layers.forSymbol("MES").getValue(a) < layers.forSymbol("MES").getValue(b))
+        assertTrue(layers.undo())
+        assertTrue(layers.forSymbol("MES").getValue(a) < 0)
+        assertTrue(layers.redo())
+        assertTrue(layers.forSymbol("MES").getValue(a) > 0)
+    }
 }

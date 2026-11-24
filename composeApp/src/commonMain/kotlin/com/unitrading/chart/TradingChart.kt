@@ -53,6 +53,7 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.chart.drawing.*
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
@@ -195,6 +196,16 @@ fun TradingChart(
     val localObjectLayers = remember { ChartObjectLayers(MemorySnapshotStore()) }
     val objectLayers = chrome.objectLayers ?: localObjectLayers
     val objectRanks = objectLayers.forSymbol(instrument.symbol)
+    val layerScope = rememberCoroutineScope()
+    val allIndicatorIds by rememberUpdatedState((chrome.allIndicators ?: indicators).map { it.id })
+    DisposableEffect(chrome.drawings, objectLayers, instrument.symbol) {
+        val controller = chrome.drawings
+        val move: (String, Int) -> Unit = { id, delta ->
+            if (controller != null) layerScope.launch { objectLayers.moveBy(instrument.symbol, drawingLayerKey(id), allIndicatorIds, controller.drawings.map { it.id }, delta) }
+        }
+        controller?.onMoveOrder = move
+        onDispose { controller?.let { if (it.onMoveOrder === move) it.onMoveOrder = null } }
+    }
     val overlays = computedIndicators.filter { it.overlay }
     val panes = computedIndicators.filterNot { it.overlay }.sortedByDescending { objectRanks[indicatorLayerKey(it.config.id)] ?: 0L }
     var paneFractions by remember(indicatorPaneFractions) { mutableStateOf(indicatorPaneFractions) }

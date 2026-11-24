@@ -297,6 +297,7 @@ class ChartDrawings internal constructor(
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo
     internal var onRecorded: (() -> Unit)? = null
+    internal var onMoveOrder: ((String, Int) -> Unit)? = null
     internal var onUndoRequested: (() -> Unit)? = null
     internal var onRedoRequested: (() -> Unit)? = null
 
@@ -420,11 +421,12 @@ class ChartDrawings internal constructor(
     fun hide(id: String) { drawings.firstOrNull { it.id == id }?.let { update(it.copy(hidden = true)) }; if (selectedId == id) selectedId = null; menuAt = null }
     /** Moves a drawing in the paint order; a positive [delta] brings it towards the front. */
     fun moveOrder(id: String, delta: Int) {
+        onMoveOrder?.let { move -> menuAt = null; move(id, delta); return }
         val index = drawings.indexOfFirst { it.id == id }
         if (index < 0) return
         val list = drawings.toMutableList()
         val item = list.removeAt(index)
-        list.add((index + delta).coerceIn(0, list.size), item)
+        list.add((index.toLong() + delta.toLong()).coerceIn(0L, list.size.toLong()).toInt(), item)
         commit(list); menuAt = null
     }
     fun openSettings(id: String) { menuAt = null; settingsId = id }

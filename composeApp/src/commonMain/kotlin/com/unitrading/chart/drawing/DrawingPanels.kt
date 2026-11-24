@@ -152,10 +152,10 @@ internal fun DrawingContextMenu(drawings: ChartDrawings) {
             item("克隆", "clone") { drawings.clone(d.id) }
             item("复制", "copy") { drawings.copySelected(); drawings.closeMenu() }
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item("置于顶层", "front") { drawings.moveOrder(d.id, drawings.drawings.size) }
+            item("置于顶层", "front") { drawings.moveOrder(d.id, Int.MAX_VALUE) }
             item("上移一层", "forward") { drawings.moveOrder(d.id, 1) }
             item("下移一层", "backward") { drawings.moveOrder(d.id, -1) }
-            item("置于底层", "back") { drawings.moveOrder(d.id, -drawings.drawings.size) }
+            item("置于底层", "back") { drawings.moveOrder(d.id, Int.MIN_VALUE) }
             DividerLine(Modifier.padding(vertical = 4.dp))
             item(if (d.locked) "解锁" else "锁定", "lock") { drawings.toggleLock(d.id) }
             item("隐藏", "hide") { drawings.hide(d.id) }

@@ -76,7 +76,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
             com.unitrading.chart.drawing.ChartDrawings(com.unitrading.chart.drawing.DrawingLibrary(chartStore(id)), drawingLibrary)
         }
     internal fun undoForChart(id: String, scope: kotlinx.coroutines.CoroutineScope): ChartUndoCoordinator =
-        chartUndoControllers.getOrPut(id) { ChartUndoCoordinator(indicatorsForChart(id), drawingsForChart(id), scope) }.also { it.scope = scope }
+        chartUndoControllers.getOrPut(id) { ChartUndoCoordinator(indicatorsForChart(id), drawingsForChart(id), objectLayersForChart(id), scope) }.also { it.scope = scope }
     suspend fun flushChartDrawings(): Boolean {
         if (!drawings.flush()) return false
         return chartDrawingControllers.values.all { it.flush() }

@@ -19,6 +19,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.ChartSession
+import com.unitrading.app.ChartUndoCoordinator
 import com.unitrading.app.IndicatorController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
@@ -159,6 +160,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         val local = DrawingLibrary(MemorySnapshotStore())
         ChartDrawings(local, drawingDefaults ?: local).also { it.bind(spec.symbol) }
     }
+    remember(indicatorController, drawings, objectLayers) { ChartUndoCoordinator(indicatorController, drawings, objectLayers, scope) }.scope = scope
     val current = bars[state.index]
     val regularIndices = remember(bars, regular, sourceFrame) {
         if (regular && sourceFrame.seconds < Timeframe.DAY) bars.indices.filter { isRegularChartTime(bars[it].timeMs) } else emptyList()

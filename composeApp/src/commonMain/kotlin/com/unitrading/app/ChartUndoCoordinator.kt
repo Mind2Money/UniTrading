@@ -1,6 +1,7 @@
 package com.unitrading.app
 
 import com.unitrading.chart.drawing.ChartDrawings
+import com.unitrading.chart.ChartObjectLayers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -10,9 +11,10 @@ import kotlinx.coroutines.sync.withLock
 internal class ChartUndoCoordinator(
     private val indicators: IndicatorController,
     private val drawings: ChartDrawings,
+    private val layers: ChartObjectLayers,
     internal var scope: CoroutineScope,
 ) {
-    private enum class Step { INDICATOR, DRAWING }
+    private enum class Step { INDICATOR, DRAWING, LAYER }
     private class Entry(val step: Step, val symbol: String)
     private val undone = ArrayDeque<Entry>()
     private val redone = ArrayDeque<Entry>()
@@ -21,6 +23,7 @@ internal class ChartUndoCoordinator(
     init {
         indicators.onRecorded = { record(Step.INDICATOR) }
         drawings.onRecorded = { record(Step.DRAWING) }
+        layers.onRecorded = { record(Step.LAYER) }
         drawings.onUndoRequested = { scope.launch { undo() }; Unit }
         drawings.onRedoRequested = { scope.launch { redo() }; Unit }
     }
@@ -36,6 +39,7 @@ internal class ChartUndoCoordinator(
         val restored = when (entry.step) {
             Step.INDICATOR -> indicators.undo()
             Step.DRAWING -> drawings.undoForSymbol(entry.symbol)
+            Step.LAYER -> layers.undo()
         }
         if (restored && undone.lastOrNull() === entry) {
             undone.removeLast()
@@ -53,6 +57,7 @@ internal class ChartUndoCoordinator(
         val restored = when (entry.step) {
             Step.INDICATOR -> indicators.redo()
             Step.DRAWING -> drawings.redoForSymbol(entry.symbol)
+            Step.LAYER -> layers.redo()
         }
         if (restored && redone.lastOrNull() === entry) {
             redone.removeLast()
