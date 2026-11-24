@@ -479,7 +479,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 Text("历史回放 · 本地模拟", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                 Text("${spec.symbol} · 图表 ${chartFrame.label} · 推进 ${selectedStep.label}", Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                ActionIcon(AppIcons.Close, "关闭回放", "replay-close", iconSize = 20.dp) {
+                ActionIcon(AppIcons.Close, "关闭回放", "replay-close", modifier = Modifier.size(36.dp), iconSize = 18.dp) {
                     playing = false; if (started) confirmExit = true else onDismiss()
                 }
             }

@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toAwtImage
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ReplayRecords
+import com.unitrading.app.SnapshotStore
 import com.unitrading.broker.*
 import com.unitrading.chart.ReplayDrawdown
 import com.unitrading.chart.ReplayRiskConfig
@@ -41,6 +42,8 @@ class ReplayConsistencyUiTest {
             Candle(start + 60_000, 10_000, 10_400, 10_000, 10_000),
             Candle(Instant.parse("2026-11-23T23:01:00Z").toEpochMilli(), 10_000, 10_025, 9_975, 10_000))
         open(bars, config(50_000_000, 40), ReplayRecords(MemorySnapshotStore()), AtomicBoolean())
+        val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/replay-consistency-ui").also { it.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", File(folder, "replay.png"))
         compose.onNodeWithTag("order-estimates-toggle").assertDoesNotExist()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-next").performClick()
@@ -72,7 +75,7 @@ class ReplayConsistencyUiTest {
             val record = records.list().single()
             assertEquals("已达成", record.status)
             assertEquals(1, record.trades.size)
-            assertEquals(5_000_000L, record.trades.single().pnlMicros)
+            assertEquals(5_000_000L, record.trades.single().netPnlMicros)
             assertEquals(50_005_000_000L, record.finalEquityMicros)
         }
     }
@@ -94,5 +97,22 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("replay-success").assertIsDisplayed()
         compose.onNodeWithTag("replay-success-discard").performClick()
         compose.runOnIdle { assertTrue(exited.get()); assertTrue(records.list().isEmpty()) }
+    }
+
+    @Test fun saveFailureDoesNotExitOrDiscardTheCompletedSession() {
+        val store = object : SnapshotStore {
+            override fun read(key: String): String? = null
+            override fun write(key: String, value: String) { error("存储不可用") }
+        }
+        val bars = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
+            Candle(start + 60_000, 10_000, 10_100, 10_000, 10_000))
+        val exited = AtomicBoolean()
+        open(bars, config(5_000_000), ReplayRecords(store), exited)
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-success-save").performClick()
+        compose.onNodeWithText("回放记录保存失败", substring = true).assertExists()
+        compose.onNodeWithTag("replay-success").assertExists()
+        assertFalse(exited.get())
     }
 }
