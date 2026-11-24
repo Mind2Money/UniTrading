@@ -137,10 +137,9 @@ class HistoryPreloadTest {
         val broker = ready(wire, store)
         broker.watch("MESZ6", M5); runCurrent()
         val chart = wire.of(M5).single { it.firstPage }
-        broker.preloadHistory(listOf("MESZ6" to M5, "MESZ6" to H1, "@MES" to Timeframe.ofMinutes(1440))); runCurrent()
+        broker.preloadHistory(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
 
         assertWhole(broker.history("MESZ6", H1), H1)
-        assertWhole(broker.history("@MES", Timeframe.ofMinutes(1440)), Timeframe.ofMinutes(1440))
         // The requests are a fresh chart's: the latest bars first, then pages back from the oldest bar read.
         val pages = wire.of(H1)
         assertEquals(3, pages.size)
@@ -159,7 +158,6 @@ class HistoryPreloadTest {
 
         advanceTimeBy(1_001); runCurrent()
         assertWhole(CandleCache(store, NAMESPACE).read("MESZ6" to H1, NOW), H1)
-        assertWhole(CandleCache(store, NAMESPACE).read("@MES" to Timeframe.ofMinutes(1440), NOW), Timeframe.ofMinutes(1440))
     }
 
     /** Each open chart keeps its own live subscription; closing or changing one leaves the others alone. */

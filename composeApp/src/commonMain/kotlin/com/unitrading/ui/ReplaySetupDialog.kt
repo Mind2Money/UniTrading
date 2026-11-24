@@ -186,7 +186,7 @@ private fun ReplayDateField(value: String, label: String, tag: String, enabled: 
 }
 
 @Composable
-private fun ReplayCalendarDialog(value: String, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+internal fun ReplayCalendarDialog(value: String, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
     val selected = remember(value) { LocalDate.parse(value) }
     var month by remember(value) { mutableStateOf(LocalDate(selected.year, selected.month, 1)) }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("选择日期") }, text = {

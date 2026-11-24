@@ -1293,6 +1293,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
                             chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
+                            continuousCurrentContract = plugin.descriptor.id.startsWith("tradovate-") || plugin.descriptor.id.startsWith("rithmic-"),
                             chartTimeZoneLabel = chartPreferences.chartTimeZone.labelAt(if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null),
                             regularSession = regularSession && shownTimeframe.seconds < Timeframe.DAY && sessionResult.second == null,
                             onOpenSettings = { showActivity = false; showSettings = true },
@@ -1396,7 +1397,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
                                 replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation)
                         })
-                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision,
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords,
                         history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
                         watch = { sym, frame ->
                             val series = sym to frame

@@ -22,6 +22,8 @@ import com.unitrading.app.ChartSession
 import com.unitrading.app.IndicatorController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.ReplayRecord
+import com.unitrading.app.ReplayRecords
 import com.unitrading.broker.*
 import com.unitrading.chart.*
 import com.unitrading.chart.drawing.ChartDrawings
@@ -32,6 +34,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
+import kotlin.time.Clock
+import kotlin.random.Random
 
 internal data class ReplayInput(val instrument: Instrument, val timeframe: Timeframe, val regular: Boolean,
     val zone: ChartTimeZone, val raw: List<Candle>, val indicators: List<IndicatorConfig>,
@@ -45,6 +49,7 @@ private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val pr
 /** A separate modal and ledger: no AccountSession is passed into the replay at any point. */
 @Composable
 internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
+    records: ReplayRecords? = null,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
     watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
     historyError: String? = null,
@@ -85,7 +90,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
-                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError, onDismiss = onDismiss)
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError, records = records, onDismiss = onDismiss)
             }
         }
     }
@@ -95,7 +100,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
-    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, onDismiss: () -> Unit) {
+    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -113,6 +118,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var confirmExit by remember { mutableStateOf(false) }
     var switchTo by remember { mutableStateOf<String?>(null) }
     var startTime by remember { mutableStateOf("") }
+    var startCalendar by remember { mutableStateOf(false) }
+    var recordId by remember { mutableStateOf("${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}") }
+    var report by remember { mutableStateOf<ReplayRecord?>(null) }
+    var savedRecords by remember { mutableStateOf<List<ReplayRecord>>(emptyList()) }
+    var recordsExpanded by remember { mutableStateOf(false) }
     var orderKind by remember { mutableStateOf(OrderKind.MARKET) }
     var orderPrice by remember { mutableStateOf("") }
     var showAccount by remember { mutableStateOf(false) }
@@ -317,6 +327,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         ClosedTrade("replay-trade-$index", p.id, p.symbol, p.side, p.lotsHundredths, p.entryPrice, trade.exit,
             p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
     } }
+    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
+        if (started && records != null) {
+            val record = ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
+                Clock.System.now().toEpochMilliseconds(), historyTrades)
+            runCatching { records.save(record) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
+        }
+    }
     val openExecutions = remember(state.positions) { state.positions.map { p ->
         Execution("replay-execution-${p.id}", p.symbol, p.side, p.lotsHundredths, p.entryPrice, p.openedAtMs, p.id)
     } }
@@ -460,6 +477,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                     valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(200.dp).testTag("replay-start"))
                                 OutlinedTextField(startTime, { startTime = it }, label = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm") },
                                     modifier = Modifier.width(200.dp).testTag("replay-start-time"), singleLine = true)
+                                TextButton(onClick = { startCalendar = true }, modifier = Modifier.testTag("replay-start-calendar")) { Text("日历") }
                                 TextButton(onClick = {
                                     val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
                                         else parseChartTime(startTime, input.zone.zoneId)
@@ -550,6 +568,19 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     } else {
                         val completed = state.trades.size
                         val wins = state.trades.count { it.pnlMicros > 0 }
+                        ReplaySection("本地回放记录") {
+                            Button(onClick = {
+                                runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
+                                    .onSuccess { savedRecords = it; recordsExpanded = true }
+                                    .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
+                            }, enabled = records != null) { Text("选择本地记录分析") }
+                            DropdownMenu(expanded = recordsExpanded, onDismissRequest = { recordsExpanded = false }) {
+                                if (savedRecords.isEmpty()) DropdownMenuItem(text = { Text("暂无保存的记录") }, onClick = { recordsExpanded = false })
+                                savedRecords.forEach { saved -> DropdownMenuItem(text = {
+                                    Text("${saved.symbol} · ${saved.trades.size} 笔 · ${Instant.fromEpochMilliseconds(saved.savedAtMs)}")
+                                }, onClick = { report = saved; recordsExpanded = false }) }
+                            }
+                        }
                         ReplaySection("交易表现") {
                             ReplayMetric("平仓次数", "$completed")
                             ReplayMetric("盈利 / 亏损", "$wins / ${state.trades.count { it.pnlMicros < 0 }}")
@@ -576,6 +607,29 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
         }
     }
+    if (startCalendar) ReplayCalendarDialog(
+        runCatching { chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId).take(10) }.getOrDefault("1970-01-01"),
+        onDismiss = { startCalendar = false }) { date ->
+        startTime = if (sourceFrame.seconds >= Timeframe.DAY) date else "$date 00:00"
+        val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(date + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
+            else parseChartTime(startTime, input.zone.zoneId)
+        if (at == null || at > bars.last().timeMs || at + 86_400_000L <= bars.first().timeMs) message = "该日期不在已加载的历史范围内"
+        else {
+            val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
+            if (found !in 0 until bars.lastIndex || chartBarDateTime(bars[found].timeMs, sourceFrame, input.zone.zoneId).take(10) != date)
+                message = "所选日期没有可用的回放起点"
+            else { start = found; state = ReplayState(start); message = null }
+        }
+        startCalendar = false
+    }
+    report?.let { saved -> Dialog(onDismissRequest = { report = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { report = null }) { Text("关闭") } }
+                AccountAnalyticsPage(AccountInfo("replay", "本地回放 · ${saved.symbol}", saved.currency), saved.trades, Modifier.weight(1f).fillMaxWidth(), replayMode = true)
+            }
+        }
+    } }
     if (showIndicators) IndicatorSettingsDialog(indicatorController) { showIndicators = false }
     orderToConfirm?.let { order -> AlertDialog(onDismissRequest = { orderToConfirm = null },
         title = { Text("确认模拟订单") },
@@ -587,15 +641,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         } }, confirmButton = { TextButton(onClick = { orderToConfirm = null; executeOrder(order) }, modifier = Modifier.testTag("replay-confirm-order")) { Text("确认模拟下单") } },
         dismissButton = { TextButton(onClick = { orderToConfirm = null }) { Text("取消") } }) }
     switchTo?.let { symbol -> AlertDialog(onDismissRequest = { switchTo = null }, title = { Text("切换回放品种？") },
-        text = { Text("切换品种会结束当前回放，清除本地模拟仓位、挂单和统计记录。") },
+        text = { Text("切换品种会结束当前回放，模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") },
         confirmButton = { TextButton(onClick = { switchTo = null; changeSymbol(symbol) }) { Text("切换品种") } },
         dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
-        text = { Text("本次模拟仓位和交易记录将清除。") }, confirmButton = {
-            TextButton(onClick = { confirmReset = false; playing = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig); started = false }) { Text("重选起点") }
+        text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
+            TextButton(onClick = { confirmReset = false; playing = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig); started = false; recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}" }) { Text("重选起点") }
         }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
-        text = { Text("本次模拟仓位和交易记录将清除。") }, confirmButton = {
+        text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
     if (showAccount) AlertDialog(onDismissRequest = { showAccount = false; drawdownMode = riskConfig.mode; allowOvernight = riskConfig.allowOvernight; cutoffText = replayCutoffText(riskConfig.overnightCutoffMinutes) }, title = { Text("模拟账户设置") }, text = {

@@ -29,6 +29,7 @@ internal class FakeRithmicServer : RithmicWire {
     val knownSymbols = mutableMapOf("MESZ6" to "CME", "MESH7" to "CME")
     /** Rithmic Test answers the front-month request with rp_code 7 "no data". */
     var frontMonthNoData = false
+    val frontMonthSymbols = mutableMapOf<String, String>()
     /** Listings a product search returns ahead of [knownSymbols], as symbol to exchange. */
     var foreignListings = emptyMap<String, String>()
     /** Exchanges this login has no entitlement for. */
@@ -178,7 +179,7 @@ internal class FakeRithmicServer : RithmicWire {
             Rt.REQUEST_FRONT_MONTH -> when {
                 m.str(Rf.EXCHANGE) in deniedExchanges -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("13", "permission denied"))
                 frontMonthNoData -> reply(Rt.RESPONSE_FRONT_MONTH, codes = listOf("7", "no data"))
-                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
+                else -> reply(Rt.RESPONSE_FRONT_MONTH) { string(Rf.SYMBOL, m.str(Rf.SYMBOL) ?: ""); string(Rf.EXCHANGE, "CME"); string(Rf.TRADING_SYMBOL, m.str(Rf.SYMBOL)?.let { frontMonthSymbols[it] } ?: "${m.str(Rf.SYMBOL)}Z6"); string(Rf.TRADING_EXCHANGE, "CME"); bool(Rf.IS_FRONT_MONTH, true) }
             }
             Rt.REQUEST_PRODUCT_CODES -> parts(Rt.RESPONSE_PRODUCT_CODES, productCodes[m.str(Rf.EXCHANGE)].orEmpty().map { code -> { string(Rf.EXCHANGE, m.str(Rf.EXCHANGE) ?: ""); string(Rf.PRODUCT_CODE, code) } })
             Rt.REQUEST_PRODUCT_RMS_INFO -> parts(Rt.RESPONSE_PRODUCT_RMS_INFO, productMaxOrder.map { (code, limit) -> { string(Rf.PRODUCT_CODE, code); int32(Rf.MAX_ORDER_QUANTITY, limit); productCommission[code]?.let { double(Rf.COMMISSION_FILL_RATE, it) } } })

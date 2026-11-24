@@ -110,10 +110,12 @@ class RithmicBroker(
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
     // v2: continuous series now hold the alias's history. Older entries hold one dated contract, and a cached series only ever grows at its end.
     private val candleCache = CandleCache(candleCacheStore, "rithmic-v2-${credentials.brokerId}", RITHMIC_CHART_BARS)
-    /** Continuous series showing their dated contract alone because the alias had no bars. They stay out of the cache, so the next run asks the alias again. */
-    private val singleContractSeries = mutableSetOf<Pair<String, Timeframe>>()
-    /** Series whose live bars are subscribed: one for each chart series being watched. */
-    private val barSubscriptions = mutableSetOf<Pair<String, Timeframe>>()
+    /** Each continuous series is pinned to its actual dated source. */
+    private val continuousChartSources = mutableMapOf<Pair<String, Timeframe>, String>()
+    /** Series and their actual subscribed contract; several views can share one feed. */
+    private val barSubscriptions = mutableMapOf<Pair<String, Timeframe>, String>()
+    private fun chartCacheKey(series: Pair<String, Timeframe>, source: String): Pair<String, Timeframe> =
+        (if (series.first.startsWith("@")) "${series.first}|$source" else source) to series.second
     /** Series read whole in the background so that their charts open from the cache, most wanted first. */
     private val preloadTargets = MutableStateFlow<List<Pair<String, Timeframe>>>(emptyList())
     private val preloadWake = Channel<Unit>(Channel.CONFLATED)
@@ -564,7 +566,7 @@ class RithmicBroker(
                     publishOrderFlow()
                 }
                 // Daily bars follow the exchange trading date, not the UTC calendar day; only the server closes them.
-                barSubscriptions.filter { executionSymbol(it.first) == symbol && !it.second.isDaily }.forEach { applyTrade(it, price, size, time) }
+                barSubscriptions.filter { (series, source) -> source == symbol && !series.second.isDaily && executionSymbol(series.first) == source }.keys.forEach { applyTrade(it, price, size, time) }
             }
             Rt.ORDER_BOOK -> {
                 val symbol = message.str(Rf.SYMBOL)?.trim() ?: return@withLock
@@ -583,13 +585,17 @@ class RithmicBroker(
                 // Several charts may hold one contract at different intervals; the bar says which interval it belongs to.
                 val type = message.int(Rf.BAR_TYPE)
                 val period = parseTicks(message, Rf.BAR_PERIOD)?.toInt()
-                val series = barSubscriptions.filter { executionSymbol(it.first) == symbol }
-                    .singleOrNull { type == null || period == null || barType(it.second) == type && barPeriod(it.second) == period } ?: return@withLock
+                val candidates = barSubscriptions.filter { (series, source) -> source == symbol && executionSymbol(series.first) == source &&
+                    (type == null || period == null || barType(series.second) == type && barPeriod(series.second) == period) }.keys
+                // An interval-less packet is ambiguous when the contract has several periods.
+                if ((type == null || period == null) && candidates.map { it.second }.distinct().size > 1) return@withLock
                 val spec = specs[symbol] ?: return@withLock
-                val bar = candleFrom(message, spec, series.second) ?: return@withLock
-                history = history + (series to mergeBars(history[series] ?: emptyList(), listOf(bar)))
-                publish()
-                scheduleCandleCacheSave(series)
+                candidates.forEach { series ->
+                    val bar = candleFrom(message, spec, series.second) ?: return@forEach
+                    history = history + (series to mergeBars(history[series] ?: emptyList(), listOf(bar)))
+                    scheduleCandleCacheSave(series)
+                }
+                if (candidates.isNotEmpty()) publish()
             }
             Rt.FORCED_LOGOUT -> { problem = "Rithmic 服务器强制登出了历史数据连接"; publish() }
         }
@@ -924,7 +930,11 @@ class RithmicBroker(
 
     // ───────────────────────────── history ─────────────────────────────
 
-    override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
+    override fun history(symbol: String, timeframe: Timeframe): List<Candle> {
+        val series = symbol to timeframe
+        if (symbol.startsWith("@") && (executionSymbol(symbol) == null || continuousChartSources[series] != executionSymbol(symbol))) return emptyList()
+        return history[series] ?: emptyList()
+    }
 
     override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
         require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
@@ -933,11 +943,10 @@ class RithmicBroker(
         val plant = checkNotNull(historyPlant) { "券商历史行情尚未连接" }
         if (symbol.startsWith("@") && lock.withLock { continuousRoutes[symbol]?.tradeSymbol == null }) refreshContinuous(symbol)
         val execution = lock.withLock { executionSymbol(symbol) } ?: error("合约尚未解析，请稍后重试")
-        val route = lock.withLock { continuousRoutes[symbol] }
         if (lock.withLock { execution !in specs }) hydrateSpecs(listOf(execution to ""), quiet = true)
         val spec = lock.withLock { specs[execution] } ?: error("合约规格尚未加载")
-        val source = route?.productCode ?: spec.instrument.symbol
-        val exchange = route?.exchange ?: spec.exchange
+        val source = spec.instrument.symbol
+        val exchange = spec.exchange
         val bars = mutableListOf<Candle>()
         var from = startMs
         // A bounded wall-clock window stays below the server's reply cap even in a continuously trading market.
@@ -952,11 +961,12 @@ class RithmicBroker(
                 else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until + timeframe.millis) / 1_000).toInt()) }
                 int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)
             }
+            check(!symbol.startsWith("@") || lock.withLock { executionSymbol(symbol) == source }) { "主力合约已变化，请重新读取历史" }
             bars.addAll(reply.mapNotNull { candleFrom(it, spec, timeframe) }.filter { it.timeMs in startMs until endMs })
             from = until
         }
         return HistoricalRangeResult(bars.associateBy { it.timeMs }.values.sortedBy { it.timeMs },
-            if (symbol.startsWith("@") && route == null) "券商未提供连续合约路由，历史只包含当前合约" else null, cacheable = true)
+            if (symbol.startsWith("@")) "$symbol 历史取当前确认的主力合约 $source，未自动拼接旧合约" else null, cacheable = true)
     }
 
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
@@ -989,25 +999,31 @@ class RithmicBroker(
         watchJobs[series]?.cancel()
         watchJobs[series] = scope.launch {
             chartLock.withLock {
-                val cached = history[series] ?: candleCache.read(series, now()).also { bars ->
-                    lock.withLock { history = history + (series to bars); publish() }
-                }
                 if (!marketReady) return@launch
                 if (symbol.startsWith("@") && lock.withLock { continuousRoutes[symbol]?.tradeSymbol == null }) {
                     if (continuousJobs[symbol]?.isActive != true) continuousJobs[symbol] = scope.launch { refreshContinuous(symbol) }
                     return@launch
                 }
                 val execution = lock.withLock { executionSymbol(symbol) } ?: return@launch
-                val route = lock.withLock { continuousRoutes[symbol] }
                 if (lock.withLock { execution !in specs }) hydrateSpecs(listOf(execution to ""))
                 val spec = lock.withLock { specs[execution] } ?: run { lock.withLock { problem = "合约规格尚未加载，暂无法订阅 $symbol"; publish() }; return@launch }
+                val sameSource = lock.withLock { !symbol.startsWith("@") || continuousChartSources[series] == execution }
+                val cached = (if (sameSource) history[series] else null) ?: candleCache.read(chartCacheKey(series, execution), now())
+                lock.withLock {
+                    if (executionSymbol(symbol) != execution) return@launch
+                    if (symbol.startsWith("@")) continuousChartSources[series] = execution
+                    history = history + (series to cached); publish()
+                }
                 try { syncQuoteSubscriptions() } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) {}
                 val plant = historyPlant ?: return@launch
                 try {
                     withContext(NonCancellable) { addBarSubscription(plant, series, spec) }
-                    val bars = if (route == null) loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, cached) else continuousBars(plant, series, route, spec, cached)
+                    val bars = loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, cached)
                     if (series !in watched) return@launch
-                    lock.withLock { history = history + (series to mergeBars(history[series] ?: emptyList(), bars)); publish() }
+                    lock.withLock {
+                        if (executionSymbol(symbol) != execution) return@launch
+                        history = history + (series to mergeBars(history[series] ?: emptyList(), bars)); publish()
+                    }
                     saveCandleCache(series)
                 } catch (_: TimeoutCancellationException) { lock.withLock { problem = "历史数据请求超时，可重新选择品种或周期重试"; publish() } }
                 catch (cancel: CancellationException) { throw cancel }
@@ -1018,8 +1034,8 @@ class RithmicBroker(
 
     override fun preloadHistory(series: List<Pair<String, Timeframe>>) {
         if (stopped) return
-        preloadTargets.value = series.distinct()
-        if (series.isEmpty()) return
+        preloadTargets.value = series.distinct().filterNot { it.first.startsWith("@") }
+        if (preloadTargets.value.isEmpty()) return
         scope.launch {
             lock.withLock { if (!stopped && preloadJob?.isActive != true) preloadJob = scope.launch { preloadLoop() } }
             preloadWake.trySend(Unit)
@@ -1069,12 +1085,9 @@ class RithmicBroker(
         val plant = historyPlant ?: return PRELOAD_ROUTE_RETRY_MS
         // A continuous series waits for the front month, which the watch list resolves.
         val execution = lock.withLock { executionSymbol(symbol) } ?: return PRELOAD_ROUTE_RETRY_MS
-        val route = lock.withLock { continuousRoutes[symbol] }
         if (lock.withLock { execution !in specs }) hydrateSpecs(listOf(execution to ""), quiet = true)
         val spec = lock.withLock { specs[execution] } ?: throw RithmicRemoteException("spec", "合约规格尚未加载")
-        // Only the alias holds a continuous series across rolls; the dated contract alone is not cached, here as on the chart.
-        val bars = if (route == null) loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, emptyList())
-            else loadBars(plant, route.productCode, route.exchange, spec, timeframe, emptyList())
+        val bars = loadBars(plant, spec.instrument.symbol, spec.exchange, spec, timeframe, emptyList())
         if (bars.isEmpty()) return PRELOAD_EMPTY_RETRY_MS
         // Opened meanwhile: the chart has its own load of this series, and shows that.
         val stored = lock.withLock { (series !in watched && history[series].isNullOrEmpty()).also { if (it) history = history + (series to bars) } }
@@ -1082,35 +1095,28 @@ class RithmicBroker(
         return 0
     }
 
-    /** Subscribes the series' live bars once. The subscriptions of series that no chart shows any more end first. */
+    /** Views sharing a contract and interval share one server subscription. */
     private suspend fun addBarSubscription(plant: RithmicPlant, series: Pair<String, Timeframe>, spec: RithmicSpec) {
-        lock.withLock { barSubscriptions.filter { it !in watched } }.forEach { dropBarSubscription(plant, it) }
-        if (!lock.withLock { barSubscriptions.add(series) }) return
-        plant.request(Rt.REQUEST_TIME_BAR_UPDATE) { timeBar(spec, series.second, RithmicEnums.REQUEST_SUBSCRIBE) }
+        lock.withLock { barSubscriptions.keys.filter { it !in watched } }.forEach { dropBarSubscription(plant, it) }
+        val previous = lock.withLock { barSubscriptions[series] }
+        if (previous == spec.instrument.symbol) return
+        if (previous != null) dropBarSubscription(plant, series)
+        val shared = lock.withLock { barSubscriptions.any { (key, source) -> source == spec.instrument.symbol && key.second == series.second } }
+        if (!shared) plant.request(Rt.REQUEST_TIME_BAR_UPDATE) { timeBar(spec, series.second, RithmicEnums.REQUEST_SUBSCRIBE) }
+        lock.withLock { barSubscriptions[series] = spec.instrument.symbol }
     }
 
     private suspend fun dropBarSubscription(plant: RithmicPlant, series: Pair<String, Timeframe>) {
-        if (!lock.withLock { barSubscriptions.remove(series) }) return
-        val old = lock.withLock { executionSymbol(series.first)?.let { specs[it] } } ?: return
-        runCatching { withTimeoutOrNull(5_000) { plant.request(Rt.REQUEST_TIME_BAR_UPDATE) { timeBar(old, series.second, RithmicEnums.REQUEST_UNSUBSCRIBE) } } }
+        val old = lock.withLock { barSubscriptions.remove(series) } ?: return
+        val shared = lock.withLock { barSubscriptions.any { (key, source) -> source == old && key.second == series.second } }
+        if (shared) return
+        val spec = lock.withLock { specs[old] } ?: return
+        runCatching { withTimeoutOrNull(5_000) { plant.request(Rt.REQUEST_TIME_BAR_UPDATE) { timeBar(spec, series.second, RithmicEnums.REQUEST_UNSUBSCRIBE) } } }
     }
 
     private fun ProtoWriter.timeBar(spec: RithmicSpec, timeframe: Timeframe, request: Int) {
         string(Rf.SYMBOL, spec.instrument.symbol); string(Rf.EXCHANGE, spec.exchange); int32(Rf.REQUEST, request)
         int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
-    }
-
-    /**
-     * The server keeps no bars for expired months, so only the bare product code, its front-month alias, has history across rolls.
-     * Without an alias (Rithmic Test has none) the chart falls back to the dated contract and says so.
-     */
-    private suspend fun continuousBars(plant: RithmicPlant, series: Pair<String, Timeframe>, route: ContinuousRoute, spec: RithmicSpec, cached: List<Candle>): List<Candle> {
-        if (lock.withLock { series !in singleContractSeries }) {
-            val stitched = loadBars(plant, route.productCode, route.exchange, spec, series.second, cached)
-            if (stitched.isNotEmpty() || cached.isNotEmpty()) return stitched
-            lock.withLock { singleContractSeries += series; problem = "服务器没有 ${series.first} 的连续历史，图表只显示 ${spec.instrument.symbol}"; publish() }
-        }
-        return loadBars(plant, spec.instrument.symbol, spec.exchange, spec, series.second, cached)
     }
 
     private suspend fun loadBars(plant: RithmicPlant, symbol: String, exchange: String, spec: RithmicSpec, timeframe: Timeframe, cached: List<Candle>): List<Candle> {
@@ -1172,7 +1178,12 @@ class RithmicBroker(
         cacheSaveJobs[series] = scope.launch { delay(2_000); saveCandleCache(series) }
     }
     private suspend fun saveCandleCache(series: Pair<String, Timeframe>? = null) {
-        val targets = lock.withLock { (if (series == null) history.toMap() else history[series]?.let { mapOf(series to it) } ?: emptyMap()) - singleContractSeries }
+        val targets = lock.withLock {
+            (if (series == null) history.toMap() else history[series]?.let { mapOf(series to it) } ?: emptyMap()).mapNotNull { (key, bars) ->
+                val source = if (key.first.startsWith("@")) continuousChartSources[key]?.takeIf { it == executionSymbol(key.first) } else key.first
+                source?.let { chartCacheKey(key, it) to bars }
+            }
+        }
         for ((key, bars) in targets) {
             try { if (bars.isNotEmpty()) candleCache.write(key, bars) }
             catch (cancel: CancellationException) { throw cancel }
