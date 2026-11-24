@@ -95,6 +95,12 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-setup").assertDoesNotExist()
         compose.onNodeWithTag("replay-header-logo").assertExists()
         compose.onNodeWithTag("replay-close").assertContentDescriptionEquals("关闭回放")
+        compose.onNodeWithTag("replay-controls").assert(hasAnyDescendant(hasTestTag("replay-play")))
+        compose.onNodeWithTag("replay-controls").assert(hasAnyDescendant(hasTestTag("replay-start-controls")))
+        compose.onNodeWithTag("replay-account-strip").assertExists()
+        val controlsBottom = compose.onNodeWithTag("replay-controls").fetchSemanticsNode().boundsInRoot.bottom
+        val stripTop = compose.onNodeWithTag("replay-account-strip").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(stripTop >= controlsBottom, "Account status must be below the replay controls")
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-next").performClick()
@@ -112,6 +118,14 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-range-end").performScrollTo().performClick()
         compose.onNodeWithTag("replay-calendar-2026-12-30").performClick()
         compose.onNode(hasTestTag("interval-menu") and hasAnyAncestor(hasTestTag("replay-setup"))).assertDoesNotExist()
+        compose.onNodeWithTag("replay-rule-row").performScrollTo().assertExists()
+        val ruleY = listOf("replay-daily-soft", "replay-daily-hard", "replay-drawdown-STATIC", "replay-drawdown-EOD", "replay-drawdown-TDD")
+            .map { compose.onNodeWithTag(it).fetchSemanticsNode().positionInRoot.y }
+        assertTrue(ruleY.max() - ruleY.min() < 2f, "Daily loss and drawdown choices should share one row")
+        compose.onNodeWithTag("replay-overnight-allow").performScrollTo().assertIsOn().performClick().assertIsOff()
+        compose.onNodeWithTag("replay-overnight-cutoff").assertExists()
+        compose.onNodeWithTag("replay-overnight-allow").performScrollTo().performClick().assertIsOn()
+        compose.onNodeWithTag("replay-use-cache").performScrollTo().assertIsOn().performClick().assertIsOff().performClick().assertIsOn()
         compose.onNodeWithTag("replay-risk-row").performScrollTo().assertExists()
         val y = listOf("replay-target-amount", "replay-daily-loss", "replay-total-loss").map { compose.onNodeWithTag(it).fetchSemanticsNode().boundsInRoot.top }
         assertTrue(y.max() - y.min() < 2f, "Risk fields should appear in one row on desktop")

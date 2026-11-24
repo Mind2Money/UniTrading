@@ -536,12 +536,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                 }, Modifier.weight(1f).fillMaxHeight(), favoriteDrawings = drawings)
                 }
-                Surface(Modifier.fillMaxWidth().padding(top = 6.dp), shape = MaterialTheme.shapes.small,
+                Surface(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("replay-controls"), shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                    Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    @Composable fun PlaybackControls() {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             IconButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed,
                                 modifier = Modifier.size(36.dp).testTag("replay-play")) {
                                 Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(20.dp))
@@ -561,31 +560,42 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
                             Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
                         }
-                        if (!started) {
-                            HorizontalDivider()
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("回放起点", style = MaterialTheme.typography.labelMedium)
-                                Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
-                                    valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(200.dp).testTag("replay-start"))
-                                OutlinedTextField(startTime, { startTime = it }, label = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm") },
-                                    modifier = Modifier.width(200.dp).testTag("replay-start-time"), singleLine = true)
-                                TextButton(onClick = { startCalendar = true }, modifier = Modifier.testTag("replay-start-calendar")) { Text("日历") }
-                                TextButton(onClick = {
-                                    val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
-                                        else parseChartTime(startTime, input.zone.zoneId)
-                                    if (at == null) message = "请输入有效的图表时区日期和时间"
-                                    else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
-                                    else {
-                                        val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
-                                        start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
-                                    }
-                                }) { Text("定位") }
+                    }
+                    @Composable fun StartControls() {
+                        Row(Modifier.testTag("replay-start-controls"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("回放起点", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
+                                valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(145.dp).testTag("replay-start"))
+                            OutlinedTextField(startTime, { startTime = it }, placeholder = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm", style = MaterialTheme.typography.bodySmall) },
+                                modifier = Modifier.width(180.dp).testTag("replay-start-time"), singleLine = true)
+                            IconButton(onClick = { startCalendar = true }, modifier = Modifier.testTag("replay-start-calendar")) { Icon(AppIcons.Calendar, "选择起点日期", Modifier.size(20.dp)) }
+                            TextButton(onClick = {
+                                val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
+                                    else parseChartTime(startTime, input.zone.zoneId)
+                                if (at == null) message = "请输入有效的图表时区日期和时间"
+                                else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
+                                else {
+                                    val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
+                                    start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
+                                }
+                            }, modifier = Modifier.testTag("replay-start-locate")) { Text("定位") }
+                        }
+                    }
+                    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        if (maxWidth >= 900.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
+                            if (!started) {
+                                VerticalDivider(Modifier.height(28.dp).padding(horizontal = 4.dp))
+                                StartControls()
                             }
+                        } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                            PlaybackControls()
+                            if (!started) { VerticalDivider(Modifier.height(28.dp).padding(horizontal = 4.dp)); StartControls() }
                         }
                     }
                 }
             }
+
             Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight(),
                 shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -604,17 +614,6 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
                             modifier = Modifier.fillMaxWidth().height(630.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
                             accountName = "回放模拟账户")
-                        ReplaySection("账户概览") {
-                            ReplayMetric("模拟资金", "${money(riskConfig.initialMicros)} ${spec.currency}")
-                            ReplayMetric("净值", if (realized != null && floating != null) runCatching { money(checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))) }.getOrDefault("—") else "—")
-                            ReplayMetric("回撤线 · ${riskConfig.mode.name}", "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
-                            ReplayMetric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
-                            ReplayMetric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
-                            ReplayMetric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")
-                            Text("已实现 ${realized?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-realized"), style = MaterialTheme.typography.bodySmall)
-                            Text("浮动 ${floating?.let { money(it, true) } ?: "—"} ${spec.currency}", Modifier.testTag("replay-floating"), style = MaterialTheme.typography.bodySmall)
-                            Text("成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", Modifier.testTag("replay-trade-count"), style = MaterialTheme.typography.bodySmall)
-                        }
                         if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
                             state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -653,6 +652,24 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     label = { Text("下单") }, modifier = Modifier.testTag("replay-tab-0"))
                 NavigationRailItem(selected = sideTab == 1, onClick = { sideTab = 1 }, icon = { Icon(AppIcons.Analytics, null) },
                     label = { Text("分析") }, modifier = Modifier.testTag("replay-tab-1"))
+            }
+        }
+        Surface(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
+            color = TradingColors.Surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                val balance = realized?.let { runCatching { checkedAdd(riskConfig.initialMicros, it) }.getOrNull() }
+                val equity = if (balance != null && floating != null) runCatching { checkedAdd(balance, floating) }.getOrNull() else null
+                Metric("模拟余额 · ${spec.currency}", balance?.let { money(it) } ?: "—")
+                Metric("净值 · ${spec.currency}", equity?.let { money(it) } ?: "—")
+                Metric("已实现盈亏", realized?.let { money(it, true) } ?: "—", valueTag = "replay-realized")
+                Metric("浮动盈亏", floating?.let { money(it, true) } ?: "—", valueTag = "replay-floating")
+                Metric("回撤线 · ${when (riskConfig.mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "日终"; ReplayDrawdown.TDD -> "浮动" }}",
+                    "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
+                Metric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
+                Metric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
+                Metric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")
+                Metric("交易统计", "成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", valueTag = "replay-trade-count")
             }
         }
     }

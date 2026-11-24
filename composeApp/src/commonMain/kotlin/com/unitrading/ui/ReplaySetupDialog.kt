@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.ReplayHistoryCache
 import com.unitrading.broker.*
@@ -97,8 +98,8 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     val loading = progress != null
     val choices = (listOf(initial) + instruments + selected.values).distinctBy { it.symbol }
         .filter { isReplayFuture(it) && (it.symbol.contains(query, true) || it.name.contains(query, true)) }
-    Dialog(onDismissRequest = { if (!loading) onDismiss() }) {
-        Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth().testTag("replay-setup"), shape = MaterialTheme.shapes.large,
+    Dialog(onDismissRequest = { if (!loading) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth(.94f).testTag("replay-setup"), shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.heightIn(max = 860.dp).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -165,30 +166,35 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                         OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-total-loss"))
                     }
                 }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("日亏损规则", style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("replay-rule-row"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("日亏损规则", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     FilterChip(selected = dailyMode == ReplayDailyLoss.SOFT, onClick = { dailyMode = ReplayDailyLoss.SOFT }, label = { Text("软止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-soft"))
                     FilterChip(selected = dailyMode == ReplayDailyLoss.HARD, onClick = { dailyMode = ReplayDailyLoss.HARD }, label = { Text("硬止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-hard"))
-                }
-                Text(if (dailyMode == ReplayDailyLoss.SOFT) "触及日亏损后暂停开仓并撤销挂单，下一交易日恢复。" else "触及日亏损后，本次考核失败。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("回撤类型", style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
+                    Text("回撤类型", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     ReplayDrawdown.entries.forEach { mode -> FilterChip(selected = drawdownMode == mode, onClick = { drawdownMode = mode }, enabled = !loading,
+                        modifier = Modifier.testTag("replay-drawdown-${mode.name}"),
                         label = { Text(when(mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "日终追踪"; ReplayDrawdown.TDD -> "浮动追踪" }) }) }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = allowOvernight, onCheckedChange = { allowOvernight = it }, enabled = !loading, modifier = Modifier.testTag("replay-overnight-allow"))
-                    Text("允许持仓过夜")
+                Text(if (dailyMode == ReplayDailyLoss.SOFT) "触及日亏损后暂停开仓并撤销挂单，下一交易日恢复。" else "触及日亏损后，本次考核失败。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    @Composable fun OvernightOption(modifier: Modifier) {
+                        ReplayOptionCard("允许持仓过夜", if (allowOvernight) "可以跨交易日持仓" else "截止时间自动平仓并撤单", allowOvernight,
+                            enabled = !loading, tag = "replay-overnight-allow", onCheckedChange = { allowOvernight = it }, modifier = modifier)
+                    }
+                    @Composable fun CacheOption(modifier: Modifier) {
+                        ReplayOptionCard(if (persistentCache) "使用本地历史缓存" else "使用本次运行的历史缓存", "最近两天重新读取；关闭可强制重读", useCache,
+                            enabled = !loading, tag = "replay-use-cache", onCheckedChange = { useCache = it }, modifier = modifier)
+                    }
+                    if (maxWidth >= 540.dp) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OvernightOption(Modifier.weight(1f)); CacheOption(Modifier.weight(1f))
+                    } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OvernightOption(Modifier.fillMaxWidth()); CacheOption(Modifier.fillMaxWidth())
+                    }
                 }
                 if (!allowOvernight) OutlinedTextField(cutoffText, { cutoffText = it }, label = { Text("每日平仓时间（芝加哥）") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-overnight-cutoff"))
                 Text("交易日按芝加哥时间 17:00 切换；回放后的图表周期可以调整。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth().clickable(enabled = !loading) { useCache = !useCache }, verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = useCache, onCheckedChange = null, enabled = !loading, modifier = Modifier.testTag("replay-use-cache"))
-                    Column {
-                        Text(if (persistentCache) "使用本地历史缓存" else "使用本次运行的历史缓存", style = MaterialTheme.typography.bodyMedium)
-                        Text("最近两天重新读取；取消勾选可强制重读。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
                 progress?.let { Text(it, Modifier.testTag("replay-load-progress"), color = MaterialTheme.colorScheme.primary) }
                 error?.let { Text(it, Modifier.testTag("replay-load-error"), color = MaterialTheme.colorScheme.error) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -238,6 +244,22 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
         ReplayCalendarDialog(if (isStart) start else end, onDismiss = { calendarForStart = null }) { date ->
             if (isStart) start = date else end = date
             calendarForStart = null
+        }
+    }
+}
+
+@Composable
+private fun ReplayOptionCard(title: String, detail: String, checked: Boolean, enabled: Boolean, tag: String,
+    onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.labelLarge)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled, modifier = Modifier.testTag(tag))
         }
     }
 }
