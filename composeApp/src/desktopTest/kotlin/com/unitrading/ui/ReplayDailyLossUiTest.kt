@@ -52,4 +52,25 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
     }
+    @Test fun savedFailureContainsClosedTradesAndCanBeImported() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.HARD)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithText("模拟平仓").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-failure-save").performClick()
+        compose.runOnIdle { assertEquals(1, records.list().single().trades.size) }
+        compose.onNodeWithTag("replay-tab-1").performClick()
+        compose.onNodeWithTag("replay-records-picker").performClick()
+        compose.onNodeWithText("MES · 1 笔", substring = true).performClick()
+        compose.onNodeWithTag("replay-dashboard").assertExists()
+        compose.onNodeWithTag("replay-dashboard").performScrollToNode(hasTestTag("replay-report-trade-count"))
+        compose.onNodeWithTag("replay-report-trade-count").assertTextContains("1 笔", substring = true)
+    }
+
 }

@@ -393,9 +393,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     -checkedAdd(position.entryFeeMicros, commission(spec, position.lotsHundredths)))) }
             checkedAdd(riskConfig.initialMicros, checkedAdd(realized, floating))
         }.getOrNull()
-        val samples = listOf(ReplayEquityPoint(bars[start].timeMs, riskConfig.initialMicros)) + equityPoints.toList()
+        val finalEquity = if (risk.failed) equityPoints.lastOrNull()?.equityMicros ?: equity else equity
+        val samples = (listOf(ReplayEquityPoint(bars[start].timeMs, riskConfig.initialMicros)) + equityPoints.toList()).let { points ->
+            if (finalEquity == null || points.lastOrNull()?.timeMs == current.timeMs) points else points + ReplayEquityPoint(current.timeMs, finalEquity)
+        }
         return ReplayRecord(recordId, spec.symbol, spec.currency, riskConfig.initialMicros,
-            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, equity, samples, spec.priceDecimals, description)
+            Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description)
     }
     LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId) {
         if (started && historyTrades.isNotEmpty() && records != null) {
