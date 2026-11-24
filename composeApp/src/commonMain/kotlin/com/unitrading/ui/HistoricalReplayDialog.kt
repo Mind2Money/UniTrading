@@ -660,10 +660,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 val balance = realized?.let { runCatching { checkedAdd(riskConfig.initialMicros, it) }.getOrNull() }
                 val equity = if (balance != null && floating != null) runCatching { checkedAdd(balance, floating) }.getOrNull() else null
+                val daily = runCatching { checkedAdd(risk.lastEquity, -risk.dayOpeningBalance) }.getOrNull()
+                Metric("本交易日盈亏", daily?.let { money(it, true) } ?: "—", color = TradingColors.pnl(daily), valueTag = "replay-daily-pnl")
                 Metric("模拟余额 · ${spec.currency}", balance?.let { money(it) } ?: "—")
                 Metric("净值 · ${spec.currency}", equity?.let { money(it) } ?: "—")
-                Metric("已实现盈亏", realized?.let { money(it, true) } ?: "—", valueTag = "replay-realized")
-                Metric("浮动盈亏", floating?.let { money(it, true) } ?: "—", valueTag = "replay-floating")
+                Metric("已实现盈亏", realized?.let { money(it, true) } ?: "—", color = TradingColors.pnl(realized), valueTag = "replay-realized")
+                Metric("浮动盈亏", floating?.let { money(it, true) } ?: "—", color = TradingColors.pnl(floating), valueTag = "replay-floating")
                 Metric("回撤线 · ${when (riskConfig.mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "日终"; ReplayDrawdown.TDD -> "浮动" }}",
                     "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
                 Metric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
