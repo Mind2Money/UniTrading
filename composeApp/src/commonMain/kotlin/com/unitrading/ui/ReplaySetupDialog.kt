@@ -26,6 +26,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
@@ -192,6 +194,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = { job?.cancel(); progress = null; onDismiss() }) { Text(if (loading) "取消加载" else "取消") }
                     Button(onClick = {
+                        if (progress != null) return@Button
                         val config = runCatching { accountConfig() }.onFailure { error = it.message }.getOrNull() ?: return@Button
                         val range = replayDateRange(start, end, zone)
                         if (range == null) { error = "请输入有效日期，结束日期不能早于开始日期"; return@Button }
@@ -219,6 +222,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                                     data[instrument.symbol to frame] = result.candles
                                     result.warning?.let { warnings += "${instrument.symbol}：$it" }
                                 }
+                                currentCoroutineContext().ensureActive()
                                 onReady(ReplayPrepared(chosen, range, data, warnings.distinct(), useCache,
                                     values.sumOf { it.third.cacheHits }, values.sumOf { it.third.downloaded }, frame, config))
                             } catch (cancel: CancellationException) { throw cancel }
