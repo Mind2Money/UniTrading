@@ -43,5 +43,6 @@ class ChartObjectLayersTest {
         assertFalse(layers.move("MES", drawingLayerKey("a"), emptyList(), listOf("a"), true))
         assertTrue(layers.forSymbol("MES").isEmpty())
         assertNotNull(layers.error)
+        Unit
     }
 }
