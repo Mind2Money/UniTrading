@@ -67,12 +67,12 @@ private fun defaultDataDirectory(): Path = (System.getProperty("unitrading.dataD
     ?: userDataRoot().resolve("UniTrading").resolve("demo-v1")
 
 fun main(args: Array<String>) {
+    // The packaged launcher also sets this JVM flag before startup. Keep the fallback for source launches.
+    if (System.getProperty("java.net.useSystemProxies") == null) System.setProperty("java.net.useSystemProxies", "true")
     // An update starts the copy it unpacked with this argument to check it, so it comes before anything else.
     if ("--version" in args) { println(System.getProperty("jpackage.app-version") ?: "source"); return }
     // The helper copy of a new version, opened by the version it replaces, puts the new version in place and exits.
     if (args.isEmpty()) SelfUpdate.pendingJob(System.getProperty("jpackage.app-path")?.let(::File))?.let { exitProcess(SelfUpdate.install(it)) }
-    // Only HttpURLConnection reads this, and only the update uses it; the brokers' Ktor sockets keep their own route.
-    System.setProperty("java.net.useSystemProxies", "true")
     desktopApplication(args)
 }
 

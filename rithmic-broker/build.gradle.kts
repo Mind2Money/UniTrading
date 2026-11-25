@@ -22,7 +22,8 @@ kotlin {
             implementation("io.ktor:ktor-client-core:3.1.0")
             implementation("io.ktor:ktor-client-websockets:3.1.0")
         }
-        getByName("desktopMain").dependencies { implementation("io.ktor:ktor-client-cio:3.1.0") }
+        // Keep the same system-proxy-aware engine as the Tradovate connection on desktop.
+        getByName("desktopMain").dependencies { implementation("io.ktor:ktor-client-okhttp:3.1.0") }
         androidMain.dependencies { implementation("io.ktor:ktor-client-okhttp:3.1.0") }
         iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.1.0") }
         commonTest.dependencies {

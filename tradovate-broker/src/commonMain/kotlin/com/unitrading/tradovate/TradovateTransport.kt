@@ -1,6 +1,7 @@
 package com.unitrading.tradovate
 
 import io.ktor.client.*
+import com.unitrading.broker.createBrokerHttpClient
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
@@ -38,7 +39,7 @@ internal fun tradovateRequestUrl(hosts: TradovateHosts, path: String): String {
 }
 
 class KtorTradovateWire : TradovateWire {
-    private val client = HttpClient {
+    private val client = createBrokerHttpClient {
         followRedirects = false
         install(WebSockets)
         install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 15_000 }

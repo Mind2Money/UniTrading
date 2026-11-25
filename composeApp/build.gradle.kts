@@ -136,11 +136,13 @@ if (isMac) tasks.matching { it.name == "createDistributable" }.configureEach {
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
+        // The JVM reads this setting at startup, before an application class may initialize networking.
+        jvmArgs("-Djava.net.useSystemProxies=true")
         nativeDistributions {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "UniTrading"
-            packageVersion = "1.8.0"
+            packageVersion = "1.8.1"
             // jlink keeps only listed modules; `suggestRuntimeModules` lists what the jars need beyond the defaults.
             modules("java.instrument", "java.management", "jdk.unsupported")
             windows { iconFile.set(project.file("icons/unitrading.ico")) }

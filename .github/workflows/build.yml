@@ -224,7 +224,7 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       (startsWith(github.ref, 'refs/tags/v') ||
-       (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
+       (github.ref == 'refs/heads/main' && (startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release') || startsWith(github.event.head_commit.message, 'Merge system proxy support for v1.8.1'))))
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -257,7 +257,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
           $packaged = (Get-Item "$app/UniTrading.exe").VersionInfo.ProductVersion
-          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '1.8.0' }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } elseif ((Get-Content 'androidApp/build.gradle.kts' -Raw) -match 'versionName\s*=\s*"([^"]+)"') { $Matches[1] } else { throw 'Could not read Android versionName' }
           if ($packaged -ne $version) { throw "UniTrading.exe is $packaged, tag is $env:GITHUB_REF_NAME" }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host is not packaged' }
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -278,7 +278,7 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       (startsWith(github.ref, 'refs/tags/v') ||
-       (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
+       (github.ref == 'refs/heads/main' && (startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release') || startsWith(github.event.head_commit.message, 'Merge system proxy support for v1.8.1'))))
     runs-on: macos-latest
     timeout-minutes: 35
     steps:
@@ -451,7 +451,7 @@ jobs:
     name: Discord 公告
     needs: [release]
     # v1.8.0 publishes to GitHub without separately sending a chat announcement.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0' && github.ref != 'refs/tags/v1.8.1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -479,8 +479,10 @@ jobs:
        github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/tags/v')) &&
       github.ref != 'refs/tags/v1.8.0' &&
+      github.ref != 'refs/tags/v1.8.1' &&
       !(github.ref == 'refs/heads/main' &&
-        (startsWith(github.event.head_commit.message, 'Refine chart contract label and settings') ||
+        (startsWith(github.event.head_commit.message, 'Merge system proxy support for v1.8.1') ||
+         startsWith(github.event.head_commit.message, 'Refine chart contract label and settings') ||
          startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
