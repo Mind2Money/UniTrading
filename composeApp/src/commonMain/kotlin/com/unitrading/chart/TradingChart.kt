@@ -1039,8 +1039,10 @@ fun TradingChart(
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
                 if (chrome.showNavigation) ChartNavigation(
-                    onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
-                    onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
+                    // The buttons use the same newest-bar anchor as the mouse wheel, so
+                    // zooming out fills the chart instead of creating empty future space.
+                    onZoomIn = { viewport = viewport.zoomAt(-2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
+                    onZoomOut = { viewport = viewport.zoomAt(2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },

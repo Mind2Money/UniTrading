@@ -109,6 +109,7 @@ class CandleZoomUiTestFullWidth {
         waitForIdle()
         val s = state(onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription])
         assertEquals(2400.0, s.getValue("bars").toDouble(), .001)
+        assertEquals(0.0, s.getValue("offset").toDouble(), .001, "The latest bar must stay on screen when zooming out")
         assertTrue(s.getValue("barStep").toFloat() in 0f..1f)
         assertTrue(s.getValue("barBody").toFloat() > 0f)
         val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/zoom-2400").also { it.mkdirs() }
