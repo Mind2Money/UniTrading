@@ -778,6 +778,23 @@ class RithmicBrokerTest {
         override suspend fun write(key: String, value: String) { values[key] = value }
     }
 
+    @Test fun existingTwoThousandBarCacheCanGrowToTheNewChartDepth() = runTest {
+        val store = MemoryCandleStore()
+        val span = Timeframe.M5.millis
+        val latest = FAKE_TIME / span * span - span
+        val old = List(2000) { i -> Candle(latest - (1999 - i) * span, 549900, 550100, 549850, 550000, 100) }
+        CandleCache(store, "rithmic-v2-${credentials().brokerId}", RITHMIC_CHART_BARS).write("MESZ6" to Timeframe.M5, old)
+        val server = FakeRithmicServer().apply { bars = 3000; filterHistoryRange = true }
+        val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+        val broker = RithmicBroker(credentials(), server, scope, { FAKE_TIME }, candleCacheStore = store)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val bars = broker.history("MESZ6", Timeframe.M5)
+        assertEquals(RITHMIC_CHART_BARS, bars.size)
+        assertEquals(latest, bars.last().timeMs)
+        assertEquals(latest - (RITHMIC_CHART_BARS - 1) * span, bars.first().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == span })
+    }
+
     private suspend fun TestScope.chart(server: FakeRithmicServer, store: CandleCacheStore): RithmicBroker {
         // disconnect() cancels the broker's scope, and these tests go on with a second broker.
         val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))

@@ -16,7 +16,7 @@ import kotlin.time.Clock
 import kotlin.time.TimeSource
 
 /** Initial history depth and cache window: twice the largest indicator period (1000). */
-const val CHART_BARS = 2000
+const val CHART_BARS = 2500
 private const val LATENCY_INTERVAL_MS = 30_000L
 private const val LATENCY_VALID_MS = 90_000L
 private const val PENDING_BRACKETS_LOCKED = "该挂单的止损/止盈关联未确认、属于 ATM 或正在处理，暂不可修改"
@@ -112,7 +112,7 @@ class TradovateBroker(
     private val quoteSides = mutableMapOf<String, QuoteSides>()
     private var history = emptyMap<Pair<String, Timeframe>, List<Candle>>()
     // v2: older entries stopped at the first page, about a month of intraday bars, and a cached series only ever grows at its end.
-    private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}")
+    private val candleCache = CandleCache(candleCacheStore, "v2-${credentials.environment.wire}-${credentials.userId}", CHART_BARS)
     private val cachedHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
     private val dirtyHistory = mutableMapOf<Pair<String, Timeframe>, List<Candle>>()
     private var cacheSaveJob: Job? = null

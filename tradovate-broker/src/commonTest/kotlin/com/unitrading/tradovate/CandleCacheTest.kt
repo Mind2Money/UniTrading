@@ -44,6 +44,23 @@ class CandleCacheTest {
         load.accept(emptyList(), historical = true, endOfHistory = true, validPacket = true)
         assertTrue(load.complete)
     }
+    @Test fun existingTwoThousandBarCacheCanGrowWithoutDiscardingItsTail() {
+        val cached = List(LEGACY_CHART_BARS) { i -> candle(CACHE_TIME - (LEGACY_CHART_BARS - 1 - i) * CACHE_STEP) }
+        val load = ChartLoad(cached, freshFloor = cached.first().timeMs - 1_000 * CACHE_STEP)
+        load.beginPage()
+        load.accept(listOf(cached.last()), historical = true, endOfHistory = true, validPacket = true)
+        assertFalse(load.complete)
+        assertEquals(cached.first().timeMs, load.nextPageBefore)
+        load.beginPage()
+        val older = List(CHART_BARS - LEGACY_CHART_BARS + 1) { i ->
+            candle(cached.first().timeMs - (CHART_BARS - LEGACY_CHART_BARS - i) * CACHE_STEP)
+        }
+        load.accept(older, historical = true, endOfHistory = true, validPacket = true)
+        assertTrue(load.complete)
+        assertEquals(CHART_BARS, load.candles.size)
+        assertEquals(cached.last(), load.candles.last())
+        assertTrue(load.candles.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == CACHE_STEP })
+    }
     @Test fun liveSubscriptionSnapshotDoesNotCountAsHistoricalBackfill() {
         val seed = Candle(1, 100, 110, 90, 100)
         val load = ChartLoad(listOf(seed))
@@ -210,11 +227,11 @@ class CandleCacheTest {
         }
     }
 
-    @Test fun cacheAcceptsTwoThousandCandlesAndRejectsAnyMore() = runTest {
+    @Test fun cacheAcceptsTheChartLimitAndRejectsAnyMore() = runTest {
         val cache = CandleCache(MemoryStore(), "demo")
-        val bars = List(2_001) { candle(CACHE_TIME - (2_000 - it) * CACHE_STEP) }
-        cache.write(series, bars.takeLast(2_000))
-        assertEquals(bars.takeLast(2_000), cache.read(series, CACHE_TIME))
+        val bars = List(CHART_BARS + 1) { candle(CACHE_TIME - (CHART_BARS - it) * CACHE_STEP) }
+        cache.write(series, bars.takeLast(CHART_BARS))
+        assertEquals(bars.takeLast(CHART_BARS), cache.read(series, CACHE_TIME))
         cache.write(series, bars)
         assertTrue(cache.read(series, CACHE_TIME).isEmpty())
     }
@@ -250,8 +267,8 @@ class CandleCacheTest {
         assertTrue(store.values.isEmpty())
     }
 
-    @Test fun emptyCacheRequestsOnlyTwoThousandElements() {
-        assertEquals(buildJsonObject { put("asMuchAsElements", 2_000) }, chartTimeRange(emptyList()))
+    @Test fun emptyCacheRequestsTheChartLimit() {
+        assertEquals(buildJsonObject { put("asMuchAsElements", CHART_BARS) }, chartTimeRange(emptyList()))
     }
 
     @Test fun populatedCacheRequestsOnlyOneElementForTheLiveSubscription() {
@@ -356,12 +373,12 @@ class CandleCacheTest {
         }
     }
 
-    @Test fun chartLoadKeepsOnlyTheNewestTwoThousandCandles() {
+    @Test fun chartLoadKeepsOnlyTheNewestChartLimitCandles() {
         for (historical in listOf(true, false)) {
-            val bars = List(2_002) { candle(CACHE_TIME - (2_001 - it) * CACHE_STEP) }
-            val load = ChartLoad(bars.take(2_000))
-            load.accept(listOf(bars.last(), bars[2_000], bars[1_999]), historical, endOfHistory = false, validPacket = true)
-            assertEquals(2_000, load.candles.size)
+            val bars = List(CHART_BARS + 2) { candle(CACHE_TIME - (CHART_BARS + 1 - it) * CACHE_STEP) }
+            val load = ChartLoad(bars.take(CHART_BARS))
+            load.accept(listOf(bars.last(), bars[CHART_BARS], bars[CHART_BARS - 1]), historical, endOfHistory = false, validPacket = true)
+            assertEquals(CHART_BARS, load.candles.size)
             assertEquals(bars.drop(2), load.candles)
             load.accept(bars.reversed(), historical, endOfHistory = false, validPacket = true)
             assertEquals(bars.drop(2), load.candles)
@@ -369,7 +386,7 @@ class CandleCacheTest {
     }
 
     @Test fun fullOldCacheAndOneHundredNewBarsNeedAnotherPageUntilHistoryCoversTheAnchor() {
-        val cached = List(2_000) { candle(CACHE_TIME - (2_200 - it) * CACHE_STEP) }
+        val cached = List(CHART_BARS) { candle(CACHE_TIME - (CHART_BARS + 200 - it) * CACHE_STEP) }
         val anchor = cached.last().timeMs
         val firstPage = List(100) { candle(CACHE_TIME - (99 - it) * CACHE_STEP) }
         val realtime = firstPage.last().copy(close = 109)
@@ -380,7 +397,7 @@ class CandleCacheTest {
         assertFalse(load.complete)
         assertNull(load.nextPageBefore)
         load.accept(firstPage.drop(40).reversed(), historical = true, endOfHistory = true, validPacket = true)
-        assertEquals(2_000, load.candles.size)
+        assertEquals(CHART_BARS, load.candles.size)
         assertEquals(anchor, load.anchor)
         assertEquals(firstPage.first().timeMs, load.nextPageBefore)
         assertFalse(load.complete)
@@ -399,23 +416,24 @@ class CandleCacheTest {
         assertNull(load.nextPageBefore)
         assertEquals(anchor, load.anchor)
         val expected = cached.dropLast(1) + secondPage + firstPage.drop(1).dropLast(1) + realtime
-        assertEquals(expected.takeLast(2_000), load.candles)
+        assertEquals(expected.takeLast(CHART_BARS), load.candles)
     }
 
-    @Test fun twoThousandDistinctHistoricalBarsAcrossPagesCompleteWithoutReachingTheAnchor() {
-        val anchor = CACHE_TIME - 2_001 * CACHE_STEP
-        val bars = List(2_000) { candle(CACHE_TIME - (1_999 - it) * CACHE_STEP) }
+    @Test fun aFullSetOfDistinctHistoricalBarsCanCompleteWithoutReachingTheAnchor() {
+        val anchor = CACHE_TIME - (CHART_BARS + 1) * CACHE_STEP
+        val bars = List(CHART_BARS) { candle(CACHE_TIME - (CHART_BARS - 1 - it) * CACHE_STEP) }
         val load = ChartLoad(listOf(candle(anchor)))
-        val firstPage = bars.drop(1_000)
+        val split = CHART_BARS / 2
+        val firstPage = bars.drop(split)
         load.beginPage()
-        // Repeated timestamps must not turn 1000 distinct historical bars into 2000.
+        // Repeated timestamps must not turn half the requested history into a full chart.
         load.accept(firstPage.reversed() + firstPage, historical = true, endOfHistory = true, validPacket = true)
         assertFalse(load.complete)
         assertFalse(load.failed)
         assertEquals(firstPage.first().timeMs, load.nextPageBefore)
 
         load.beginPage()
-        load.accept(bars.subList(1, 1_000), historical = true, endOfHistory = true, validPacket = true)
+        load.accept(bars.subList(1, split), historical = true, endOfHistory = true, validPacket = true)
         assertFalse(load.complete)
         assertFalse(load.failed)
         assertEquals(bars[1].timeMs, load.nextPageBefore)
@@ -431,13 +449,13 @@ class CandleCacheTest {
     }
 
     @Test fun realtimeBarsCannotSatisfyHistoricalCountOrAnchorCoverage() {
-        val anchor = CACHE_TIME - 2_001 * CACHE_STEP
-        val realtime = List(2_000) { candle(CACHE_TIME - (1_999 - it) * CACHE_STEP) }
+        val anchor = CACHE_TIME - (CHART_BARS + 1) * CACHE_STEP
+        val realtime = List(CHART_BARS) { candle(CACHE_TIME - (CHART_BARS - 1 - it) * CACHE_STEP) }
         val load = ChartLoad(listOf(candle(anchor)))
         load.beginPage()
         load.accept(listOf(candle(anchor)) + realtime, historical = false, endOfHistory = false, validPacket = true)
         load.accept(listOf(realtime.last()), historical = true, endOfHistory = true, validPacket = true)
-        assertEquals(2_000, load.candles.size)
+        assertEquals(CHART_BARS, load.candles.size)
         assertEquals(anchor, load.anchor)
         assertFalse(load.complete)
         assertFalse(load.failed)

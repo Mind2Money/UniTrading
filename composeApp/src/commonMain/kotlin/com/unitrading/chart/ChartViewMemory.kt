@@ -46,7 +46,7 @@ data class SavedChartView(
 
     companion object {
         const val MIN_BARS = 12.0
-        const val MAX_BARS = 600.0
+        const val MAX_BARS = MAX_VISIBLE_CANDLES
 
         /** What to keep of [viewport] over [candles] (not empty) and of a price axis set by hand. */
         fun of(viewport: ChartViewport, candles: List<Candle>, manual: PriceScale?): SavedChartView {

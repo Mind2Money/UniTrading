@@ -237,6 +237,7 @@ class DrawingGeometryTest {
         val view = com.unitrading.chart.drawing.zoomedViewport(20.0, 49.0, 100)
         assertEquals(30.0, view.count)
         assertEquals(19.5, view.start(100), 1e-9)
+        assertEquals(2400.0, com.unitrading.chart.drawing.zoomedViewport(20.0, 2519.0, 3000).count)
     }
 
     @Test fun ratiosPrintWithoutTrailingZeros() {

@@ -202,6 +202,18 @@ internal fun SettingsPage(
 
             if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
 
+            if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
+                SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
+            }
+
+            if (localDemo) SettingsSection("本地模拟") {
+                SettingsRow(if (paused) "继续模拟行情" else "暂停模拟行情", "模拟时间每秒推进 15 秒", if (paused) AppIcons.PlayArrow else AppIcons.Pause,
+                    "settings-pause-demo", { runtime.paused.value = !paused })
+                SettingsRow("重置所有模拟账户", "清空本地模拟交易并恢复初始资金", AppIcons.DeleteSweep, "settings-reset-demo", onReset, destructive = true)
+            }
+
+            if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
+
             SettingsSection("其他", Modifier.testTag("settings-other-section")) {
                 SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
                 if (showDesktopExitSetting) ListItem(
@@ -217,18 +229,6 @@ internal fun SettingsPage(
                     colors = settingsRowColors(),
                 )
             }
-
-            if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
-                SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
-            }
-
-            if (localDemo) SettingsSection("本地模拟") {
-                SettingsRow(if (paused) "继续模拟行情" else "暂停模拟行情", "模拟时间每秒推进 15 秒", if (paused) AppIcons.PlayArrow else AppIcons.Pause,
-                    "settings-pause-demo", { runtime.paused.value = !paused })
-                SettingsRow("重置所有模拟账户", "清空本地模拟交易并恢复初始资金", AppIcons.DeleteSweep, "settings-reset-demo", onReset, destructive = true)
-            }
-
-            if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
         }
     }
     if (chooseChartSession) AlertDialog(

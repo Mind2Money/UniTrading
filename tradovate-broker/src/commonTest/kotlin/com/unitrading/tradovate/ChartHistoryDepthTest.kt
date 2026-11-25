@@ -22,7 +22,7 @@ class ChartHistoryDepthTest {
     }
 
     @Test fun chartRequestsAndKeepsTwiceTheLargestIndicatorPeriod() = runTest {
-        assertTrue(CHART_BARS >= 2_000)
+        assertTrue(CHART_BARS >= 2_400)
         val wire = MockTradovateWire()
         val broker = ready(wire)
         val request = Json.parseToJsonElement(wire.market.bodies.getValue("md/getChart")).jsonObject

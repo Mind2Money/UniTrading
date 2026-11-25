@@ -10,19 +10,20 @@ import kotlinx.serialization.Serializable
 
 /** How much one wheel notch scales the visible range, as the exponent of e: about 13%. */
 private const val WHEEL_ZOOM = .12
+internal const val MAX_VISIBLE_CANDLES = 2400.0
 
 /** Body and wick remain within one bar slot; the gap stops growing once it reaches two dp. */
 internal data class CandleWidths(val body: Float, val wick: Float)
 internal fun candleWidths(slot: Float, density: Float): CandleWidths {
     if (!slot.isFinite() || !density.isFinite() || slot <= 0f || density <= 0f) return CandleWidths(0f, 0f)
-    // At the supported minimum of two pixels per slot, leave at least one pixel clear.
+    // Wide slots leave a pixel clear; at high density preserve a proportional subpixel gap.
     val gap = if (slot >= 2f) minOf(maxOf(1f, minOf(slot * .28f, 2f * density)), slot - 1f) else slot * .28f
     val body = slot - gap
     val wick = minOf(body, maxOf(minOf(density, body), minOf(body * .12f, 2f * density)))
     return CandleWidths(body, wick)
 }
 internal fun maxVisibleCandleCount(width: Float): Double =
-    if (!width.isFinite() || width <= 0f) 600.0 else floor(width / 2.0).coerceIn(12.0, 600.0)
+    if (!width.isFinite() || width <= 0f) MAX_VISIBLE_CANDLES else floor(width * 2.0).coerceIn(12.0, MAX_VISIBLE_CANDLES)
 
 /** Rendering uses floating coordinates; account arithmetic remains integer-only. */
 @Serializable
@@ -149,7 +150,7 @@ data class PriceScale(val low: Double, val high: Double, val top: Float, val bot
 
 /** Continuous bar coordinates preserve fractional movement and allow space after the latest bar. */
 data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
-    /** Cap zoom-out at two device pixels per slot so neighboring candles retain a visible gap. */
+    /** Allow dense views down to half a device pixel per bar while capping the total. */
     fun fitPixelWidth(width: Float, total: Int): ChartViewport {
         if (!width.isFinite() || width <= 0f) return this
         val limit = maxVisibleCandleCount(width)
@@ -184,15 +185,15 @@ data class ChartViewport(val count: Double = 80.0, val offset: Double = 0.0) {
      * at [anchor] (0 the left edge, 1 the right) stays under the pointer, except on a chart following the newest bar, which
      * keeps its right edge. Zooming out of the past stops at the newest bar instead of opening empty space after it.
      */
-    fun zoomAt(ticks: Float, anchor: Float, total: Int, maxCount: Double = 600.0): ChartViewport {
-        val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, maxCount.coerceIn(12.0, 600.0))
+    fun zoomAt(ticks: Float, anchor: Float, total: Int, maxCount: Double = MAX_VISIBLE_CANDLES): ChartViewport {
+        val next = (count * exp(ticks * WHEEL_ZOOM)).coerceIn(12.0, maxCount.coerceIn(12.0, MAX_VISIBLE_CANDLES))
         val moved = if (offset <= 0.0) offset else (offset + (1 - anchor) * (count - next)).coerceAtLeast(0.0)
         return copy(count = next, offset = moved).bounded(total)
     }
     /** Continuous pinch scaling and panning, anchored to the two-finger centroid. */
-    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, total: Int, maxCount: Double = 600.0): ChartViewport {
+    fun pinch(factor: Double, previousAnchor: Float, anchor: Float, total: Int, maxCount: Double = MAX_VISIBLE_CANDLES): ChartViewport {
         if (!factor.isFinite() || factor <= 0.0) return this
-        val next = (count / factor).coerceIn(12.0, maxCount.coerceIn(12.0, 600.0))
+        val next = (count / factor).coerceIn(12.0, maxCount.coerceIn(12.0, MAX_VISIBLE_CANDLES))
         return copy(count = next, offset = offset + (1 - previousAnchor.coerceIn(0f, 1f)) * count -
             (1 - anchor.coerceIn(0f, 1f)) * next).bounded(total)
     }

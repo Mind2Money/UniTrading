@@ -22,6 +22,8 @@ import com.unitrading.chart.PriceScale
 import com.unitrading.chart.TradingChart
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
+import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 import kotlin.test.*
 
@@ -73,5 +75,27 @@ class CandleZoomUiTest {
         val step = state().getValue("barStep").toFloat()
         assertTrue(after > before * 2, "rendered bodies should widen substantially: $before -> $after")
         assertTrue(after < step, "the rendered body must not reach its neighbor")
+    }
+
+    @Test fun aFullWidthChartCanShowAbout2400Candles() {
+        val many = (0 until 3000).map { i ->
+            val open = 10_000L + (i % 80) * 10L
+            Candle(i * 60_000L, open, open + 35, open - 25, open + 20)
+        }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1400.dp, 600.dp)) {
+                TradingChart("account", instrument, null, many, Timeframe.M1, {}, emptyList(), emptyList(), null, null,
+                    null, null, emptyList(), actions, Modifier.fillMaxSize())
+            }
+        } }
+        compose.waitForIdle()
+        repeat(16) { compose.onNodeWithTag("chart-zoom-out").performClick() }
+        compose.waitForIdle()
+        val s = state()
+        assertEquals(2400.0, s.getValue("bars").toDouble(), .001)
+        assertTrue(s.getValue("barStep").toFloat() in 0f..1f)
+        assertTrue(s.getValue("barBody").toFloat() > 0f)
+        val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/zoom-2400").also { it.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("trading-chart").captureToImage().toAwtImage(), "png", File(folder, "chart.png"))
     }
 }

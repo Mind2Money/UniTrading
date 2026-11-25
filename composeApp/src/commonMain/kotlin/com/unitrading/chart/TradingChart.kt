@@ -787,8 +787,11 @@ fun TradingChart(
                         drawLine(if (rising) colors.UpWick else colors.DownWick, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
                         val y = minOf(scale.y(candle.open), scale.y(candle.close))
                         val height = maxOf(abs(scale.y(candle.open) - scale.y(candle.close)), 1.6f)
-                        drawRect(color, Offset(center - width / 2, y), Size(width, height))
-                        drawRect(if (rising) colors.UpBorder else colors.DownBorder, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
+                        // At subpixel density use the outline color so hollow candles remain visible on a light chart.
+                        val denseColor = if (rising) colors.UpBorder else colors.DownBorder
+                        drawRect(if (step < 2f) denseColor else color, Offset(center - width / 2, y), Size(width, height))
+                        // Borders would overlap neighbouring candles when a slot is less than two pixels wide.
+                        if (step >= 2f) drawRect(if (rising) colors.UpBorder else colors.DownBorder, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
                     }
                     paintPriceObjects(false)
                     drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }

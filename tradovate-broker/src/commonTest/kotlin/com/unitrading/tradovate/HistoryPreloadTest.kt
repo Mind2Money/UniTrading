@@ -143,11 +143,11 @@ class HistoryPreloadTest {
         assertWhole(broker.history("@MES", Timeframe.ofMinutes(1440)), Timeframe.ofMinutes(1440))
         // The requests are a fresh chart's: the latest bars first, then pages back from the oldest bar read.
         val pages = wire.of(H1)
-        assertEquals(3, pages.size)
+        assertEquals(4, pages.size)
         assertTrue(pages.first().firstPage)
         val floor = Instant.fromEpochMilliseconds(chartHistoryFloor(H1, NOW)).toString()
         assertTrue(pages.drop(1).all { it.range.str("asFarAsTimestamp") == floor && it.range["asMuchAsElements"] == null })
-        assertEquals(listOf(NOW - 699 * 3_600_000L, NOW - 1_398 * 3_600_000L),
+        assertEquals(listOf(NOW - 699 * 3_600_000L, NOW - 1_398 * 3_600_000L, NOW - 2_097 * 3_600_000L),
             pages.drop(1).map { Instant.parse(it.range.str("closestTimestamp")!!).toEpochMilliseconds() })
         // No background subscription outlives its page, and the chart keeps its own.
         val background = wire.charts.filter { it.minutes != 5L }

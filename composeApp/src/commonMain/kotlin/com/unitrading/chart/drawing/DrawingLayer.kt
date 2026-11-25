@@ -157,7 +157,7 @@ internal fun DrawScope.drawLayerMarks(layer: DrawingLayer, labelStyle: TextStyle
 
 /** The view showing bars [from]..[to], as the zoom tool leaves it. */
 internal fun zoomedViewport(from: Double, to: Double, total: Int): ChartViewport {
-    val count = (to - from + 1).coerceIn(12.0, 600.0)
+    val count = (to - from + 1).coerceIn(12.0, com.unitrading.chart.MAX_VISIBLE_CANDLES)
     return ChartViewport(count, total - count - from + .5).bounded(total)
 }
 

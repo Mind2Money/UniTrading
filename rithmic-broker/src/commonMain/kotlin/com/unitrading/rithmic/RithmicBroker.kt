@@ -14,7 +14,7 @@ import kotlin.math.roundToLong
 import kotlin.time.Clock
 
 /** History depth per series: twice the largest indicator period, like the Tradovate adapter. */
-const val RITHMIC_CHART_BARS = 2000
+const val RITHMIC_CHART_BARS = 2500
 private const val QUOTE_FRESH_MS = 15_000L
 /** Upper bound for the list loaded at login; anything beyond it stays reachable through search. */
 private const val PRODUCT_LIST_LIMIT = 200
@@ -1118,7 +1118,12 @@ class RithmicBroker(
         val end = now()
         val span = timeframe.millis
         // Four chart-widths of wall time cover weekends and holidays while staying under Rithmic's 10,000-bar reply cap.
-        val start = cached.lastOrNull()?.timeMs?.takeIf { end - it < span * RITHMIC_CHART_BARS * 4 } ?: (end - span * RITHMIC_CHART_BARS * 4)
+        val floor = (end - span * (RITHMIC_CHART_BARS * 4 - 1)).coerceAtLeast(0L)
+        val legacyCache = cached.size in 2000 until RITHMIC_CHART_BARS
+        val start = if (legacyCache) {
+            val missing = RITHMIC_CHART_BARS - cached.size
+            maxOf(floor, cached.first().timeMs - span * missing * 4)
+        } else cached.lastOrNull()?.timeMs?.takeIf { it >= floor } ?: floor
         val bars = mutableListOf<Candle>()
         var from = start
         for (page in 0 until 6) {

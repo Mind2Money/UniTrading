@@ -10,6 +10,13 @@ class ChartViewMemoryTest {
     private fun bars(count: Int, from: Int = 0) = (from until from + count).map { Candle(it * 60_000L, 100, 110, 90, 105) }
     private fun memory(store: MemorySnapshotStore) = ChartViewMemory(store, Dispatchers.Unconfined, saveDelayMs = 0)
 
+    @Test fun theWiderViewSurvivesRestart() {
+        val store = MemorySnapshotStore()
+        memory(store).keep("MESZ6|5", SavedChartView(2400.0))
+        assertEquals(2400.0, memory(store).view("MESZ6|5")?.count)
+        assertEquals(2400.0, memory(store).count)
+    }
+
     @Test fun aViewOnTheNewestBarKeepsFollowingIt() {
         val view = SavedChartView.of(ChartViewport(40.0, 0.0), bars(100), null)
         assertEquals(SavedChartView(40.0), view)
