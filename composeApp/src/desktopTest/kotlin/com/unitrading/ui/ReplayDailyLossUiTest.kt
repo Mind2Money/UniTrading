@@ -121,7 +121,8 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithText("账户触及最大总亏损。").assertExists()
     }
 
-    private fun openHundredMclLots(lowAfterEntry: Long, addPending: Boolean = false, adverseAddition: Boolean = false): ReplayRecords {
+    private fun openHundredMclLots(lowAfterEntry: Long, addPending: Boolean = false, adverseAddition: Boolean = false,
+        secondAdverse: Boolean = false): ReplayRecords {
         val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
         val mcl = Instrument("@MCL", "Micro Crude Oil", "期货", 2, tickSize = 1, tickValueMicrosPerLot = 1_000_000,
             minLotsHundredths = 100, maxLotsHundredths = 10_000, lotStepHundredths = 100, quantityDecimals = 0,
@@ -142,10 +143,14 @@ class ReplayDailyLossUiTest {
             compose.onNodeWithTag("order-kind-LIMIT").performScrollTo().performClick()
             compose.onNodeWithTag(if (adverseAddition) "order-side-BUY" else "order-side-SELL").performScrollTo().performClick()
             compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement(if (adverseAddition) "100" else "1")
-            compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(if (adverseAddition) "82.42" else "83.00")
+            compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(if (adverseAddition) "82.42" else "82.48")
             compose.onNodeWithTag("review-order").performScrollTo().performClick()
             val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
             assertTrue(buttons.keys.any { it.startsWith("撤单 ") })
+            if (secondAdverse) {
+                compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("82.37")
+                compose.onNodeWithTag("review-order").performScrollTo().performClick()
+            }
         }
         compose.onNodeWithTag("replay-next").performClick()
         return records
@@ -191,7 +196,8 @@ class ReplayDailyLossUiTest {
     }
 
     @Test fun mclSoftStopRecalculatesAfterAPendingAdditionFillsFirst() {
-        val records = openHundredMclLots(8_237, adverseAddition = true)
+        val records = openHundredMclLots(8_235, adverseAddition = true, secondAdverse = true)
+        compose.onNodeWithText("回放考核失败").assertDoesNotExist()
         compose.onNodeWithTag("replay-realized").assertTextContains("-1100.00", substring = true)
         compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()

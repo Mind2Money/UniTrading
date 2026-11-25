@@ -215,8 +215,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     }
     fun accept(next: ReplayState, evaluationBar: Candle? = null) {
         val sourceBar = evaluationBar ?: bars[next.index]
-        val softPrice = replaySoftStopPrice(spec, riskConfig, risk, state, next, sourceBar)
-        var checked = next
+        val reconstructed = replaySoftStopAfterAdditions(spec, riskConfig, risk, state, next, sourceBar)
+        val softPrice = reconstructed?.price ?: replaySoftStopPrice(spec, riskConfig, risk, state, next, sourceBar)
+        var checked = reconstructed?.state ?: next
         if (softPrice != null) {
             checked = checked.copy(pending = emptyList())
             checked.positions.toList().forEach { position ->

@@ -84,6 +84,47 @@ internal fun replaySoftStopBeforeAdvance(spec: Instrument, config: ReplayRiskCon
     return candidate
 }
 
+internal data class ReplaySoftStopExecution(val state: ReplayState, val price: Long)
+
+/** Reconstruct same-side additions on the adverse path, stopping before later pending orders can fill. */
+internal fun replaySoftStopAfterAdditions(spec: Instrument, config: ReplayRiskConfig, risk: ReplayRiskState,
+    before: ReplayState, after: ReplayState, bar: Candle): ReplaySoftStopExecution? {
+    if (config.dailyLossMode != ReplayDailyLoss.SOFT || config.maxDailyLossMicros == null ||
+        after.index != before.index + 1 || before.positions.isEmpty() || before.trades != after.trades) return null
+    val side = before.positions.first().side
+    if (before.positions.any { it.side != side } || after.positions.any { it.side != side }) return null
+    val oldIds = before.positions.map { it.id }.toSet()
+    if (after.positions.filter { it.id in oldIds } != before.positions) return null
+    val additions = after.positions.filter { it.id !in oldIds }
+    if (additions.isEmpty() || additions.any { it.openedAtMs != bar.timeMs }) return null
+    fun atOpen(position: com.unitrading.broker.Position) = before.pending.any { order ->
+        if (order.side != position.side || order.quantity != position.lotsHundredths) false else when (order.kind) {
+            OrderKind.LIMIT -> position.entryPrice == order.price &&
+                if (side == Side.BUY) bar.open <= order.price else bar.open >= order.price
+            OrderKind.STOP -> position.entryPrice == (if (side == Side.BUY) maxOf(bar.open, order.price) else minOf(bar.open, order.price)) &&
+                if (side == Side.BUY) bar.open >= order.price else bar.open <= order.price
+            OrderKind.MARKET -> false
+        }
+    }
+    val opened = additions.filter(::atOpen)
+    val adverse = additions.filterNot(::atOpen).filter {
+        if (side == Side.BUY) it.entryPrice <= bar.open else it.entryPrice >= bar.open
+    }.groupBy { it.entryPrice }.toList().let { rows -> if (side == Side.BUY) rows.sortedByDescending { it.first } else rows.sortedBy { it.first } }
+    var active = before.copy(positions = before.positions + opened)
+    var cursor = bar.open
+    fun check(end: Long): ReplaySoftStopExecution? {
+        val segment = bar.copy(open = cursor, high = maxOf(cursor, end), low = minOf(cursor, end), close = end)
+        val price = replaySoftStopPrice(spec, config, risk, active, active.copy(index = active.index + 1), segment) ?: return null
+        return ReplaySoftStopExecution(active.copy(index = after.index, pending = emptyList(), nextId = after.nextId), price)
+    }
+    for ((price, group) in adverse) {
+        check(price)?.let { return it }
+        active = active.copy(positions = active.positions + group)
+        cursor = price
+    }
+    return check(if (side == Side.BUY) bar.low else bar.high)
+}
+
 /** An isolated pending entry that is known to have filled at the opening price of this candle. */
 internal fun replaySinglePendingAtOpen(spec: Instrument, before: ReplayState, bar: Candle): ReplayState? {
     if (before.positions.isNotEmpty() || before.pending.size != 1) return null
