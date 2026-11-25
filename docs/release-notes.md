@@ -67,7 +67,7 @@
 - **图表设置与桌面退出：**图表时区和退出时保存布局位于“设置 → 外观与图表”。默认退出时自动保存图表和窗口布局，不再弹窗询问；关闭后退出时放弃本次布局修改。
 - **平板界面：**优化 Android 平板和 iPad 的顶部工具栏、账户信息、侧栏及价格轴，为图表保留更多空间。部分调整已包含在后续发布的 v1.7.0 平板安装包中。
 
-**安装与使用说明：**提供 Windows x64、macOS Apple Silicon、两个签名 Android APK（标准版和内置 GeckoView 版）以及未签名 iOS IPA。iOS IPA 包含主应用和小组件，需使用有效的 Apple 证书和描述文件分别签名后才能安装；尚未在 iOS 真机验证。连续合约月份按价格推断；回放使用 K 线模拟成交，柱内价格顺序无法完整还原。实盘使用前请先在券商模拟账户核对行情、订单和风控。
+**安装与使用说明：**提供 Windows x64、macOS Apple Silicon、两个签名 Android APK（标准版和内置 GeckoView 版）以及未签名 iOS IPA。macOS 包未公证。iOS IPA 包含主应用和小组件，需使用有效的 Apple 证书和描述文件分别签名后才能安装；尚未在 iOS 真机验证。连续合约月份按价格推断；回放使用 K 线模拟成交，柱内价格顺序无法完整还原。实盘使用前请先在券商模拟账户核对行情、订单和风控。
 
 ## English
 
@@ -130,7 +130,7 @@
 - **Chart settings and desktop exit:** Chart time zone and save-on-exit controls are under Settings → Appearance & chart. Chart and window layouts are saved automatically by default without an exit prompt; disabling this discards layout changes on exit.
 - **Tablet interface:** Improved the top toolbar, account information, side panel, and price axis on Android tablets and iPad, leaving more space for the chart. Some changes were already included in later v1.7.0 tablet packages.
 
-**Installation and usage:** The release includes Windows x64, macOS Apple Silicon, two signed Android APKs (standard and bundled GeckoView), and an unsigned iOS IPA. The IPA contains the app and widget; both must be signed with valid Apple certificates and provisioning profiles before installation. The iOS build has not been verified on a physical device. Continuous-contract months are inferred from prices, and OHLC replay cannot recover the precise intrabar path. Verify quotes, orders, and risk controls in a broker demo account before live use.
+**Installation and usage:** The release includes Windows x64, macOS Apple Silicon, two signed Android APKs (standard and bundled GeckoView), and an unsigned iOS IPA. The macOS package is not notarized. The IPA contains the app and widget; both must be signed with valid Apple certificates and provisioning profiles before installation. The iOS build has not been verified on a physical device. Continuous-contract months are inferred from prices, and OHLC replay cannot recover the precise intrabar path. Verify quotes, orders, and risk controls in a broker demo account before live use.
 
 # v1.7.0
 
