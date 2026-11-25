@@ -612,7 +612,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }, contentPadding = PaddingValues(horizontal = 6.dp)) {
                                 Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                             } }
-                            TextButton(onClick = { playing = false; confirmReset = true }, modifier = Modifier.testTag("replay-reset")) { Text("重选起点") }
+                            TextButton(onClick = {
+                                playing = false
+                                if (completionFinalized && risk.targetReached) restartReplay() else confirmReset = true
+                            }, modifier = Modifier.testTag("replay-reset")) { Text("重选起点") }
                             Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -662,7 +665,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             Text(spec.symbol, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    message?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    message?.let {
+                        Text(it, color = if (completionFinalized && it.startsWith("本次回放")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                     if (sideTab == 0) {
                         OrderTicket(ticketSpec, replayQuote, BrokerCapabilities(hedging = false), draft,
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
@@ -868,7 +874,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     runCatching { requireNotNull(records).save(currentRecord("已达成")) }
                         .onSuccess {
                             currentRecordDeleted = false; completionFinalized = true; showSuccess = false
-                            message = "本次回放已保存，可查看分析或重新开始。"
+                            message = "本次回放已保存，可查看分析或重选起点。"
                         }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
                 }, modifier = Modifier.fillMaxWidth().testTag("replay-success-save"), enabled = records != null,
                     colors = brandButtonColors()) { Text("保存本次回放") }
@@ -878,7 +884,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         temporaryRecords.removeAll { it.id == recordId }
                         temporaryRecords.add(completed)
                         currentRecordDeleted = true; completionFinalized = true; showSuccess = false
-                        message = "本次回放仅临时保留，可查看分析或重新开始；关闭回放后清除。"
+                        message = "本次回放仅临时保留，可查看分析或重选起点；关闭回放后清除。"
                     }
                         .onFailure { message = "回放记录删除失败：${it.message ?: "请检查存储"}" }
                 }, modifier = Modifier.fillMaxWidth().testTag("replay-success-discard")) { Text("不保存本次回放") }

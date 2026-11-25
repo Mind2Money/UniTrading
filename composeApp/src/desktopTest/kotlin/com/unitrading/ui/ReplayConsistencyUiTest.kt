@@ -94,7 +94,6 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("replay-report-trade-count").assertTextContains("1 笔", substring = true)
         compose.onNodeWithTag("replay-report-close").performClick()
         compose.onNodeWithTag("replay-reset").performScrollTo().performClick()
-        compose.onNodeWithTag("replay-confirm-reset").performClick()
         compose.onNodeWithTag("replay-next").assertIsEnabled()
         compose.onNodeWithTag("replay-close").performClick()
         compose.runOnIdle { assertTrue(exited.get()); assertEquals("已达成", records.list().single().status) }
@@ -114,6 +113,20 @@ class ReplayConsistencyUiTest {
             assertFalse(exited.get())
             assertEquals(5_000_000L, records.list().single().trades.single().netPnlMicros)
         }
+    }
+
+    @Test fun closingAfterSavingKeepsTheCompletedRecord() {
+        val bars = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
+            Candle(start + 60_000, 10_000, 10_100, 10_000, 10_000))
+        val records = ReplayRecords(MemorySnapshotStore())
+        val exited = AtomicBoolean()
+        open(bars, config(5_000_000), records, exited)
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-success-save").performClick()
+        compose.onNodeWithTag("replay-close").performClick()
+        compose.onNodeWithText("关闭回放").performClick()
+        compose.runOnIdle { assertTrue(exited.get()); assertEquals("已达成", records.list().single().status) }
     }
 
     @Test fun unsavedResultRemainsAnalyzableAfterRestartButDisappearsOnExit() {
@@ -145,7 +158,6 @@ class ReplayConsistencyUiTest {
         compose.runOnIdle { assertTrue(records.list().isEmpty()) }
         compose.onNodeWithTag("replay-report-close").performClick()
         compose.onNodeWithTag("replay-reset").performScrollTo().performClick()
-        compose.onNodeWithTag("replay-confirm-reset").performClick()
         compose.onNodeWithTag("replay-next").assertIsEnabled()
         compose.onNodeWithTag("replay-records-picker").performClick()
         compose.onNodeWithText("临时记录将在关闭回放后清除").assertExists()
@@ -231,5 +243,9 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("replay-dashboard").performScrollToNode(hasTestTag("replay-report-trade-count"))
         compose.onNodeWithTag("replay-report-trade-count").assertTextContains("1 笔", substring = true)
         assertFalse(exited.get())
+        compose.onNodeWithTag("replay-report-close").performClick()
+        compose.onNodeWithTag("replay-close").performClick()
+        compose.onNodeWithText("关闭回放").performClick()
+        assertTrue(exited.get())
     }
 }
