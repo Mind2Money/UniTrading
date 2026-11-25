@@ -324,17 +324,23 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
             val result = runCatching {
                 val nextBar = bars[state.index + 1]
-                if (replayProfitAtOpen(spec, riskConfig, risk, state, nextBar)) {
+                val pendingAtOpen = replaySinglePendingAtOpen(spec, state, nextBar)
+                val pendingProfitAtOpen = pendingAtOpen?.let { replayProfitAtOpen(spec, riskConfig, risk, it, nextBar) } == true
+                if (replayProfitAtOpen(spec, riskConfig, risk, state, nextBar) || pendingProfitAtOpen) {
                     val openingBar = nextBar.copy(high = nextBar.open, low = nextBar.open, close = nextBar.open)
-                    accept(state.copy(index = state.index + 1, lastNotice = null), openingBar)
+                    accept((if (pendingProfitAtOpen) pendingAtOpen!! else state).copy(index = state.index + 1, lastNotice = null), openingBar)
                 } else {
                     val softPrice = replaySoftStopBeforeAdvance(spec, riskConfig, risk, state, nextBar)
-                    if (softPrice != null) {
-                        val triggerBar = nextBar.copy(open = softPrice, high = softPrice, low = softPrice, close = softPrice)
-                        accept(state.copy(index = state.index + 1, lastNotice = null), triggerBar)
+                    val pendingSoftPrice = pendingAtOpen?.let { replaySoftStopBeforeAdvance(spec, riskConfig, risk, it, nextBar) }
+                    if (softPrice != null || pendingSoftPrice != null) {
+                        val triggerPrice = softPrice ?: pendingSoftPrice!!
+                        val triggerBar = nextBar.copy(open = triggerPrice, high = triggerPrice, low = triggerPrice, close = triggerPrice)
+                        accept((if (softPrice == null) pendingAtOpen!! else state).copy(index = state.index + 1, lastNotice = null), triggerBar)
                     } else {
-                        val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
-                            state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
+                        val pendingProfitBeforeTp = pendingAtOpen?.let { replayProfitPrecedesTakeProfit(spec, riskConfig, risk, it, nextBar) } == true
+                        val nextState = if (pendingProfitBeforeTp) pendingAtOpen!!.copy(index = state.index + 1, lastNotice = null)
+                            else if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar)) state.copy(index = state.index + 1, lastNotice = null)
+                            else state.advance(spec, nextBar)
                         accept(nextState)
                     }
                 }

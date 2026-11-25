@@ -40,6 +40,7 @@ class ReplaySoftStopTest {
     @Test fun aCloserProtectiveStopRunsBeforeTheAccountLimit() {
         val bar = Candle(start.timeMs + 60_000, 10_000, 10_600, 9_700, 10_500)
         assertNull(replaySoftStopBeforeAdvance(spec, config, risk, open(stop = 9_950), bar))
+        assertEquals(9_900L, replaySoftStopBeforeAdvance(spec, config, risk, open(stop = 9_900), bar))
         assertEquals(9_900L, replaySoftStopBeforeAdvance(spec, config, risk, open(stop = 9_800), bar))
     }
 
@@ -49,6 +50,8 @@ class ReplaySoftStopTest {
         assertNull(replaySoftStopBeforeAdvance(spec, config, risk, before, bar))
         val favorable = open().enqueue(spec, Side.SELL, OrderKind.LIMIT, 100, 10_100, null, null, start.close)
         assertEquals(9_900L, replaySoftStopBeforeAdvance(spec, config, risk, favorable, bar))
+        val atLimit = open().enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_900, null, null, start.close)
+        assertEquals(9_900L, replaySoftStopBeforeAdvance(spec, config, risk, atLimit, bar))
     }
 
     @Test fun newlyFilledPendingPositionCanStillHitTheSoftStop() {
@@ -56,6 +59,13 @@ class ReplaySoftStopTest {
         val bar = Candle(start.timeMs + 60_000, 10_000, 10_025, 9_800, 9_800)
         val after = before.advance(spec, bar)
         assertEquals(9_850L, replaySoftStopPrice(spec, config, risk, before, after, bar))
+    }
+
+    @Test fun aPendingEntryAtTheOpenCanHitTheSoftStopBeforeItsLaterTakeProfit() {
+        val before = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_900, null, 10_350, 10_000)
+        val bar = Candle(start.timeMs + 60_000, 9_900, 10_400, 9_800, 10_400)
+        val opened = assertNotNull(replaySinglePendingAtOpen(spec, before, bar))
+        assertEquals(9_800L, replaySoftStopBeforeAdvance(spec, config, risk, opened, bar))
     }
 
     @Test fun hardAndDisabledDailyStopsDoNotUseTheSoftFlatteningPath() {

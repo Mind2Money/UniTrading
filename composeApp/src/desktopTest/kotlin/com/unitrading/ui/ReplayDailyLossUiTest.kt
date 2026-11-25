@@ -2,6 +2,7 @@ package com.unitrading.ui
 
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.geometry.Offset
 import com.unitrading.app.ChartTimeZone
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ReplayRecords
@@ -15,6 +16,7 @@ import org.junit.Test
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class ReplayDailyLossUiTest {
@@ -119,7 +121,7 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithText("账户触及最大总亏损。").assertExists()
     }
 
-    private fun openHundredMclLots(lowAfterEntry: Long): ReplayRecords {
+    private fun openHundredMclLots(lowAfterEntry: Long, addPending: Boolean = false): ReplayRecords {
         val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
         val mcl = Instrument("@MCL", "Micro Crude Oil", "期货", 2, tickSize = 1, tickValueMicrosPerLot = 1_000_000,
             minLotsHundredths = 100, maxLotsHundredths = 10_000, lotStepHundredths = 100, quantityDecimals = 0,
@@ -136,6 +138,15 @@ class ReplayDailyLossUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("100")
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        if (addPending) {
+            compose.onNodeWithTag("order-kind-LIMIT").performScrollTo().performClick()
+            compose.onNodeWithTag("order-side-SELL").performScrollTo().performClick()
+            compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("1")
+            compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("83.00")
+            compose.onNodeWithTag("review-order").performScrollTo().performClick()
+            val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+            assertTrue(buttons.keys.any { it.startsWith("撤单 ") })
+        }
         compose.onNodeWithTag("replay-next").performClick()
         return records
     }
@@ -157,18 +168,49 @@ class ReplayDailyLossUiTest {
     }
 
     @Test fun mclSoftLossFlattensBeforeTheSameBarRalliesPastConsistency() {
-        val records = openHundredMclLots(8_237)
+        val records = openHundredMclLots(8_237, addPending = true)
         compose.onNodeWithTag("replay-realized").assertTextContains("-1000.00", substring = true)
         compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
         assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
+        assertFalse(buttons.keys.any { it.startsWith("撤单 ") })
+        val chart = compose.onNodeWithTag("trading-chart")
+        val size = chart.fetchSemanticsNode().size
+        chart.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .65f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("plot-menu-BUY-MARKET").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        chart.fetchSemanticsNode().config[OrderTagButtons]["提交买入订单"]?.let { action -> chart.performMouseInput { click(action.center) } }
+        assertFalse(chart.fetchSemanticsNode().config[OrderTagButtons].keys.any { it.startsWith("平仓 ") })
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
         compose.runOnIdle { assertEquals("每日软止损自动平仓", records.list().single().trades.single().reason) }
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun pendingEntryAtTheOpenHitsConsistencyBeforeALaterTakeProfit() {
+        val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
+        val timeline = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
+            Candle(start + 60_000, 9_900, 10_400, 9_875, 9_900))
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 50_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.SOFT, consistencyPercent = 40)
+        val records = ReplayRecords(MemorySnapshotStore())
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, timeline, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("order-kind-LIMIT").performScrollTo().performClick()
+        compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("99.00")
+        compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-tp").performScrollTo().performTextReplacement("103.50")
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-realized").assertTextContains("+20.00", substring = true)
+        compose.onNodeWithTag("replay-consistency-status").assertTextContains("已触及", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
+        compose.runOnIdle { assertEquals("一致性自动平仓", records.list().single().trades.single().reason) }
     }
     @Test fun noDailyStopAllowsTradingWhenTheDailyAmountIsCrossed() {
         val records = ReplayRecords(MemorySnapshotStore())

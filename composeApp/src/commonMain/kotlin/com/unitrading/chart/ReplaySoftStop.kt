@@ -64,7 +64,7 @@ internal fun replaySoftStopBeforeAdvance(spec: Instrument, config: ReplayRiskCon
         val targetAtOpen = position.takeProfit?.let { if (position.side == Side.BUY) bar.open >= it else bar.open <= it } == true
         if (stopAtOpen || targetAtOpen) return null
         val earlierStop = position.stopLoss?.let {
-            if (position.side == Side.BUY) it in candidate..bar.open else it in bar.open..candidate
+            if (position.side == Side.BUY) it > candidate && it <= bar.open else it >= bar.open && it < candidate
         } == true
         if (earlierStop) return null
     }
@@ -74,6 +74,26 @@ internal fun replaySoftStopBeforeAdvance(spec: Instrument, config: ReplayRiskCon
         OrderKind.STOP -> if (order.side == Side.BUY) price >= order.price else price <= order.price
         OrderKind.MARKET -> false
     }
-    if (before.pending.any { hit(it, bar.open) || hit(it, candidate) }) return null
+    if (before.pending.any { hit(it, bar.open) || hit(it, candidate) && it.price != candidate }) return null
     return candidate
+}
+
+/** An isolated pending entry that is known to have filled at the opening price of this candle. */
+internal fun replaySinglePendingAtOpen(spec: Instrument, before: ReplayState, bar: Candle): ReplayState? {
+    if (before.positions.isNotEmpty() || before.pending.size != 1) return null
+    val order = before.pending.single()
+    val atOpen = when (order.kind) {
+        OrderKind.LIMIT -> if (order.side == Side.BUY) bar.open <= order.price else bar.open >= order.price
+        OrderKind.STOP -> if (order.side == Side.BUY) bar.open >= order.price else bar.open <= order.price
+        OrderKind.MARKET -> false
+    }
+    if (!atOpen) return null
+    val fill = when (order.kind) {
+        OrderKind.LIMIT -> order.price
+        OrderKind.STOP -> if (order.side == Side.BUY) maxOf(bar.open, order.price) else minOf(bar.open, order.price)
+        OrderKind.MARKET -> return null
+    }
+    return runCatching {
+        before.copy(pending = emptyList(), lastNotice = null).open(spec, bar.copy(close = fill), order.side, order.quantity, order.stop, order.target)
+    }.getOrNull()
 }

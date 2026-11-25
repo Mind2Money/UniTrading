@@ -82,6 +82,16 @@ class ReplayProfitTest {
         assertEquals(10_300L, trigger.price)
     }
 
+    @Test fun aPendingEntryAtTheOpenCannotSkipTheCapForALaterTakeProfit() {
+        val before = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_900, null, 10_350, 10_000)
+        val bar = Candle(start.timeMs + 60_000, 9_900, 10_400, 9_875, 9_900)
+        val opened = assertNotNull(replaySinglePendingAtOpen(spec, before, bar))
+        assertTrue(replayProfitPrecedesTakeProfit(spec, config, risk, opened, bar))
+        val trigger = assertNotNull(replayProfitTrigger(spec, config, risk, before, opened.copy(index = 1), bar))
+        assertEquals(10_300L, trigger.price)
+        assertEquals(ReplayProfitKind.CONSISTENCY, trigger.kind)
+    }
+
     @Test fun accountCapBeforeTakeProfitIsNotSkipped() {
         val bar = Candle(start.timeMs + 60_000, 10_000, 10_800, 9_975, 10_000)
         val laterTp = ReplayState(0).open(spec, start, Side.BUY, 100, null, 10_600)
