@@ -83,40 +83,53 @@ class CandleZoomUiTest {
         assertTrue(after < step, "the rendered body must not reach its neighbor")
     }
 
-    @Test fun aFullWidthChartCanShowAbout2400Candles() {
+}
+
+@OptIn(ExperimentalTestApi::class)
+class CandleZoomUiTestFullWidth {
+    private val instrument = Instrument("TEST", "测试", "期货", priceDecimals = 2, tickValueMicrosPerLot = 500_000)
+    private val actions = ChartOrderActions({ error("unused") }, {}, { _, _ -> }, false, { _, _ -> error("unused") }, { _, _ -> },
+        false, { _, _, _ -> error("unused") }, { _, _, _ -> }, { _, _, _ -> })
+
+    private fun state(description: String) = description.split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+
+    @Test fun aFullWidthChartCanShowAbout2400Candles() = runDesktopComposeUiTest(width = 1400, height = 600) {
         val many = (0 until 3000).map { i ->
             val open = 10_000L + (i % 80) * 10L
             Candle(i * 60_000L, open, open + 35, open - 25, open + 20)
         }
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
             Box(Modifier.requiredSize(1400.dp, 600.dp)) {
                 TradingChart("account", instrument, null, many, Timeframe.M1, {}, emptyList(), emptyList(), null, null,
                     null, null, emptyList(), actions, Modifier.fillMaxSize())
             }
         } }
-        compose.waitForIdle()
-        repeat(16) { compose.onNodeWithTag("chart-zoom-out").performClick() }
-        compose.waitForIdle()
-        val s = state()
+        waitForIdle()
+        repeat(16) { onNodeWithTag("chart-zoom-out").performClick() }
+        waitForIdle()
+        val s = state(onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription])
         assertEquals(2400.0, s.getValue("bars").toDouble(), .001)
         assertTrue(s.getValue("barStep").toFloat() in 0f..1f)
         assertTrue(s.getValue("barBody").toFloat() > 0f)
         val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/zoom-2400").also { it.mkdirs() }
-        ImageIO.write(compose.onNodeWithTag("trading-chart").captureToImage().toAwtImage(), "png", File(folder, "chart.png"))
+        val image = onNodeWithTag("trading-chart").captureToImage().toAwtImage()
+        assertTrue(image.width >= 1400, "The screenshot must include the complete single chart")
+        ImageIO.write(image, "png", File(folder, "chart.png"))
     }
 
-    @Test fun savedWideZoomIsNotClampedBeforeTheChartIsMeasured() {
+    @Test fun savedWideZoomIsNotClampedBeforeTheChartIsMeasured() = runDesktopComposeUiTest(width = 1400, height = 600) {
         val many = (0 until 3000).map { Candle(it * 60_000L, 10_000, 10_150, 9_950, 10_100) }
         val views = ChartViewMemory(MemorySnapshotStore(), Dispatchers.Unconfined, saveDelayMs = 0).also {
             it.keep(chartViewKey(instrument.symbol, Timeframe.M1), SavedChartView(2400.0))
         }
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
             Box(Modifier.requiredSize(1400.dp, 600.dp)) {
                 TradingChart("account", instrument, null, many, Timeframe.M1, {}, emptyList(), emptyList(), null, null,
                     null, null, emptyList(), actions, Modifier.fillMaxSize(), chrome = ChartChrome(views = views))
             }
         } }
-        compose.waitForIdle()
-        assertEquals(2400.0, state().getValue("bars").toDouble(), .001)
+        waitForIdle()
+        val s = state(onNodeWithTag("trading-chart").fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+        assertEquals(2400.0, s.getValue("bars").toDouble(), .001)
     }
 }
