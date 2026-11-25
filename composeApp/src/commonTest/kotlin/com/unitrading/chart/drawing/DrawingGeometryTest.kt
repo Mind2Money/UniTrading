@@ -25,7 +25,10 @@ class DrawingGeometryTest {
         assertEquals(START + 101 * HOUR, c.timeAt(101.0))
         val point = DrawingPoint(START + 30 * HOUR, 40_200.0)
         val pixel = c.offset(point)
-        assertEquals(point, c.pointAt(pixel))
+        val roundTrip = c.pointAt(pixel)
+        assertEquals(point.timeMs, roundTrip.timeMs)
+        // Screen coordinates use floats; price round trips can differ by a fraction of a pixel.
+        assertEquals(point.price, roundTrip.price, 0.001)
     }
 
     @Test fun timeInsideASessionGapLandsOnTheNextBarCenterAtMost() {
@@ -237,6 +240,7 @@ class DrawingGeometryTest {
         val view = com.unitrading.chart.drawing.zoomedViewport(20.0, 49.0, 100)
         assertEquals(30.0, view.count)
         assertEquals(19.5, view.start(100), 1e-9)
+        assertEquals(2400.0, com.unitrading.chart.drawing.zoomedViewport(20.0, 2519.0, 3000).count)
     }
 
     @Test fun ratiosPrintWithoutTrailingZeros() {

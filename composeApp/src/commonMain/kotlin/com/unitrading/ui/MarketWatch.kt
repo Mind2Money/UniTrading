@@ -30,6 +30,7 @@ import com.unitrading.app.MemorySnapshotStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 @Composable
@@ -56,6 +57,9 @@ internal fun MarketWatch(
     var searching by remember(plugin) { mutableStateOf(false) }
     var searchError by remember(plugin) { mutableStateOf<String?>(null) }
     var retry by remember(plugin) { mutableIntStateOf(0) }
+    var refreshing by remember(plugin) { mutableStateOf(false) }
+    var refreshError by remember(plugin) { mutableStateOf<String?>(null) }
+    val refreshScope = rememberCoroutineScope()
     val remote = plugin.descriptor.environment != BrokerEnvironment.LOCAL_DEMO
     val symbols = lists[broker].orEmpty()
     val activity = remember(account) { marketActivities(account) }
@@ -97,6 +101,15 @@ internal fun MarketWatch(
                 Icon(AppIcons.Check, "完成编辑")
             }
             else {
+                ActionIcon(AppIcons.Sync, "更新连续合约", "market-refresh", enabled = market.connected && !refreshing) {
+                    refreshScope.launch {
+                        refreshing = true; refreshError = null
+                        try { plugin.refreshContinuousQuotes(symbols.toSet()) }
+                        catch (cancel: CancellationException) { throw cancel }
+                        catch (_: Exception) { refreshError = "更新连续合约失败，请检查行情连接" }
+                        finally { refreshing = false }
+                    }
+                }
                 ActionIcon(AppIcons.Add, "添加交易品种", "market-add") { adding = true }
                 IconButton({ editing = true }, Modifier.testTag("market-edit")) {
                     Icon(AppIcons.Edit, "编辑自选")
@@ -177,6 +190,7 @@ internal fun MarketWatch(
                 }
             }
         }
+        refreshError?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = colors.Loss, style = type.bodySmall) }
         saveError?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = colors.Loss, style = type.bodySmall) }
     }
 }

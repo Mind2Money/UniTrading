@@ -2,6 +2,30 @@
 
 ## 简体中文
 
+- 修复回放的一致性盈利上限被软日损状态屏蔽；触及一致性上限或每日软止损时自动平仓、撤单，并禁止当日新开仓。
+
+- 回放达到盈利目标后可保存或临时保留记录，继续留在回放界面分析并重新开始；临时记录关闭回放后清除。
+
+- 设置的“其他”分组移至最下方；图表最多可显示约 2400 根 K 线，并扩大券商行情缓存以支持更远的缩放。
+
+- 回放新增无日止损选项，日亏损金额与最大总亏损同步；默认采用软止损和日终追踪。退出保存布局与活动记录归入设置的“其他”分组。
+
+- 桌面端退出时默认自动保存图表和窗口布局，可在设置中关闭；回放记录列表支持逐条删除。
+
+- 非股指连续期货保留券商连续图表，使用最近三个未到期月份的最新成交价一次匹配买卖报价与下单月份；匹配后保留结果，行情栏可手动更新并并发查询。候选数据不全或价格相同时保持待确认；价格匹配是推断，需在券商模拟账户核验。
+
+- 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
+
+- 回放支持每日一致性盈利上限；触及上限自动平仓并暂停当日开仓，达到盈利目标后可保存或丢弃记录并退出。精简回放下单面板并调整标题栏。
+
+- 修复回放对象树的指标隐藏和删除；主界面与回放均可调整绘图、指标与 K 线的前后层级，精简回放入口和下单说明。
+
+- 将回放账户状态移至窗口底部，合并播放与起点定位控制，调整回放入口的考核规则和开关布局。
+
+- 压缩回放入口的考核规则，突出期货资产选择；一次点击开始回放并自动读取历史，调整回放标题栏。
+
+- 改进历史回放入口、图表下单与平仓操作，新增净值、月度、星期、分时段和交易频率分析；可保存或丢弃止损失败后的已平仓记录。
+
 - 优化 Android 平板和 iPad 图表空间：缩小顶部和右侧控件，账户资金信息并入交易栏，价格轴根据文字宽度自适应；保留平仓确认。
 
 - 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
@@ -11,6 +35,30 @@
 - 图表指标菜单可粘贴 Pine v5/v6 子集脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形。新建 Pine 指标默认使用简单的 20 周期布林带。脚本只在本机读取当前图表行情，不运行策略、不下单。见 [Pine 指标与绘图](pine-indicators.md)。
 
 ## English
+
+- Fix replay consistency limits being masked by a soft daily stop. Both limits flatten positions, cancel pending orders and block new entries for the trading day.
+
+- After reaching a replay profit target, save the result or keep it temporarily for analysis, and restart without leaving the replay. Temporary records are cleared when the replay closes.
+
+- Move Other to the bottom of settings, and allow charts to zoom out to approximately 2,400 candles with deeper broker history caches.
+
+- Add an option without a separate daily stop to replay, synchronizing its displayed daily loss amount with the total loss limit. Soft daily loss and end-of-day trailing are now the defaults. Group exit saving and the activity log under Other in settings.
+
+- On desktop, save charts and window layouts automatically on exit by default; this can be disabled in settings. Replay records can be deleted individually.
+
+- Preserve broker continuous charts for non-index futures and match their latest price once against the three nearest unexpired months. The resulting quote and execution month stays fixed until manually refreshed; watch-list products resolve concurrently. Incomplete or ambiguous prices remain unconfirmed. This heuristic needs broker demo validation.
+
+- Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
+
+- Add a replay daily consistency cap, automatic flattening and a save-or-discard success dialog; simplify the replay order panel and header.
+
+- Fix indicator visibility and removal in replay; allow chart objects to be moved above or below candles in both workspaces, and simplify replay text.
+
+- Move replay account status to a separate bottom bar and combine playback and start-position controls; refine replay rule and option layouts.
+
+- Compact replay risk settings, distinguish the futures selector, start replay in one step and refine the replay title bar.
+
+- Refine replay setup, chart orders and position closing; add equity, monthly, weekday, intraday and trade-frequency analysis, with save-or-discard options after a risk failure.
 
 - Give Android tablets and iPad more chart space with compact controls, an integrated account and trade bar, and a content-aware price axis. Flatten confirmation remains in place.
 

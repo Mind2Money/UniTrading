@@ -241,6 +241,25 @@ class IncrementalChartTest {
         assertTrue(saved.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == BAR_STEP })
     }
 
+    @Test fun priorTwoThousandBarCacheIsExtendedFromItsOldestBar() = runTest {
+        val anchor = CACHE_NOW - 10 * BAR_STEP
+        val store = Store()
+        val old = List(LEGACY_CHART_BARS) { i -> Candle(anchor - (LEGACY_CHART_BARS - 1 - i) * BAR_STEP,
+            5_500_000_000, 5_502_000_000, 5_499_000_000, 5_500_250_000) }
+        CandleCache(store, NAMESPACE, CHART_BARS).write("MESZ6" to Timeframe.M5, old)
+        val wire = Wire().apply { serverBars = List(CHART_BARS + 500) { CACHE_NOW - it * BAR_STEP }; pageLimit = 700 }
+        val broker = ready(wire, store)
+        broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val bars = broker.history("MESZ6", Timeframe.M5)
+        assertEquals(CHART_BARS, bars.size)
+        assertEquals(CACHE_NOW, bars.last().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == BAR_STEP })
+        assertTrue(wire.charts.drop(1).any { range(it).str("closestTimestamp") == Instant.fromEpochMilliseconds(old.first().timeMs).toString() })
+        assertFalse(wire.liveId.toString() in wire.cancelled)
+        broker.disconnect(); runCurrent()
+        assertEquals(CHART_BARS, CandleCache(store, NAMESPACE, CHART_BARS).read("MESZ6" to Timeframe.M5, CACHE_NOW).size)
+    }
+
     @Test fun failedBackfillKeepsTheOldCheckpointAndTheSameChartCanRetry() = runTest {
         val anchor = CACHE_NOW - 10 * BAR_STEP
         val store = Store()
@@ -373,7 +392,7 @@ class IncrementalChartTest {
         broker.watch("MESZ6", Timeframe.M5); runCurrent()
         assertEquals(CHART_BARS.toLong(), range(wire.charts.first()).long("asMuchAsElements"))
         val pages = wire.charts.drop(1).map(::range)
-        assertEquals(2, pages.size)
+        assertEquals(3, pages.size)
         val floor = Instant.fromEpochMilliseconds(chartHistoryFloor(Timeframe.M5, CACHE_NOW)).toString()
         assertTrue(pages.all { it.str("asFarAsTimestamp") == floor && it["asMuchAsElements"] == null })
         assertTrue(pages.zipWithNext().all { (a, b) -> Instant.parse(a.str("closestTimestamp")!!) > Instant.parse(b.str("closestTimestamp")!!) })

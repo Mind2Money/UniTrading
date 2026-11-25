@@ -25,6 +25,23 @@ class RithmicBrokerTest {
         return broker
     }
 
+    @Test fun replayHistoryRequestsTheEntireRangeInBoundedWindows() = runTest {
+        val server = FakeRithmicServer()
+        val broker = ready(server)
+        server.bars = 2_000; server.filterHistoryRange = true
+        val before = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size
+        val end = FAKE_TIME / Timeframe.M1.millis * Timeframe.M1.millis
+        val start = end - 1_801 * Timeframe.M1.millis
+        val result = broker.historicalRange("MESZ6", Timeframe.M1, start, end)
+        val requests = server.requests(Rt.REQUEST_TIME_BAR_REPLAY).drop(before)
+        assertEquals(3, requests.size)
+        assertEquals((start / 1_000).toInt(), requests.first().int(Rf.START_INDEX))
+        assertEquals(((end + Timeframe.M1.millis) / 1_000).toInt(), requests.last().int(Rf.FINISH_INDEX))
+        assertTrue(requests.zipWithNext().all { (a, b) -> a.int(Rf.FINISH_INDEX)!! >= b.int(Rf.START_INDEX)!! })
+        assertEquals(1_801, result.candles.size)
+        assertTrue(result.candles.all { it.timeMs in start until end })
+    }
+
     @Test fun connectLogsEveryPlantInAndLoadsAccountsRoutesSpecsQuotesAndBars() = runTest {
         val server = FakeRithmicServer()
         val broker = ready(server)
@@ -759,6 +776,36 @@ class RithmicBrokerTest {
         val values = mutableMapOf<String, String>()
         override suspend fun read(key: String) = values[key]
         override suspend fun write(key: String, value: String) { values[key] = value }
+    }
+
+    @Test fun existingTwoThousandBarCacheCanGrowToTheNewChartDepth() = runTest {
+        val store = MemoryCandleStore()
+        val span = Timeframe.M5.millis
+        val latest = FAKE_TIME / span * span - span
+        val old = List(2000) { i -> Candle(latest - (1999 - i) * span, 549900, 550100, 549850, 550000, 100) }
+        CandleCache(store, "rithmic-v2-${credentials().brokerId}", RITHMIC_CHART_BARS).write("MESZ6" to Timeframe.M5, old)
+        val server = FakeRithmicServer().apply { bars = 3000; filterHistoryRange = true }
+        val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))
+        val broker = RithmicBroker(credentials(), server, scope, { FAKE_TIME }, candleCacheStore = store)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val bars = broker.history("MESZ6", Timeframe.M5)
+        assertEquals(RITHMIC_CHART_BARS, bars.size)
+        assertEquals(latest, bars.last().timeMs)
+        assertEquals(latest - (RITHMIC_CHART_BARS - 1) * span, bars.first().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == span })
+    }
+
+    @Test fun pagedChartHistoryReachesTheNewestBarsOnABusySeries() = runTest {
+        val server = FakeRithmicServer().apply { bars = 7200; filterHistoryRange = true; maxHistoryReplyBars = 1000 }
+        val broker = broker(server)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M1); runCurrent()
+        val bars = broker.history("MESZ6", Timeframe.M1)
+        val span = Timeframe.M1.millis
+        val latest = FAKE_TIME / span * span - span
+        assertEquals(RITHMIC_CHART_BARS, bars.size)
+        assertEquals(latest, bars.last().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == span })
+        assertTrue(server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size > 6)
     }
 
     private suspend fun TestScope.chart(server: FakeRithmicServer, store: CandleCacheStore): RithmicBroker {

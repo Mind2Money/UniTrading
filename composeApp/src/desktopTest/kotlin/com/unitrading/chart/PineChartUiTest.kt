@@ -54,6 +54,7 @@ class PineChartUiTest {
     }
 
     @Test fun scriptPaintsPriceCoordinatesObjectsAndAnIndependentPane() {
+        // Keep the label below the chart legend so the test checks its paint rather than legend occlusion.
         configs.value = listOf(
             IndicatorConfig("overlay", IndicatorKind.PINE, pineSource = """
                 //@version=6
@@ -62,7 +63,7 @@ class PineChartUiTest {
                 if barstate.islast
                     line.new(bar_index - 62, 100.6, bar_index - 20, 100.6, color=#00FFFF, width=3)
                     box.new(bar_index - 52, 100.1, bar_index - 32, 99.4, border_color=na, bgcolor=#F00477)
-                    label.new(bar_index - 14, 103, "P", color=#00FF00, textcolor=#000000)
+                    label.new(bar_index - 14, 101.6, "P", color=#00FF00, textcolor=#000000)
             """.trimIndent()),
             IndicatorConfig("pane", IndicatorKind.PINE, pineSource = """
                 //@version=5

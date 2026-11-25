@@ -19,6 +19,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.unitrading.chart.drawing.ChartDrawings
+import com.unitrading.chart.drawing.WorkspaceFavoriteDrawingsBar
 
 /** The first cell is the existing main chart; remaining cells retain their own symbol and interval. */
 internal enum class ChartSplitLayout(val label: String, val count: Int) {
@@ -128,11 +130,13 @@ internal fun ChartSplitWorkspace(
     modifier: Modifier = Modifier,
     chartId: (String) -> String = { it },
     ratiosOverride: MutableMap<String, Float>? = null,
+    favoriteDrawings: ChartDrawings? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val defaultRatios = remember { mutableMapOf<String, Float>() }
     val ratios = ratiosOverride ?: defaultRatios
-    Column(modifier.testTag("split-workspace")) {
+    Box(modifier.testTag("split-workspace")) {
+    Column(Modifier.fillMaxSize()) {
         @Composable fun cell(id: String, cellModifier: Modifier) {
             Box(cellModifier.border(1.dp,
                 if (chartId(id) == activeChart && layout.count > 1) colors.primary else colors.outlineVariant).clipToBounds()
@@ -161,5 +165,7 @@ internal fun ChartSplitWorkspace(
                 ChartSplitPane(false, "three-right-inner", ratios, Modifier.fillMaxSize(), { chartCell("main") }, { chartCell("split1") })
             }, { chartCell("split2") })
         }
+    }
+    favoriteDrawings?.let { WorkspaceFavoriteDrawingsBar(it) }
     }
 }

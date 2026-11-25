@@ -4,9 +4,54 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.chart.PriceAxisSettings
 import com.unitrading.chart.PriceScaleMode
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.offsetAt
 import kotlin.test.*
 
 class ChartPreferencesTest {
+    @Test fun allIntegerUtcOffsetsAreAvailableAndFixed() {
+        val fixed = ChartTimeZone.entries.filter { it.fixedOffsetHours != null }
+        assertEquals((-12..14).toList(), fixed.mapNotNull { it.fixedOffsetHours })
+        val winter = kotlin.time.Instant.parse("2026-01-15T12:00:00Z")
+        val summer = kotlin.time.Instant.parse("2026-07-15T12:00:00Z")
+        for (zone in fixed) {
+            val actual = kotlinx.datetime.TimeZone.of(zone.zoneId)
+            assertEquals(zone.fixedOffsetHours!! * 3600, actual.offsetAt(winter).totalSeconds)
+            assertEquals(zone.fixedOffsetHours!! * 3600, actual.offsetAt(summer).totalSeconds)
+        }
+        assertEquals("Asia/Shanghai", ChartTimeZone.SHANGHAI.zoneId)
+        assertEquals("America/New_York", ChartTimeZone.NEW_YORK.zoneId)
+    }
+    @Test fun sessionsAreIndependentForEachChartAndSurviveRestart() = runTest {
+        val store = MemorySnapshotStore().apply { write("chart-v1", """{"chartSession":"REGULAR"}""") }
+        val controller = ChartPreferencesController(store)
+        assertEquals(ChartSession.REGULAR, controller.preferences.value.sessionForChart("main"))
+        assertTrue(controller.setChartSessionFor("main", ChartSession.ELECTRONIC))
+        assertTrue(controller.setChartSessionFor("split1", ChartSession.REGULAR))
+        assertTrue(controller.setChartSessionFor("c1", ChartSession.ELECTRONIC))
+        val restored = ChartPreferencesController(store)
+        assertEquals(ChartSession.ELECTRONIC, restored.preferences.value.sessionForChart("main"))
+        assertEquals(ChartSession.REGULAR, restored.preferences.value.sessionForChart("split1"))
+        assertEquals(ChartSession.ELECTRONIC, restored.preferences.value.sessionForChart("c1"))
+        assertTrue(restored.clearChartSessions(setOf("c1", "c1s1")))
+        assertEquals(ChartSession.REGULAR, ChartPreferencesController(store).preferences.value.sessionForChart("c1"))
+        assertEquals(ChartSession.ELECTRONIC, ChartPreferencesController(store).preferences.value.sessionForChart("main"))
+    }
+    @Test fun chartZonePersistsAndDefaultsToShanghai() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertEquals(ChartTimeZone.SHANGHAI, prefs.preferences.value.chartTimeZone)
+        assertTrue(prefs.setChartTimeZone(ChartTimeZone.NEW_YORK))
+        assertEquals(ChartTimeZone.NEW_YORK, ChartPreferencesController(store).preferences.value.chartTimeZone)
+    }
+
+    @Test fun sessionPersistsAndDefaultsToElectronic() = runTest {
+        val store = MemorySnapshotStore()
+        val prefs = ChartPreferencesController(store)
+        assertEquals(ChartSession.ELECTRONIC, prefs.preferences.value.chartSession)
+        assertTrue(prefs.setChartSession(ChartSession.REGULAR))
+        assertEquals(ChartSession.REGULAR, ChartPreferencesController(store).preferences.value.chartSession)
+    }
+
     @Test fun watermarkVisibilityPersists() = runTest {
         val store = MemorySnapshotStore()
         val prefs = ChartPreferencesController(store)

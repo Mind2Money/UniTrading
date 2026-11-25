@@ -86,8 +86,8 @@ fun barCountdown(barOpenMs: Long, periodMs: Long, nowMs: Long): String? {
 }
 
 /** Time-axis label: clock time for intraday bars, to the second for second intervals, and the calendar day for daily and longer bars. */
-fun axisTimeLabel(timeMs: Long, timeframe: Timeframe): String =
-    if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else beijingDateTime(timeMs, seconds = timeframe.isSeconds).substring(11)
+fun axisTimeLabel(timeMs: Long, timeframe: Timeframe, zoneId: String = "Asia/Shanghai"): String =
+    if (timeframe.seconds >= Timeframe.DAY) dateTime(timeMs).substring(5, 10) else chartDateTime(timeMs, seconds = timeframe.isSeconds, zoneId = zoneId).substring(11)
 
 /**
  * Chart controls: symbol, interval, indicators and layers, with the favourite intervals inline. Wide layouts float them
@@ -115,7 +115,7 @@ internal fun ChartToolbar(
         SymbolChip(instrument, instruments, onSymbol)
         IntervalControl(timeframe, onTimeframe, intervals)
         indicators?.let { IndicatorChip(it, compact) }
-        LayerMenu(layers, compact)
+        if (layers.isNotEmpty()) LayerMenu(layers, compact)
         additionalControls()
     }
     if (compact || singleRow) Row(modifier.height(48.dp).padding(start = 8.dp, end = 4.dp).testTag("chart-toolbar"),
@@ -209,7 +209,7 @@ private val Timeframe.shortLabel: String get() = when {
 
 /** Starred intervals inline plus a dropdown with second / minute / hour / day presets, favourites and custom intervals. */
 @Composable
-private fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
+internal fun IntervalControl(timeframe: Timeframe, onTimeframe: (Timeframe) -> Unit, intervals: IntervalOptions) {
     val colors = TradingColors
     val type = MaterialTheme.typography
     var expanded by remember { mutableStateOf(false) }
@@ -333,6 +333,8 @@ internal fun ChartLegend(
     compact: Boolean = false,
     keysHint: String? = null,
     keysLive: Boolean = false,
+    zoneId: String = "Asia/Shanghai",
+    zoneLabel: String = "北京时间",
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -359,7 +361,7 @@ internal fun ChartLegend(
                     listOf("开" to bar.open, "高" to bar.high, "低" to bar.low, "收" to bar.close).forEach { (label, value) -> Figure(label, instrument.formatPrice(value), tone) }
                     Text(change.label(instrument), style = type.labelSmall, color = if (change.diff >= 0) colors.UpText else colors.DownText)
                     Figure("量", formatVolume(bar.volume), colors.Ink)
-                    Text("${chartBarDateTime(bar.timeMs, timeframe)} ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else "北京时间"}", style = type.labelSmall, color = colors.Muted)
+                    Text("${chartBarDateTime(bar.timeMs, timeframe, zoneId)} ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else zoneLabel}", style = type.labelSmall, color = colors.Muted)
                 }
             }
             if (!compact) Row(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

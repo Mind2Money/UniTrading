@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 
 fun TradingPalette.color(role: ThemeColor): Color = when (role) {
     ThemeColor.PAGE -> Shell; ThemeColor.SURFACE -> Surface; ThemeColor.CHART -> Chart; ThemeColor.GRID -> Grid
-    ThemeColor.UP -> Up; ThemeColor.DOWN -> Down; ThemeColor.PROFIT -> Profit; ThemeColor.LOSS -> Loss
+    ThemeColor.RISE -> Up; ThemeColor.FALL -> Down; ThemeColor.UP -> UpBody; ThemeColor.DOWN -> DownBody; ThemeColor.UP_BORDER -> UpBorder; ThemeColor.DOWN_BORDER -> DownBorder; ThemeColor.UP_WICK -> UpWick; ThemeColor.DOWN_WICK -> DownWick; ThemeColor.PROFIT -> Profit; ThemeColor.LOSS -> Loss
     ThemeColor.ACCENT -> Key; ThemeColor.TEXT -> Ink; ThemeColor.MUTED -> Muted; ThemeColor.STOP -> Stop; ThemeColor.TARGET -> Target
 }
 fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toString(16).padStart(6, '0').uppercase()
@@ -36,7 +36,7 @@ fun colorHex(color: Color) = "#" + (color.toArgb().toLong() and 0xFFFFFF).toStri
 /** Colours by what they paint, so a role is found by where it shows up. */
 private val themeColorGroups = listOf(
     "界面" to listOf(ThemeColor.PAGE, ThemeColor.SURFACE, ThemeColor.TEXT, ThemeColor.MUTED, ThemeColor.ACCENT),
-    "图表" to listOf(ThemeColor.CHART, ThemeColor.GRID, ThemeColor.UP, ThemeColor.DOWN, ThemeColor.STOP, ThemeColor.TARGET),
+    "图表" to listOf(ThemeColor.CHART, ThemeColor.GRID, ThemeColor.RISE, ThemeColor.FALL, ThemeColor.UP, ThemeColor.DOWN, ThemeColor.UP_BORDER, ThemeColor.DOWN_BORDER, ThemeColor.UP_WICK, ThemeColor.DOWN_WICK, ThemeColor.STOP, ThemeColor.TARGET),
     "盈亏数字" to listOf(ThemeColor.PROFIT, ThemeColor.LOSS),
 )
 
@@ -60,7 +60,7 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
                 Text("预览配色，保存后应用到所有页面。", style = type.bodyMedium, color = colors.Muted)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemePreset.entries.forEach { preset ->
-                        FilterChip(draft.preset == preset, { draft = ThemeSettings(preset) }, label = { Text(preset.label) },
+                        FilterChip(draft.preset == preset, { draft = ThemeSettings(preset).withIndependentCandleParts() }, label = { Text(preset.label) },
                             modifier = Modifier.testTag("theme-${preset.name}"))
                     }
                 }
@@ -71,9 +71,11 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
                         for (i in 1..7) {
                             val x = size.width * i / 8
                             val y = size.height * (if (i % 2 == 0) .45f else .3f)
-                            val ink = if (i % 2 == 0) colors.Down else colors.Up
-                            drawLine(ink, Offset(x, y - 8.dp.toPx()), Offset(x, y + 28.dp.toPx()), 1.5.dp.toPx())
+                            val ink = if (i % 2 == 0) colors.DownBody else colors.UpBody
+                            val up = i % 2 != 0
+                            drawLine(if (up) colors.UpWick else colors.DownWick, Offset(x, y - 8.dp.toPx()), Offset(x, y + 28.dp.toPx()), 1.5.dp.toPx())
                             drawRect(ink, Offset(x - body / 2, y), Size(body, 18.dp.toPx()))
+                            drawRect(if (up) colors.UpBorder else colors.DownBorder, Offset(x - body / 2, y), Size(body, 18.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
                         }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -87,7 +89,7 @@ internal fun ThemeSettingsDialog(controller: ThemeController, onDismiss: () -> U
                             { draft = draft.copy(colors = draft.colors + (role.name to it.uppercase())) })
                     }
                 }
-                TextButton({ draft = ThemeSettings(draft.preset) }, Modifier.testTag("theme-reset")) { Text("恢复此主题默认颜色") }
+                TextButton({ draft = ThemeSettings(draft.preset).withIndependentCandleParts() }, Modifier.testTag("theme-reset")) { Text("恢复此主题默认颜色") }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = type.bodySmall) }
             }
         }
@@ -107,7 +109,7 @@ private fun ColorRow(label: String, value: String, swatch: Color, tag: String, o
     val valid = value.matches(Regex("#[0-9A-Fa-f]{6}"))
     val style = MaterialTheme.typography.bodyMedium
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        IconButton(onPick, Modifier.semantics { contentDescription = "选择${label}颜色" }) {
+        IconButton(onPick, Modifier.semantics { contentDescription = if (label.endsWith("颜色")) "选择$label" else "选择${label}颜色" }) {
             Box(Modifier.size(28.dp).background(swatch, CircleShape).border(1.dp, scheme.outline, CircleShape))
         }
         Text(label, Modifier.weight(1f), style = style, maxLines = 1)

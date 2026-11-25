@@ -75,7 +75,7 @@ class ChartContextMenuUiTest {
 
     @Test fun desktopMenuOmitsCopyPriceAndResetsTheView() {
         render()
-        compose.onNodeWithTag("chart-zoom-in").performClick()
+        chart().performMouseInput { moveTo(center); scroll(-3f) }
         compose.waitForIdle()
         assertTrue(chartState().getValue("bars").toDouble() < 80.0)
         rightClick(549_000)
@@ -150,6 +150,7 @@ class ChartContextMenuUiTest {
         treeItem("隐藏").performClick()
         compose.waitForIdle()
         assertTrue(runtime.drawings.drawings.single().hidden)
+        assertNull(runtime.drawings.selectedId, "A hidden drawing must not leave its editing toolbar selected")
         treeItem("锁定").performClick()
         compose.waitForIdle()
         assertTrue(runtime.drawings.drawings.single().locked)
@@ -180,6 +181,43 @@ class ChartContextMenuUiTest {
         chart().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.Z) } }
         compose.waitUntil(5_000) { runtime.indicators.settings.value.indicators.size == 1 }
         assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun objectTreeMovesIndicatorsAndDrawingsInClickOrder() {
+        render()
+        runBlocking { assertTrue(runtime.indicators.apply(com.unitrading.app.IndicatorSettings(listOf(com.unitrading.chart.IndicatorConfig("ma", com.unitrading.chart.IndicatorKind.MA))))) }
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        val id = runtime.drawings.drawings.single().id
+        rightClick(549_000)
+        compose.onNodeWithTag("plot-objects").performScrollTo().performClick()
+        val drawing = "drawing:$id"
+        val indicator = "indicator:ma"
+        compose.onNodeWithTag("object-layer-menu-$drawing").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-front-$drawing").performClick()
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) > 0 }
+        compose.onNodeWithTag("object-layer-menu-$indicator").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-front-$indicator").performClick()
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[indicator] ?: 0) > (ranks[drawing] ?: 0)
+        }
+        compose.onNodeWithTag("object-layer-menu-$drawing").performScrollTo().performClick()
+        compose.onNodeWithTag("object-layer-back-$drawing").performClick()
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
+        compose.onNode(hasText("关闭") and hasAnyAncestor(hasTestTag("chart-object-tree"))).performClick()
+        rightClick(548_500)
+        compose.onNodeWithTag("drawing-menu-front").performScrollTo().performClick()
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)
+        }
+        compose.runOnIdle { runtime.drawings.requestUndo() }
+        compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
+        compose.runOnIdle { runtime.drawings.requestRedo() }
+        compose.waitUntil(5_000) {
+            val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
+            (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)
+        }
     }
 
     @Test fun menuRemovesAndRestoresDrawings() {

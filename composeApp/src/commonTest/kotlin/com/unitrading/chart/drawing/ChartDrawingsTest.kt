@@ -7,6 +7,41 @@ import kotlinx.coroutines.Dispatchers
 import kotlin.test.*
 
 class ChartDrawingsTest {
+    @Test fun closingOneSplitChartKeepsTheOtherLayerHandlerConnected() {
+        val first = Any()
+        val second = Any()
+        var handledBy = ""
+        drawings.attachOrderHandler(first) { _, _ -> handledBy = "first" }
+        drawings.attachOrderHandler(second) { _, _ -> handledBy = "second" }
+        drawings.moveOrder("line", 1)
+        assertEquals("second", handledBy)
+        drawings.detachOrderHandler(second)
+        drawings.moveOrder("line", 1)
+        assertEquals("first", handledBy)
+    }
+    @Test fun overlappingDrawingsAreHitInTheSameOrderTheyArePainted() {
+        drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
+        drawings.addHorizontalLine(DrawingPoint(START, 39_500.0))
+        val first = drawings.drawings.first().id
+        val second = drawings.drawings.last().id
+        drawings.select(null)
+        val point = at(40, 39_500)
+        drawings.frame(ctx) { if (it == first) 1L else 0L }
+        assertEquals(first, assertIs<DrawingHit.Body>(drawings.hitAt(point, 6f, 6f)).drawing.id)
+        drawings.frame(ctx) { if (it == second) 1L else 0L }
+        assertEquals(second, assertIs<DrawingHit.Body>(drawings.hitAt(point, 6f, 6f)).drawing.id)
+    }
+    @Test fun favoriteToolsAreSharedWhileChartDrawingsStayIndependent() {
+        val shared = DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined)
+        val first = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), shared).apply { bind("MES") }
+        val second = ChartDrawings(DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined), shared).apply { bind("MES") }
+        first.toggleFavorite(DrawingTool.TREND_LINE)
+        assertTrue(second.isFavorite(DrawingTool.TREND_LINE))
+        second.favoritesBarVisible = false
+        assertFalse(first.favoritesBarVisible)
+        first.addHorizontalLine(DrawingPoint(START, 40_000.0))
+        assertTrue(second.drawings.isEmpty())
+    }
     private val ctx = testContext()
     private val store = MemorySnapshotStore()
     private val drawings = ChartDrawings(store, Dispatchers.Unconfined).apply { bind("TEST") }

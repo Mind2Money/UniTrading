@@ -119,6 +119,7 @@ internal fun rememberDrawingLayer(
     plot: Rect,
     chartBottom: Float,
     palette: TradingPalette,
+    zoneId: String = "Asia/Shanghai",
 ): DrawingLayer {
     DisposableEffect(symbol) { controller.bind(symbol); onDispose { } }
     val layer = remember(controller) { DrawingLayer(controller) }
@@ -128,7 +129,7 @@ internal fun rememberDrawingLayer(
     layer.ctx = DrawingContext(
         DrawingCoordinates(candles, periodMs, viewport, plot, chartBottom, scale), instrument, timeframe, density, palette.Surface, palette.Ink, palette.Up, palette.Down,
         { text, size, bold, italic, maxWidth -> measurer.layout(text, size, bold, italic, maxWidth).size.let { Size(it.width.toFloat(), it.height.toFloat()) } },
-        images.mapValues { (_, bitmap) -> Size(bitmap.width.toFloat(), bitmap.height.toFloat()) },
+        images.mapValues { (_, bitmap) -> Size(bitmap.width.toFloat(), bitmap.height.toFloat()) }, zoneId,
     )
     LaunchedEffect(controller.demoStrokes.any { it.endedAtMs != null }) {
         while (controller.demoStrokes.any { it.endedAtMs != null }) withFrameMillis { controller.tickDemo(currentTimeMs()) }
@@ -138,26 +139,25 @@ internal fun rememberDrawingLayer(
 
 private fun currentTimeMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
-/** Draws the layer's drawings inside the plot, below the order lines and the crosshair. */
-internal fun DrawScope.drawLayerDrawings(layer: DrawingLayer, measurer: androidx.compose.ui.text.TextMeasurer, chartColor: androidx.compose.ui.graphics.Color) {
-    val ctx = layer.ctx ?: return
-    val frame = layer.controller.frame(ctx)
+/** Computes the scene in paint order; pointer hit tests use this same order. */
+internal fun prepareLayerFrame(layer: DrawingLayer, order: (String) -> Long): DrawingFrame? {
+    val ctx = layer.ctx ?: return null
+    val frame = layer.controller.frame(ctx, order)
     layer.frame = frame
-    drawDrawings(frame, ctx.coords.plot, measurer, chartColor)
+    return frame
 }
 
 /** Axis tags, outside the plot's clip. */
 internal fun DrawScope.drawLayerMarks(layer: DrawingLayer, labelStyle: TextStyle, measurer: androidx.compose.ui.text.TextMeasurer, axisLeft: Float, axisRight: Float, timeAxisTop: Float, axisPrice: (Double) -> String) {
     val ctx = layer.ctx ?: return
     val frame = layer.frame ?: return
-    drawFullHeightParts(frame, ctx.coords.plot, ctx.coords.chartBottom)
     drawDrawingMarks(frame, ctx, labelStyle, measurer, axisLeft, axisRight, timeAxisTop, axisPrice)
     if (layer.controller.cursor == ChartCursor.DOT && !layer.showsCrosshairLines) layer.hoverPoint?.let { drawCircle(ctx.ink, 3f * density, it) }
 }
 
 /** The view showing bars [from]..[to], as the zoom tool leaves it. */
 internal fun zoomedViewport(from: Double, to: Double, total: Int): ChartViewport {
-    val count = (to - from + 1).coerceIn(12.0, 600.0)
+    val count = (to - from + 1).coerceIn(12.0, com.unitrading.chart.MAX_VISIBLE_CANDLES)
     return ChartViewport(count, total - count - from + .5).bounded(total)
 }
 
@@ -279,7 +279,7 @@ internal fun DrawingValuesTooltip(layer: DrawingLayer) {
     Box(Modifier.offset { IntOffset(min(point.x.roundToInt() + 16, max(0, (c.plot.right - 180 * ctx.density).roundToInt())), max(point.y.roundToInt() - 90, c.plot.top.roundToInt())) }) {
         Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.inverseSurface, contentColor = MaterialTheme.colorScheme.inverseOnSurface) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                listOf(chartBarDateTime(bar.timeMs, ctx.timeframe), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
+                listOf(chartBarDateTime(bar.timeMs, ctx.timeframe, ctx.zoneId), "开 ${instrument.formatPrice(bar.open)}", "高 ${instrument.formatPrice(bar.high)}", "低 ${instrument.formatPrice(bar.low)}", "收 ${instrument.formatPrice(bar.close)}",
                     barChange(bar, previous).label(instrument), "量 ${formatVolume(bar.volume)}").forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
             }
         }

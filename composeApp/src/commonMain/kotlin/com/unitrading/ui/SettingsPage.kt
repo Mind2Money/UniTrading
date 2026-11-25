@@ -54,11 +54,15 @@ internal fun SettingsPage(
     onConnectRithmic: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
     updates: AppUpdates? = null,
+    showOrderLayout: Boolean = true,
+    showChartSessionControls: Boolean = true,
+    showDesktopExitSetting: Boolean = false,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
     val theme by runtime.theme.settings.collectAsState()
     val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
+    val marketTime = if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null
     val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
     val savingTradingPreferences by runtime.tradingPreferences.saving.collectAsState()
     val tradingPreferencesError by runtime.tradingPreferences.error.collectAsState()
@@ -77,6 +81,8 @@ internal fun SettingsPage(
     var accountsExpanded by rememberSaveable { mutableStateOf(false) }
     val scroll = rememberScrollState()
     var chooseOrderLayout by remember { mutableStateOf(false) }
+    var chooseChartTimeZone by remember { mutableStateOf(false) }
+    var chooseChartSession by remember { mutableStateOf(false) }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -115,8 +121,12 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
-                SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
+                if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
+                if (showChartSessionControls) SettingsRow("图表交易时段", chartPreferences.sessionForChart("main").label, AppIcons.History, "settings-chart-session",
+                    { chooseChartSession = true }, navigates = true)
+                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.Language, "settings-chart-timezone",
+                    { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
                 val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
@@ -192,10 +202,6 @@ internal fun SettingsPage(
 
             if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
 
-            SettingsSection("记录") {
-                SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
-            }
-
             if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
                 SavedLoginControls(runtime, grouped = true, onForgotten = onForgotten)
             }
@@ -207,8 +213,53 @@ internal fun SettingsPage(
             }
 
             if (updates != null) SettingsSection("关于与更新") { AppUpdateRows(updates, runtime.registry, busy) }
+
+            SettingsSection("其他", Modifier.testTag("settings-other-section")) {
+                SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
+                if (showDesktopExitSetting) ListItem(
+                    headlineContent = { Text("退出时保存布局") },
+                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
+                        "退出时自动保存图表和窗口布局，不再询问。"
+                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
+                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
+                        .testTag("settings-save-workspace-on-exit"),
+                    colors = settingsRowColors(),
+                )
+            }
         }
     }
+    if (chooseChartSession) AlertDialog(
+        onDismissRequest = { chooseChartSession = false }, title = { Text("图表交易时段") },
+        text = { Column {
+            Text("常规时段采用 TradingView CME 图表模板（芝加哥 08:30–15:15）；仅支持 ES、NQ、CL、GC 及对应 Micro。日线及以上直接使用券商的电子交易时段 K 线。分钟及小时周期由 1 分钟数据合成，历史深度受券商数据限制；秒线暂不支持。此设置不限制下单。", style = MaterialTheme.typography.bodySmall)
+            com.unitrading.app.ChartSession.entries.forEach { value ->
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(value == chartPreferences.sessionForChart("main"), role = Role.RadioButton, onClick = {
+                    preferenceScope.launch { if (runtime.chartPreferences.setChartSessionFor("main", value)) chooseChartSession = false }
+                }), verticalAlignment = Alignment.CenterVertically) { RadioButton(value == chartPreferences.sessionForChart("main"), onClick = null); Spacer(Modifier.width(12.dp)); Text(value.label) }
+            }
+        } }, confirmButton = { TextButton({ chooseChartSession = false }) { Text("关闭") } },
+    )
+    if (chooseChartTimeZone) AlertDialog(
+        onDismissRequest = { chooseChartTimeZone = false },
+        title = { Text("图表时区") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
+            Text("整数 UTC 时区", style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
+            com.unitrading.app.ChartTimeZone.entries.forEach { zone ->
+                if (zone == com.unitrading.app.ChartTimeZone.NEW_YORK) Text("地区时区（按当地规则）", style = MaterialTheme.typography.labelMedium, color = TradingColors.Muted)
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
+                    selected = zone == chartPreferences.chartTimeZone, role = Role.RadioButton,
+                    onClick = { preferenceScope.launch { if (runtime.chartPreferences.setChartTimeZone(zone)) chooseChartTimeZone = false } }
+                ).padding(horizontal = 8.dp).testTag("settings-timezone-${zone.name}"), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(zone == chartPreferences.chartTimeZone, onClick = null)
+                    Spacer(Modifier.width(12.dp)); Text(zone.labelAt(marketTime))
+                }
+            }
+        } },
+        confirmButton = { TextButton({ chooseChartTimeZone = false }) { Text("关闭") } },
+    )
     if (chooseOrderLayout) AlertDialog(
         onDismissRequest = { if (!savingTradingPreferences) chooseOrderLayout = false },
         title = { Text("下单界面") },
@@ -265,8 +316,8 @@ internal fun keyboardTradingSummary(preferences: TradingPreferences, brackets: A
 private fun settingsRowColors() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
 @Composable
-private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun SettingsSection(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, Modifier.padding(start = 16.dp).semantics { heading() }, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
             Column(content = content)

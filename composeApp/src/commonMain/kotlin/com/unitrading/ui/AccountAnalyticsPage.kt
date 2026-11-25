@@ -43,13 +43,14 @@ private fun ratio(value: Double?, percent: Boolean = false): String = when {
  */
 @Composable
 internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade>, modifier: Modifier = Modifier, name: String = account.name, cachedSinceMs: Long? = null,
-    showHeading: Boolean = true) {
+    showHeading: Boolean = true, replayMode: Boolean = false) {
     var symbol by remember { mutableStateOf<String?>(null) }
     var zoneId by remember { mutableStateOf("America/Chicago") }
     val zone = remember(zoneId) { TimeZone.of(zoneId) }
     val today = Clock.System.now().toLocalDateTime(zone).date
-    var month by remember { mutableStateOf(LocalDate(today.year, today.month, 1)) }
-    var monthOnly by remember { mutableStateOf(true) }
+    val initialDate = if (replayMode) trades.maxByOrNull { it.closedAtMs }?.closeDate(zone) ?: today else today
+    var month by remember { mutableStateOf(LocalDate(initialDate.year, initialDate.month, 1)) }
+    var monthOnly by remember { mutableStateOf(!replayMode) }
     var cumulative by remember { mutableStateOf(true) }
     var selectedDay by remember { mutableStateOf<LocalDate?>(null) }
     var showTrades by remember { mutableStateOf(false) }
@@ -195,7 +196,7 @@ internal fun AccountAnalyticsPage(account: AccountInfo, trades: List<ClosedTrade
                 }
             }
         }
-        item { Text("数据范围受券商返回的历史记录限制；此处不推算缺失历史、不生成评分或交易建议。", color = colors.Muted, style = MaterialTheme.typography.labelSmall) }
+        item { Text(if (replayMode) "仅统计本地模拟平仓记录，不包含浮动盈亏。" else "数据范围受券商返回的历史记录限制；此处不推算缺失历史、不生成评分或交易建议。", color = colors.Muted, style = MaterialTheme.typography.labelSmall) }
     }
     }
 }

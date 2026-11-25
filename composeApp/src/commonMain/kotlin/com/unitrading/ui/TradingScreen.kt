@@ -42,6 +42,8 @@ import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import com.unitrading.chart.chartSessionCandles
+import com.unitrading.chart.chartSessionSource
 import com.unitrading.chart.ChartLayerState
 import com.unitrading.chart.ChartToggle
 import com.unitrading.chart.ChartToolbar
@@ -52,15 +54,25 @@ import com.unitrading.chart.LineAction
 import com.unitrading.chart.TradingChart
 import com.unitrading.tradovate.TradovateLogin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Orders, edits, cancels and history work on Paper Trading; closing a position is unverified live, and conformance is pending. */
 private const val RITHMIC_LOGIN_ENABLED = true
+
+/** Compare snapshots by identity: quote-only revisions retain the same immutable candle list. */
+private class CandleSnapshotKey(private val candles: List<Candle>) {
+    override fun equals(other: Any?) = other is CandleSnapshotKey && candles === other.candles
+    override fun hashCode() = 0
+}
+private class SessionResult(val candles: List<Candle>, val notice: String?)
 
 @Composable
 fun UniTradingApp(store: SnapshotStore, login: TradovateLogin? = null) {
@@ -469,8 +481,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 ?.let { QuantityCapacityState(it.maximum, it.message) } ?: QuantityCapacityState()
         LaunchedEffect(runtime) { runtime.run() }
         // Every chart window stays live; the broker serves the one being worked on first.
-        val parkedSeries = visibleParkedCharts.values.map { it.symbol to it.timeframe }
-        LaunchedEffect(plugin, symbol, executionSymbol, timeframe, parkedSeries) { plugin.watchAll((listOf(symbol to timeframe) + parkedSeries).distinct()) }
+        val watchedCharts = listOf(ChartSlot(activeChart, symbol, timeframe)) + visibleParkedCharts.values.filter { it.id != activeChart }
+        val chartSources = watchedCharts.map { slot ->
+            val regular = chartPreferences.sessionForChart(slot.id) == ChartSession.REGULAR
+            (slot.symbol to chartSessionSource(slot.symbol, slot.timeframe, regular)) to regular
+        }
+        val liveSeries = chartSources.map { it.first }.distinct()
+        val extendedSeries = chartSources.filter { it.second && it.first.second == Timeframe.M1 }.map { it.first }.toSet()
+        LaunchedEffect(plugin, executionSymbol, liveSeries, extendedSeries) { plugin.watchAllWithExtendedHistory(liveSeries, extendedSeries) }
         val focusedDetached = detachedWorkspaces.firstOrNull { chartWindowKey(it) == activeWindow }
         val detachedDomActive = focusedDetached?.let { detachedDomOpen[it] == true && workspaceOf(activeChart) == it } == true
         val mainDomActive = focusedDetached == null && (showOrderFlow || showDom)
@@ -673,7 +691,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chartOrder = chartOrder - id
             workspaceOrder = workspaceOrder - id
             runtime.desktopLayout.setWindowBounds(chartWindowKey(id), null)
-            scope.launch { runtime.desktopLayout.save() }
+            scope.launch { runtime.chartPreferences.clearChartSessions((0..3).map { cellId(id, it) }.toSet()); runtime.desktopLayout.save() }
         }
         val restoreDesktopWorkspace = LocalChartPlatform.current == ChartPlatform.DESKTOP && panelWindows
         LaunchedEffect(plugin, restoreDesktopWorkspace) {
@@ -1159,7 +1177,25 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val shownTimeframe = parked?.timeframe ?: timeframe
                     val shownExecution = shownInstrument.executionSymbol
                     val shownQuote = if (active) quote else market.quotes[shownExecution]
-                    val shownCandles = remember(plugin, shownInstrument.symbol, shownTimeframe, market.revision) { plugin.history(shownInstrument.symbol, shownTimeframe) }
+                    val regularSession = chartPreferences.sessionForChart(chartId) == ChartSession.REGULAR
+                    val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
+                    val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }
+                    val sessionResult = if (regularSession && shownTimeframe.seconds < Timeframe.DAY) {
+                        // Keep the previous result visible while a new history snapshot is aggregated. Changing chart
+                        // identity resets it immediately, so old candles never appear under another symbol or period.
+                        key(plugin, shownInstrument.symbol, shownTimeframe, regularSession) {
+                            val result by produceState(SessionResult(emptyList(), null), CandleSnapshotKey(rawCandles)) {
+                                val calculated = withContext(Dispatchers.Default) {
+                                    chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, true) {
+                                        coroutineContext.ensureActive()
+                                    }
+                                }
+                                value = SessionResult(calculated.first, calculated.second)
+                            }
+                            result.candles to result.notice
+                        }
+                    } else rawCandles to null
+                    val shownCandles = sessionResult.first
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
                     fun onActive(block: () -> Unit) {
                         if (!active) activateChart(chartId)
@@ -1248,7 +1284,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
                         chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
                             { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
-                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, views = runtime.chartViews,
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, showDrawingFavorites = active && !shared, views = runtime.chartViews,
                             showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
                                 runtime.chartPreferences.selectHistoryVisible(visible)
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
@@ -1256,6 +1292,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
                             desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
+                            chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
+                            chartTimeZoneLabel = chartPreferences.chartTimeZone.labelAt(if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null),
+                            regularSession = regularSession && shownTimeframe.seconds < Timeframe.DAY && sessionResult.second == null,
                             onOpenSettings = { showActivity = false; showSettings = true },
                             priceAxis = priceAxis, onPriceAxis = { value ->
                                 runtime.chartPreferences.selectPriceAxis(value)
@@ -1272,6 +1311,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } },
                             onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                             allIndicators = chartIndicatorSettings.indicators,
+                            objectLayers = runtime.objectLayersForChart(chartId),
                             keyboardTrading = tradingPreferences.keyboardTrading,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
                                 changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
@@ -1301,6 +1341,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 // A toolbar follows the last-selected chart in its own workspace.
                 @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
+                    var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
+                    var replaySetup by remember { mutableStateOf(false) }
+                    var replayPrepared by remember { mutableStateOf<ReplayPrepared?>(null) }
+                    val replaySeries = remember { mutableStateMapOf<Pair<String, Timeframe>, List<Candle>>() }
+                    val replayLoading = remember { mutableStateMapOf<Pair<String, Timeframe>, Boolean>() }
+                    val replayJobs = remember { mutableMapOf<Pair<String, Timeframe>, kotlinx.coroutines.Job>() }
+                    var replayGeneration by remember { mutableIntStateOf(0) }
+                    var replayRevision by remember { mutableLongStateOf(0) }
+                    var replayError by remember { mutableStateOf<String?>(null) }
                     val target = workspaceSelected[workspace] ?: workspace
                     val slot = shownCharts[target]
                     val selectedInstrument = if (target == workingChart) instrument else
@@ -1329,7 +1378,54 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         modifier, compact = compact && !singleLine,
                         additionalControls = {
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
+                            if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
+                                onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
+                            if (desktopStyle) AssistChip(onClick = { replaySetup = true }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
+                                leadingIcon = { Icon(AppIcons.PlayArrow, null, Modifier.size(18.dp)) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
                         }, singleRow = singleLine)
+                    val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
+                    if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
+                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
+                            replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
+                            replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
+                            replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
+                            val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
+                            val replaySourceFrame = if (ready.initialFrame.isSeconds) ready.initialFrame else Timeframe.M1
+                            replayInput = ReplayInput(chosen, ready.initialFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
+                                chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
+                                replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation, ready.riskConfig)
+                        })
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords,
+                        history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
+                        watch = { sym, frame ->
+                            val series = sym to frame
+                            val ready = replayPrepared
+                            if (ready != null && ready.instruments.any { it.symbol == sym } && series !in replaySeries && series !in replayLoading) {
+                                replayLoading[series] = true
+                                val generation = replayGeneration
+                                val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                                    try {
+                                        val (from, until) = ready.range.forFrame(frame)
+                                        val result = runtime.replayHistory.load(plugin, sym, frame, from, until,
+                                            enabled = ready.cacheEnabled, persistent = persistentReplayCache).result
+                                        if (generation == replayGeneration) {
+                                            replaySeries[series] = result.candles.sortedBy { it.timeMs }
+                                            replayError = result.warning ?: if (result.candles.isEmpty()) "券商没有 $sym ${frame.label} 的历史数据" else null
+                                            replayRevision++
+                                        }
+                                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                                    catch (failure: Exception) { if (generation == replayGeneration) replayError = "读取 $sym ${frame.label} 失败：${failure.message ?: "请重试"}" }
+                                    finally { if (generation == replayGeneration) { replayLoading.remove(series); replayJobs.remove(series) } }
+                                }
+                                replayJobs[series] = job
+                                job.start()
+                            }
+                        },
+                        drawingDefaults = runtime.drawingLibrary,
+                        historyError = replayError,
+                        onDismiss = { replayGeneration++; replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear(); replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
                 }
                 @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
                     val selected = workspaceSelected[workspace] ?: workspace
@@ -1349,7 +1445,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ChartSplitWorkspace(layoutOf(workspace), selected, { id, cellModifier -> chartView(id, cellModifier, true) },
                                     Modifier.weight(1f).fillMaxHeight(), chartId = { id ->
                                         if (id == "main") workspace else cellId(workspace, id.removePrefix("split").toInt())
-                                    }, ratiosOverride = workspaceRatios[workspace])
+                                    }, ratiosOverride = workspaceRatios[workspace], favoriteDrawings = currentDrawings)
                             }
                         }
                     }
@@ -2201,7 +2297,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates)
+                                modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates,
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable,
+                                showDesktopExitSetting = nativeDesktop)
                         }
                     }
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
@@ -2230,7 +2328,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 ::chooseBroker, ::chooseAccount, onTheme = { showTheme = true },
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
-                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates)
+                                modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates,
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable,
+                                showDesktopExitSetting = nativeDesktop)
                         }
                     }
                 }

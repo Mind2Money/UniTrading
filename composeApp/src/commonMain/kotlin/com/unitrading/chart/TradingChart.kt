@@ -51,10 +51,12 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
+import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.chart.drawing.*
 import com.unitrading.chart.pine.pinePriceFactor
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
@@ -66,6 +68,11 @@ import kotlin.time.Instant
 
 private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
 private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
+private sealed interface PriceObject {
+    val rank: Long
+    data class Indicator(val item: ComputedIndicator, override val rank: Long) : PriceObject
+    data class Drawing(val scene: DrawingScene, override val rank: Long) : PriceObject
+}
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -144,6 +151,7 @@ fun TradingChart(
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
     var drag by remember(accountKey, instrument.symbol, instrument.executionSymbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
+    var chartMeasured by remember { mutableStateOf(false) }
     /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
     var legendArea by remember { mutableStateOf<Rect?>(null) }
     /** Where the mouse rests; the tag button under it lights up and names itself. */
@@ -181,9 +189,11 @@ fun TradingChart(
     val top = with(density) { (if (mobilePlatform) 58.dp else 18.dp).toPx() }
     val bottom = (size.height - with(density) { (if (mobilePlatform) 30.dp else 54.dp).toPx() }).coerceAtLeast(top + 1)
     val plotWidth = right - left
-    LaunchedEffect(plotWidth, viewport.count, candles.size) {
-        val fittedViewport = viewport.fitPixelWidth(plotWidth, candles.size)
-        if (fittedViewport != viewport) viewport = fittedViewport
+    LaunchedEffect(chartMeasured, plotWidth, viewport.count, candles.size) {
+        if (chartMeasured) {
+            val fittedViewport = viewport.fitPixelWidth(plotWidth, candles.size)
+            if (fittedViewport != viewport) viewport = fittedViewport
+        }
     }
     val range = viewport.range(candles.size)
     val slots = viewport.slots(candles.size)
@@ -195,8 +205,22 @@ fun TradingChart(
     val pineFrame = rememberChartPine(accountKey, instrument, timeframe, indicators, candles)
     val pineOffset = remember(pineFrame, candles) { pineFrame?.let { pineSampleOffset(it.candles, candles) } }
     val computedIndicators = remember(indicators, builtin, pineFrame, pineOffset) { mergeChartIndicators(indicators, builtin, pineFrame, pineOffset) }
+    val localObjectLayers = remember { ChartObjectLayers(MemorySnapshotStore()) }
+    val objectLayers = chrome.objectLayers ?: localObjectLayers
+    val objectRanks = objectLayers.forSymbol(instrument.symbol)
+    val layerScope = rememberCoroutineScope()
+    val layerHandlerOwner = remember { Any() }
+    val allIndicatorIds by rememberUpdatedState((chrome.allIndicators ?: indicators).map { it.id })
+    DisposableEffect(chrome.drawings, objectLayers, instrument.symbol) {
+        val controller = chrome.drawings
+        val move: (String, Int) -> Unit = { id, delta ->
+            if (controller != null) layerScope.launch { objectLayers.moveBy(instrument.symbol, drawingLayerKey(id), allIndicatorIds, controller.drawings.map { it.id }, delta) }
+        }
+        controller?.attachOrderHandler(layerHandlerOwner, move)
+        onDispose { controller?.detachOrderHandler(layerHandlerOwner) }
+    }
     val overlays = computedIndicators.filter { it.overlay }
-    val panes = computedIndicators.filterNot { it.overlay }
+    val panes = computedIndicators.filterNot { it.overlay }.sortedByDescending { objectRanks[indicatorLayerKey(it.config.id)] ?: 0L }
     val pineOverlays = remember(computedIndicators) { overlays.mapNotNull { it.pine } }
     val pineCandleTints = remember(pineOverlays) { pineOverlays.asReversed().filter { pane -> pane.result.barColors.any { it != null } } }
     val pineGeometryLimit = 16_000 / (pineOverlays.size + panes.count { it.pine != null }).coerceAtLeast(1)
@@ -212,9 +236,21 @@ fun TradingChart(
     val plotBottom = paneLayout.firstOrNull()?.top ?: bottom
     val currentPlotBottom by rememberUpdatedState(plotBottom)
     val selectedPosition = positions.firstOrNull { it.id == selectedPositionId } ?: positions.firstOrNull()
+    val remote = environment != BrokerEnvironment.LOCAL_DEMO
+    var wallClockMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(remote, candles.isEmpty()) {
+        if (remote && candles.isNotEmpty()) while (true) {
+            wallClockMs = Clock.System.now().toEpochMilliseconds()
+            delay(1_000)
+        }
+    }
+    val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
+    val chartQuote = if (chrome.regularSession && (nowMs == null || !isRegularChartTime(nowMs))) {
+        candles.lastOrNull()?.close?.let { close -> quote?.copy(bid = close, ask = close) }
+    } else quote
     /** Prices the automatic axis keeps in view: the quote, the position and its protection, orders and the draft. */
     val tradingPrices = buildList {
-        quote?.let { add(it.bid); add(it.ask) }
+        chartQuote?.let { add(it.bid); add(it.ask) }
         if (showPositions) selectedPosition?.let { p -> add(p.entryPrice); p.stopLoss?.let(::add); p.takeProfit?.let(::add) }
         if (showOrders) orders.forEach { order ->
             order.request.entryPrice?.let(::add)
@@ -240,7 +276,7 @@ fun TradingChart(
     }
     val fitted = PriceScale.from(visible, extras, top, plotBottom)
     // While the newest bar is on screen the automatic axis keeps the current price in the middle of the plot.
-    val livePrice = quote?.bid?.takeIf { it > 0 } ?: candles.lastOrNull()?.close
+    val livePrice = chartQuote?.bid?.takeIf { it > 0 } ?: candles.lastOrNull()?.close
     val autoMiddle = livePrice?.takeIf { !axis.chartOnly && !axis.fitAllBars && candles.isNotEmpty() && range.last == candles.lastIndex }
         ?.let { PriceScale.followedCenter(autoCenter[0].takeUnless { c -> c.isNaN() }, it, fitted.high - fitted.low) }
     SideEffect { autoCenter[0] = autoMiddle ?: Double.NaN }
@@ -281,7 +317,7 @@ fun TradingChart(
     }
 
     val currentScale by rememberUpdatedState(scale)
-    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors) }
+    val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors, chrome.chartTimeZone.zoneId) }
     val currentVisible by rememberUpdatedState(visible)
     val currentCandles by rememberUpdatedState(candles)
     val currentTrades by rememberUpdatedState(trades)
@@ -391,16 +427,6 @@ fun TradingChart(
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
     var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
-    val remote = environment != BrokerEnvironment.LOCAL_DEMO
-    var wallClockMs by remember { mutableStateOf(0L) }
-    LaunchedEffect(remote, candles.isEmpty()) {
-        if (remote && candles.isNotEmpty()) while (true) {
-            wallClockMs = Clock.System.now().toEpochMilliseconds()
-            delay(1_000)
-        }
-    }
-    // Local demo bars advance on the simulated clock carried by their quotes; server bars count down on the wall clock.
-    val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
     val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val layers = listOf(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
@@ -418,9 +444,8 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text(if (instrument.symbol == "@MCL")
-            "连续图表 @MCL · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
-            "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
+        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}" +
+            if (instrument.tradeSymbol != null && instrument.tradeSymbolStatus?.startsWith("价格匹配") == true) " · 价格匹配，非券商确认" else "",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
@@ -439,12 +464,12 @@ fun TradingChart(
                 DividerLine()
             }
             Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else "北京时间"} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
+                Text("${environment.label} · ${if (timeframe.seconds >= Timeframe.DAY) "交易日" else chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label} / OHLC（${instrument.symbol}）", style = MaterialTheme.typography.labelMedium, color = colors.Muted)
             }
             LazyColumn(Modifier.weight(1f).testTag("ohlc-table")) {
                 items(candles.asReversed(), key = { it.timeMs }) { c ->
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(chartBarDateTime(c.timeMs, timeframe), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                        Text(chartBarDateTime(c.timeMs, timeframe, chrome.chartTimeZone.zoneId), style = MaterialTheme.typography.labelSmall, color = colors.Muted)
                         Text("开 ${instrument.formatPrice(c.open)}    高 ${instrument.formatPrice(c.high)}\n低 ${instrument.formatPrice(c.low)}    收 ${instrument.formatPrice(c.close)}" +
                             (c.volume?.let { "    量 ${formatVolume(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
                     }
@@ -456,13 +481,13 @@ fun TradingChart(
                 toolbar(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp))
                 DividerLine()
             }
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { EmptyState("暂无行情", "等待交易商提供历史 K 线。", icon = com.unitrading.ui.AppIcons.Candlestick) }
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { EmptyState("暂无行情", chrome.sessionNotice ?: "等待交易商提供历史 K 线。", icon = com.unitrading.ui.AppIcons.Candlestick) }
         } else {
             // The toolbar, legend and navigation float over the plot instead of taking their own banner above it.
             val crosshairState = crosshair?.let { index -> "$index@" + (crosshairY?.takeIf { it in top..plotBottom }?.let { scale.price(it, instrument.tickSize).toString() } ?: "none") } ?: "none"
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
-                    Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                    Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it; chartMeasured = true }.testTag("trading-chart")
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             // Initial pass wins over drawing/order-line gestures. Once two fingers take
                             // ownership, consume through the LAST finger up: never commit a leftover drag.
@@ -511,7 +536,7 @@ fun TradingChart(
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
                                 } ?: "")
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0}"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
@@ -754,7 +779,30 @@ fun TradingChart(
                         val index = ((visible.size - 1) * i / 4)
                         val x = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
                         drawLine(colors.Grid, Offset(x, top), Offset(x, bottom), 1f)
-                        text(axisTimeLabel(visible[index].timeMs, timeframe), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
+                        text(axisTimeLabel(visible[index].timeMs, timeframe, chrome.chartTimeZone.zoneId), (x - 14f).coerceIn(left, right - 28f), bottom + 9f)
+                    }
+                    val drawingFrame = drawingLayer?.let { prepareLayerFrame(it) { id -> objectRanks[drawingLayerKey(id)] ?: 0L } }
+                    val plotRect = Rect(left, top, right, plotBottom)
+                    val priceObjects = buildList<PriceObject> {
+                        overlays.forEach { add(PriceObject.Indicator(it, objectRanks[indicatorLayerKey(it.config.id)] ?: 0L)) }
+                        drawingFrame?.scenes?.forEach { add(PriceObject.Drawing(it, objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L)) }
+                    }.sortedBy { it.rank }
+                    fun paintPriceObjects(behindCandles: Boolean) {
+                        priceObjects.forEach { item ->
+                            if ((item.rank < 0L) == behindCandles) when (item) {
+                                is PriceObject.Indicator -> {
+                                    drawIndicatorOverlays(listOf(item.item), range, scale, colors) { index -> barX(index.toDouble()) }
+                                    item.item.pine?.let { pane ->
+                                        drawPineVisuals(pane.result, pane.local(range), pane.local(slots), candles, periodMs,
+                                            left, right, top, plotBottom, step, textMeasurer, priceFactor = priceFactor,
+                                            barOrigin = pane.offset, textBudget = overlayTextBudget, geometryBudget = PineGeometryBudget(pineGeometryLimit),
+                                            nonPositiveBaselineY = if (scale.logarithmic) scale.yOf(scale.low) else Float.NaN,
+                                            x = { barX(it + pane.offset) }, y = { scale.yOf(it * priceFactor) })
+                                    }
+                                }
+                                is PriceObject.Drawing -> if (drawingFrame != null) drawDrawingScene(item.scene, drawingFrame, plotRect, textMeasurer)
+                            }
+                        }
                     }
                     clipRect(left, top, right, plotBottom) {
                     pineOverlays.forEach { pane ->
@@ -773,27 +821,27 @@ fun TradingChart(
                             }
                         }
                     }
+                    paintPriceObjects(true)
                     visible.forEachIndexed { index, candle ->
                         val barIndex = range.first + index
                         val center = barX(barIndex.toDouble())
-                        val color = pineCandleTints.firstNotNullOfOrNull { it.candleColor(barIndex) }
-                            ?: if (candle.close >= candle.open) colors.Up else colors.Down
+                        val tint = pineCandleTints.firstNotNullOfOrNull { it.candleColor(barIndex) }
                         val width = candleWidth.body
-                        drawLine(color, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
+                        val rising = candle.close >= candle.open
+                        val color = tint ?: if (rising) colors.UpBody else colors.DownBody
+                        val border = tint ?: if (rising) colors.UpBorder else colors.DownBorder
+                        val wick = tint ?: if (rising) colors.UpWick else colors.DownWick
+                        drawLine(wick, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
                         val y = minOf(scale.y(candle.open), scale.y(candle.close))
                         val height = maxOf(abs(scale.y(candle.open) - scale.y(candle.close)), 1.6f)
-                        drawRect(color, Offset(center - width / 2, y), Size(width, height))
+                        // At subpixel density use the outline color so hollow candles remain visible on a light chart.
+                        drawRect(if (step < 2f) border else color, Offset(center - width / 2, y), Size(width, height))
+                        // Borders would overlap neighbouring candles when a slot is less than two pixels wide.
+                        if (step >= 2f) drawRect(border, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
                     }
-                    drawIndicatorOverlays(overlays, range, scale, colors) { barX(it.toDouble()) }
-                    pineOverlays.forEach { pane ->
-                        drawPineVisuals(pane.result, pane.local(range), pane.local(slots), candles, periodMs,
-                            left, right, top, plotBottom, step, textMeasurer, priceFactor = priceFactor,
-                            barOrigin = pane.offset, textBudget = overlayTextBudget, geometryBudget = PineGeometryBudget(pineGeometryLimit),
-                            nonPositiveBaselineY = if (scale.logarithmic) scale.yOf(scale.low) else Float.NaN,
-                            x = { barX(it + pane.offset) }, y = { scale.yOf(it * priceFactor) })
-                    }
-                    drawingLayer?.let { drawLayerDrawings(it, textMeasurer, colors.Chart) }
-                    quote?.let {
+                    paintPriceObjects(false)
+                    drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }
+                    chartQuote?.let {
                         val y = scale.y(it.bid)
                         if (axis.showPriceLine) drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
                         if (axis.showBidAsk) drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
@@ -850,8 +898,14 @@ fun TradingChart(
                     val tagStyle = OrderTagStyle(colors, 3.dp.toPx(), 13.dp.toPx(), closeIcon) { tagText(it) }
                     orderTags.forEach { drawOrderTag(it, tagStyle, right, hoveredButton) }
                     }
-                    if (panes.isNotEmpty()) drawIndicatorPanes(panes, candles, range, range.first + readoutIndex, instrument, left, right, paneLayout, step,
-                        textMeasurer, labelStyle, colors, axis.left, slots, periodMs, paneTextBudget, pineGeometryLimit, ::barX)
+                    panes.forEachIndexed { index, pane ->
+                        val bounds = paneLayout[index]
+                        val paneRank = objectRanks[indicatorLayerKey(pane.config.id)] ?: 0L
+                        drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) < paneRank }, plotRect, bounds.top, bounds.bottom) }
+                        drawIndicatorPanes(listOf(pane), candles, range, range.first + readoutIndex, instrument, left, right, listOf(bounds), step,
+                            textMeasurer, labelStyle, colors, axis.left, slots, periodMs, paneTextBudget, pineGeometryLimit, ::barX)
+                        drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) >= paneRank } + listOfNotNull(frame.draft), plotRect, bounds.top, bounds.bottom) }
+                    }
                     drawLine(colors.Border, Offset(if (axis.left) left else right, top), Offset(if (axis.left) left else right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
                     drawingLayer?.let { drawLayerMarks(it, labelStyle, textMeasurer, if (axis.left) 0f else right + 4.dp.toPx(), if (axis.left) left - 4.dp.toPx() else this.size.width, bottom + 1f) { price -> axisPrice(price.roundToLong()) } }
@@ -895,7 +949,7 @@ fun TradingChart(
                         val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 4f))
                         val line = colors.Ink.copy(alpha = if (drawingLayer?.showsCrosshairLines != false) .55f else 0f)
                         drawLine(line, Offset(x, top), Offset(x, bottom), 1f, pathEffect = dash)
-                        val timeLabel = crosshairTimeLabel(slotTimeMs, timeframe)
+                        val timeLabel = crosshairTimeLabel(slotTimeMs, timeframe, chrome.chartTimeZone.zoneId)
                         val timeWidth = textMeasurer.measure(timeLabel, labelStyle).size.width + labelPadding * 2
                         val timeLeft = (x - timeWidth / 2).coerceIn(left, maxOf(left, right - timeWidth))
                         drawRect(colors.Ink, Offset(timeLeft, bottom + 1f), Size(timeWidth, lineHeight))
@@ -1012,7 +1066,7 @@ fun TradingChart(
                             removeDrawings = chrome.drawings?.let { drawings -> { drawings.removeAllDrawings() } },
                             drawingCount = chrome.drawings?.drawingCount() ?: 0,
                             keyboardTrading = chrome.keyboardTrading,
-                            settings = { chrome.onOpenSettings?.invoke() },
+                            settings = chrome.onOpenSettings,
                         ))
                 }
                 val bar = visible.getOrNull(readoutIndex)
@@ -1023,13 +1077,15 @@ fun TradingChart(
                     ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
-                        }, keysLive = chartFocused)
+                        }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label)
                     if (!collapsed && overlays.isNotEmpty()) IndicatorLegend(indicatorReadouts(overlays, range.first + readoutIndex, instrument))
                 }
                 val navigationBottom = 38.dp + with(density) { (bottom - plotBottom).toDp() }
                 if (chrome.showNavigation) ChartNavigation(
-                    onZoomIn = { viewport = viewport.zoom(plotWidth * .1f, plotWidth, candles.size) },
-                    onZoomOut = { viewport = viewport.zoom(-plotWidth * .1f, plotWidth, candles.size) },
+                    // The buttons use the same newest-bar anchor as the mouse wheel, so
+                    // zooming out fills the chart instead of creating empty future space.
+                    onZoomIn = { viewport = viewport.zoomAt(-2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
+                    onZoomOut = { viewport = viewport.zoomAt(2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
                     onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
@@ -1061,9 +1117,9 @@ fun TradingChart(
                         )
                     }
                 }
-                drawingLayer?.let { DrawingChartOverlays(it, compact) }
+                drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
-                    chrome.onIndicatorChanges ?: {}, { showObjectTree = false })
+                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false })
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,
                     chrome.allIndicators ?: indicators, axis, { template ->
                         chrome.onApplyTemplate.invoke(template)
@@ -1081,7 +1137,7 @@ fun TradingChart(
                 Text("选中历史  #${trade.id} · ${if (trade.directionKnown) trade.side.label() else "买卖配对"} ${instrument.formatQuantity(trade.lotsHundredths)} ${instrument.quantityUnit} · ${trade.netPnlMicros?.let { money(it, true) } ?: "毛 " + (trade.grossPnlMicros?.let { money(it, true) } ?: "—") + "（费用未知）"} USD · ${trade.reason}", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
             }
             selectedExecution?.let { fill ->
-                Text("选中成交 #${fill.id} · ${beijingDateTime(fill.timeMs)} 北京时间 · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
+                Text("选中成交 #${fill.id} · ${chartDateTime(fill.timeMs, zoneId = chrome.chartTimeZone.zoneId)} ${chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label} · ${fill.side.label()} ${instrument.formatQuantity(fill.lotsHundredths)} ${instrument.quantityUnit} · ${instrument.formatPrice(fill.price)}",
                     Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("selected-execution"), style = MaterialTheme.typography.labelSmall)
             }
         }
@@ -1111,6 +1167,8 @@ class ChartChrome(
     val toolbarEnd: @Composable () -> Unit = {},
     /** The left toolbar's drawings for this chart; null leaves the chart without them. */
     val drawings: ChartDrawings? = null,
+    /** A split workspace shows one shared favorite bar on the currently selected chart. */
+    val showDrawingFavorites: Boolean = true,
     /** Where the chart keeps how it showed each series, so it opens again as it was left; null starts every series afresh. */
     val views: ChartViewMemory? = null,
     /** Locked, the mouse wheel moves the chart through time instead of zooming it. */
@@ -1138,34 +1196,48 @@ class ChartChrome(
     val tabletCompactAxis: Boolean = false,
     val showNavigation: Boolean = true,
     val showWatermark: Boolean = false,
+    val sessionNotice: String? = null,
+    val regularSession: Boolean = false,
+    val chartTimeZone: com.unitrading.app.ChartTimeZone = com.unitrading.app.ChartTimeZone.SHANGHAI,
+    val chartTimeZoneLabel: String? = null,
     val onOpenSettings: (() -> Unit)? = null,
+    val objectLayers: ChartObjectLayers? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */
 fun dateTime(timeMs: Long, seconds: Boolean = false): String =
     Instant.fromEpochMilliseconds(timeMs).toString().take(if (seconds) 19 else 16).replace('T', ' ')
 
-private val beijingChartZone = TimeZone.of("Asia/Shanghai")
 
 /** Format an absolute instant as Beijing local time; stored timestamps remain UTC instants. */
-fun beijingDateTime(timeMs: Long, seconds: Boolean = false): String {
-    val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(beijingChartZone)
+fun beijingDateTime(timeMs: Long, seconds: Boolean = false): String = chartDateTime(timeMs, seconds)
+
+fun chartDateTime(timeMs: Long, seconds: Boolean = false, zoneId: String = "Asia/Shanghai"): String {
+    val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(TimeZone.of(zoneId))
     fun two(value: Int) = value.toString().padStart(2, '0')
     return "${local.date} ${two(local.hour)}:${two(local.minute)}" + if (seconds) ":${two(local.second)}" else ""
 }
 
 /** Daily-or-longer broker bars carry a trading date rather than an intraday instant. */
-fun chartBarDateTime(timeMs: Long, timeframe: Timeframe): String = when {
+fun chartBarDateTime(timeMs: Long, timeframe: Timeframe, zoneId: String = "Asia/Shanghai"): String = when {
     timeframe.seconds >= Timeframe.DAY -> dateTime(timeMs).take(10)
-    else -> beijingDateTime(timeMs, seconds = timeframe.isSeconds)
+    else -> chartDateTime(timeMs, seconds = timeframe.isSeconds, zoneId = zoneId)
 }
 
 /** Parse a chart drawing coordinate typed as Beijing local time into the underlying UTC instant. */
-fun parseBeijingChartTime(text: String): Long? = runCatching {
+fun parseBeijingChartTime(text: String): Long? = parseChartTime(text, "Asia/Shanghai")
+
+fun parseChartTime(text: String, zoneId: String): Long? = runCatching {
     val value = text.trim()
     require(value.matches(Regex("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}")))
-    LocalDateTime.parse(value.replace(' ', 'T') + ":00").toInstant(beijingChartZone).toEpochMilliseconds()
+    val local = LocalDateTime.parse(value.replace(' ', 'T') + ":00")
+    val zone = TimeZone.of(zoneId)
+    val instant = local.toInstant(zone)
+    require(instant.toLocalDateTime(zone) == local)
+    val ms = instant.toEpochMilliseconds()
+    require(listOf(-7_200_000L, -3_600_000L, -1_800_000L, 1_800_000L, 3_600_000L, 7_200_000L).none { Instant.fromEpochMilliseconds(ms + it).toLocalDateTime(zone) == local })
+    ms
 }.getOrNull()
 
 /** Chart crosshair: Beijing time intraday, trading date for daily and longer bars. */
-fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe): String = chartBarDateTime(timeMs, timeframe)
+fun crosshairTimeLabel(timeMs: Long, timeframe: Timeframe, zoneId: String = "Asia/Shanghai"): String = chartBarDateTime(timeMs, timeframe, zoneId)

@@ -57,6 +57,25 @@ class DesktopWorkspaceTabsUiTest {
         compose.onNodeWithTag("chart-layout-$name").performClick()
         compose.waitForIdle()
     }
+    @Test fun sessionChoiceFollowsEachSplitChart() {
+        render()
+        layout("TWO_COLUMNS")
+        compose.onNodeWithTag("chart-session-menu").performScrollTo().performClick()
+        compose.onNodeWithTag("chart-session-REGULAR").performClick()
+        compose.waitUntil(10_000) { runtime.chartPreferences.preferences.value.sessionForChart("main") == com.unitrading.app.ChartSession.REGULAR }
+        assertEquals(com.unitrading.app.ChartSession.REGULAR, runtime.chartPreferences.preferences.value.sessionForChart("main"))
+        val other = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("split-cell-split1")))
+        val size = other.fetchSemanticsNode().size
+        other.performMouseInput { moveTo(Offset(size.width * .65f, size.height * .65f)); press(); release() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("chart-session-menu").assertTextContains("ETH", substring = true).performClick()
+        compose.onNodeWithTag("chart-session-ELECTRONIC").performClick()
+        compose.waitUntil(10_000) { runtime.chartPreferences.preferences.value.chartSessions["split1"] == com.unitrading.app.ChartSession.ELECTRONIC }
+        assertEquals(com.unitrading.app.ChartSession.ELECTRONIC, runtime.chartPreferences.preferences.value.sessionForChart("split1"))
+        assertEquals(com.unitrading.app.ChartSession.REGULAR, runtime.chartPreferences.preferences.value.sessionForChart("main"))
+        assertEquals(com.unitrading.app.ChartSession.ELECTRONIC, com.unitrading.app.ChartPreferencesController(store).preferences.value.sessionForChart("split1"))
+        assertEquals(com.unitrading.app.ChartSession.REGULAR, com.unitrading.app.ChartPreferencesController(store).preferences.value.sessionForChart("main"))
+    }
     @Test fun tabsKeepIndependentLayoutsCanDetachAndRestoreOnRestart() {
         render()
         compose.onNodeWithTag("rail-windows").assertDoesNotExist()

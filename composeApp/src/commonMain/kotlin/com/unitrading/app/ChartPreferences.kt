@@ -10,6 +10,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.offsetAt
+import kotlin.time.Instant
 
 /**
  * Chart state saved per device: starred intervals shown inline on the chart toolbar, user-added custom intervals, and
@@ -23,6 +26,39 @@ import kotlinx.serialization.json.Json
 /** A chart in a window of its own, beside the main chart: the symbol it shows at each broker, and its interval. */
 @Serializable
 data class SavedChart(val id: String, val symbols: Map<String, String> = emptyMap(), val timeframeSeconds: Int)
+
+@Serializable
+enum class ChartSession(val label: String) { ELECTRONIC("电子交易时间"), REGULAR("常规交易时间") }
+
+@Serializable
+enum class ChartTimeZone(val region: String, val zoneId: String, val fixedOffsetHours: Int? = null, val fallbackOffsetHours: Int? = fixedOffsetHours) {
+    UTC_MINUS_12("国际日期变更线西", "-12:00", -12),
+    UTC_MINUS_11("帕果帕果", "-11:00", -11), UTC_MINUS_10("檀香山", "-10:00", -10),
+    UTC_MINUS_9("甘比尔群岛", "-09:00", -9), UTC_MINUS_8("亚当斯敦", "-08:00", -8),
+    UTC_MINUS_7("菲尼克斯", "-07:00", -7), UTC_MINUS_6("危地马拉城", "-06:00", -6),
+    UTC_MINUS_5("利马", "-05:00", -5), UTC_MINUS_4("加拉加斯", "-04:00", -4),
+    UTC_MINUS_3("布宜诺斯艾利斯", "-03:00", -3), UTC_MINUS_2("南乔治亚岛", "-02:00", -2),
+    UTC_MINUS_1("普拉亚", "-01:00", -1), UTC("UTC / 雷克雅未克", "UTC", 0),
+    UTC_PLUS_1("拉各斯", "+01:00", 1), UTC_PLUS_2("约翰内斯堡", "+02:00", 2),
+    UTC_PLUS_3("莫斯科", "+03:00", 3), UTC_PLUS_4("迪拜", "+04:00", 4),
+    UTC_PLUS_5("卡拉奇", "+05:00", 5), UTC_PLUS_6("达卡", "+06:00", 6),
+    UTC_PLUS_7("曼谷", "+07:00", 7), UTC_PLUS_8("上海", "+08:00", 8), UTC_PLUS_9("东京", "+09:00", 9),
+    UTC_PLUS_10("布里斯班", "+10:00", 10), UTC_PLUS_11("努美阿", "+11:00", 11),
+    UTC_PLUS_12("塔拉瓦", "+12:00", 12), UTC_PLUS_13("阿皮亚", "+13:00", 13),
+    UTC_PLUS_14("基里蒂马蒂", "+14:00", 14),
+    /** Regional choices retain local historical and daylight-saving rules and legacy saved preferences. */
+    NEW_YORK("纽约", "America/New_York"), CHICAGO("芝加哥", "America/Chicago"), LONDON("伦敦", "Europe/London"),
+    SHANGHAI("上海", "Asia/Shanghai", fallbackOffsetHours = 8), TOKYO("东京", "Asia/Tokyo", fallbackOffsetHours = 9);
+
+    val label: String get() = labelAt(null)
+
+    /** The offset is derived from the broker's quote timestamp; never infer it from the local clock. */
+    fun labelAt(networkTimeMs: Long?): String {
+        val offset = fixedOffsetHours ?: if (networkTimeMs != null && networkTimeMs > 0)
+            TimeZone.of(zoneId).offsetAt(Instant.fromEpochMilliseconds(networkTimeMs)).totalSeconds / 3600 else fallbackOffsetHours
+        return if (offset == null) "$region（等待行情时间）" else "(UTC${if (offset >= 0) "+" else ""}$offset) $region"
+    }
+}
 
 @Serializable
 data class ChartPreferences(
@@ -53,7 +89,12 @@ data class ChartPreferences(
     val showHistory: Boolean = true,
     val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val showChartWatermark: Boolean = true,
+    val chartTimeZone: ChartTimeZone = ChartTimeZone.SHANGHAI,
+    val chartSession: ChartSession = ChartSession.ELECTRONIC,
+    /** Each chart cell has an independent session; the legacy value is its initial default. */
+    val chartSessions: Map<String, ChartSession> = emptyMap(),
 ) {
+    fun sessionForChart(chartId: String): ChartSession = chartSessions[chartId] ?: chartSession
     private val favoriteLengths: List<Int> get() = favoriteSeconds ?: favoriteMinutes.map(::minutes)
     private val customLengths: List<Int> get() = customSeconds ?: customMinutes.map(::minutes)
     private val lastLength: Int? get() = lastTimeframeSeconds ?: lastTimeframeMinutes?.let(::minutes)
@@ -61,6 +102,7 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
+        require(chartSessions.size <= 64 && chartSessions.keys.all { it.isNotBlank() && it.length <= 64 }) { "图表时段设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
         require(favoriteLengths.size <= MAX_FAVORITES) { "收藏周期最多 $MAX_FAVORITES 个" }
@@ -166,6 +208,26 @@ class ChartPreferencesController(private val store: SnapshotStore) {
 
     suspend fun setLegendCollapsed(collapsed: Boolean): Boolean = saveMutex.withLock {
         preferences.value.legendCollapsed == collapsed || persist(preferences.value.copy(legendCollapsed = collapsed))
+    }
+
+    suspend fun setChartSession(session: ChartSession): Boolean = saveMutex.withLock {
+        preferences.value.chartSession == session || persist(preferences.value.copy(chartSession = session))
+    }
+
+    suspend fun setChartSessionFor(chartId: String, session: ChartSession): Boolean = saveMutex.withLock {
+        require(chartId.isNotBlank() && chartId.length <= 64)
+        val current = preferences.value
+        current.chartSessions[chartId] == session || persist(current.copy(chartSessions = current.chartSessions + (chartId to session)))
+    }
+
+    suspend fun clearChartSessions(chartIds: Set<String>): Boolean = saveMutex.withLock {
+        val current = preferences.value
+        val remaining = current.chartSessions - chartIds
+        remaining == current.chartSessions || persist(current.copy(chartSessions = remaining))
+    }
+
+    suspend fun setChartTimeZone(zone: ChartTimeZone): Boolean = saveMutex.withLock {
+        preferences.value.chartTimeZone == zone || persist(preferences.value.copy(chartTimeZone = zone))
     }
 
     suspend fun setChartWatermark(visible: Boolean): Boolean = saveMutex.withLock {

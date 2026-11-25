@@ -4,6 +4,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 
+/** A separate, bounded replay download. End is exclusive; no live order account is involved. */
+data class HistoricalRangeResult(val candles: List<Candle>, val warning: String? = null,
+    /** True only when the broker completed the requested history read; cache is not a completeness guarantee. */
+    val cacheable: Boolean = false)
+
 interface BrokerPlugin {
     val descriptor: BrokerDescriptor
     val capabilities: BrokerCapabilities
@@ -19,6 +24,8 @@ interface BrokerPlugin {
     suspend fun searchInstruments(query: String) {}
     /** Subscribe an independent quote list without changing the chart or sending trade commands. */
     fun watchQuotes(symbols: Set<String>) {}
+    /** Explicitly re-resolve the user's watched continuous symbols without sending orders. */
+    suspend fun refreshContinuousQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     /**
      * Keeps every chart series in [series] live at once; each call replaces the list. The first is the chart the user is
@@ -26,6 +33,8 @@ interface BrokerPlugin {
      * [history] already has.
      */
     fun watchAll(series: List<Pair<String, Timeframe>>) { series.firstOrNull()?.let { watch(it.first, it.second) } }
+    /** Request deeper broker history for the specified series when supported. */
+    fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
     /**
      * Series to read whole and cache in the background, most wanted first; each call replaces the list. A chart
      * that opens one of them then only fetches the bars since. Never changes the chart or sends trade commands.
@@ -37,6 +46,12 @@ interface BrokerPlugin {
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession
     fun history(symbol: String, timeframe: Timeframe): List<Candle>
+    /** Fetch replay history without truncating it to the live chart's cache size. */
+    suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
+        require(startMs < endMs) { "历史数据起始日期必须早于结束日期" }
+        val bars = history(symbol, timeframe).filter { it.timeMs in startMs until endMs }
+        return HistoricalRangeResult(bars, "当前数据源仅提供已缓存的历史，所选日期可能不完整")
+    }
 }
 
 interface AccountSession {

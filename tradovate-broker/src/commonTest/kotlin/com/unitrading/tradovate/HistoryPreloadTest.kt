@@ -113,6 +113,24 @@ class HistoryPreloadTest {
         assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == timeframe.millis })
     }
 
+    @Test fun replayRangePagesPastTheLiveCacheLimitWithoutChangingTheLiveChart() = runTest {
+        val wire = Wire().apply { serverBars = 6_000; pageLimit = 300 }
+        val broker = ready(wire)
+        broker.watch("MESZ6", M5); runCurrent()
+        val live = broker.history("MESZ6", M5)
+        val start = NOW - 5_000 * Timeframe.M1.millis
+        val end = NOW - 100 * Timeframe.M1.millis
+        val loaded = async { broker.historicalRange("MESZ6", Timeframe.M1, start, end) }
+        runCurrent()
+        val bars = loaded.await().candles
+        assertEquals(4_900, bars.size)
+        assertEquals(start, bars.first().timeMs)
+        assertEquals(end - Timeframe.M1.millis, bars.last().timeMs)
+        assertTrue(wire.of(Timeframe.M1).size > 10)
+        assertEquals(live, broker.history("MESZ6", M5))
+        assertTrue(wire.of(Timeframe.M1).flatMap { it.ids }.all { it in wire.cancelled })
+    }
+
     @Test fun listedSeriesAreReadWholeAndCachedWithoutTouchingTheChart() = runTest {
         val wire = Wire()
         val store = Store()
@@ -125,11 +143,11 @@ class HistoryPreloadTest {
         assertWhole(broker.history("@MES", Timeframe.ofMinutes(1440)), Timeframe.ofMinutes(1440))
         // The requests are a fresh chart's: the latest bars first, then pages back from the oldest bar read.
         val pages = wire.of(H1)
-        assertEquals(3, pages.size)
+        assertEquals(4, pages.size)
         assertTrue(pages.first().firstPage)
         val floor = Instant.fromEpochMilliseconds(chartHistoryFloor(H1, NOW)).toString()
         assertTrue(pages.drop(1).all { it.range.str("asFarAsTimestamp") == floor && it.range["asMuchAsElements"] == null })
-        assertEquals(listOf(NOW - 699 * 3_600_000L, NOW - 1_398 * 3_600_000L),
+        assertEquals(listOf(NOW - 699 * 3_600_000L, NOW - 1_398 * 3_600_000L, NOW - 2_097 * 3_600_000L),
             pages.drop(1).map { Instant.parse(it.range.str("closestTimestamp")!!).toEpochMilliseconds() })
         // No background subscription outlives its page, and the chart keeps its own.
         val background = wire.charts.filter { it.minutes != 5L }
@@ -187,14 +205,15 @@ class HistoryPreloadTest {
         broker.watchAll(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
         val five = wire.of(M5).single { it.firstPage }
         val hour = wire.of(H1).single { it.firstPage }
-        // The user clicks the hour chart, then changes the five minute chart's place to the daily interval.
+        // Activating the hour chart refreshes its subscription; the other chart remains live.
         broker.watchAll(listOf("MESZ6" to H1, "MESZ6" to M5)); runCurrent()
-        assertTrue(wire.cancelled.isEmpty() || (five.ids + hour.ids).none { it in wire.cancelled }, "reordering alone cancels nothing")
-        assertEquals(1, wire.of(H1).count { it.firstPage })
+        assertTrue(five.ids.none { it in wire.cancelled })
+        val activeHour = wire.of(H1).last { it.range.long("asMuchAsElements") != null }
+        assertNotEquals(hour.realtimeId, activeHour.realtimeId)
         broker.watchAll(listOf("MESZ6" to H1)); runCurrent()
         assertTrue(five.ids.all { it in wire.cancelled })
-        assertTrue(hour.ids.none { it in wire.cancelled })
-        wire.live(hour.realtimeId, NOW, "5501.75"); runCurrent()
+        assertTrue(activeHour.ids.none { it in wire.cancelled })
+        wire.live(activeHour.realtimeId, NOW, "5501.75"); runCurrent()
         assertEquals(5_501_750_000L, broker.history("MESZ6", H1).last().close)
     }
 

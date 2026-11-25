@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.window.Window
@@ -105,38 +106,25 @@ private fun desktopApplication(args: Array<String>) = application {
     val license = remember { LicenseController(DesktopCredentialStore(fileName = DesktopCredentialStore.LICENSE_FILE)) }
     val scope = rememberCoroutineScope()
     var closing by remember { mutableStateOf(false) }
-    var confirmExit by remember { mutableStateOf(false) }
     var exitError by remember { mutableStateOf<String?>(null) }
-    fun shutdown(saveWorkspace: Boolean = false, discardWorkspace: Boolean = false) {
-        if (!closing) {
-            closing = true
-            scope.launch {
-                val saved = try { !saveWorkspace || runtime.desktopWorkspaceSaver?.invoke() == true }
-                    catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
-                    catch (_: Exception) { false }
-                if (!saved) { exitError = "窗口布局或绘图保存失败，请重试。"; closing = false; return@launch }
-                if (discardWorkspace) {
-                    try { workspaceStore.discard() }
-                    catch (_: Exception) { exitError = "无法恢复退出前的窗口设置，请重试。"; closing = false; return@launch }
-                }
-                if (runtime.startupError.value != null || runtime.save()) {
-                    runtime.registry.plugins.forEach { it.disconnect() }
-                    exitApplication()
-                } else { if (discardWorkspace) workspaceStore.resumeWrites(); exitError = "账户数据保存失败，请重试。"; closing = false }
-            }
-        }
-    }
     fun requestClose() {
-        if (closing || confirmExit) return
+        if (closing) return
         exitError = null
         closing = true
         scope.launch {
-            val flushed = try { runtime.desktopWorkspaceSaver?.invoke() ?: true }
-                catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
-                catch (_: Exception) { false }
-            if (!flushed) exitError = "窗口布局或绘图保存失败，请重试或选择不保存退出。"
-            closing = false
-            confirmExit = true
+            // Honor a setting change that was already being persisted when the window closed.
+            runtime.tradingPreferences.saving.first { !it }
+            val failure = prepareDesktopExit(
+                saveWorkspace = runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit,
+                saveWorkspaceNow = runtime.desktopWorkspaceSaver,
+                discardWorkspace = workspaceStore::discard,
+                resumeWorkspaceWrites = workspaceStore::resumeWrites,
+                saveApplication = { runtime.startupError.value != null || runtime.save() },
+            )
+            if (failure == null) {
+                runtime.registry.plugins.forEach { it.disconnect() }
+                exitApplication()
+            } else { exitError = failure; closing = false }
         }
     }
     LaunchedEffect(updateTarget) { updateTarget?.exit = { withContext(Dispatchers.Main) { requestClose() } } }
@@ -158,16 +146,9 @@ private fun desktopApplication(args: Array<String>) = application {
                 }
             }
         } else content()
-        if (confirmExit) AlertDialog(onDismissRequest = { if (!closing) confirmExit = false },
-            title = { Text("确定退出？") },
-            text = { Text(exitError ?: "保存当前图表和窗口布局，或放弃本次修改并退出。") },
-            confirmButton = { TextButton(onClick = { shutdown(saveWorkspace = true) }, enabled = !closing,
-                modifier = Modifier.testTag("save-workspaces-and-exit")) { Text("保存并退出") } },
-            dismissButton = { androidx.compose.foundation.layout.Row {
-                TextButton(onClick = { shutdown(discardWorkspace = true) }, enabled = !closing,
-                    modifier = Modifier.testTag("discard-workspaces-and-exit")) { Text("不保存并退出") }
-                TextButton(onClick = { confirmExit = false }, enabled = !closing,
-                    modifier = Modifier.testTag("cancel-workspace-exit")) { Text("取消") }
-            } })
+        exitError?.let { error -> AlertDialog(onDismissRequest = { exitError = null },
+            title = { Text("无法退出") }, text = { Text(error) },
+            confirmButton = { TextButton(onClick = ::requestClose, modifier = Modifier.testTag("retry-workspace-exit")) { Text("重试") } },
+            dismissButton = { TextButton(onClick = { exitError = null }) { Text("返回") } }) }
     }
 }

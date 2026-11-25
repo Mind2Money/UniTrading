@@ -100,6 +100,8 @@ internal fun OrderTicket(
     orderNotice: @Composable () -> Unit = {},
     onDiscard: (() -> Unit)? = null,
     accountName: String? = null,
+    showPriceExplanation: Boolean = true,
+    showEstimates: Boolean = true,
 ) {
     Column(modifier) {
         PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
@@ -113,7 +115,8 @@ internal fun OrderTicket(
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("取消订单") }
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
-            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice)
+            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
+            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates)
     }
 }
 

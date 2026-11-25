@@ -29,6 +29,7 @@ import com.unitrading.app.WindowBounds
 import com.unitrading.broker.OrderKind
 import com.unitrading.broker.Side
 import com.unitrading.broker.Timeframe
+import com.unitrading.chart.drawing.DrawingTool
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -51,6 +52,31 @@ class ChartWindowsUiTest {
     private val m15 = Timeframe.M15
 
     private fun newRuntime() = TradingRuntime(store, listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+
+    @Test fun favoritesFloatAcrossSplitChartsAndTargetTheSelectedChart() {
+        runtime.drawingsForChart(MAIN_CHART).toggleFavorite(DrawingTool.TREND_LINE)
+        render()
+        compose.onNodeWithTag("chart-layout-menu").performClick()
+        compose.onNodeWithTag("chart-layout-TWO_COLUMNS").performClick()
+        compose.onAllNodesWithTag("drawing-favorites").assertCountEquals(1)
+        val left = compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().boundsInRoot
+        val right = compose.onNodeWithTag("split-cell-split1").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("drawing-favorites-drag").performTouchInput {
+            down(center); moveBy(Offset(-(right.left - left.left), 0f)); up()
+        }
+        compose.waitForIdle()
+        val moved = compose.onNodeWithTag("drawing-favorites").fetchSemanticsNode().boundsInRoot
+        assertTrue(moved.left < left.right, "Favorites must be draggable onto the other chart")
+        val other = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("chart-view-split1")))
+        val otherSize = other.fetchSemanticsNode().size
+        other.performMouseInput { moveTo(Offset(otherSize.width * .7f, otherSize.height * .5f)); press(); release() }
+        compose.waitForIdle()
+        assertEquals(moved.left, compose.onNodeWithTag("drawing-favorites").fetchSemanticsNode().boundsInRoot.left,
+            "Switching charts must keep the floating bar in place")
+        compose.onNodeWithTag("favorite-TREND_LINE").performClick()
+        assertEquals(DrawingTool.TREND_LINE, runtime.drawingsForChart("split1").tool)
+        assertNull(runtime.drawingsForChart(MAIN_CHART).tool)
+    }
 
     private fun render(windowed: Boolean = true) {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) {

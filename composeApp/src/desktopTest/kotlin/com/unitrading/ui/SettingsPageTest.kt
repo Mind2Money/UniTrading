@@ -16,6 +16,7 @@ import com.unitrading.broker.OrderKind
 import com.unitrading.broker.OrderRequest
 import com.unitrading.broker.Side
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -26,12 +27,12 @@ import kotlin.test.assertEquals
 class SettingsPageTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun render(width: Int = 400, height: Int = 840, light: Boolean = false, fontScale: Float = 1f, soundPlayer: TradeSoundPlayer? = null): TradingRuntime {
+    private fun render(width: Int = 400, height: Int = 840, light: Boolean = false, fontScale: Float = 1f, soundPlayer: TradeSoundPlayer? = null, updates: AppUpdates? = null): TradingRuntime {
         val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true)
         runtime.paused.value = true
         if (light) runBlocking { runtime.theme.apply(ThemeSettings(ThemePreset.LIGHT)) }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
-            Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime, soundPlayer = soundPlayer) }
+            Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime, soundPlayer = soundPlayer, updates = updates) }
         } }
         return runtime
     }
@@ -39,6 +40,17 @@ class SettingsPageTest {
     private fun capture(name: String) {
         val target = File("../artifacts/$name.png"); target.parentFile.mkdirs()
         ImageIO.write(compose.onNodeWithTag("settings-page").captureToImage().toAwtImage(), "png", target)
+    }
+
+    @Test fun timeZoneMovesToTradingSettingsAndSupportsUtcExtremes() {
+        val runtime = render(width = 1100, height = 900)
+        compose.onNodeWithTag("chart-timezone-menu").assertDoesNotExist()
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("settings-chart-timezone").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-timezone-UTC_MINUS_12").assertExists()
+        compose.onNodeWithTag("settings-timezone-UTC_PLUS_14").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.chartTimeZone == ChartTimeZone.UTC_PLUS_14 }
+        compose.onNodeWithTag("settings-chart-timezone").assertTextContains("UTC+14", substring = true)
     }
 
     @Test fun phoneGroupsKeepAccountSwitchingAndPreferenceDestinationsAccessible() {
@@ -85,6 +97,42 @@ class SettingsPageTest {
         compose.onNodeWithTag("close-settings").performClick()
         compose.onNodeWithTag("settings-page").assertDoesNotExist()
         compose.onNodeWithTag("trading-chart").assertExists()
+    }
+
+    @Test fun desktopExitSavingSwitchStartsOnAndCanBeChanged() {
+        val runtime = render(width = 1100, height = 900)
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("settings-save-workspace-on-exit").performScrollTo().assertIsOn()
+            .assert(hasAnyAncestor(hasTestTag("settings-other-section"))).performClick()
+        compose.onNodeWithTag("open-activity").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
+        compose.onNodeWithText("其他").assertExists()
+        compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
+        compose.onNodeWithTag("settings-save-workspace-on-exit").assertIsOff()
+            .assertTextContains("放弃本次图表和窗口布局修改", substring = true)
+        compose.onNodeWithTag("settings-save-workspace-on-exit").performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
+    }
+
+    @Test fun otherIsBelowTheUpdatesAndLoginSections() {
+        val updates = object : AppUpdates {
+            override val currentVersion = "1.7.0"
+            override val install = UpdateInstall.MANUAL
+            override val check = MutableStateFlow<UpdateCheck>(UpdateCheck.Idle)
+            override val checkedAtMs = MutableStateFlow<Long?>(null)
+            override val progress = MutableStateFlow<UpdateProgress>(UpdateProgress.Idle)
+            override fun checkNow() = Unit
+            override fun start(release: ReleasePackage) = Unit
+            override fun cancel() = Unit
+            override fun finish() = Unit
+        }
+        render(width = 1100, height = 900, updates = updates)
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("settings-other-section").performScrollTo()
+        val updateBottom = compose.onNodeWithTag("update-privacy").fetchSemanticsNode().boundsInRoot.bottom
+        val otherTop = compose.onNodeWithTag("settings-other-section").fetchSemanticsNode().boundsInRoot.top
+        assertTrue(otherTop >= updateBottom, "Other must follow the update section")
+        compose.onNodeWithTag("open-activity").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
+        compose.onNodeWithTag("settings-save-workspace-on-exit").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
     }
 
     @Test fun skipConfirmationSwitchAppliesImmediatelyAndResetStillRequiresConfirmation() {

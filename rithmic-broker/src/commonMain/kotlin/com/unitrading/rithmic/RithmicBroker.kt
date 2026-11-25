@@ -14,7 +14,7 @@ import kotlin.math.roundToLong
 import kotlin.time.Clock
 
 /** History depth per series: twice the largest indicator period, like the Tradovate adapter. */
-const val RITHMIC_CHART_BARS = 2000
+const val RITHMIC_CHART_BARS = 2500
 private const val QUOTE_FRESH_MS = 15_000L
 /** Upper bound for the list loaded at login; anything beyond it stays reachable through search. */
 private const val PRODUCT_LIST_LIMIT = 200
@@ -926,6 +926,39 @@ class RithmicBroker(
 
     override fun history(symbol: String, timeframe: Timeframe) = history[symbol to timeframe] ?: emptyList()
 
+    override suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
+        require(startMs >= 0 && startMs < endMs) { "历史数据日期范围无效" }
+        require(timeframe.isDaily || endMs <= Int.MAX_VALUE.toLong() * 1_000 - timeframe.millis) { "所选日期超出券商历史接口范围" }
+        check(marketReady && !stopped) { "券商行情尚未连接" }
+        val plant = checkNotNull(historyPlant) { "券商历史行情尚未连接" }
+        if (symbol.startsWith("@") && lock.withLock { continuousRoutes[symbol]?.tradeSymbol == null }) refreshContinuous(symbol)
+        val execution = lock.withLock { executionSymbol(symbol) } ?: error("合约尚未解析，请稍后重试")
+        val route = lock.withLock { continuousRoutes[symbol] }
+        if (lock.withLock { execution !in specs }) hydrateSpecs(listOf(execution to ""), quiet = true)
+        val spec = lock.withLock { specs[execution] } ?: error("合约规格尚未加载")
+        val source = route?.productCode ?: spec.instrument.symbol
+        val exchange = route?.exchange ?: spec.exchange
+        val bars = mutableListOf<Candle>()
+        var from = startMs
+        // A bounded wall-clock window stays below the server's reply cap even in a continuously trading market.
+        val window = timeframe.millis.coerceAtMost(Long.MAX_VALUE / 899) * 899
+        while (from < endMs) {
+            val until = if (endMs - from <= window) endMs else from + window
+            val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
+                string(Rf.SYMBOL, source); string(Rf.EXCHANGE, exchange)
+                int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
+                if (timeframe.isDaily) { int32(Rf.START_INDEX, yyyymmdd(from)); int32(Rf.FINISH_INDEX, yyyymmdd(until - 1)) }
+                // Intraday markers are bar close times. Overlap by a bar so no boundary candle is omitted.
+                else { int32(Rf.START_INDEX, (from / 1_000).toInt()); int32(Rf.FINISH_INDEX, ((until + timeframe.millis) / 1_000).toInt()) }
+                int32(Rf.TIME_ORDER, RithmicEnums.TIME_ORDER_FORWARDS)
+            }
+            bars.addAll(reply.mapNotNull { candleFrom(it, spec, timeframe) }.filter { it.timeMs in startMs until endMs })
+            from = until
+        }
+        return HistoricalRangeResult(bars.associateBy { it.timeMs }.values.sortedBy { it.timeMs },
+            if (symbol.startsWith("@") && route == null) "券商未提供连续合约路由，历史只包含当前合约" else null, cacheable = true)
+    }
+
     override fun watch(symbol: String, timeframe: Timeframe) = watchAll(listOf(symbol to timeframe))
 
     override fun watchAll(series: List<Pair<String, Timeframe>>) {
@@ -1085,10 +1118,17 @@ class RithmicBroker(
         val end = now()
         val span = timeframe.millis
         // Four chart-widths of wall time cover weekends and holidays while staying under Rithmic's 10,000-bar reply cap.
-        val start = cached.lastOrNull()?.timeMs?.takeIf { end - it < span * RITHMIC_CHART_BARS * 4 } ?: (end - span * RITHMIC_CHART_BARS * 4)
+        val floor = (end - span * (RITHMIC_CHART_BARS * 4 - 1)).coerceAtLeast(0L)
+        val legacyCache = cached.size in 2000 until RITHMIC_CHART_BARS
+        val start = if (legacyCache) {
+            val missing = RITHMIC_CHART_BARS - cached.size
+            maxOf(floor, cached.first().timeMs - span * missing * 4)
+        } else cached.lastOrNull()?.timeMs?.takeIf { it >= floor } ?: floor
         val bars = mutableListOf<Candle>()
         var from = start
-        for (page in 0 until 6) {
+        // A full 9,999-bar window can require ten 1,000-bar replies. Stopping at six
+        // could leave the newest part of a busy series missing from the chart.
+        for (page in 0 until 11) {
             val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
                 string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange)
                 int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))

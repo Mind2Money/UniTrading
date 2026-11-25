@@ -26,8 +26,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.parseFixed
-import com.unitrading.chart.beijingDateTime
-import com.unitrading.chart.parseBeijingChartTime
+import com.unitrading.chart.chartDateTime
+import com.unitrading.chart.parseChartTime
 import com.unitrading.ui.ActionIcon
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.ColorPicker
@@ -152,10 +152,10 @@ internal fun DrawingContextMenu(drawings: ChartDrawings) {
             item("克隆", "clone") { drawings.clone(d.id) }
             item("复制", "copy") { drawings.copySelected(); drawings.closeMenu() }
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item("置于顶层", "front") { drawings.moveOrder(d.id, drawings.drawings.size) }
+            item("置于顶层", "front") { drawings.moveOrder(d.id, Int.MAX_VALUE) }
             item("上移一层", "forward") { drawings.moveOrder(d.id, 1) }
             item("下移一层", "backward") { drawings.moveOrder(d.id, -1) }
-            item("置于底层", "back") { drawings.moveOrder(d.id, -drawings.drawings.size) }
+            item("置于底层", "back") { drawings.moveOrder(d.id, Int.MIN_VALUE) }
             DividerLine(Modifier.padding(vertical = 4.dp))
             item(if (d.locked) "解锁" else "锁定", "lock") { drawings.toggleLock(d.id) }
             item("隐藏", "hide") { drawings.hide(d.id) }
@@ -263,7 +263,7 @@ private fun LevelsEditor(title: String, levels: List<DrawingLevel>, tag: String,
     TextButton({ onChange(levels + DrawingLevel(levels.maxOf { it.value } + .5, "#2962FF")) }, Modifier.testTag("$tag-add")) { Text("添加层级") }
 }
 
-private fun parseTime(text: String): Long? = parseBeijingChartTime(text)
+private fun parseTime(text: String, zoneId: String): Long? = parseChartTime(text, zoneId)
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -272,6 +272,7 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
     val id = drawings.settingsId ?: return
     val original = remember(id) { drawings.drawings.firstOrNull { it.id == id } } ?: return
     val instrument = layer.ctx?.instrument ?: return
+    val zoneId = layer.ctx?.zoneId ?: "Asia/Shanghai"
     var d by remember(id) { mutableStateOf(original) }
     var tab by remember(id) { mutableStateOf(0) }
     var invalidCoordinates by remember(id) { mutableStateOf(false) }
@@ -365,16 +366,16 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                 "坐标" -> {
                     var invalid = false
                     d.points.take(24).forEachIndexed { index, point ->
-                        var timeText by remember(id, index) { mutableStateOf(beijingDateTime(point.timeMs)) }
+                        var timeText by remember(id, index, zoneId) { mutableStateOf(chartDateTime(point.timeMs, zoneId = zoneId)) }
                         var priceText by remember(id, index) { mutableStateOf(instrument.formatPrice(point.price.roundToInt().toLong().coerceAtLeast(0))) }
-                        val time = parseTime(timeText)
+                        val time = parseTime(timeText, zoneId)
                         val price = parseFixed(priceText.trim(), instrument.priceDecimals)
                         if (time == null || price == null) invalid = true
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(timeText, { text ->
                                 timeText = text
-                                parseTime(text)?.let { value -> change(d.copy(points = d.points.mapIndexed { i, old -> if (i == index) old.copy(timeMs = value) else old })) }
-                            }, Modifier.weight(1.6f).testTag("settings-point-time-$index"), label = { Text("点 ${index + 1} 时间 北京") }, singleLine = true, isError = time == null)
+                                parseTime(text, zoneId)?.let { value -> change(d.copy(points = d.points.mapIndexed { i, old -> if (i == index) old.copy(timeMs = value) else old })) }
+                            }, Modifier.weight(1.6f).testTag("settings-point-time-$index"), label = { Text("点 ${index + 1} 时间 $zoneId") }, singleLine = true, isError = time == null)
                             OutlinedTextField(priceText, { text ->
                                 priceText = text
                                 parseFixed(text.trim(), instrument.priceDecimals)?.let { value -> change(d.copy(points = d.points.mapIndexed { i, old -> if (i == index) old.copy(price = value.toDouble()) else old })) }
@@ -382,6 +383,7 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
                         }
                     }
                     SideEffect { invalidCoordinates = invalid }
+                    if (invalid) Text("请检查时间和价格；夏令时切换产生的不存在或重复时间不可输入。", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     if (d.points.size > 24) Text("共 ${d.points.size} 个点，这里显示前 24 个。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 }
                 "可见性" -> {
@@ -417,13 +419,13 @@ internal fun DrawingSettingsDialog(layer: DrawingLayer) {
 
 /** Everything of the drawing layer that sits over the plot: quick bar, menus, dialogs and the value tooltip. */
 @Composable
-internal fun BoxScope.DrawingChartOverlays(layer: DrawingLayer, compact: Boolean) {
+internal fun BoxScope.DrawingChartOverlays(layer: DrawingLayer, compact: Boolean, showFavorites: Boolean = true) {
     val drawings = layer.controller
     DrawingContextMenu(drawings)
     DrawingValuesTooltip(layer)
     // A phone's legend and toolbar leave no room at the top, so the bar sits above the navigation there.
     DrawingFloatingBar(drawings, if (compact) Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp) else Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 92.dp))
-    FavoriteDrawingsBar(drawings, Modifier.align(Alignment.BottomEnd).padding(bottom = 38.dp, end = 92.dp))
+    if (showFavorites) FavoriteDrawingsBar(drawings, Modifier.align(Alignment.BottomEnd).padding(bottom = 38.dp, end = 92.dp))
     DrawingTextDialog(drawings)
     DrawingSettingsDialog(layer)
     // Phones have no room for the toolbar by default; this tab on the plot's edge brings it in and out.

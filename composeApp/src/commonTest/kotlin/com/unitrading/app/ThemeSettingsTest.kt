@@ -12,7 +12,7 @@ class ThemeSettingsTest {
         val custom = ThemeSettings(ThemePreset.LIGHT, mapOf("PAGE" to "#EEEEEE", "UP" to "#123456", "PROFIT" to "#654321"))
         assertTrue(first.theme.apply(custom))
         val reopened = TradingRuntime(store)
-        assertEquals(custom, reopened.theme.settings.value)
+        assertEquals(custom.withIndependentCandleParts(), reopened.theme.settings.value)
         assertTrue(reopened.registry.plugins.isEmpty())
         assertNull(store.read("atlas-demo"))
     }
@@ -31,8 +31,19 @@ class ThemeSettingsTest {
         val controller = ThemeController(store)
         assertFailsWith<IllegalArgumentException> { controller.apply(ThemeSettings(colors = mapOf("PAGE" to "#GG00FF"))) }
         assertFalse(controller.apply(ThemeSettings(ThemePreset.LIGHT)))
-        assertEquals(ThemeSettings(), controller.settings.value)
+        assertEquals(ThemeSettings().withIndependentCandleParts(), controller.settings.value)
         assertNotNull(controller.error.value)
+    }
+
+    @Test fun existingCandleColoursAreMigratedWithoutChangingTheChart() {
+        val store = MemorySnapshotStore().apply { write("theme-v1", """{"preset":"LIGHT","colors":{"UP":"#FFFFFF","DOWN":"#BD4421","UP_BORDER":"#000000"}}""") }
+        val theme = ThemeController(store).settings.value
+        assertTrue(theme.independentCandleParts)
+        assertEquals("#FFFFFF", theme.colors["UP"])
+        assertEquals("#000000", theme.colors["UP_BORDER"])
+        assertEquals("#FFFFFF", theme.colors["UP_WICK"])
+        assertEquals("#BD4421", theme.colors["DOWN_BORDER"])
+        assertEquals("#BD4421", theme.colors["DOWN_WICK"])
     }
     @Test fun corruptThemeDoesNotBlockStartupOrReadOldDemoSnapshots() = runTest {
         val reads = mutableListOf<String>()

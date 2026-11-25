@@ -175,6 +175,14 @@ class ChartDrawings internal constructor(
     /** Defaults are global even when each pane keeps its own drawing library. */
     private val defaultsLibrary: DrawingLibrary = library,
 ) {
+    init {
+        // Merge the old per-chart favorites once; subsequent edits use the common library only.
+        if (library !== defaultsLibrary && library.prefs.favorites.isNotEmpty()) {
+            val existing = library.prefs.favorites
+            defaultsLibrary.updatePrefs { it.copy(favorites = (it.favorites + existing).distinct()) }
+            library.updatePrefs { it.copy(favorites = emptyList()) }
+        }
+    }
     /** A chart with a library of its own, for an app that shows one chart. */
     constructor(store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) : this(DrawingLibrary(store, saveDispatcher))
 
@@ -211,9 +219,9 @@ class ChartDrawings internal constructor(
         get() = prefs.removeLocked
         set(value) { updatePrefs { it.copy(removeLocked = value) } }
     var favoritesBarVisible: Boolean
-        get() = prefs.favoritesBarVisible
-        set(value) { updatePrefs { it.copy(favoritesBarVisible = value) } }
-    val favorites: List<DrawingTool> get() = prefs.favorites
+        get() = defaultsLibrary.prefs.favoritesBarVisible
+        set(value) { defaultsLibrary.updatePrefs { it.copy(favoritesBarVisible = value) } }
+    val favorites: List<DrawingTool> get() = defaultsLibrary.prefs.favorites
     var lockDrawings by mutableStateOf(false)
     var lockIndicators by mutableStateOf(false)
     var hideDrawings by mutableStateOf(false)
@@ -225,8 +233,8 @@ class ChartDrawings internal constructor(
     private fun updatePrefs(change: (DrawingToolPrefs) -> DrawingToolPrefs) = library.updatePrefs(change)
 
     internal fun recentTool(group: ToolGroup): DrawingTool = prefs.recent[group.name]?.takeIf { it in group.tools } ?: group.sections.first().tools.first()
-    fun toggleFavorite(value: DrawingTool) = updatePrefs { p -> p.copy(favorites = if (value in p.favorites) p.favorites - value else p.favorites + value) }
-    fun isFavorite(value: DrawingTool) = value in prefs.favorites
+    fun toggleFavorite(value: DrawingTool) = defaultsLibrary.updatePrefs { p -> p.copy(favorites = if (value in p.favorites) p.favorites - value else p.favorites + value) }
+    fun isFavorite(value: DrawingTool) = value in favorites
 
     fun chooseCursor(value: ChartCursor) {
         cancelPlacement()
@@ -289,6 +297,10 @@ class ChartDrawings internal constructor(
     val canUndo: Boolean get() = history.canUndo
     val canRedo: Boolean get() = history.canRedo
     internal var onRecorded: (() -> Unit)? = null
+    // Replay split charts may share one controller. Detaching one chart must not disconnect the others.
+    private val orderHandlers = linkedMapOf<Any, (String, Int) -> Unit>()
+    internal fun attachOrderHandler(owner: Any, handler: (String, Int) -> Unit) { orderHandlers[owner] = handler }
+    internal fun detachOrderHandler(owner: Any) { orderHandlers.remove(owner) }
     internal var onUndoRequested: (() -> Unit)? = null
     internal var onRedoRequested: (() -> Unit)? = null
 
@@ -412,11 +424,12 @@ class ChartDrawings internal constructor(
     fun hide(id: String) { drawings.firstOrNull { it.id == id }?.let { update(it.copy(hidden = true)) }; if (selectedId == id) selectedId = null; menuAt = null }
     /** Moves a drawing in the paint order; a positive [delta] brings it towards the front. */
     fun moveOrder(id: String, delta: Int) {
+        orderHandlers.values.lastOrNull()?.let { move -> menuAt = null; move(id, delta); return }
         val index = drawings.indexOfFirst { it.id == id }
         if (index < 0) return
         val list = drawings.toMutableList()
         val item = list.removeAt(index)
-        list.add((index + delta).coerceIn(0, list.size), item)
+        list.add((index.toLong() + delta.toLong()).coerceIn(0L, list.size.toLong()).toInt(), item)
         commit(list); menuAt = null
     }
     fun openSettings(id: String) { menuAt = null; settingsId = id }
@@ -481,10 +494,10 @@ class ChartDrawings internal constructor(
     // Frame ----------------------------------------------------------------------------------------------------------
 
     /** What the chart paints this frame; hit tests use the same scenes. */
-    internal fun frame(ctx: DrawingContext): DrawingFrame {
+    internal fun frame(ctx: DrawingContext, layer: (String) -> Long = { 0L }): DrawingFrame {
         val bucket = IntervalBucket.of(ctx.timeframe)
         val list = if (hideDrawings) emptyList() else drawings.filter { !it.hidden && bucket !in it.hiddenIntervals }
-        val built = list.map { buildScene(it, ctx, expanded = it.id == hoveredId || it.id == selectedId) }
+        val built = list.sortedBy { layer(it.id) }.map { buildScene(it, ctx, expanded = it.id == hoveredId || it.id == selectedId) }
         scenes = built
         val transient = draft ?: measured
         return DrawingFrame(built, selectedId, hoveredId, images, transient?.let { buildScene(it, ctx, expanded = true) }, zoomBox, demoStrokes)

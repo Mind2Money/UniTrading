@@ -31,18 +31,21 @@ class ChartGeometryTest {
         assertEquals(CandleWidths(0f, 0f), candleWidths(Float.NaN, 1f))
     }
     @Test fun pixelWidthLimitKeepsLatestEdgeOrHistoricalCenter() {
-        val following = ChartViewport(count = 600.0, offset = 0.0).fitPixelWidth(300f, 1_000)
-        assertEquals(150.0, following.count)
+        val following = ChartViewport(count = 1200.0, offset = 0.0).fitPixelWidth(300f, 5_000)
+        assertEquals(600.0, following.count)
         assertEquals(0.0, following.offset)
-        val historic = ChartViewport(count = 600.0, offset = 100.0)
-        val limited = historic.fitPixelWidth(300f, 1_000)
-        assertEquals(historic.start(1_000) + historic.count / 2, limited.start(1_000) + limited.count / 2, .0001)
+        val historic = ChartViewport(count = 1200.0, offset = 1000.0)
+        val limited = historic.fitPixelWidth(300f, 5_000)
+        assertEquals(historic.start(5_000) + historic.count / 2, limited.start(5_000) + limited.count / 2, .0001)
         assertEquals(ChartViewport(), ChartViewport().fitPixelWidth(900f, 1_000))
-        assertEquals(12.0, ChartViewport(count = 80.0).fitPixelWidth(10f, 1_000).count)
-        val underPointer = ChartViewport(count = 100.0, offset = 200.0)
-        val limitedWheel = underPointer.zoomAt(100f, .25f, 1_000, maxVisibleCandleCount(300f))
-        assertEquals(150.0, limitedWheel.count)
-        assertEquals(underPointer.start(1_000) + .25 * underPointer.count, limitedWheel.start(1_000) + .25 * limitedWheel.count, .0001)
+        assertEquals(12.0, ChartViewport(count = 80.0).fitPixelWidth(5f, 1_000).count)
+        val underPointer = ChartViewport(count = 100.0, offset = 1000.0)
+        val limitedWheel = underPointer.zoomAt(100f, .25f, 5_000, maxVisibleCandleCount(300f))
+        assertEquals(600.0, limitedWheel.count)
+        assertEquals(underPointer.start(5_000) + .25 * underPointer.count, limitedWheel.start(5_000) + .25 * limitedWheel.count, .0001)
+        assertEquals(2400.0, maxVisibleCandleCount(1_200f))
+        assertEquals(2400.0, maxVisibleCandleCount(1_920f))
+        assertEquals(1000.0, maxVisibleCandleCount(500f))
     }
     @Test fun invertedAndLogarithmicAxesRoundTripOrderPrices() {
         for (log in listOf(false, true)) for (inverted in listOf(false, true)) {
@@ -73,7 +76,7 @@ class ChartGeometryTest {
         assertEquals(200.0, prices.high - prices.low)
         assertEquals(400.0, prices.high - .75 * (prices.high - prices.low))
         assertEquals(12.0, original.pinch(100000.0, .5f, .5f, 1000).count)
-        assertEquals(600.0, original.pinch(.00001, .5f, .5f, 1000).count)
+        assertEquals(2400.0, original.pinch(.00001, .5f, .5f, 1000).count)
         assertEquals(original, original.pinch(Double.NaN, .5f, .5f, 1000))
         assertEquals(scale, scale.pinch(0.0, .5f, .5f, 4.0))
     }
@@ -92,7 +95,7 @@ class ChartGeometryTest {
         assertEquals(300.0, (expanded.low + expanded.high) / 2)
         assertEquals(scale.y(300) + 50, scale.pan(50f).y(300), .001f)
         assertTrue(original.zoom(100000f, 500f, 200).count >= 12)
-        assertTrue(original.zoom(-100000f, 500f, 200).count <= 600)
+        assertTrue(original.zoom(-100000f, 500f, 200).count <= 1000)
         assertTrue(original.pan(100000f, 500f, 200).range(200).first >= 0)
     }
     @Test fun wheelKeepsAFollowingChartOnTheNewestBar() {
@@ -115,7 +118,7 @@ class ChartGeometryTest {
     @Test fun wheelStopsAtTheNewestBarAndItsLimits() {
         val after = ChartViewport(80.0, 2.0).zoomAt(10f, 0f, 1_000)
         assertEquals(0.0, after.offset, "Zooming out of the recent past does not open space after the newest bar")
-        assertEquals(600.0, ChartViewport().zoomAt(1_000f, .5f, 1_000).count)
+        assertEquals(2400.0, ChartViewport().zoomAt(1_000f, .5f, 1_000).count)
         assertEquals(12.0, ChartViewport().zoomAt(-1_000f, .5f, 1_000).count)
         val scale = PriceScale(100.0, 500.0, 0f, 400f)
         val wider = scale.zoomWheel(1f, 4.0)
