@@ -87,12 +87,14 @@ class ReplayConsistencyUiTest {
             assertEquals(50_005_000_000L, record.finalEquityMicros)
         }
         compose.onNodeWithTag("replay-success").assertDoesNotExist()
+        compose.onNodeWithTag("replay-restart-completed").assertDoesNotExist()
         compose.onNodeWithTag("replay-tab-1").performClick()
         compose.onNodeWithTag("replay-current-report").performClick()
         compose.onNodeWithTag("replay-dashboard").performScrollToNode(hasTestTag("replay-report-trade-count"))
         compose.onNodeWithTag("replay-report-trade-count").assertTextContains("1 笔", substring = true)
         compose.onNodeWithTag("replay-report-close").performClick()
-        compose.onNodeWithTag("replay-restart-completed").performClick()
+        compose.onNodeWithTag("replay-reset").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-confirm-reset").performClick()
         compose.onNodeWithTag("replay-next").assertIsEnabled()
         compose.onNodeWithTag("replay-close").performClick()
         compose.runOnIdle { assertTrue(exited.get()); assertEquals("已达成", records.list().single().status) }
@@ -142,7 +144,8 @@ class ReplayConsistencyUiTest {
         compose.onNodeWithTag("replay-description-edit").performClick()
         compose.runOnIdle { assertTrue(records.list().isEmpty()) }
         compose.onNodeWithTag("replay-report-close").performClick()
-        compose.onNodeWithTag("replay-restart-completed").performClick()
+        compose.onNodeWithTag("replay-reset").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-confirm-reset").performClick()
         compose.onNodeWithTag("replay-next").assertIsEnabled()
         compose.onNodeWithTag("replay-records-picker").performClick()
         compose.onNodeWithText("临时记录将在关闭回放后清除").assertExists()

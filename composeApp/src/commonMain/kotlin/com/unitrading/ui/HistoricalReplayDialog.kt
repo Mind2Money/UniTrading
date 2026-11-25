@@ -612,10 +612,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }, contentPadding = PaddingValues(horizontal = 6.dp)) {
                                 Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                             } }
-                            if (completionFinalized && risk.targetReached) {
-                                TextButton(onClick = { restartReplay() }, modifier = Modifier.testTag("replay-restart-completed")) { Text("重新开始") }
-                            }
-                            TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
+                            TextButton(onClick = { playing = false; confirmReset = true }, modifier = Modifier.testTag("replay-reset")) { Text("重选起点") }
                             Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -836,8 +833,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         confirmButton = { TextButton(onClick = { finishReplay { switchTo = null; changeSymbol(symbol) } }) { Text("切换品种") } },
         dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
-        text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }) { Text("重选起点") }
+        text = { Text(if (temporaryRecords.isNotEmpty()) "本次模拟仓位和挂单将清除；已保存和临时回放记录仍可用于分析，临时记录将在关闭回放后清除。"
+            else "本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
+            TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }, modifier = Modifier.testTag("replay-confirm-reset")) { Text("重选起点") }
         }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
         text = { Text(if (temporaryRecords.isNotEmpty()) "本次模拟仓位和挂单将清除；临时回放记录将随回放界面关闭而删除，已保存的记录仍可用于分析。"
