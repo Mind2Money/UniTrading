@@ -753,7 +753,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                 }
             }
-        } }, confirmButton = { TextButton(onClick = { recordsExpanded = false }) { Text("关闭") } })
+        } }, confirmButton = { TextButton(onClick = { recordsExpanded = false }, modifier = Modifier.testTag("replay-records-close")) { Text("关闭") } })
     recordToDelete?.let { saved -> AlertDialog(
         onDismissRequest = { recordToDelete = null; recordDeleteError = null },
         title = { Text("删除回放记录？") },
@@ -775,7 +775,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     report?.let { saved -> Dialog(onDismissRequest = { report = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
             Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { report = null }) { Text("关闭") } }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { report = null }, modifier = Modifier.testTag("replay-report-close")) { Text("关闭") }
+                }
                 ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth()) { text ->
                     val updated = saved.copy(description = text)
                     runCatching {

@@ -63,13 +63,13 @@ class ReplayRecordDeleteUiTest {
         compose.onNodeWithTag("replay-record-delete-$id").performClick()
         compose.onNodeWithTag("replay-record-delete-confirm").performClick()
         compose.runOnIdle { assertEquals(emptyList(), records.list()) }
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("replay-records-close").performClick()
         compose.onNodeWithTag("replay-current-report").performClick()
         compose.onNodeWithTag("replay-description-edit").performClick()
         compose.onNodeWithTag("replay-description").performTextInput("复盘备注")
         compose.onNodeWithTag("replay-description-edit").performClick()
         compose.runOnIdle { assertEquals(emptyList(), records.list()) }
-        compose.onNodeWithText("关闭").performClick()
+        compose.onNodeWithTag("replay-report-close").performClick()
         compose.onNodeWithTag("replay-tab-0").performClick()
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
         closePosition()
