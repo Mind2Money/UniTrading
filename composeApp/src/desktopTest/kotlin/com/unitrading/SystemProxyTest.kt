@@ -1,8 +1,11 @@
 package com.unitrading
 
 import com.unitrading.rithmic.KtorRithmicWire
+import com.unitrading.broker.createBrokerHttpClient
 import com.unitrading.tradovate.KtorTradovateWire
 import com.unitrading.tradovate.TradovateHosts
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -16,6 +19,7 @@ import java.net.SocketException
 import java.net.URI
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -105,6 +109,32 @@ private class RejectingSocksProxy : Closeable {
     override fun close() { server.close(); worker.join(5_000) }
 }
 
+/** Asks a client to retry, including for non-idempotent POSTs; records each request. */
+private class RetryAfterServer : Closeable {
+    private val server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0)) }
+    val port: Int get() = server.localPort
+    val requests = AtomicInteger()
+    private val worker = thread(name = "test-retry-server", isDaemon = true) {
+        try {
+            while (!server.isClosed) {
+                server.accept().use { socket ->
+                    socket.soTimeout = 5_000
+                    val input = socket.getInputStream().bufferedReader(Charsets.US_ASCII)
+                    while (true) {
+                        val line = input.readLine() ?: break
+                        if (line.isEmpty()) break
+                    }
+                    requests.incrementAndGet()
+                    socket.getOutputStream().write("HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray(Charsets.US_ASCII))
+                }
+            }
+        } catch (_: SocketException) {
+            // Closing the listening socket ends the worker.
+        }
+    }
+    override fun close() { server.close(); worker.join(5_000) }
+}
+
 private suspend fun expectProxyRejection(call: suspend () -> Unit): Exception = withTimeout(15_000) {
     try {
         call()
@@ -133,6 +163,21 @@ private suspend fun checkRithmicSocket(wire: KtorRithmicWire, proxy: RejectingPr
 }
 
 class SystemProxyTest {
+    @Test fun tradingPostIsNotAutomaticallyReplayed() = runBlocking {
+        RetryAfterServer().use { server ->
+            val client = createBrokerHttpClient { }
+            try {
+                val response = withTimeout(15_000) {
+                    client.post("http://127.0.0.1:${server.port}/order") { setBody("test-order") }
+                }
+                assertEquals(503, response.status.value)
+                assertEquals(1, server.requests.get(), "A non-idempotent POST must not be replayed")
+            } finally {
+                client.close()
+            }
+        }
+    }
+
     @Test fun brokerRequestsAndReconnectsFollowTheJvmProxySelector() = runBlocking {
         val names = listOf("https.proxyHost", "https.proxyPort", "http.nonProxyHosts")
         val original = names.associateWith(System::getProperty)

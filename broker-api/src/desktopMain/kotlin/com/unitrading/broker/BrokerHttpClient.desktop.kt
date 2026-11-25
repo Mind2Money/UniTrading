@@ -3,6 +3,9 @@ package com.unitrading.broker
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.MediaType
+import okhttp3.RequestBody
+import okio.BufferedSink
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -38,7 +41,27 @@ private object DirectSocketFactory : SocketFactory() {
         connect(InetSocketAddress(address, port), InetSocketAddress(localAddress, localPort))
 }
 
+/** A response or connection can be lost after the broker accepted a trading command. */
+private class SingleAttemptBody(private val original: RequestBody) : RequestBody() {
+    override fun contentType(): MediaType? = original.contentType()
+    override fun contentLength(): Long = original.contentLength()
+    override fun isDuplex(): Boolean = original.isDuplex()
+    override fun isOneShot(): Boolean = true
+    override fun writeTo(sink: BufferedSink) = original.writeTo(sink)
+}
+
 actual fun createBrokerHttpClient(configure: HttpClientConfig<*>.() -> Unit): HttpClient = HttpClient(OkHttp) {
-    engine { config { socketFactory(DirectSocketFactory) } }
+    engine { config {
+        socketFactory(DirectSocketFactory)
+        // OkHttp can otherwise replay even POST requests after a timeout or a 503 Retry-After.
+        addInterceptor { chain ->
+            val request = chain.request()
+            val body = request.body
+            val guarded = if (body != null && request.method != "GET" && request.method != "HEAD")
+                request.newBuilder().method(request.method, SingleAttemptBody(body)).build()
+            else request
+            chain.proceed(guarded)
+        }
+    } }
     configure(this)
 }

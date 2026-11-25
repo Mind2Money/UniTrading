@@ -8,7 +8,7 @@ Windows、macOS 桌面版的 Tradovate 请求和实时连接会读取系统代�
 
 ## 验证
 
-`SystemProxyTest` 在本地建立只返回错误的 HTTP CONNECT 代理，验证 Tradovate HTTPS、Tradovate WebSocket 和 Rithmic WebSocket 会选择该代理，并验证现有客户端建立新连接时能读取更新后的代理设置。测试目标为不可用的测试子域名，不登录券商或提交订单。
+`SystemProxyTest` 在本地建立只返回错误的 HTTP CONNECT 和 SOCKS 代理，验证 Tradovate HTTPS、Tradovate WebSocket 和 Rithmic WebSocket 的路由，以及现有客户端建立新连接时读取更新后的代理设置。另用本地服务验证交易 POST 不会因服务器要求重试而被自动重复发送。测试目标为不可用的测试子域名，不登录券商或提交订单。
 
 Windows 系统代理的集成测试可在隔离的 Windows 环境中启用：把当前用户系统代理设为 `127.0.0.1:<空闲端口>`，启动测试 JVM 时指定 `-Djava.net.useSystemProxies=true`，并设置 `UNITRADING_TEST_WINDOWS_SYSTEM_PROXY` 为该端口，再单独运行 `SystemProxyTest.brokerRequestsFollowWindowsSystemProxy`。该测试验证真实系统代理选择及三个连接路径；请在测试后恢复原代理设置。
 
