@@ -778,7 +778,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { report = null }) { Text("关闭") } }
                 ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth()) { text ->
                     val updated = saved.copy(description = text)
-                    runCatching { records?.save(updated) }.onSuccess {
+                    runCatching {
+                        if (saved.id != recordId || !currentRecordDeleted) records?.save(updated)
+                    }.onSuccess {
                         if (saved.id == recordId) description = text
                         report = updated
                     }.onFailure { message = "保存备注失败：${it.message ?: "请检查存储"}" }
