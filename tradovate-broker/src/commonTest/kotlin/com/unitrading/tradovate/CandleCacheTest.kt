@@ -286,7 +286,7 @@ class CandleCacheTest {
     }
 
     @Test fun freshHistoryFloorCoversFourChartWidthsAndStaysPositive() {
-        assertEquals(CACHE_TIME - 8_000 * 60_000L, chartHistoryFloor(Timeframe.M1, CACHE_TIME))
+        assertEquals(CACHE_TIME - 4L * CHART_BARS * 60_000L, chartHistoryFloor(Timeframe.M1, CACHE_TIME))
         assertEquals(0, chartHistoryFloor(Timeframe.ofSeconds(Timeframe.MAX_SECONDS), 1_000))
     }
 
