@@ -61,6 +61,8 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
+    // Unsaved completed runs belong to this replay window, even when its symbol or start changes.
+    val temporaryRecords = remember(input) { mutableStateListOf<ReplayRecord>() }
     val fineHistory = remember(revision, selected.symbol, input.rawFrame) { history(selected.symbol, input.rawFrame) }
     LaunchedEffect(selected, fineHistory) {
         if ((selected.symbol != input.instrument.symbol || input.raw.size < 2) && fineSnapshot == null && fineHistory.size >= 2)
@@ -95,7 +97,8 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
-                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError, records = records, onDismiss = onDismiss)
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError,
+                    records = records, temporaryRecords = temporaryRecords, onDismiss = onDismiss)
             }
         }
     }
@@ -105,7 +108,8 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
-    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?, onDismiss: () -> Unit) {
+    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?,
+    temporaryRecords: MutableList<ReplayRecord>, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -130,6 +134,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var recordId by remember { mutableStateOf("${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}") }
     // Deleting the active session must not immediately recreate it through autosave or normal exit.
     var currentRecordDeleted by remember { mutableStateOf(false) }
+    // A completed run is already handled by the user's save/discard choice.
+    var completionFinalized by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<ReplayRecord?>(null) }
     var description by remember { mutableStateOf("") }
     val equityPoints = remember { mutableStateListOf<ReplayEquityPoint>() }
@@ -431,7 +437,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         ClosedTrade("replay-trade-$index", p.id, p.symbol, p.side, p.lotsHundredths, p.entryPrice, trade.exit,
             p.openedAtMs, trade.exitTimeMs, trade.pnlMicros, trade.reason)
     } }
-    fun currentRecord(status: String = if (risk.failed) "失败" else "进行中"): ReplayRecord {
+    fun currentRecord(status: String = if (risk.failed) "失败" else if (risk.targetReached) "已达成" else "进行中"): ReplayRecord {
         val equity = runCatching {
             val realized = state.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
             val floating = state.positions.fold(0L) { n, position -> checkedAdd(n,
@@ -447,20 +453,20 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description,
             startedAtMs = bars[start].timeMs)
     }
-    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId, showSuccess, showFailure, currentRecordDeleted) {
-        if (started && !showSuccess && !showFailure && !currentRecordDeleted && historyTrades.isNotEmpty() && records != null) {
+    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId, showSuccess, showFailure, currentRecordDeleted, completionFinalized) {
+        if (started && !showSuccess && !showFailure && !currentRecordDeleted && !completionFinalized && historyTrades.isNotEmpty() && records != null) {
             runCatching { records.save(currentRecord()) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }
     }
     fun restartReplay() {
         playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
-        equityPoints.clear(); description = ""; showFailure = false; showSuccess = false; message = null; currentRecordDeleted = false
+        equityPoints.clear(); description = ""; showFailure = false; showSuccess = false; message = null; currentRecordDeleted = false; completionFinalized = false
         draft = OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))
         showDraft = false; orderToConfirm = null; lineToConfirm = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
     }
     fun finishReplay(after: () -> Unit) {
-        if (records == null || historyTrades.isEmpty() || currentRecordDeleted) { after(); return }
+        if (records == null || historyTrades.isEmpty() || currentRecordDeleted || completionFinalized) { after(); return }
         runCatching { records.save(currentRecord("已结束")) }.onSuccess { after() }
             .onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
     }
@@ -606,6 +612,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }, contentPadding = PaddingValues(horizontal = 6.dp)) {
                                 Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                             } }
+                            if (completionFinalized && risk.targetReached) {
+                                TextButton(onClick = { restartReplay() }, modifier = Modifier.testTag("replay-restart-completed")) { Text("重新开始") }
+                            }
                             TextButton(onClick = { playing = false; confirmReset = true }) { Text("重选起点") }
                             Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
                         }
@@ -676,10 +685,18 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         Button(onClick = { playing = false; report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
                         OutlinedButton(onClick = {
                             playing = false
-                            runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
+                            runCatching {
+                                val temporaryIds = temporaryRecords.map { it.id }.toSet()
+                                (records?.list().orEmpty().filterNot { it.id in temporaryIds } + temporaryRecords).sortedByDescending { it.savedAtMs }
+                            }
                                 .onSuccess { savedRecords = it; recordsExpanded = true }
-                                .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
-                        }, enabled = records != null, modifier = Modifier.fillMaxWidth().testTag("replay-records-picker")) { Text("选择已保存的回放") }
+                                .onFailure {
+                                    message = "读取本地记录失败：${it.message ?: "请检查存储"}"
+                                    if (temporaryRecords.isNotEmpty()) {
+                                        savedRecords = temporaryRecords.sortedByDescending { it.savedAtMs }; recordsExpanded = true
+                                    }
+                                }
+                        }, enabled = records != null || temporaryRecords.isNotEmpty(), modifier = Modifier.fillMaxWidth().testTag("replay-records-picker")) { Text("选择回放记录") }
 
 
                     }
@@ -737,6 +754,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         text = { Column(Modifier.widthIn(min = 320.dp, max = 500.dp).heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (savedRecords.isEmpty()) Text("暂无已保存的回放记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (savedRecords.any { saved -> temporaryRecords.any { it.id == saved.id } })
+                Text("临时记录将在关闭回放后清除", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             savedRecords.forEach { saved ->
                 Surface(onClick = { playing = false; report = saved; recordsExpanded = false },
                     modifier = Modifier.fillMaxWidth().testTag("replay-record-${saved.id}"), shape = MaterialTheme.shapes.medium,
@@ -744,7 +763,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("${saved.symbol} · ${saved.trades.size} 笔", style = MaterialTheme.typography.titleSmall)
-                            Text("${saved.status} · ${Instant.fromEpochMilliseconds(saved.savedAtMs).toString().replace('T', ' ').take(16)} UTC",
+                            Text("${if (temporaryRecords.any { it.id == saved.id }) "临时 · " else ""}${saved.status} · ${Instant.fromEpochMilliseconds(saved.savedAtMs).toString().replace('T', ' ').take(16)} UTC",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = { recordDeleteError = null; recordToDelete = saved },
@@ -761,11 +780,14 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         title = { Text("删除回放记录？") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("将删除 ${saved.symbol} 的这条回放记录及其已平仓交易，删除后无法恢复。")
-            if (saved.id == recordId) Text("这是当前回放的记录；删除后本次回放将不再自动保存，可在考核结束时选择保存。")
+            if (saved.id == recordId && !completionFinalized) Text("这是当前回放的记录；删除后本次回放将不再自动保存，可在考核结束时选择保存。")
             recordDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("replay-record-delete-error")) }
         } },
         confirmButton = { TextButton(onClick = {
-            runCatching { requireNotNull(records).delete(saved.id) }.onSuccess {
+            runCatching {
+                if (temporaryRecords.any { it.id == saved.id }) temporaryRecords.removeAll { it.id == saved.id }
+                else requireNotNull(records).delete(saved.id)
+            }.onSuccess {
                 if (saved.id == recordId) currentRecordDeleted = true
                 savedRecords = savedRecords.filterNot { it.id == saved.id }
                 recordToDelete = null; recordDeleteError = null
@@ -783,7 +805,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 ReplayDashboard(saved, Modifier.weight(1f).fillMaxWidth()) { text ->
                     val updated = saved.copy(description = text)
                     runCatching {
-                        if (saved.id != recordId || !currentRecordDeleted) records?.save(updated)
+                        val temporaryIndex = temporaryRecords.indexOfFirst { it.id == saved.id }
+                        if (temporaryIndex >= 0) temporaryRecords[temporaryIndex] = updated
+                        else if (saved.id != recordId || !currentRecordDeleted) records?.save(updated)
                     }.onSuccess {
                         if (saved.id == recordId) description = text
                         report = updated
@@ -816,7 +840,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }) { Text("重选起点") }
         }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
-        text = { Text("本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
+        text = { Text(if (temporaryRecords.isNotEmpty()) "本次模拟仓位和挂单将清除；临时回放记录将随回放界面关闭而删除，已保存的记录仍可用于分析。"
+            else "本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
             TextButton(onClick = { finishReplay(onDismiss) }) { Text("关闭回放") }
         }, dismissButton = { TextButton(onClick = { confirmExit = false }) { Text("取消") } })
     if (showSuccess) Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
@@ -843,13 +868,22 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
                 Button(onClick = {
                     runCatching { requireNotNull(records).save(currentRecord("已达成")) }
-                        .onSuccess { onDismiss() }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
+                        .onSuccess {
+                            currentRecordDeleted = false; completionFinalized = true; showSuccess = false
+                            message = "本次回放已保存，可查看分析或重新开始。"
+                        }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
                 }, modifier = Modifier.fillMaxWidth().testTag("replay-success-save"), enabled = records != null,
-                    colors = brandButtonColors()) { Text("保存本次回放并退出") }
+                    colors = brandButtonColors()) { Text("保存本次回放") }
                 OutlinedButton(onClick = {
-                    runCatching { records?.delete(recordId) }.onSuccess { onDismiss() }
+                    val completed = currentRecord("已达成")
+                    runCatching { records?.let { if (it.list().any { saved -> saved.id == recordId }) it.delete(recordId) } }.onSuccess {
+                        temporaryRecords.removeAll { it.id == recordId }
+                        temporaryRecords.add(completed)
+                        currentRecordDeleted = true; completionFinalized = true; showSuccess = false
+                        message = "本次回放仅临时保留，可查看分析或重新开始；关闭回放后清除。"
+                    }
                         .onFailure { message = "回放记录删除失败：${it.message ?: "请检查存储"}" }
-                }, modifier = Modifier.fillMaxWidth().testTag("replay-success-discard")) { Text("不保存本次回放并退出") }
+                }, modifier = Modifier.fillMaxWidth().testTag("replay-success-discard")) { Text("不保存本次回放") }
             }
         }
     }
