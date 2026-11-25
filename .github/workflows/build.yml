@@ -451,7 +451,7 @@ jobs:
     name: Discord 公告
     needs: [release]
     # v1.8.0 publishes to GitHub without separately sending a chat announcement.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0' && github.ref != 'refs/tags/v1.8.1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -479,8 +479,10 @@ jobs:
        github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/tags/v')) &&
       github.ref != 'refs/tags/v1.8.0' &&
+      github.ref != 'refs/tags/v1.8.1' &&
       !(github.ref == 'refs/heads/main' &&
-        (startsWith(github.event.head_commit.message, 'Refine chart contract label and settings') ||
+        (startsWith(github.event.head_commit.message, 'Merge system proxy support for v1.8.1') ||
+         startsWith(github.event.head_commit.message, 'Refine chart contract label and settings') ||
          startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
     runs-on: ubuntu-latest
     timeout-minutes: 10

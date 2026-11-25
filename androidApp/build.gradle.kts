@@ -15,8 +15,8 @@ android {
         applicationId = "com.unitrading.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.8.0"
+        versionCode = 15
+        versionName = "1.8.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("test-r8-rules.pro")
         // Separate application ID for credential tests; never replace the normal installation.

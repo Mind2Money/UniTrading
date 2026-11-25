@@ -2,11 +2,141 @@
 
 ## 简体中文
 
-- 桌面端 Tradovate 和 Rithmic 的请求及实时连接支持系统代理，可配合 Clash 等代理软件使用规则模式。
+## English
+
+# v1.8.1
+
+## 简体中文
+
+🎉 UniTrading 更新至 **v1.8.1**！在 1.8.0 的历史回放、交易复盘和 Pine 指标功能基础上，本次增加系统代理支持并修复相关连接问题。
+
+### 一、Bug 修复
+
+- 修复 Windows 系统 HTTP 代理连接可能被错误地再次作为 SOCKS 代理处理的问题。
+- 防止桌面券商客户端自动重发带请求体的交易请求。
+- 改进商品类连续合约图表与 Bid、Ask 及实际下单月份不一致的问题，包括 GC、MGC、CL、MCL 等品种。
+- 修复连续合约匹配成功后一段时间可能重新显示“等待报价”的问题，保持已匹配结果。
+- 修复回放中新 K 线出现时，倒计时显示不正确的问题。
+- 修复回放通过图表下单后，已成交订单仍残留“待确认”草稿的问题。
+- 修复回放对象树中指标隐藏和删除无效的问题。
+- 修复软日损状态屏蔽一致性盈利检查的问题。触及软日损或一致性上限后，会按对应规则自动平仓并限制当日开仓。
+
+### 二、新功能
+
+#### 1. 历史回放与本地模拟交易
+
+- 新增历史回放，可选择期货品种、历史日期、模拟资金和考核规则。
+- 支持播放、暂停、单步推进、调整速度、拖动进度条和日历定位；可使用分屏查看不同周期。
+- 支持在回放图表中模拟市价、限价和突破单，以及设置止损、止盈和修改订单数量。回放交易使用本地模拟账户。
+- 支持本地历史数据缓存，也可重新读取历史数据。
+
+#### 2. 模拟账户考核规则
+
+- 支持设置盈利目标、最大日亏损和最大总亏损。
+- 日亏损规则提供**软止损、硬止损、无日止损**；回撤类型支持**静态、日终追踪、浮动追踪**。默认选择软止损和日终追踪。
+- 新增一致性选项：**0%、20%、30%、40%、50%**。每日盈利上限按“盈利目标 × 一致性比例”计算，0% 表示不启用。
+- 触及软日损或一致性盈利上限时，自动平仓、撤销挂单，并禁止当日新开仓；下一个交易日恢复。
+- 达到盈利目标后自动平仓并弹出提示，可选择保存或临时保留本次回放，随后继续分析或通过“重选起点”重新开始。
+- 支持设置是否允许持仓过夜；不允许时可设置自动平仓时间。
+
+#### 3. 回放分析与记录
+
+- 新增回放分析页面，展示净值曲线、总盈亏、胜率、平均盈亏比、月度和星期表现、分时段表现及交易频率。
+- 支持查看已平仓交易明细、添加复盘备注、保存和删除回放记录。
+- 未保存的回放可在当前回放界面临时分析，关闭回放后自动清除。
+
+#### 4. 图表功能
+
+- 新增 **ETH 电子交易时段 / RTH 常规交易时段**切换；常规时段模板支持 ES、NQ、CL、GC 及对应 Micro 合约。
+- 新增图表时区设置，可选择整数 UTC 时区及纽约、芝加哥、伦敦等地区时区。
+- 新增品种与周期水印，可在设置中开启或关闭。
+- 新增图表对象层级调整，绘图和指标可置于顶层或底层，并支持撤销、重做。
+- 支持分别设置上涨、下跌 K 线的实体、边框和影线颜色，并区分行情涨跌与 K 线配色。
+
+#### 5. Pine 指标
+
+- 支持在指标菜单中粘贴 **Pine v5/v6 子集**脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形等。
+- 新建 Pine 指标默认提供布林带示例；脚本源码随图表配置或模板保存。
+
+### 三、功能优化
+
+- **系统代理：**Windows 和 macOS 的 Tradovate、Rithmic 请求及实时连接跟随系统代理，可配合 Clash、Clash Verge 等软件的规则模式。Android 和 iOS 使用各自的系统网络与 VPN 配置；具体路由取决于代理规则。代理变更后需重新连接已建立的实时连接。
+- **行情列表：**新增连续合约更新按钮；多个品种可并发查询，匹配结果不明确时继续等待确认。
+- **连续合约图表：**标题显示连续合约和对应月份合约，鼠标悬停可查看价格匹配提示；放大品种与周期水印。
+- **图表缩放：**扩大可显示的 K 线数量，屏幕宽度和历史数据足够时，单个图表最多可显示约 **2400 根 K 线**。
+- **图表下单：**优化图表右键和订单线操作，可从图表打开下单面板、提交订单并修改数量。
+- **限价单：**买入和卖出限价单不再受当前盘口方向限制；触及或越过对手价时可能立即成交，仍按填写的限价提交。
+- **回放界面：**优化创建回放面板、资产选择、考核规则、顶部状态栏和账户概览；播放控制、起点滑块和日期定位合并到同一栏。
+- **图表设置与桌面退出：**图表时区和退出时保存布局位于“设置 → 外观与图表”。默认退出时自动保存图表和窗口布局，不再弹窗询问；关闭后退出时放弃本次布局修改。
+- **平板界面：**优化 Android 平板和 iPad 的顶部工具栏、账户信息、侧栏及价格轴，为图表保留更多空间。部分调整已包含在后续发布的 v1.7.0 平板安装包中。
+
+**安装与使用说明：**提供 Windows x64、macOS Apple Silicon、两个签名 Android APK（标准版和内置 GeckoView 版）以及未签名 iOS IPA。macOS 包未公证。iOS IPA 包含主应用和小组件，需使用有效的 Apple 证书和描述文件分别签名后才能安装；尚未在 iOS 真机验证。连续合约月份按价格推断；回放使用 K 线模拟成交，柱内价格顺序无法完整还原。实盘使用前请先在券商模拟账户核对行情、订单和风控。
 
 ## English
 
-- Desktop Tradovate and Rithmic requests and live connections now use the system proxy, including with rule-based clients such as Clash.
+🎉 **UniTrading v1.8.1** builds on the historical replay, trade analysis, and Pine indicator features in 1.8.0, adding system proxy support and fixing related connection issues.
+
+### 1. Bug Fixes
+
+- Fixed Windows system HTTP proxy connections being incorrectly treated as SOCKS connections a second time.
+- Prevented the desktop broker client from automatically replaying trading requests that contain a body.
+- Improved cases where commodity continuous-contract charts did not match the Bid, Ask, or actual contract month used for orders, including GC, MGC, CL, MCL, and other products.
+- Fixed an issue where a continuous contract could return to “Waiting for quotes” after it had already been matched. A successful match is now retained.
+- Fixed an incorrect countdown when a new candle appeared during replay.
+- Fixed an issue where a filled replay order could leave a “Pending confirmation” draft on the chart.
+- Fixed indicator hiding and deletion in the replay object tree.
+- Fixed an issue where a soft daily loss state could prevent the consistency profit limit from being checked. Reaching either limit now closes positions and restricts new entries for the rest of the trading day.
+
+### 2. New Features
+
+#### Historical Replay and Local Simulation
+
+- Added historical replay with selectable futures products, date ranges, simulated account balances, and evaluation rules.
+- Supports play, pause, single-step advancement, playback speed adjustment, a draggable timeline, and calendar navigation. Split charts can display different timeframes.
+- Supports simulated market, limit, and stop orders, along with stop-loss and take-profit settings and order quantity changes. Replay trades use a local simulated account.
+- Supports local historical data caching and reloading historical data.
+
+#### Simulated Account Evaluation Rules
+
+- Set a profit target, maximum daily loss, and maximum total loss.
+- Choose from **soft stop, hard stop, or no daily stop**. Drawdown types include **static, end-of-day trailing, and floating trailing**. Soft stop and end-of-day trailing are selected by default.
+- Added consistency options of **0%, 20%, 30%, 40%, and 50%**. The daily profit limit is calculated as the profit target multiplied by the selected percentage; 0% disables the rule.
+- When the soft daily loss or consistency profit limit is reached, positions are closed, pending orders are cancelled, and new entries are blocked until the next trading day.
+- When the profit target is reached, positions are closed automatically and a dialog appears. The replay can be saved or kept temporarily for analysis, after which a new simulation can be started using Reselect Start Point.
+- Choose whether to allow overnight positions. If overnight holding is disabled, an automatic closing time can be configured.
+
+#### Replay Analysis and Records
+
+- Added a replay analysis page with an equity curve, total P&L, win rate, average win/loss ratio, monthly and weekday performance, performance by time of day, and trading frequency.
+- View closed-trade details, add review notes, and save or delete replay records.
+- Unsaved replay results remain available for temporary analysis and are cleared when the replay window is closed.
+
+#### Chart Features
+
+- Added **ETH electronic trading hours / RTH regular trading hours** switching. The regular-hours template supports ES, NQ, CL, GC, and their Micro contracts.
+- Added chart time zone settings, including whole-hour UTC offsets and regional time zones such as New York, Chicago, and London.
+- Added an optional symbol and timeframe watermark.
+- Added chart object layering. Drawings and indicators can be brought to the front or sent to the back, with undo and redo support.
+- Configure the bodies, borders, and wicks of rising and falling candles separately. Market price-change colors and candle colors can also be configured independently.
+
+#### Pine Indicators
+
+- Paste **a subset of Pine v5/v6** scripts in the indicator menu to draw curves, signals, reference lines, line segments, labels, and rectangles on the main chart or in a separate pane.
+- New Pine indicators include a Bollinger Bands example by default. Script source is saved with the chart configuration or template.
+
+### 3. Improvements
+
+- **System proxy:** Tradovate and Rithmic requests and live connections on Windows and macOS follow the system proxy and can work with rule-based clients such as Clash and Clash Verge. Android and iOS use their system network and VPN configuration; actual routing depends on the proxy rules. Reconnect existing live connections after changing the proxy.
+- **Market watch:** Added a continuous-contract refresh button. Multiple products can be queried concurrently, and ambiguous matches remain unconfirmed.
+- **Continuous-contract charts:** The chart label shows the continuous symbol and its matched contract, with price-match details on hover. The symbol and timeframe watermark is larger.
+- **Chart zoom:** Increased the number of visible candles. With sufficient screen width and historical data, a single chart can display approximately **2,400 candles**.
+- **Chart order entry:** Improved chart context-menu and order-line controls. Users can open the order panel, submit orders, and change quantities from the chart.
+- **Limit orders:** Buy and sell limit orders are no longer restricted by their direction relative to the current Bid or Ask. Orders at or through the opposing quote may fill immediately and are still submitted at the specified limit price.
+- **Replay interface:** Refined the replay setup panel, asset selection, evaluation rules, header, and account overview. Playback controls, the start-point slider, and date navigation now share one row.
+- **Chart settings and desktop exit:** Chart time zone and save-on-exit controls are under Settings → Appearance & chart. Chart and window layouts are saved automatically by default without an exit prompt; disabling this discards layout changes on exit.
+- **Tablet interface:** Improved the top toolbar, account information, side panel, and price axis on Android tablets and iPad, leaving more space for the chart. Some changes were already included in later v1.7.0 tablet packages.
+
+**Installation and usage:** The release includes Windows x64, macOS Apple Silicon, two signed Android APKs (standard and bundled GeckoView), and an unsigned iOS IPA. The macOS package is not notarized. The IPA contains the app and widget; both must be signed with valid Apple certificates and provisioning profiles before installation. The iOS build has not been verified on a physical device. Continuous-contract months are inferred from prices, and OHLC replay cannot recover the precise intrabar path. Verify quotes, orders, and risk controls in a broker demo account before live use.
 
 # v1.8.0
 
