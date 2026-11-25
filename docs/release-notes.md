@@ -2,75 +2,135 @@
 
 ## 简体中文
 
-- 精简连续合约图表标题、放大水印，并将图表时区及退出时保存布局移至“外观与图表”设置。
+## English
 
-- 修复回放的一致性盈利上限被软日损状态屏蔽；触及一致性上限或每日软止损时自动平仓、撤单，并禁止当日新开仓。
+# v1.8.0
 
-- 回放达到盈利目标后可保存或临时保留记录，继续留在回放界面分析并重新开始；临时记录关闭回放后清除。
+## 简体中文
 
-- 设置的“其他”分组移至最下方；图表最多可显示约 2400 根 K 线，并扩大券商行情缓存以支持更远的缩放。
+🎉 UniTrading 更新至 **v1.8.0**！本次更新新增历史回放与模拟考核、交易复盘分析和 Pine 指标支持，同时改进连续合约报价匹配、图表设置与下单操作。
 
-- 回放新增无日止损选项，日亏损金额与最大总亏损同步；默认采用软止损和日终追踪。退出保存布局与活动记录归入设置的“其他”分组。
+### 一、Bug 修复
 
-- 桌面端退出时默认自动保存图表和窗口布局，可在设置中关闭；回放记录列表支持逐条删除。
+- 改进商品类连续合约图表与 Bid、Ask 及实际下单月份不一致的问题，包括 GC、MGC、CL、MCL 等品种。
+- 修复连续合约匹配成功后一段时间可能重新显示“等待报价”的问题，保持已匹配结果。
+- 修复回放中新 K 线出现时，倒计时显示不正确的问题。
+- 修复回放通过图表下单后，已成交订单仍残留“待确认”草稿的问题。
+- 修复回放对象树中指标隐藏和删除无效的问题。
+- 修复软日损状态屏蔽一致性盈利检查的问题。触及软日损或一致性上限后，会按对应规则自动平仓并限制当日开仓。
 
-- 非股指连续期货保留券商连续图表，使用最近三个未到期月份的最新成交价一次匹配买卖报价与下单月份；匹配后保留结果，行情栏可手动更新并并发查询。候选数据不全或价格相同时保持待确认；价格匹配是推断，需在券商模拟账户核验。
+### 二、新功能
 
-- 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
+#### 1. 历史回放与本地模拟交易
 
-- 回放支持每日一致性盈利上限；触及上限自动平仓并暂停当日开仓，达到盈利目标后可保存或丢弃记录并退出。精简回放下单面板并调整标题栏。
+- 新增历史回放，可选择期货品种、历史日期、模拟资金和考核规则。
+- 支持播放、暂停、单步推进、调整速度、拖动进度条和日历定位；可使用分屏查看不同周期。
+- 支持在回放图表中模拟市价、限价和突破单，以及设置止损、止盈和修改订单数量。回放交易使用本地模拟账户。
+- 支持本地历史数据缓存，也可重新读取历史数据。
 
-- 修复回放对象树的指标隐藏和删除；主界面与回放均可调整绘图、指标与 K 线的前后层级，精简回放入口和下单说明。
+#### 2. 模拟账户考核规则
 
-- 将回放账户状态移至窗口底部，合并播放与起点定位控制，调整回放入口的考核规则和开关布局。
+- 支持设置盈利目标、最大日亏损和最大总亏损。
+- 日亏损规则提供**软止损、硬止损、无日止损**；回撤类型支持**静态、日终追踪、浮动追踪**。默认选择软止损和日终追踪。
+- 新增一致性选项：**0%、20%、30%、40%、50%**。每日盈利上限按“盈利目标 × 一致性比例”计算，0% 表示不启用。
+- 触及软日损或一致性盈利上限时，自动平仓、撤销挂单，并禁止当日新开仓；下一个交易日恢复。
+- 达到盈利目标后自动平仓并弹出提示，可选择保存或临时保留本次回放，随后继续分析或通过“重选起点”重新开始。
+- 支持设置是否允许持仓过夜；不允许时可设置自动平仓时间。
 
-- 压缩回放入口的考核规则，突出期货资产选择；一次点击开始回放并自动读取历史，调整回放标题栏。
+#### 3. 回放分析与记录
 
-- 改进历史回放入口、图表下单与平仓操作，新增净值、月度、星期、分时段和交易频率分析；可保存或丢弃止损失败后的已平仓记录。
+- 新增回放分析页面，展示净值曲线、总盈亏、胜率、平均盈亏比、月度和星期表现、分时段表现及交易频率。
+- 支持查看已平仓交易明细、添加复盘备注、保存和删除回放记录。
+- 未保存的回放可在当前回放界面临时分析，关闭回放后自动清除。
 
-- 优化 Android 平板和 iPad 图表空间：缩小顶部和右侧控件，账户资金信息并入交易栏，价格轴根据文字宽度自适应；保留平仓确认。
+#### 4. 图表功能
 
-- 调整 Android 平板和 iPad 顶部布局：平仓按钮位于标签栏右侧，平台和子账户位于图表工具栏右侧，下单入口放在最右侧竖栏的 DOM 与交易之间。
+- 新增 **ETH 电子交易时段 / RTH 常规交易时段**切换；常规时段模板支持 ES、NQ、CL、GC 及对应 Micro 合约。
+- 新增图表时区设置，可选择整数 UTC 时区及纽约、芝加哥、伦敦等地区时区。
+- 新增品种与周期水印，可在设置中开启或关闭。
+- 新增图表对象层级调整，绘图和指标可置于顶层或底层，并支持撤销、重做。
+- 支持分别设置上涨、下跌 K 线的实体、边框和影线颜色，并区分行情涨跌与 K 线配色。
 
-- 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
+#### 5. Pine 指标
 
-- 图表指标菜单可粘贴 Pine v5/v6 子集脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形。新建 Pine 指标默认使用简单的 20 周期布林带。脚本只在本机读取当前图表行情，不运行策略、不下单。见 [Pine 指标与绘图](pine-indicators.md)。
+- 支持在指标菜单中粘贴 **Pine v5/v6 子集**脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形等。
+- 新建 Pine 指标默认提供布林带示例；脚本源码随图表配置或模板保存。
+
+### 三、功能优化
+
+- **行情列表：**新增连续合约更新按钮；多个品种可并发查询，匹配结果不明确时继续等待确认。
+- **连续合约图表：**标题显示连续合约和对应月份合约，鼠标悬停可查看价格匹配提示；放大品种与周期水印。
+- **图表缩放：**扩大可显示的 K 线数量，屏幕宽度和历史数据足够时，单个图表最多可显示约 **2400 根 K 线**。
+- **图表下单：**优化图表右键和订单线操作，可从图表打开下单面板、提交订单并修改数量。
+- **限价单：**买入和卖出限价单不再受当前盘口方向限制；触及或越过对手价时可能立即成交，仍按填写的限价提交。
+- **回放界面：**优化创建回放面板、资产选择、考核规则、顶部状态栏和账户概览；播放控制、起点滑块和日期定位合并到同一栏。
+- **图表设置与桌面退出：**图表时区和退出时保存布局位于“设置 → 外观与图表”。默认退出时自动保存图表和窗口布局，不再弹窗询问；关闭后退出时放弃本次布局修改。
+- **平板界面：**优化 Android 平板和 iPad 的顶部工具栏、账户信息、侧栏及价格轴，为图表保留更多空间。部分调整已包含在后续发布的 v1.7.0 平板安装包中。
+
+**安装与使用说明：**提供 Windows x64、macOS Apple Silicon、两个签名 Android APK（标准版和内置 GeckoView 版）以及未签名 iOS IPA。macOS 包未公证。iOS IPA 包含主应用和小组件，需使用有效的 Apple 证书和描述文件分别签名后才能安装；尚未在 iOS 真机验证。连续合约月份按价格推断；回放使用 K 线模拟成交，柱内价格顺序无法完整还原。实盘使用前请先在券商模拟账户核对行情、订单和风控。
 
 ## English
 
-- Simplify the continuous-contract chart label, enlarge its watermark, and move chart time zone and save-on-exit controls to Appearance & chart settings.
+🎉 **UniTrading v1.8.0** introduces historical replay, simulated evaluation accounts, trade analysis, and Pine indicator support. It also improves continuous-contract quote matching, chart settings, and order entry.
 
-- Fix replay consistency limits being masked by a soft daily stop. Both limits flatten positions, cancel pending orders and block new entries for the trading day.
+### 1. Bug Fixes
 
-- After reaching a replay profit target, save the result or keep it temporarily for analysis, and restart without leaving the replay. Temporary records are cleared when the replay closes.
+- Improved cases where commodity continuous-contract charts did not match the Bid, Ask, or actual contract month used for orders, including GC, MGC, CL, MCL, and other products.
+- Fixed an issue where a continuous contract could return to “Waiting for quotes” after it had already been matched. A successful match is now retained.
+- Fixed an incorrect countdown when a new candle appeared during replay.
+- Fixed an issue where a filled replay order could leave a “Pending confirmation” draft on the chart.
+- Fixed indicator hiding and deletion in the replay object tree.
+- Fixed an issue where a soft daily loss state could prevent the consistency profit limit from being checked. Reaching either limit now closes positions and restricts new entries for the rest of the trading day.
 
-- Move Other to the bottom of settings, and allow charts to zoom out to approximately 2,400 candles with deeper broker history caches.
+### 2. New Features
 
-- Add an option without a separate daily stop to replay, synchronizing its displayed daily loss amount with the total loss limit. Soft daily loss and end-of-day trailing are now the defaults. Group exit saving and the activity log under Other in settings.
+#### Historical Replay and Local Simulation
 
-- On desktop, save charts and window layouts automatically on exit by default; this can be disabled in settings. Replay records can be deleted individually.
+- Added historical replay with selectable futures products, date ranges, simulated account balances, and evaluation rules.
+- Supports play, pause, single-step advancement, playback speed adjustment, a draggable timeline, and calendar navigation. Split charts can display different timeframes.
+- Supports simulated market, limit, and stop orders, along with stop-loss and take-profit settings and order quantity changes. Replay trades use a local simulated account.
+- Supports local historical data caching and reloading historical data.
 
-- Preserve broker continuous charts for non-index futures and match their latest price once against the three nearest unexpired months. The resulting quote and execution month stays fixed until manually refreshed; watch-list products resolve concurrently. Incomplete or ambiguous prices remain unconfirmed. This heuristic needs broker demo validation.
+#### Simulated Account Evaluation Rules
 
-- Fix the replay candle countdown and stale order drafts after fills; make the replay sidebar collapsible, enable chart order submission and quantity editing, and remove the simulated-position card.
+- Set a profit target, maximum daily loss, and maximum total loss.
+- Choose from **soft stop, hard stop, or no daily stop**. Drawdown types include **static, end-of-day trailing, and floating trailing**. Soft stop and end-of-day trailing are selected by default.
+- Added consistency options of **0%, 20%, 30%, 40%, and 50%**. The daily profit limit is calculated as the profit target multiplied by the selected percentage; 0% disables the rule.
+- When the soft daily loss or consistency profit limit is reached, positions are closed, pending orders are cancelled, and new entries are blocked until the next trading day.
+- When the profit target is reached, positions are closed automatically and a dialog appears. The replay can be saved or kept temporarily for analysis, after which a new simulation can be started using Reselect Start Point.
+- Choose whether to allow overnight positions. If overnight holding is disabled, an automatic closing time can be configured.
 
-- Add a replay daily consistency cap, automatic flattening and a save-or-discard success dialog; simplify the replay order panel and header.
+#### Replay Analysis and Records
 
-- Fix indicator visibility and removal in replay; allow chart objects to be moved above or below candles in both workspaces, and simplify replay text.
+- Added a replay analysis page with an equity curve, total P&L, win rate, average win/loss ratio, monthly and weekday performance, performance by time of day, and trading frequency.
+- View closed-trade details, add review notes, and save or delete replay records.
+- Unsaved replay results remain available for temporary analysis and are cleared when the replay window is closed.
 
-- Move replay account status to a separate bottom bar and combine playback and start-position controls; refine replay rule and option layouts.
+#### Chart Features
 
-- Compact replay risk settings, distinguish the futures selector, start replay in one step and refine the replay title bar.
+- Added **ETH electronic trading hours / RTH regular trading hours** switching. The regular-hours template supports ES, NQ, CL, GC, and their Micro contracts.
+- Added chart time zone settings, including whole-hour UTC offsets and regional time zones such as New York, Chicago, and London.
+- Added an optional symbol and timeframe watermark.
+- Added chart object layering. Drawings and indicators can be brought to the front or sent to the back, with undo and redo support.
+- Configure the bodies, borders, and wicks of rising and falling candles separately. Market price-change colors and candle colors can also be configured independently.
 
-- Refine replay setup, chart orders and position closing; add equity, monthly, weekday, intraday and trade-frequency analysis, with save-or-discard options after a risk failure.
+#### Pine Indicators
 
-- Give Android tablets and iPad more chart space with compact controls, an integrated account and trade bar, and a content-aware price axis. Flatten confirmation remains in place.
+- Paste **a subset of Pine v5/v6** scripts in the indicator menu to draw curves, signals, reference lines, line segments, labels, and rectangles on the main chart or in a separate pane.
+- New Pine indicators include a Bollinger Bands example by default. Script source is saved with the chart configuration or template.
 
-- Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and put the order button on the right rail between DOM and trading.
+### 3. Improvements
 
-- Submit regular buy and sell limit orders on either side of the quote. Both sides are available at the same price in the chart's right-click and long-press menus. Orders at or through the opposite quote may fill immediately; they retain the entered limit, never become market orders, and are not guaranteed to fill. Stop triggers, protective orders, and account risk checks are unchanged.
+- **Market watch:** Added a continuous-contract refresh button. Multiple products can be queried concurrently, and ambiguous matches remain unconfirmed.
+- **Continuous-contract charts:** The chart label shows the continuous symbol and its matched contract, with price-match details on hover. The symbol and timeframe watermark is larger.
+- **Chart zoom:** Increased the number of visible candles. With sufficient screen width and historical data, a single chart can display approximately **2,400 candles**.
+- **Chart order entry:** Improved chart context-menu and order-line controls. Users can open the order panel, submit orders, and change quantities from the chart.
+- **Limit orders:** Buy and sell limit orders are no longer restricted by their direction relative to the current Bid or Ask. Orders at or through the opposing quote may fill immediately and are still submitted at the specified limit price.
+- **Replay interface:** Refined the replay setup panel, asset selection, evaluation rules, header, and account overview. Playback controls, the start-point slider, and date navigation now share one row.
+- **Chart settings and desktop exit:** Chart time zone and save-on-exit controls are under Settings → Appearance & chart. Chart and window layouts are saved automatically by default without an exit prompt; disabling this discards layout changes on exit.
+- **Tablet interface:** Improved the top toolbar, account information, side panel, and price axis on Android tablets and iPad, leaving more space for the chart. Some changes were already included in later v1.7.0 tablet packages.
 
-- Paste scripts in the chart's indicator menu to plot lines, signals, reference levels, drawing segments, labels, and boxes in the main chart or a separate pane. New Pine indicators start with simple 20-period Bollinger Bands. This local Pine v5/v6 subset reads the current chart only; it does not run strategies or place orders. See [Pine indicators and drawings](pine-indicators.md).
+**Installation and usage:** The release includes Windows x64, macOS Apple Silicon, two signed Android APKs (standard and bundled GeckoView), and an unsigned iOS IPA. The macOS package is not notarized. The IPA contains the app and widget; both must be signed with valid Apple certificates and provisioning profiles before installation. The iOS build has not been verified on a physical device. Continuous-contract months are inferred from prices, and OHLC replay cannot recover the precise intrabar path. Verify quotes, orders, and risk controls in a broker demo account before live use.
 
 # v1.7.0
 

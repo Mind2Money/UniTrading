@@ -218,10 +218,13 @@ jobs:
           path: signed/${{ needs.build-android.outputs.apk_name }}-webview.apk
           if-no-files-found: error
 
-  # ─── Windows 桌面包（仅 v* tag）──────────────────────────────────────────────
+  # ─── Windows 桌面包（v* tag 与 v1.8.0 发布准备）────────────────────────────
   build-windows:
     name: Windows 桌面包
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -252,9 +255,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
           $packaged = (Get-Item "$app/UniTrading.exe").VersionInfo.ProductVersion
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '1.8.0' }
           if ($packaged -ne $version) { throw "UniTrading.exe is $packaged, tag is $env:GITHUB_REF_NAME" }
           if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host is not packaged' }
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -267,12 +270,15 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # ─── macOS 桌面包（仅 v* tag）────────────────────────────────────────────────
+  # ─── macOS 桌面包（v* tag 与 v1.8.0 发布准备）────────────────────────────────
   # Apple Silicon, ad-hoc signed and not notarized. The only tests here are the
   # ones that exercise macOS code, which the Windows regression cannot run.
   build-macos:
     name: macOS 桌面包
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
     runs-on: macos-latest
     timeout-minutes: 35
     steps:
@@ -444,6 +450,8 @@ jobs:
   notify-discord:
     name: Discord 公告
     needs: [release]
+    # v1.8.0 publishes to GitHub without separately sending a chat announcement.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.8.0'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -464,14 +472,16 @@ jobs:
   notify-telegram:
     name: Telegram 通知
     needs: [build-android, sign-android]
-    # Keep this UI-only merge silent; later main pushes and releases notify as usual.
+    # Keep these merges and the v1.8.0 release silent; other pushes notify as usual.
     if: >-
       !cancelled() && github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' ||
        github.ref == 'refs/heads/master' ||
        startsWith(github.ref, 'refs/tags/v')) &&
+      github.ref != 'refs/tags/v1.8.0' &&
       !(github.ref == 'refs/heads/main' &&
-        startsWith(github.event.head_commit.message, 'Refine chart contract label and settings'))
+        (startsWith(github.event.head_commit.message, 'Refine chart contract label and settings') ||
+         startsWith(github.event.head_commit.message, 'Prepare UniTrading v1.8.0 release')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

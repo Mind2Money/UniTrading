@@ -9,14 +9,14 @@ plugins {
 }
 android {
     namespace = "com.unitrading.android"
-    // GeckoView 159 refuses to link against anything older than 37.2. targetSdk, not this, sets runtime behavior.
+    // GeckoView requires at least 37.2. targetSdk, not this, sets runtime behavior.
     compileSdk { version = release(37) { minorApiLevel = 2 } }
     defaultConfig {
         applicationId = "com.unitrading.demo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.7.0"
+        versionCode = 14
+        versionName = "1.8.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("test-r8-rules.pro")
         // Separate application ID for credential tests; never replace the normal installation.
@@ -113,7 +113,7 @@ dependencies {
     implementation(libs.activity.compose)
     "standardImplementation"("androidx.webkit:webkit:1.18.0")
     // Follows Firefox releases. The engine updates only when this version does, so raise it with each app release.
-    "geckoImplementation"("org.mozilla.geckoview:geckoview-$geckoAbi:160.0.20261116130455")
+    "geckoImplementation"("org.mozilla.geckoview:geckoview-$geckoAbi:161.0.20261118180411")
     tradovateDesktopRuntime(project(":tradovate-broker"))
     // NotificationCompat Live Update helpers (promotion request, status-bar chip text) and startForegroundService.
     implementation("androidx.core:core:1.18.0")
