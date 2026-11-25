@@ -246,4 +246,25 @@ class SystemProxyTest {
             }
         }
     }
+
+    /** Opt-in on an isolated Mac with its active network service pointing to this local proxy. */
+    @Test fun brokerRequestsFollowMacSystemProxy() = runBlocking {
+        val port = System.getenv("UNITRADING_TEST_MAC_SYSTEM_PROXY")?.toIntOrNull() ?: return@runBlocking
+        assertTrue(System.getProperty("os.name").startsWith("Mac"))
+        assertEquals("true", System.getProperty("java.net.useSystemProxies"))
+        val selected = ProxySelector.getDefault().select(URI("https://$TRADOVATE_HOST/v1/order/list"))
+        assertTrue(selected.any { it.type() == Proxy.Type.HTTP && (it.address() as? InetSocketAddress)?.port == port }, "System proxy was not selected: $selected")
+        RejectingProxy(port).use { proxy ->
+            val tradovate = KtorTradovateWire()
+            val rithmic = KtorRithmicWire()
+            try {
+                checkTradovateSocket(tradovate, proxy)
+                checkTradovateRequest(tradovate, proxy)
+                checkRithmicSocket(rithmic, proxy)
+            } finally {
+                tradovate.close()
+                rithmic.close()
+            }
+        }
+    }
 }
