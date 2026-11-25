@@ -14,12 +14,18 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.ThemeSettings
+import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.Timeframe
 import com.unitrading.chart.ChartOrderActions
 import com.unitrading.chart.PriceScale
 import com.unitrading.chart.TradingChart
+import com.unitrading.chart.ChartChrome
+import com.unitrading.chart.ChartViewMemory
+import com.unitrading.chart.SavedChartView
+import com.unitrading.chart.chartViewKey
+import kotlinx.coroutines.Dispatchers
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -97,5 +103,20 @@ class CandleZoomUiTest {
         assertTrue(s.getValue("barBody").toFloat() > 0f)
         val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/zoom-2400").also { it.mkdirs() }
         ImageIO.write(compose.onNodeWithTag("trading-chart").captureToImage().toAwtImage(), "png", File(folder, "chart.png"))
+    }
+
+    @Test fun savedWideZoomIsNotClampedBeforeTheChartIsMeasured() {
+        val many = (0 until 3000).map { Candle(it * 60_000L, 10_000, 10_150, 9_950, 10_100) }
+        val views = ChartViewMemory(MemorySnapshotStore(), Dispatchers.Unconfined, saveDelayMs = 0).also {
+            it.keep(chartViewKey(instrument.symbol, Timeframe.M1), SavedChartView(2400.0))
+        }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f)) {
+            Box(Modifier.requiredSize(1400.dp, 600.dp)) {
+                TradingChart("account", instrument, null, many, Timeframe.M1, {}, emptyList(), emptyList(), null, null,
+                    null, null, emptyList(), actions, Modifier.fillMaxSize(), chrome = ChartChrome(views = views))
+            }
+        } }
+        compose.waitForIdle()
+        assertEquals(2400.0, state().getValue("bars").toDouble(), .001)
     }
 }

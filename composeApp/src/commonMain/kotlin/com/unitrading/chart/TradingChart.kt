@@ -148,6 +148,7 @@ fun TradingChart(
     var crosshairY by remember(accountKey, instrument.symbol, timeframe) { mutableStateOf<Float?>(null) }
     var drag by remember(accountKey, instrument.symbol, instrument.executionSymbol, timeframe) { mutableStateOf<LineDrag?>(null) }
     var size by remember { mutableStateOf(IntSize(900, 400)) }
+    var chartMeasured by remember { mutableStateOf(false) }
     /** Where the floating toolbar and legend sit over the plot; line labels keep clear of it. */
     var legendArea by remember { mutableStateOf<Rect?>(null) }
     /** Where the mouse rests; the tag button under it lights up and names itself. */
@@ -185,9 +186,11 @@ fun TradingChart(
     val top = with(density) { (if (mobilePlatform) 58.dp else 18.dp).toPx() }
     val bottom = (size.height - with(density) { (if (mobilePlatform) 30.dp else 54.dp).toPx() }).coerceAtLeast(top + 1)
     val plotWidth = right - left
-    LaunchedEffect(plotWidth, viewport.count, candles.size) {
-        val fittedViewport = viewport.fitPixelWidth(plotWidth, candles.size)
-        if (fittedViewport != viewport) viewport = fittedViewport
+    LaunchedEffect(chartMeasured, plotWidth, viewport.count, candles.size) {
+        if (chartMeasured) {
+            val fittedViewport = viewport.fitPixelWidth(plotWidth, candles.size)
+            if (fittedViewport != viewport) viewport = fittedViewport
+        }
     }
     val range = viewport.range(candles.size)
     val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
@@ -460,7 +463,7 @@ fun TradingChart(
             val crosshairState = crosshair?.let { index -> "$index@" + (crosshairY?.takeIf { it in top..plotBottom }?.let { scale.price(it, instrument.tickSize).toString() } ?: "none") } ?: "none"
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
-                    Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it }.testTag("trading-chart")
+                    Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it; chartMeasured = true }.testTag("trading-chart")
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             // Initial pass wins over drawing/order-line gestures. Once two fingers take
                             // ownership, consume through the LAST finger up: never commit a leftover drag.
