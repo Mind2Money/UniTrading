@@ -2,7 +2,11 @@
 
 ## 简体中文
 
+- 桌面端 Tradovate 和 Rithmic 的请求及实时连接支持系统代理，可配合 Clash 等代理软件使用规则模式。
+
 ## English
+
+- Desktop Tradovate and Rithmic requests and live connections now use the system proxy, including with rule-based clients such as Clash.
 
 # v1.8.0
 

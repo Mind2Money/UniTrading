@@ -1,6 +1,6 @@
 # UniTrading
 
-UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows、macOS、Android 和 iOS 共用交易界面；iOS 提供未签名 IPA，需自行签名后安装，尚未在真机验证。
+UniTrading 是用 Kotlin Multiplatform 开发的交易终端，通过 Tradovate 网页登录或 Rithmic 账号连接服务器账户。Windows、macOS、Android 和 iOS 共用交易界面；iOS 提供未签名 IPA，需自行签名后安装，尚未在真机验证。桌面端券商连接支持[系统代理](docs/system-proxy.md)。
 
 **Tradovate Live 模式会把用户确认的指令发送至真实账户。** Windows 端曾实测 Tradovate Demo 登录及账户、报价、历史数据的只读流程，真实下单与成交回执仍未联调。当前应用版本为 1.8.0，版本改动见[发布说明](docs/release-notes.md)。[当前状态](docs/current-status.md) 区分已实现、未实现和未验证能力，[代码核对](docs/implementation-audit.md) 记录已知缺口。
 

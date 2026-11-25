@@ -22,7 +22,9 @@ kotlin {
             implementation("io.ktor:ktor-client-core:3.1.0")
             implementation("io.ktor:ktor-client-websockets:3.1.0")
         }
-        getByName("desktopMain").dependencies { implementation("io.ktor:ktor-client-cio:3.1.0") }
+        // CIO opens its own sockets and does not consult the JVM's system ProxySelector. OkHttp
+        // uses that selector for HTTPS requests and WebSocket handshakes, including reconnects.
+        getByName("desktopMain").dependencies { implementation("io.ktor:ktor-client-okhttp:3.1.0") }
         androidMain.dependencies { implementation("io.ktor:ktor-client-okhttp:3.1.0") }
         iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.1.0") }
         commonTest.dependencies {

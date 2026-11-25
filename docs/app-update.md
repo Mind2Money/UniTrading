@@ -34,7 +34,7 @@ Windows 的做法来自 BatchTradovate：jpackage 启动器把应用放在 kill-
 - SHA-256 由 GitHub 在上传资源时计算，和安装包来自同一个仓库。它能发现下载损坏，不能证明发布者身份。
 - Windows 包没有代码签名。Android 由系统比对签名证书，与已安装应用不同的 APK 装不上；调试版遇到正式版会在下载后提示签名不同。
 - Windows 程序目录不可写时（例如装在 `Program Files`）更新失败，当前版本不变，需要手动更新。
-- 桌面端打开了 `java.net.useSystemProxies`，让更新走系统代理；券商连接用 Ktor 自己的 socket，不受影响。
+- 桌面端通过系统代理访问更新服务；券商的 HTTPS 请求和 WebSocket 连接也跟随系统代理，详见[网络与系统代理](system-proxy.md)。
 
 ## 发布约定
 

@@ -136,6 +136,8 @@ if (isMac) tasks.matching { it.name == "createDistributable" }.configureEach {
 compose.desktop {
     application {
         mainClass = "com.unitrading.MainKt"
+        // The JVM reads this setting at startup, before an application class may initialize networking.
+        jvmArgs("-Djava.net.useSystemProxies=true")
         nativeDistributions {
             appResourcesRootDir.set(layout.buildDirectory.dir("appResources"))
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
