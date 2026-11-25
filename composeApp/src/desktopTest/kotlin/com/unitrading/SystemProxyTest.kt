@@ -55,8 +55,8 @@ private class RejectingProxy(port: Int = 0) : Closeable {
         }
     }
 
-    fun expectConnect(host: String) {
-        val lines = requests.poll(10, TimeUnit.SECONDS) ?: fail("No CONNECT reached the local proxy for $host")
+    fun expectConnect(host: String, failure: Exception) {
+        val lines = requests.poll(10, TimeUnit.SECONDS) ?: fail("No CONNECT reached the local proxy for $host; request failed: ${failure.stackTraceToString()}")
         assertEquals("CONNECT $host:443 HTTP/1.1", lines.firstOrNull())
         assertFalse(lines.any { it.contains(TEST_TOKEN) }, "The broker token must not appear in the proxy CONNECT headers")
     }
@@ -67,30 +67,31 @@ private class RejectingProxy(port: Int = 0) : Closeable {
     }
 }
 
-private suspend fun expectProxyRejection(call: suspend () -> Unit) = withTimeout(15_000) {
+private suspend fun expectProxyRejection(call: suspend () -> Unit): Exception = withTimeout(15_000) {
     try {
         call()
         fail("The test proxy rejected CONNECT, so the request should not succeed")
     } catch (cancelled: CancellationException) {
         throw cancelled
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
         // Expected: the proxy responds with 502 before the client sends any broker credentials.
+        failure
     }
 }
 
 private suspend fun checkTradovateRequest(wire: KtorTradovateWire, proxy: RejectingProxy) {
-    expectProxyRejection { wire.request(TradovateHosts(TRADOVATE_HOST, TRADOVATE_HOST), TEST_TOKEN, "GET", "order/list") }
-    proxy.expectConnect(TRADOVATE_HOST)
+    val failure = expectProxyRejection { wire.request(TradovateHosts(TRADOVATE_HOST, TRADOVATE_HOST), TEST_TOKEN, "GET", "order/list") }
+    proxy.expectConnect(TRADOVATE_HOST, failure)
 }
 
 private suspend fun checkTradovateSocket(wire: KtorTradovateWire, proxy: RejectingProxy) {
-    expectProxyRejection { wire.socket("wss://$TRADOVATE_HOST/v1/websocket") }
-    proxy.expectConnect(TRADOVATE_HOST)
+    val failure = expectProxyRejection { wire.socket("wss://$TRADOVATE_HOST/v1/websocket") }
+    proxy.expectConnect(TRADOVATE_HOST, failure)
 }
 
 private suspend fun checkRithmicSocket(wire: KtorRithmicWire, proxy: RejectingProxy) {
-    expectProxyRejection { wire.socket("wss://$RITHMIC_HOST:443") }
-    proxy.expectConnect(RITHMIC_HOST)
+    val failure = expectProxyRejection { wire.socket("wss://$RITHMIC_HOST:443") }
+    proxy.expectConnect(RITHMIC_HOST, failure)
 }
 
 class SystemProxyTest {
@@ -133,8 +134,8 @@ class SystemProxyTest {
             val tradovate = KtorTradovateWire()
             val rithmic = KtorRithmicWire()
             try {
-                checkTradovateRequest(tradovate, proxy)
                 checkTradovateSocket(tradovate, proxy)
+                checkTradovateRequest(tradovate, proxy)
                 checkRithmicSocket(rithmic, proxy)
             } finally {
                 tradovate.close()
