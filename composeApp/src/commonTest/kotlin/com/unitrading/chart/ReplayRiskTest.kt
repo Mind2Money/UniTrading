@@ -24,6 +24,25 @@ class ReplayRiskTest {
 
 class ReplayDailyRiskTest {
     private fun at(s: String) = Instant.parse(s).toEpochMilliseconds()
+    @Test fun defaultsUseSoftStopAndEndOfDayTrailing() {
+        val config = defaultReplayRiskConfig()
+        assertEquals(ReplayDailyLoss.SOFT, config.dailyLossMode)
+        assertEquals(ReplayDrawdown.EOD, config.mode)
+        assertEquals(1_000_000_000L, config.maxDailyLossMicros)
+    }
+    @Test fun noDailyStopDoesNotLockOrFailBeforeTheTotalDrawdown() {
+        val cfg = ReplayRiskConfig(50_000, 5_000, 10_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000, dailyLossMode = ReplayDailyLoss.NONE)
+        val prior = ReplayRiskState.initial(cfg).observe(cfg, at("2026-11-23T22:59:00Z"), 55_000, 55_000)
+        val opening = prior.observe(cfg, at("2026-11-23T23:01:00Z"), 55_000, 55_000)
+        val dailyLoss = opening.observe(cfg, at("2026-11-24T00:00:00Z"), 50_000, 50_000)
+        assertFalse(dailyLoss.dailyLossHit)
+        assertFalse(dailyLoss.dailyFailure)
+        assertFalse(dailyLoss.failed)
+        val totalLoss = dailyLoss.observe(cfg, at("2026-11-24T00:01:00Z"), 45_000, 45_000)
+        assertTrue(totalLoss.failed)
+        assertFalse(totalLoss.dailyFailure)
+    }
     @Test fun hardDailyLossFailsAtThresholdAndStaysFailed() {
         val cfg = ReplayRiskConfig(50_000, 5_000, 3_000, ReplayDrawdown.STATIC,
             maxDailyLossMicros = 1_000, dailyLossMode = ReplayDailyLoss.HARD)

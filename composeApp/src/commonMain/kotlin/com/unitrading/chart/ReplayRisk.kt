@@ -9,11 +9,11 @@ import com.unitrading.broker.multiplyDivide
 
 /** Generic local rules, not a representation of a particular firm's evaluation contract. */
 internal enum class ReplayDrawdown { STATIC, EOD, TDD }
-internal enum class ReplayDailyLoss { SOFT, HARD }
+internal enum class ReplayDailyLoss { SOFT, HARD, NONE }
 
 internal data class ReplayRiskConfig(val initialMicros: Long, val maxDrawdownMicros: Long, val targetMicros: Long,
     val mode: ReplayDrawdown, val allowOvernight: Boolean = true, val overnightCutoffMinutes: Int = 15 * 60 + 59,
-    val maxDailyLossMicros: Long? = null, val dailyLossMode: ReplayDailyLoss = ReplayDailyLoss.HARD,
+    val maxDailyLossMicros: Long? = null, val dailyLossMode: ReplayDailyLoss = ReplayDailyLoss.SOFT,
     val consistencyPercent: Int = 0) {
     init {
         require(initialMicros > 0 && maxDrawdownMicros > 0 && targetMicros > 0) { "资金、回撤额度和盈利目标必须大于零" }
@@ -26,6 +26,11 @@ internal data class ReplayRiskConfig(val initialMicros: Long, val maxDrawdownMic
     }
     val consistencyLimitMicros: Long? get() = if (consistencyPercent == 0) null else multiplyDivide(targetMicros, consistencyPercent.toLong(), 1L, 100L)
 }
+
+internal fun defaultReplayRiskConfig() = ReplayRiskConfig(
+    50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.EOD,
+    maxDailyLossMicros = 1_000_000_000L, dailyLossMode = ReplayDailyLoss.SOFT,
+)
 
 internal data class ReplayRiskState(val threshold: Long, val highWater: Long, val tradingDay: String? = null,
     val lastBalance: Long, val failed: Boolean = false, val targetReached: Boolean = false,
@@ -48,7 +53,8 @@ internal data class ReplayRiskState(val threshold: Long, val highWater: Long, va
         val limit = maxOf(threshold, high - config.maxDrawdownMicros)
         val newDay = tradingDay != null && tradingDay != day
         val opening = if (newDay) lastEquity else dayOpeningBalance
-        val hit = (!newDay && dailyLossHit) || (config.maxDailyLossMicros?.let { equity <= opening - it } == true)
+        val hit = config.dailyLossMode != ReplayDailyLoss.NONE &&
+            ((!newDay && dailyLossHit) || (config.maxDailyLossMicros?.let { equity <= opening - it } == true))
         val hard = hit && config.dailyLossMode == ReplayDailyLoss.HARD
         return copy(threshold = limit, highWater = high, tradingDay = day, lastBalance = balance,
             dayOpeningBalance = opening, dailyLossHit = hit, dailyFailure = dailyFailure || hard, lastEquity = equity,

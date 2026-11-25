@@ -185,18 +185,6 @@ internal fun SettingsPage(
             }
 
             SettingsSection("外观与图表") {
-                if (showDesktopExitSetting) ListItem(
-                    headlineContent = { Text("退出时保存布局") },
-                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
-                        "退出时自动保存图表和窗口布局，不再询问。"
-                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
-                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
-                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
-                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
-                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
-                        .testTag("settings-save-workspace-on-exit"),
-                    colors = settingsRowColors(),
-                )
                 ListItem(headlineContent = { Text("商品代码与周期水印") },
                     supportingContent = { Text("在图表背景显示当前品种和周期") },
                     leadingContent = { Icon(AppIcons.Candlestick, contentDescription = null) },
@@ -214,8 +202,20 @@ internal fun SettingsPage(
 
             if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
 
-            SettingsSection("记录") {
+            SettingsSection("其他", Modifier.testTag("settings-other-section")) {
                 SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
+                if (showDesktopExitSetting) ListItem(
+                    headlineContent = { Text("退出时保存布局") },
+                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
+                        "退出时自动保存图表和窗口布局，不再询问。"
+                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
+                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
+                        .testTag("settings-save-workspace-on-exit"),
+                    colors = settingsRowColors(),
+                )
             }
 
             if (runtime.savedLogins.available) SettingsSection("已保存的登录") {
@@ -316,8 +316,8 @@ internal fun keyboardTradingSummary(preferences: TradingPreferences, brackets: A
 private fun settingsRowColors() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
 @Composable
-private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun SettingsSection(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, Modifier.padding(start = 16.dp).semantics { heading() }, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
             Column(content = content)

@@ -101,7 +101,10 @@ class SettingsPageTest {
     @Test fun desktopExitSavingSwitchStartsOnAndCanBeChanged() {
         val runtime = render(width = 1100, height = 900)
         compose.onNodeWithTag("open-settings").performClick()
-        compose.onNodeWithTag("settings-save-workspace-on-exit").performScrollTo().assertIsOn().performClick()
+        compose.onNodeWithTag("settings-save-workspace-on-exit").performScrollTo().assertIsOn()
+            .assert(hasAnyAncestor(hasTestTag("settings-other-section"))).performClick()
+        compose.onNodeWithTag("open-activity").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
+        compose.onNodeWithText("其他").assertExists()
         compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
         compose.onNodeWithTag("settings-save-workspace-on-exit").assertIsOff()
             .assertTextContains("放弃本次图表和窗口布局修改", substring = true)

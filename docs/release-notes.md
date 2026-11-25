@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 回放新增无日止损选项，日亏损金额与最大总亏损同步；默认采用软止损和日终追踪。退出保存布局与活动记录归入设置的“其他”分组。
+
 - 桌面端退出时默认自动保存图表和窗口布局，可在设置中关闭；回放记录列表支持逐条删除。
 
 - 非股指连续期货保留券商连续图表，使用最近三个未到期月份的最新成交价一次匹配买卖报价与下单月份；匹配后保留结果，行情栏可手动更新并并发查询。候选数据不全或价格相同时保持待确认；价格匹配是推断，需在券商模拟账户核验。
@@ -25,6 +27,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Add an option without a separate daily stop to replay, synchronizing its displayed daily loss amount with the total loss limit. Soft daily loss and end-of-day trailing are now the defaults. Group exit saving and the activity log under Other in settings.
 
 - On desktop, save charts and window layouts automatically on exit by default; this can be disabled in settings. Replay records can be deleted individually.
 

@@ -58,6 +58,13 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
     }
+    @Test fun noDailyStopAllowsTradingWhenTheDailyAmountIsCrossed() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        open(ReplayDailyLoss.NONE, records)
+        compose.onNodeWithText("回放考核失败").assertDoesNotExist()
+        compose.onNodeWithText("最大日亏损 · 无止损").assertExists()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+    }
     @Test fun savedFailureContainsClosedTradesAndCanBeImported() {
         val records = ReplayRecords(MemorySnapshotStore())
         val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,

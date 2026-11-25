@@ -21,6 +21,7 @@ import com.unitrading.chart.IntervalOptions
 import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.ReplayDrawdown
 import com.unitrading.chart.ReplayDailyLoss
+import com.unitrading.chart.defaultReplayRiskConfig
 import com.unitrading.chart.parseReplayCutoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -55,7 +56,7 @@ internal fun replayDateRange(start: String, end: String, zone: ChartTimeZone): R
 internal data class ReplayPrepared(val instruments: List<Instrument>, val range: ReplayDateRange,
     val data: Map<Pair<String, Timeframe>, List<Candle>>, val warnings: List<String>, val cacheEnabled: Boolean = true,
     val cacheHits: Int = 0, val downloaded: Int = 0, val initialFrame: Timeframe = Timeframe.M1,
-    val riskConfig: ReplayRiskConfig = ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC))
+    val riskConfig: ReplayRiskConfig = defaultReplayRiskConfig())
 
 internal fun isReplayFuture(instrument: Instrument): Boolean = instrument.isContinuous ||
     instrument.category.contains("期货", true) || instrument.category.contains("future", true) || instrument.name.contains("future", true)
@@ -76,8 +77,8 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     var dailyText by remember { mutableStateOf("1000") }
     var targetText by remember { mutableStateOf("3000") }
     var consistencyPercent by remember { mutableIntStateOf(0) }
-    var drawdownMode by remember { mutableStateOf(ReplayDrawdown.STATIC) }
-    var dailyMode by remember { mutableStateOf(ReplayDailyLoss.HARD) }
+    var drawdownMode by remember { mutableStateOf(ReplayDrawdown.EOD) }
+    var dailyMode by remember { mutableStateOf(ReplayDailyLoss.SOFT) }
     var allowOvernight by remember { mutableStateOf(true) }
     var cutoffText by remember { mutableStateOf("15:59") }
     var assetsExpanded by remember { mutableStateOf(false) }
@@ -86,7 +87,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
         parseFixed(drawdownText, 6) ?: error("请输入有效的最大总亏损"),
         parseFixed(targetText, 6) ?: error("请输入有效的盈利目标"), drawdownMode,
         allowOvernight, parseReplayCutoff(cutoffText) ?: error("请输入有效的平仓时间"),
-        parseFixed(dailyText, 6) ?: error("请输入有效的最大日亏损"), dailyMode, consistencyPercent)
+        parseFixed(if (dailyMode == ReplayDailyLoss.NONE) drawdownText else dailyText, 6) ?: error("请输入有效的最大日亏损"), dailyMode, consistencyPercent)
 
     var calendarForStart by remember { mutableStateOf<Boolean?>(null) }
     var query by remember { mutableStateOf("") }
@@ -172,12 +173,12 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     }
                     if (maxWidth >= 560.dp) Row(Modifier.fillMaxWidth().testTag("replay-risk-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-target-amount"))
-                        OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-daily-loss"))
+                        OutlinedTextField(if (dailyMode == ReplayDailyLoss.NONE) drawdownText else dailyText, { dailyText = it }, label = { Text("最大日亏损", maxLines = 1) }, singleLine = true, enabled = !loading && dailyMode != ReplayDailyLoss.NONE, modifier = Modifier.weight(1f).testTag("replay-daily-loss"))
                         OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损", maxLines = 1) }, singleLine = true, enabled = !loading, modifier = Modifier.weight(1f).testTag("replay-total-loss"))
                         ConsistencyField(Modifier.weight(1f))
                     } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(targetText, { targetText = it }, label = { Text("盈利目标") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-target-amount"))
-                        OutlinedTextField(dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
+                        OutlinedTextField(if (dailyMode == ReplayDailyLoss.NONE) drawdownText else dailyText, { dailyText = it }, label = { Text("最大日亏损") }, singleLine = true, enabled = !loading && dailyMode != ReplayDailyLoss.NONE, modifier = Modifier.fillMaxWidth().testTag("replay-daily-loss"))
                         OutlinedTextField(drawdownText, { drawdownText = it }, label = { Text("最大总亏损") }, singleLine = true, enabled = !loading, modifier = Modifier.fillMaxWidth().testTag("replay-total-loss"))
                         ConsistencyField(Modifier.fillMaxWidth())
                     }
@@ -187,6 +188,7 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
                     Text("日亏损规则", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     FilterChip(selected = dailyMode == ReplayDailyLoss.SOFT, onClick = { dailyMode = ReplayDailyLoss.SOFT }, label = { Text("软止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-soft"))
                     FilterChip(selected = dailyMode == ReplayDailyLoss.HARD, onClick = { dailyMode = ReplayDailyLoss.HARD }, label = { Text("硬止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-hard"))
+                    FilterChip(selected = dailyMode == ReplayDailyLoss.NONE, onClick = { dailyMode = ReplayDailyLoss.NONE }, label = { Text("无止损") }, enabled = !loading, modifier = Modifier.testTag("replay-daily-none"))
                     VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
                     Text("回撤类型", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     ReplayDrawdown.entries.forEach { mode -> FilterChip(selected = drawdownMode == mode, onClick = { drawdownMode = mode }, enabled = !loading,

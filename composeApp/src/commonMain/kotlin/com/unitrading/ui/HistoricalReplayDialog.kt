@@ -46,7 +46,7 @@ internal data class ReplayInput(val instrument: Instrument, val timeframe: Timef
     val rawFrame: Timeframe = timeframe, val instruments: List<Instrument> = listOf(instrument),
     val intervals: IntervalOptions = IntervalOptions(), val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val skipConfirmation: Boolean = false,
-    val riskConfig: ReplayRiskConfig = ReplayRiskConfig(50_000_000_000L, 2_000_000_000L, 3_000_000_000L, ReplayDrawdown.STATIC))
+    val riskConfig: ReplayRiskConfig = defaultReplayRiskConfig())
 
 private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val price: Long?, val quantity: Long,
     val stop: Long?, val target: Long?)
@@ -707,7 +707,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 Metric("浮动盈亏", floating?.let { money(it, true) } ?: "—", color = TradingColors.pnl(floating), valueTag = "replay-floating")
                 Metric("回撤线 · ${when (riskConfig.mode) { ReplayDrawdown.STATIC -> "静态"; ReplayDrawdown.EOD -> "日终"; ReplayDrawdown.TDD -> "浮动" }}",
                     "${money(risk.threshold)}${if (risk.failed) " · 已触及" else ""}")
-                Metric("最大日亏损 · ${if (riskConfig.dailyLossMode == ReplayDailyLoss.HARD) "硬止损" else "软止损"}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
+                Metric("最大日亏损 · ${when (riskConfig.dailyLossMode) {
+                    ReplayDailyLoss.SOFT -> "软止损"; ReplayDailyLoss.HARD -> "硬止损"; ReplayDailyLoss.NONE -> "无止损"
+                }}", riskConfig.maxDailyLossMicros?.let { money(it) } ?: "未设置")
                 Metric("盈利目标", "${money(riskConfig.targetMicros)}${if (risk.targetReached) " · 已达成" else ""}")
                 Metric("一致性 · ${riskConfig.consistencyPercent}%", riskConfig.consistencyLimitMicros?.let { "每日 ${money(it)}${if (risk.consistencyHit) " · 已触及" else ""}" } ?: "关闭", valueTag = "replay-consistency-status")
                 Metric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")

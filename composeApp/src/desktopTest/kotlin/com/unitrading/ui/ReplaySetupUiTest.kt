@@ -9,18 +9,48 @@ import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.ReplayHistoryCache
 import com.unitrading.broker.*
 import com.unitrading.chart.IntervalOptions
+import com.unitrading.chart.ReplayDailyLoss
+import com.unitrading.chart.ReplayDrawdown
 import kotlinx.coroutines.awaitCancellation
 import org.junit.Rule
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.assertFalse
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 @OptIn(ExperimentalTestApi::class)
 class ReplaySetupUiTest {
     @get:Rule val compose = createComposeRule()
+    @Test fun defaultsAndNoDailyStopFollowTotalLoss() {
+        val broker = OfflineOrderBroker()
+        val ready = AtomicReference<ReplayPrepared?>(null)
+        compose.setContent { TradingTheme {
+            ReplaySetupDialog(broker, ReplayHistoryCache(MemorySnapshotStore()), false, broker.instruments, broker.spec,
+                ChartTimeZone.SHANGHAI, broker.time, Timeframe.M5, IntervalOptions(), false, onDismiss = {}, onReady = { ready.set(it) })
+        } }
+        compose.onNodeWithTag("replay-daily-soft").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("replay-drawdown-EOD").assertIsSelected()
+        compose.onNodeWithTag("replay-daily-loss").performScrollTo().assertIsEnabled().assertTextContains("1000")
+        compose.onNodeWithTag("replay-daily-none").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithTag("replay-daily-loss").performScrollTo().assertIsNotEnabled().assertTextContains("2000")
+        compose.onNodeWithTag("replay-total-loss").performTextClearance().performTextInput("3500")
+        compose.onNodeWithTag("replay-daily-loss").assertTextContains("3500")
+        compose.onNodeWithTag("replay-daily-soft").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-daily-loss").performScrollTo().assertIsEnabled().assertTextContains("1000")
+        compose.onNodeWithTag("replay-daily-none").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
+        compose.waitUntil(10_000) { ready.get() != null }
+        val risk = assertNotNull(ready.get()).riskConfig
+        assertEquals(ReplayDailyLoss.NONE, risk.dailyLossMode)
+        assertEquals(ReplayDrawdown.EOD, risk.mode)
+        assertEquals(3_500_000_000L, risk.maxDailyLossMicros)
+        assertEquals(risk.maxDrawdownMicros, risk.maxDailyLossMicros)
+    }
     @Test fun setupOmitsOnlyTheRequestedExplanations() {
         val broker = OfflineOrderBroker()
         compose.setContent { TradingTheme {
