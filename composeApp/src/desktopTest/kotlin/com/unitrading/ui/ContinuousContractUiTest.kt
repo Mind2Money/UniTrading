@@ -19,7 +19,8 @@ class ContinuousContractUiTest {
     @Test fun chartUsesContinuousSymbolWhileConfirmationPinsDatedTargetAndRolloverClearsIt() {
         val demo = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).registry.plugins.first()
         val dated = demo.instruments.first()
-        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol)
+        val alias = dated.copy(symbol = "@TEST", isContinuous = true, tradeSymbol = dated.symbol,
+            tradeSymbolStatus = "价格匹配（非券商确认）")
         val changes = MutableStateFlow(BrokerCatalog(listOf(alias) + demo.instruments, demo.accounts))
         var chartSymbol: String? = null
         var previewed: OrderRequest? = null
@@ -44,7 +45,8 @@ class ContinuousContractUiTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("continuous-route").assertTextContains("下单 / 买卖报价 ${dated.symbol}", substring = true)
+        compose.onNodeWithTag("continuous-route", useUnmergedTree = true).assertTextEquals("连续合约@TEST ${dated.symbol}")
+            .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "价格匹配（非券商确认）"))
         compose.runOnIdle {
             assertEquals("@TEST", chartSymbol)
             assertEquals(dated.symbol, previewed?.symbol)

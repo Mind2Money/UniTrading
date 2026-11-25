@@ -42,11 +42,12 @@ class SettingsPageTest {
         ImageIO.write(compose.onNodeWithTag("settings-page").captureToImage().toAwtImage(), "png", target)
     }
 
-    @Test fun timeZoneMovesToTradingSettingsAndSupportsUtcExtremes() {
+    @Test fun timeZoneIsInAppearanceSettingsAndSupportsUtcExtremes() {
         val runtime = render(width = 1100, height = 900)
         compose.onNodeWithTag("chart-timezone-menu").assertDoesNotExist()
         compose.onNodeWithTag("open-settings").performClick()
-        compose.onNodeWithTag("settings-chart-timezone").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-chart-timezone").performScrollTo()
+            .assert(hasAnyAncestor(hasTestTag("settings-appearance-section"))).performClick()
         compose.onNodeWithTag("settings-timezone-UTC_MINUS_12").assertExists()
         compose.onNodeWithTag("settings-timezone-UTC_PLUS_14").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.chartPreferences.preferences.value.chartTimeZone == ChartTimeZone.UTC_PLUS_14 }
@@ -103,7 +104,7 @@ class SettingsPageTest {
         val runtime = render(width = 1100, height = 900)
         compose.onNodeWithTag("open-settings").performClick()
         compose.onNodeWithTag("settings-save-workspace-on-exit").performScrollTo().assertIsOn()
-            .assert(hasAnyAncestor(hasTestTag("settings-other-section"))).performClick()
+            .assert(hasAnyAncestor(hasTestTag("settings-appearance-section"))).performClick()
         compose.onNodeWithTag("open-activity").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
         compose.onNodeWithText("其他").assertExists()
         compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
@@ -132,7 +133,7 @@ class SettingsPageTest {
         val otherTop = compose.onNodeWithTag("settings-other-section").fetchSemanticsNode().boundsInRoot.top
         assertTrue(otherTop >= updateBottom, "Other must follow the update section")
         compose.onNodeWithTag("open-activity").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
-        compose.onNodeWithTag("settings-save-workspace-on-exit").assert(hasAnyAncestor(hasTestTag("settings-other-section")))
+        compose.onNodeWithTag("settings-save-workspace-on-exit").assert(hasAnyAncestor(hasTestTag("settings-appearance-section")))
     }
 
     @Test fun skipConfirmationSwitchAppliesImmediatelyAndResetStillRequiresConfirmation() {

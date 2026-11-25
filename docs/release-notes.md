@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 精简连续合约图表标题、放大水印，并将图表时区及退出时保存布局移至“外观与图表”设置。
+
 - 修复回放的一致性盈利上限被软日损状态屏蔽；触及一致性上限或每日软止损时自动平仓、撤单，并禁止当日新开仓。
 
 - 回放达到盈利目标后可保存或临时保留记录，继续留在回放界面分析并重新开始；临时记录关闭回放后清除。
@@ -35,6 +37,8 @@
 - 图表指标菜单可粘贴 Pine v5/v6 子集脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形。新建 Pine 指标默认使用简单的 20 周期布林带。脚本只在本机读取当前图表行情，不运行策略、不下单。见 [Pine 指标与绘图](pine-indicators.md)。
 
 ## English
+
+- Simplify the continuous-contract chart label, enlarge its watermark, and move chart time zone and save-on-exit controls to Appearance & chart settings.
 
 - Fix replay consistency limits being masked by a soft daily stop. Both limits flatten positions, cancel pending orders and block new entries for the trading day.
 
