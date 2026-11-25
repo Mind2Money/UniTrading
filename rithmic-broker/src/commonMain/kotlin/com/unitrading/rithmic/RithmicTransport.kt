@@ -1,6 +1,7 @@
 package com.unitrading.rithmic
 
 import io.ktor.client.*
+import com.unitrading.broker.createBrokerHttpClient
 import io.ktor.client.plugins.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
@@ -29,7 +30,7 @@ internal fun validateRithmicGateway(url: String): String {
 }
 
 class KtorRithmicWire : RithmicWire {
-    private val client = HttpClient {
+    private val client = createBrokerHttpClient {
         followRedirects = false
         install(WebSockets)
         install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 15_000 }

@@ -20,7 +20,9 @@ kotlin {
         commonMain.dependencies {
             api(libs.coroutines.core)
             api(libs.serialization.json)
+            api("io.ktor:ktor-client-core:3.1.0")
         }
+        getByName("desktopMain").dependencies { implementation("io.ktor:ktor-client-okhttp:3.1.0") }
         commonTest.dependencies { implementation(libs.kotlin.test) }
     }
 }

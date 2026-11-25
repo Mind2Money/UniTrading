@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.Closeable
+import java.io.DataInputStream
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ProxySelector
@@ -67,6 +68,43 @@ private class RejectingProxy(port: Int = 0) : Closeable {
     }
 }
 
+/** A minimal SOCKS5 server; records the requested destination and rejects it. */
+private class RejectingSocksProxy : Closeable {
+    private val server = ServerSocket().apply { bind(InetSocketAddress("127.0.0.1", 0)) }
+    val port: Int get() = server.localPort
+    private val targets = LinkedBlockingQueue<String>()
+    private val worker = thread(name = "test-socks-proxy", isDaemon = true) {
+        try {
+            server.accept().use { socket ->
+                socket.soTimeout = 5_000
+                val input = DataInputStream(socket.getInputStream())
+                val output = socket.getOutputStream()
+                check(input.readUnsignedByte() == 5)
+                repeat(input.readUnsignedByte()) { input.readUnsignedByte() }
+                output.write(byteArrayOf(5, 0))
+                check(input.readUnsignedByte() == 5 && input.readUnsignedByte() == 1)
+                input.readUnsignedByte() // reserved
+                val host = when (input.readUnsignedByte()) {
+                    3 -> ByteArray(input.readUnsignedByte()).also { input.readFully(it) }.toString(Charsets.US_ASCII)
+                    1 -> ByteArray(4).also { input.readFully(it) }.joinToString(".") { (it.toInt() and 255).toString() }
+                    else -> error("Unexpected SOCKS address type")
+                }
+                val targetPort = input.readUnsignedShort()
+                targets.put("$host:$targetPort")
+                output.write(byteArrayOf(5, 5, 0, 1, 0, 0, 0, 0, 0, 0))
+            }
+        } catch (_: SocketException) {
+            // Closing the listening socket ends the worker.
+        }
+    }
+
+    fun expectTarget(host: String, failure: Exception) {
+        assertEquals("$host:443", targets.poll(10, TimeUnit.SECONDS), "SOCKS proxy did not receive target; request failed: ${failure.stackTraceToString()}")
+    }
+
+    override fun close() { server.close(); worker.join(5_000) }
+}
+
 private suspend fun expectProxyRejection(call: suspend () -> Unit): Exception = withTimeout(15_000) {
     try {
         call()
@@ -118,6 +156,26 @@ class SystemProxyTest {
                     original.forEach { (name, value) ->
                         if (value == null) System.clearProperty(name) else System.setProperty(name, value)
                     }
+                }
+            }
+        }
+    }
+
+    @Test fun brokerWebSocketCanUseExplicitSocksProxy() = runBlocking {
+        val names = listOf("https.proxyHost", "https.proxyPort", "proxyHost", "proxyPort", "socksProxyHost", "socksProxyPort", "socksNonProxyHosts")
+        val original = names.associateWith(System::getProperty)
+        RejectingSocksProxy().use { proxy ->
+            val rithmic = KtorRithmicWire()
+            try {
+                names.forEach { System.clearProperty(it) }
+                System.setProperty("socksProxyHost", "127.0.0.1")
+                System.setProperty("socksProxyPort", proxy.port.toString())
+                val failure = expectProxyRejection { rithmic.socket("wss://$RITHMIC_HOST:443") }
+                proxy.expectTarget(RITHMIC_HOST, failure)
+            } finally {
+                rithmic.close()
+                original.forEach { (name, value) ->
+                    if (value == null) System.clearProperty(name) else System.setProperty(name, value)
                 }
             }
         }
