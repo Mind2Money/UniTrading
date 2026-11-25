@@ -121,7 +121,7 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithText("账户触及最大总亏损。").assertExists()
     }
 
-    private fun openHundredMclLots(lowAfterEntry: Long, addPending: Boolean = false): ReplayRecords {
+    private fun openHundredMclLots(lowAfterEntry: Long, addPending: Boolean = false, adverseAddition: Boolean = false): ReplayRecords {
         val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
         val mcl = Instrument("@MCL", "Micro Crude Oil", "期货", 2, tickSize = 1, tickValueMicrosPerLot = 1_000_000,
             minLotsHundredths = 100, maxLotsHundredths = 10_000, lotStepHundredths = 100, quantityDecimals = 0,
@@ -138,11 +138,11 @@ class ReplayDailyLossUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("100")
         compose.onNodeWithTag("review-order").performScrollTo().performClick()
-        if (addPending) {
+        if (addPending || adverseAddition) {
             compose.onNodeWithTag("order-kind-LIMIT").performScrollTo().performClick()
-            compose.onNodeWithTag("order-side-SELL").performScrollTo().performClick()
-            compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("1")
-            compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("83.00")
+            compose.onNodeWithTag(if (adverseAddition) "order-side-BUY" else "order-side-SELL").performScrollTo().performClick()
+            compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement(if (adverseAddition) "100" else "1")
+            compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(if (adverseAddition) "82.42" else "83.00")
             compose.onNodeWithTag("review-order").performScrollTo().performClick()
             val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
             assertTrue(buttons.keys.any { it.startsWith("撤单 ") })
@@ -188,6 +188,15 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun mclSoftStopRecalculatesAfterAPendingAdditionFillsFirst() {
+        val records = openHundredMclLots(8_237, adverseAddition = true)
+        compose.onNodeWithTag("replay-realized").assertTextContains("-1100.00", substring = true)
+        compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 2 }
+        compose.runOnIdle { assertTrue(records.list().single().trades.all { it.reason == "每日软止损自动平仓" }) }
     }
 
     @Test fun pendingEntryAtTheOpenHitsConsistencyBeforeALaterTakeProfit() {

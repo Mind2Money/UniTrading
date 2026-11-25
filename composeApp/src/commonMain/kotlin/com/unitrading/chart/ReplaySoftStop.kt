@@ -17,16 +17,22 @@ internal fun replaySoftStopPrice(spec: Instrument, config: ReplayRiskConfig, ris
     fun equity(price: Long) = after.closingEquity(spec, config, price)
     val samePositions = before.positions == after.positions && before.trades == after.trades
     val newPositions = after.positions.all { it.openedAtMs == bar.timeMs && it.entryPrice == after.positions.first().entryPrice }
+    val oldIds = before.positions.map { it.id }.toSet()
+    val added = after.positions.filter { it.id !in oldIds }
+    val addedToExisting = before.positions.isNotEmpty() && before.trades == after.trades &&
+        after.positions.filter { it.id in oldIds } == before.positions && added.isNotEmpty() &&
+        added.all { it.openedAtMs == bar.timeMs && it.entryPrice == added.first().entryPrice && it.side == before.positions.first().side }
     val isNextBar = after.index == before.index + 1
     val start = when {
         !isNextBar -> bar.close
         samePositions -> bar.open
         newPositions -> after.positions.first().entryPrice
+        addedToExisting -> added.first().entryPrice
         else -> bar.close
     }
     if (day.dailyLossHit || equity(start) <= line) return start
     // If fills changed the ledger and their order is unknown, do not apply an earlier bar extreme to them.
-    if (!isNextBar || !samePositions && !newPositions) return if (equity(bar.close) <= line) bar.close else null
+    if (!isNextBar || !samePositions && !newPositions && !addedToExisting) return if (equity(bar.close) <= line) bar.close else null
     val side = after.positions.first().side
     if (after.positions.any { it.side != side }) return if (equity(bar.close) <= line) bar.close else null
     val worst = if (side == Side.BUY) bar.low else bar.high

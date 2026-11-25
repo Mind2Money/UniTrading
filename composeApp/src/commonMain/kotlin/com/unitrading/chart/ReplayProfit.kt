@@ -22,9 +22,9 @@ internal fun ReplayState.closingEquity(spec: Instrument, config: ReplayRiskConfi
 }
 
 /**
- * The first reached ceiling wins. Only use a candle's extremes if the same positions existed for the whole candle and
- * no order or protective exit changed the ledger. Otherwise only the known closing snapshot is safe to use: an extreme
- * may have occurred before a pending entry. Stops and loss limits are evaluated conservatively before this function.
+ * The first reached ceiling wins. Use candle extremes for unchanged positions or an isolated pending fill known to
+ * occur at the open. Otherwise only the known closing snapshot is safe: an extreme may predate the entry.
+ * Stops and loss limits are evaluated conservatively before this function.
  */
 internal fun replayProfitTrigger(spec: Instrument, config: ReplayRiskConfig, risk: ReplayRiskState,
     before: ReplayState, after: ReplayState, bar: Candle): ReplayProfitTrigger? {

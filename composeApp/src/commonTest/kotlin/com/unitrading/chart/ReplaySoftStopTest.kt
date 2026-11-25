@@ -61,6 +61,14 @@ class ReplaySoftStopTest {
         assertEquals(9_850L, replaySoftStopPrice(spec, config, risk, before, after, bar))
     }
 
+    @Test fun aPendingAdditionBeforeTheStopRecalculatesTheAccountLimit() {
+        val before = open().enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_950, null, null, start.close)
+        val bar = Candle(start.timeMs + 60_000, 10_000, 10_500, 9_800, 10_500)
+        val after = before.advance(spec, bar)
+        assertEquals(2, after.positions.size)
+        assertEquals(9_925L, replaySoftStopPrice(spec, config, risk, before, after, bar))
+    }
+
     @Test fun aPendingEntryAtTheOpenCanHitTheSoftStopBeforeItsLaterTakeProfit() {
         val before = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_900, null, 10_350, 10_000)
         val bar = Candle(start.timeMs + 60_000, 9_900, 10_400, 9_800, 10_400)
