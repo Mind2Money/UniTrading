@@ -65,6 +65,18 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithText("最大日亏损 · 无止损").assertExists()
         compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
     }
+    @Test fun noDailyStopStillFailsWhenTheTotalDrawdownIsHit() {
+        val records = ReplayRecords(MemorySnapshotStore())
+        val config = ReplayRiskConfig(50_000_000_000, 5_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.NONE)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithText("回放考核失败").assertIsDisplayed()
+        compose.onNodeWithText("账户触及最大总亏损。").assertExists()
+    }
     @Test fun savedFailureContainsClosedTradesAndCanBeImported() {
         val records = ReplayRecords(MemorySnapshotStore())
         val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
