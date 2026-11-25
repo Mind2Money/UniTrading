@@ -424,9 +424,8 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text(if (instrument.symbol == "@MCL")
-            "连续图表 @MCL · K线 / 下单 / 报价 ${instrument.executionLabel} · 当前主力历史" else
-            "连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}",
+        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}" +
+            if (instrument.tradeSymbol != null && instrument.tradeSymbolStatus?.startsWith("价格匹配") == true) " · 价格匹配，非券商确认" else "",
             Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())

@@ -24,6 +24,8 @@ interface BrokerPlugin {
     suspend fun searchInstruments(query: String) {}
     /** Subscribe an independent quote list without changing the chart or sending trade commands. */
     fun watchQuotes(symbols: Set<String>) {}
+    /** Explicitly re-resolve the user's watched continuous symbols without sending orders. */
+    suspend fun refreshContinuousQuotes(symbols: Set<String>) {}
     fun watch(symbol: String, timeframe: Timeframe) {}
     /**
      * Keeps every chart series in [series] live at once; each call replaces the list. The first is the chart the user is

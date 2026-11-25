@@ -20,6 +20,7 @@ internal class TradovateSocket(
     private val opened = CompletableDeferred<Unit>()
     private val pending = mutableMapOf<Int, CompletableDeferred<JsonObject>>()
     private val lock = Mutex()
+    private val sendLock = Mutex()
     private var sequence = 0
     private var reader: Job? = null
     private var heartbeat: Job? = null
@@ -51,7 +52,7 @@ internal class TradovateSocket(
         }
         withTimeout(15_000) { opened.await() }
         rawRequest("authorize", token)
-        heartbeat = scope.launch { while (isActive) { delay(2_500); wire.send("[]") } }
+        heartbeat = scope.launch { while (isActive) { delay(2_500); sendLock.withLock { wire.send("[]") } } }
     }
     suspend fun request(route: String, body: JsonObject): JsonObject = rawRequest(route, body.toString())
     suspend fun probeUser(userId: Long) { rawRequest("user/item", body = "", query = "id=$userId", rejectPenalty = true) }
@@ -59,7 +60,7 @@ internal class TradovateSocket(
         val waiter = CompletableDeferred<JsonObject>()
         val id = lock.withLock { ++sequence; pending[sequence] = waiter; sequence }
         return try {
-            wire.send("$route\n$id\n$query\n$body")
+            sendLock.withLock { wire.send("$route\n$id\n$query\n$body") }
             val frame = withTimeout(15_000) { waiter.await() }
             val status = frame.long("s")?.toInt() ?: 0
             val data = frame["d"] as? JsonObject ?: buildJsonObject {}

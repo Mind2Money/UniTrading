@@ -29,12 +29,14 @@ class MarketWatchUiTest {
     private val catalog = MutableStateFlow(BrokerCatalog(specs, demo.accounts))
     private var remote = false
     private val searches = mutableListOf<String>()
+    private var refreshedSymbols: Set<String>? = null
     private var searchAction: suspend (String) -> Unit = {}
     private val plugin = object : BrokerPlugin by demo {
         override val descriptor get() = demo.descriptor.copy(environment = if (remote) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LOCAL_DEMO)
         override val catalog = this@MarketWatchUiTest.catalog
         override val instruments get() = catalog.value.instruments
         override suspend fun searchInstruments(query: String) { searches.add(query); searchAction(query) }
+        override suspend fun refreshContinuousQuotes(symbols: Set<String>) { refreshedSymbols = symbols }
     }
     private val state = mutableStateOf(AccountSnapshot("A", 0, positions = listOf(
         Position("long", "XAUUSD", Side.BUY, 100, 388000, 0, marginMicros = 0),
@@ -62,6 +64,16 @@ class MarketWatchUiTest {
     private fun capture(name: String) {
         val target = File(System.getenv("UNITRADING_MARKET_ARTIFACTS") ?: "../artifacts/market-watch", "$name.png"); target.parentFile.mkdirs()
         ImageIO.write(compose.onNodeWithTag("market-test-host").captureToImage().toAwtImage(), "png", target)
+    }
+
+    @Test fun refreshButtonSitsBeforeAddAndRefreshesTheWatchList() {
+        render(320)
+        val refresh = compose.onNodeWithTag("market-refresh")
+        val add = compose.onNodeWithTag("market-add")
+        refresh.assertIsDisplayed(); add.assertIsDisplayed()
+        assertTrue(refresh.fetchSemanticsNode().boundsInRoot.right <= add.fetchSemanticsNode().boundsInRoot.left)
+        refresh.performClick()
+        compose.runOnIdle { assertTrue(refreshedSymbols?.contains("XAUUSD") == true) }
     }
 
     @Test fun dailyChangeUsesTradeAndSettlementAndHandlesMissingData() {

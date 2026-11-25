@@ -10,7 +10,7 @@ private const val CONTINUOUS_TIME = 1_798_589_000_000L
 private fun json(value: String) = Json.parseToJsonElement(value).jsonObject
 
 class ContinuousContractsTest {
-    private class Wire(val delegate: MockTradovateWire = MockTradovateWire(), val root: String = "MES") : TradovateWire by delegate {
+    private class Wire(val delegate: MockTradovateWire = MockTradovateWire(), val root: String = "MES", val fourMonths: Boolean = false) : TradovateWire by delegate {
         var clock = CONTINUOUS_TIME
         var leader = "${root}Z6"
         var failMapping = false
@@ -36,9 +36,14 @@ class ContinuousContractsTest {
         private var channelId = 1000
         val dailyRequests = mutableListOf<JsonObject>()
         val chartRequests = mutableListOf<JsonObject>()
-        val maturities get() = listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
-        val contracts get() = listOf(json("""{"id":200,"name":"${root}Z6","contractMaturityId":300}"""),
-            json("""{"id":201,"name":"${root}H7","contractMaturityId":301}"""))
+        val quoteSubscriptions = mutableListOf<String>()
+        val maturities get() = if (!fourMonths) listOf(300L, 301L).map { id -> json("""{"id":$id,"productId":400,"isFront":${id == 300L},"expirationDate":"2027-03-20T00:00:00Z"}""") }
+            else listOf("2027-01-20", "2027-02-20", "2027-04-20", "2027-06-20").mapIndexed { i, date ->
+                json("""{"id":${300+i},"productId":400,"expirationDate":"${date}T00:00:00Z"}""")
+            }
+        val contracts get() = (if (fourMonths) listOf("Z6", "H7", "J7", "M7") else listOf("Z6", "H7")).mapIndexed { i, month ->
+            json("""{"id":${200+i},"name":"$root$month","contractMaturityId":${300+i}}""")
+        }
         val sessions get() = sessionRows ?: listOf(300L, 301L).flatMap { id -> (28..31).map { day ->
             json("""{"contractMaturityId":$id,"tradeDate":{"year":2026,"month":12,"day":$day},"startTime":"2026-12-${day-1}T23:30Z","openTime":"2026-12-${day-1}T23:00Z","closeTime":"2026-12-${day}T23:29Z","endTime":"2026-12-${day}T23:00Z"}""")
         } }
@@ -53,7 +58,10 @@ class ContinuousContractsTest {
                 if (failMapping) error("offline")
                 JsonArray(maturities)
             }
-            path.startsWith("contract/ldeps") -> JsonArray(contracts)
+            path.startsWith("contract/ldeps") -> {
+                val ids = path.substringAfter("masterids=").split(',').map(String::toLong)
+                JsonArray(contracts.filter { it.long("contractMaturityId") in ids })
+            }
             path.startsWith("contractMaturity/items") -> { maturityBatchRequests++; JsonArray(maturities) }
             path.startsWith("tradingSession/ldeps") -> JsonArray(sessions.filter { !omitFutureSessions || timestamp(it.str("endTime")!!)!! <= clock })
             else -> delegate.request(hosts, token, method, path, body)
@@ -67,6 +75,7 @@ class ContinuousContractsTest {
                     when (parts.first()) {
                         "md/cancelChart" -> json(text.substringAfter("\n\n")).long("subscriptionId")?.let(cancelledCharts::add)
                         "md/subscribequote" -> {
+                            json(text.substringAfter("\n\n")).str("symbol")?.let(quoteSubscriptions::add)
                             if (json(text.substringAfter("\n\n")).str("symbol") in refusedQuotes) {
                                 delegate.market.queue.send("""a[{"s":200,"i":${parts[1]},"d":{"errorText":"No market entitlement"}}]""")
                                 return
@@ -249,48 +258,73 @@ class ContinuousContractsTest {
         assertEquals(afterRetry, wire.delegate.market.sent.count { it == "md/getChart" }, "Retries are rate-limited")
     }
 
-    @Test fun mclContinuousRefreshKeepsMclz6AsItsExecutionContract() = runTest {
-        val wire = Wire(root = "MCL")
+    @Test fun onlyTheFirstThreeMonthsAreSubscribedForMatching() = runTest {
+        val wire = Wire(root = "MCL", fourMonths = true)
         val broker = ready(wire)
-        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        val before = wire.delegate.market.sent.count { it == "md/getChart" }
-        wire.clock += 31_000
-        val at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
-        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5500.50}}}]}}]""")
-        runCurrent()
-        assertTrue(wire.delegate.market.sent.count { it == "md/getChart" } > before)
-        assertEquals("MCLZ6", json(wire.delegate.market.bodies.getValue("md/getChart")).str("symbol"))
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
-        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
+        assertEquals(setOf("MCLZ6", "MCLH7", "MCLJ7"), wire.quoteSubscriptions.toSet())
+        assertFalse("MCLM7" in wire.quoteSubscriptions)
+        assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
     }
 
-    @Test fun mclChartWaitsForAConfirmedContract() = runTest {
+    @Test fun mclMatchesOnceKeepsItsQuotesAndOnlyRematchesOnManualRefresh() = runTest {
+        val wire = Wire(root = "MCL").apply { leader = "MCLZ6" }
+        val broker = ready(wire)
+        assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
+        assertTrue(wire.chartRequests.none { it.str("symbol") == "MCLZ6" || it.str("symbol") == "MCLH7" })
+        assertTrue(wire.dailyRequests.isEmpty())
+        wire.clock += 1000
+        var at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5500.50}]}]}}]""")
+        // A historical packet arriving later must not replace the already observed live price.
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":12,"s":"db","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5499.50}]}]}}]""")
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5499.50},"Bid":{"price":5499.50},"Offer":{"price":5499.75}}},{"contractId":201,"timestamp":"$at","entries":{"Trade":{"price":5500.50},"Bid":{"price":5500.50},"Offer":{"price":5500.75}}}]}}]""")
+        runCurrent()
+        assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        val session = broker.openSession("100")
+        val matched = OrderRequest("MCLH7", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")
+        assertTrue(session.preview(matched).valid)
+        wire.clock += 26_000
+        at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        // A new price now equals Z6; it must not switch the previously matched H7.
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5499.50}]}]}}]""")
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5499.50},"Bid":{"price":5499.50},"Offer":{"price":5499.75}}},{"contractId":201,"timestamp":"$at","entries":{"Bid":{"price":5500.50},"Offer":{"price":5500.75}}}]}}]""")
+        runCurrent()
+        assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.priceSymbol)
+        assertTrue(session.preview(matched).valid, "Fresh Bid/Ask must remain usable without rematching")
+        val beforeRefresh = wire.quoteSubscriptions.count { it == "MCLH7" }
+        broker.refreshContinuousQuotes(setOf("@MCL"))
+        advanceTimeBy(5_000); runCurrent()
+        assertTrue(wire.quoteSubscriptions.count { it == "MCLH7" } > beforeRefresh, "Refresh must request a new snapshot")
+        assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        wire.clock += 1000
+        at = kotlin.time.Instant.fromEpochMilliseconds(wire.clock).toString()
+        wire.delegate.market.queue.send("""a[{"e":"chart","d":{"charts":[{"id":13,"s":"s","bars":[{"timestamp":"$at","open":5500,"high":5501,"low":5499,"close":5499.50}]}]}}]""")
+        wire.delegate.market.queue.send("""a[{"e":"md","d":{"quotes":[{"contractId":200,"timestamp":"$at","entries":{"Trade":{"price":5499.50},"Bid":{"price":5499.50},"Offer":{"price":5499.75}}},{"contractId":201,"timestamp":"$at","entries":{"Trade":{"price":5500.50},"Bid":{"price":5500.50},"Offer":{"price":5500.75}}}]}}]""")
+        runCurrent()
+        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        assertFalse(session.preview(matched).valid, "An old order must not target a different month after refresh")
+        val replacement = OrderRequest("MCLZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")
+        assertTrue(session.preview(replacement).valid)
+        assertTrue(session.placeOrder("matched", replacement).accepted)
+        assertEquals("MCLZ6", wire.delegate.requests.single { it.path == "order/placeorder" }.body?.str("symbol"))
+    }
+
+    @Test fun mclChartSurvivesMissingContractMetadata() = runTest {
         val wire = Wire(root = "MCL").apply { failMapping = true }
         val broker = ready(wire)
         assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(broker.history("@MCL", Timeframe.M5).isEmpty())
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" || it.str("symbol") == "MCLZ6" })
-        wire.failMapping = false
-        broker.resynchronize()
-        runCurrent()
-        assertEquals("MCLZ6", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLZ6" })
-        assertTrue(broker.history("@MCL", Timeframe.M5).isNotEmpty())
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
+        assertFalse(broker.openSession("100").preview(OrderRequest("MCLZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")).valid)
     }
 
-    @Test fun mclChartChangesSourceWhenVerifiedLeaderRolls() = runTest {
-        val wire = Wire(root = "MCL")
+    @Test fun refusesToGuessWhenAContractQuoteSubscriptionFails() = runTest {
+        val wire = Wire(root = "MCL").apply { refusedQuotes = setOf("MCLH7") }
         val broker = ready(wire)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLZ6" })
-        wire.leader = "MCLH7"
-        wire.clock += 86_400_000
-        broker.refreshContinuous("@MCL", force = true)
-        runCurrent()
-        assertEquals("MCLH7", broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
-        assertTrue(wire.chartRequests.any { it.str("symbol") == "MCLH7" })
-        assertTrue(wire.chartRequests.none { it.str("symbol") == "@MCL" })
-        assertTrue(wire.delegate.requests.none { it.path.startsWith("order/place") })
+        assertNull(broker.instruments.single { it.symbol == "@MCL" }.executionSymbol)
+        assertTrue(wire.chartRequests.any { it.str("symbol") == "@MCL" })
+        assertFalse(broker.openSession("100").preview(OrderRequest("MCLZ6", Side.BUY, OrderKind.MARKET, 100, sourceSymbol = "@MCL")).valid)
     }
 
     @Test fun liveContinuousChartIsNotRestartedWhileItsOwnBarsArrive() = runTest {

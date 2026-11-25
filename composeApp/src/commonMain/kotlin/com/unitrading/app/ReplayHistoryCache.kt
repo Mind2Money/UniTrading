@@ -72,14 +72,15 @@ internal class ReplayHistoryCache(private val store: SnapshotStore, private val 
             val slot = (id.hashCode().toLong() and 0x7fffffffL).rem(CACHE_SLOTS).toInt()
             val outcome = if (!useCache) permits.withPermit { broker.historicalRange(symbol, frame, from, until) } to false
             else slotLocks[slot].withLock {
-                val key = "replay-history-v1-$slot"
+                val version = if (symbol.startsWith("@")) 2 else 1
+                val key = "replay-history-v$version-$slot"
                 val cached = try {
                     storageLock.withLock {
                         memory[slot] ?: if (persistent) withContext(Dispatchers.Default) { store.read(key)?.let { Json.decodeFromString<ReplayCacheEntry>(it) } } else null
                     }
                 } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { null }
                 val ttl = if (symbol.startsWith("@")) CONTINUOUS_TTL else CONTRACT_TTL
-                val valid = cached != null && cached.version == 1 && cached.broker == broker.descriptor.id && cached.symbol == symbol &&
+                val valid = cached != null && cached.version == version && cached.broker == broker.descriptor.id && cached.symbol == symbol &&
                     cached.source == identity && cached.seconds == frame.seconds && cached.start == from && cached.end == until &&
                     cached.savedAt in 0..clock && clock - cached.savedAt <= ttl && source(broker, symbol) == identity &&
                     cached.candles.size <= 50_000 && cached.candles.all { it.timeMs >= from && it.timeMs < until && it.low > 0 &&
@@ -94,7 +95,7 @@ internal class ReplayHistoryCache(private val store: SnapshotStore, private val 
                         bars.all { it.timeMs >= from && it.timeMs < until && it.low > 0 && it.high >= maxOf(it.open, it.close) &&
                             it.low <= minOf(it.open, it.close) && it.volume?.let { v -> v >= 0 } != false } &&
                         bars.zipWithNext().all { (a, b) -> a.timeMs < b.timeMs }) {
-                        val entry = ReplayCacheEntry(broker = broker.descriptor.id, symbol = symbol, source = requireNotNull(identity),
+                        val entry = ReplayCacheEntry(version = version, broker = broker.descriptor.id, symbol = symbol, source = requireNotNull(identity),
                             seconds = frame.seconds, start = from, end = until, savedAt = clock, candles = bars, warning = fresh.warning)
                         try {
                             storageLock.withLock {

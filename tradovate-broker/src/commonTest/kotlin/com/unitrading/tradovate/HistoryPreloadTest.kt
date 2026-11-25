@@ -205,14 +205,15 @@ class HistoryPreloadTest {
         broker.watchAll(listOf("MESZ6" to M5, "MESZ6" to H1)); runCurrent()
         val five = wire.of(M5).single { it.firstPage }
         val hour = wire.of(H1).single { it.firstPage }
-        // The user clicks the hour chart, then changes the five minute chart's place to the daily interval.
+        // Activating the hour chart refreshes its subscription; the other chart remains live.
         broker.watchAll(listOf("MESZ6" to H1, "MESZ6" to M5)); runCurrent()
-        assertTrue(wire.cancelled.isEmpty() || (five.ids + hour.ids).none { it in wire.cancelled }, "reordering alone cancels nothing")
-        assertEquals(1, wire.of(H1).count { it.firstPage })
+        assertTrue(five.ids.none { it in wire.cancelled })
+        val activeHour = wire.of(H1).last { it.range.long("asMuchAsElements") != null }
+        assertNotEquals(hour.realtimeId, activeHour.realtimeId)
         broker.watchAll(listOf("MESZ6" to H1)); runCurrent()
         assertTrue(five.ids.all { it in wire.cancelled })
-        assertTrue(hour.ids.none { it in wire.cancelled })
-        wire.live(hour.realtimeId, NOW, "5501.75"); runCurrent()
+        assertTrue(activeHour.ids.none { it in wire.cancelled })
+        wire.live(activeHour.realtimeId, NOW, "5501.75"); runCurrent()
         assertEquals(5_501_750_000L, broker.history("MESZ6", H1).last().close)
     }
 

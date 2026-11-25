@@ -76,6 +76,7 @@ class ContinuousContractUiTest {
             override val instruments get() = changes.value.instruments
             // The screen asks for every open chart at once; the first is the one being worked on.
             override fun watchAll(series: List<Pair<String, Timeframe>>) { chartSymbol = series.first().first }
+            override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(dated.symbol, timeframe)
             override fun openSession(accountId: String): AccountSession {
                 val session = demo.openSession(accountId)
@@ -105,6 +106,7 @@ class ContinuousContractUiTest {
             override val catalog = changes
             override val instruments get() = changes.value.instruments
             override fun watchAll(series: List<Pair<String, Timeframe>>) { charts += series.first().first }
+            override fun watchAllWithExtendedHistory(series: List<Pair<String, Timeframe>>, extended: Set<Pair<String, Timeframe>>) = watchAll(series)
             override fun history(symbol: String, timeframe: Timeframe) = demo.history(saved.symbol, timeframe)
         }
         val store = MemorySnapshotStore()
