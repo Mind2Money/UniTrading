@@ -32,6 +32,8 @@
 
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
+- 图表指标菜单可粘贴 Pine v5/v6 子集脚本，在主图或副图绘制曲线、信号、参考线、线段、标签和矩形。新建 Pine 指标默认使用简单的 20 周期布林带。脚本只在本机读取当前图表行情，不运行策略、不下单。见 [Pine 指标与绘图](pine-indicators.md)。
+
 ## English
 
 - Fix replay consistency limits being masked by a soft daily stop. Both limits flatten positions, cancel pending orders and block new entries for the trading day.
@@ -63,6 +65,8 @@
 - Move tablet flatten controls to the right of the tab bar, place account selectors beside the chart toolbar, and put the order button on the right rail between DOM and trading.
 
 - Submit regular buy and sell limit orders on either side of the quote. Both sides are available at the same price in the chart's right-click and long-press menus. Orders at or through the opposite quote may fill immediately; they retain the entered limit, never become market orders, and are not guaranteed to fill. Stop triggers, protective orders, and account risk checks are unchanged.
+
+- Paste scripts in the chart's indicator menu to plot lines, signals, reference levels, drawing segments, labels, and boxes in the main chart or a separate pane. New Pine indicators start with simple 20-period Bollinger Bands. This local Pine v5/v6 subset reads the current chart only; it does not run strategies or place orders. See [Pine indicators and drawings](pine-indicators.md).
 
 # v1.7.0
 

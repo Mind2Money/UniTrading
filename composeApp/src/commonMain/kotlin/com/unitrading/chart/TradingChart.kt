@@ -35,8 +35,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
@@ -51,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.unitrading.broker.*
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.chart.drawing.*
+import com.unitrading.chart.pine.pinePriceFactor
 import com.unitrading.ui.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -193,9 +196,15 @@ fun TradingChart(
         }
     }
     val range = viewport.range(candles.size)
+    val slots = viewport.slots(candles.size)
     val visible = if (range.isEmpty()) emptyList() else candles.slice(range)
-    // Indicators use every loaded bar; separate panes take the bottom of the drawable area, above the time axis.
-    val computedIndicators = remember(candles, indicators, timeframe) { computeIndicators(indicators, candles, timeframe) }
+    val periodMs = timeframe.millis
+    val priceFactor = pinePriceFactor(instrument)
+    // Pine runs on the latest candle snapshot in the background; align completed output to the chart's time axis.
+    val builtin = remember(candles, indicators, timeframe) { computeIndicators(indicators, candles, timeframe) }
+    val pineFrame = rememberChartPine(accountKey, instrument, timeframe, indicators, candles)
+    val pineOffset = remember(pineFrame, candles) { pineFrame?.let { pineSampleOffset(it.candles, candles) } }
+    val computedIndicators = remember(indicators, builtin, pineFrame, pineOffset) { mergeChartIndicators(indicators, builtin, pineFrame, pineOffset) }
     val localObjectLayers = remember { ChartObjectLayers(MemorySnapshotStore()) }
     val objectLayers = chrome.objectLayers ?: localObjectLayers
     val objectRanks = objectLayers.forSymbol(instrument.symbol)
@@ -212,6 +221,15 @@ fun TradingChart(
     }
     val overlays = computedIndicators.filter { it.overlay }
     val panes = computedIndicators.filterNot { it.overlay }.sortedByDescending { objectRanks[indicatorLayerKey(it.config.id)] ?: 0L }
+    val pineOverlays = remember(computedIndicators) { overlays.mapNotNull { it.pine } }
+    val pineCandleTints = remember(pineOverlays) { pineOverlays.asReversed().filter { pane -> pane.result.barColors.any { it != null } } }
+    val pineGeometryLimit = 16_000 / (pineOverlays.size + panes.count { it.pine != null }).coerceAtLeast(1)
+    val pineErrors = remember(pineFrame, indicators) {
+        indicators.mapIndexedNotNull { index, config -> pineFrame?.runs?.get(config.id)?.error?.let { "Pine ${index + 1} · $it" } }
+    }
+    val pineScaleValues = remember(pineOverlays, range, slots, candles, periodMs, priceFactor, axis.chartOnly) {
+        if (axis.chartOnly) emptyList() else pineOverlayScaleValues(pineOverlays, range, slots, candles, periodMs, priceFactor)
+    }
     var paneFractions by remember(indicatorPaneFractions) { mutableStateOf(indicatorPaneFractions) }
     val minimumPaneHeight = with(density) { 56.dp.toPx() }
     val paneLayout = indicatorPaneLayout(top, bottom, panes.map { it.config.id }, paneFractions, minimumPaneHeight)
@@ -243,7 +261,7 @@ fun TradingChart(
         draft?.stopLoss?.let(::add)
         draft?.takeProfit?.let(::add)
     }
-    val extras = if (axis.chartOnly) emptyList() else tradingPrices + overlayScaleValues(overlays, range)
+    val extras = if (axis.chartOnly) emptyList() else tradingPrices + overlayScaleValues(overlays, range) + pineScaleValues
     // A newly enabled protection must be reachable even after the user manually zoomed the price axis.
     // Only activation/direction/type changes fit the range; moving a line keeps its frozen drag scale.
     LaunchedEffect(accountKey, instrument.symbol, draft?.side, draft?.kind, draft?.stopLoss != null, draft?.takeProfit != null) {
@@ -265,7 +283,7 @@ fun TradingChart(
     // Older bars far from the price may leave a centred axis; the newest fifth of the screen always stays in view.
     val automatic = autoMiddle?.let {
         val recent = visible.takeLast(maxOf(10, visible.size / 5)).flatMap { bar -> listOf(bar.low, bar.high) }
-        PriceScale.centered(visible, tradingPrices + recent, it, top, plotBottom)
+        PriceScale.centered(visible, tradingPrices + recent + pineScaleValues, it, top, plotBottom)
     } ?: fitted
     // A kept axis that no longer suits the bars (the market moved away, other price units) gives way to the automatic one.
     LaunchedEffect(manualChecked, candles.isEmpty()) {
@@ -362,7 +380,6 @@ fun TradingChart(
         drag != null || hoverPoint?.let { it.x in left..right && it.y in top..plotBottom && grabAt(it, orderTags, lines, scale, 22 * density.density) != null } == true -> panelResizeCursor(false)
         else -> PointerIcon.Default
     }
-    val periodMs = timeframe.millis
     val step = plotWidth / viewport.count.toFloat()
     val candleWidth = candleWidths(step, density.density)
     val currentViewport by rememberUpdatedState(viewport)
@@ -433,6 +450,13 @@ fun TradingChart(
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
+        }
+        pineErrors.firstOrNull()?.let { message ->
+            val suffix = if (pineErrors.size > 1) "（另有 ${pineErrors.size - 1} 个 Pine 脚本错误）" else ""
+            Text(message + suffix, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("chart-pine-error")
+                .semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
         if (showData) {
             if (!compact && !chrome.sharedToolbar) {
@@ -727,10 +751,14 @@ fun TradingChart(
                         val layout = textMeasurer.measure(value, labelStyle.copy(color = color))
                         drawText(layout, topLeft = Offset(x, y.coerceIn(0f, (size.height - layout.size.height).toFloat().coerceAtLeast(0f))))
                     }
+                    val barStart = viewport.start(candles.size)
+                    val overlayTextBudget = PineTextBudget()
+                    val paneTextBudget = PineTextBudget()
+                    fun barX(index: Double): Float = left + (index - barStart + .5).toFloat() * step
                     fun x(time: Long): Float? {
                         if (visible.isEmpty() || time < visible.first().timeMs || time >= visible.last().timeMs + periodMs) return null
                         val index = visible.indexOfLast { it.timeMs <= time }
-                        return left + (range.first + index - viewport.start(candles.size) + 0.5).toFloat() * step
+                        return barX((range.first + index).toDouble())
                     }
                     val labelHeight = textMeasurer.measure("0", labelStyle).size.height.toFloat()
                     val labelPadding = 3.dp.toPx()
@@ -762,12 +790,24 @@ fun TradingChart(
                     fun paintPriceObjects(behindCandles: Boolean) {
                         priceObjects.forEach { item ->
                             if ((item.rank < 0L) == behindCandles) when (item) {
-                                is PriceObject.Indicator -> drawIndicatorOverlays(listOf(item.item), range, scale, colors) { index -> left + (index - viewport.start(candles.size) + .5).toFloat() * step }
+                                is PriceObject.Indicator -> {
+                                    drawIndicatorOverlays(listOf(item.item), range, scale, colors) { index -> barX(index.toDouble()) }
+                                    item.item.pine?.let { pane ->
+                                        drawPineVisuals(pane.result, pane.local(range), pane.local(slots), candles, periodMs,
+                                            left, right, top, plotBottom, step, textMeasurer, priceFactor = priceFactor,
+                                            barOrigin = pane.offset, textBudget = overlayTextBudget, geometryBudget = PineGeometryBudget(pineGeometryLimit),
+                                            nonPositiveBaselineY = if (scale.logarithmic) scale.yOf(scale.low) else Float.NaN,
+                                            x = { barX(it + pane.offset) }, y = { scale.yOf(it * priceFactor) })
+                                    }
+                                }
                                 is PriceObject.Drawing -> if (drawingFrame != null) drawDrawingScene(item.scene, drawingFrame, plotRect, textMeasurer)
                             }
                         }
                     }
                     clipRect(left, top, right, plotBottom) {
+                    pineOverlays.forEach { pane ->
+                        drawPineBackground(pane.result, pane.local(range), left, right, top, plotBottom, step) { barX(it + pane.offset) }
+                    }
                     if (chrome.showWatermark) {
                         val mark = textMeasurer.measure("${instrument.symbol} · ${timeframe.label}", TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
                         drawText(mark, topLeft = Offset((left + right - mark.size.width) / 2f, (top + plotBottom - mark.size.height) / 2f))
@@ -783,18 +823,21 @@ fun TradingChart(
                     }
                     paintPriceObjects(true)
                     visible.forEachIndexed { index, candle ->
-                        val center = left + (range.first + index - viewport.start(candles.size) + .5).toFloat() * step
-                        val color = if (candle.close >= candle.open) colors.UpBody else colors.DownBody
+                        val barIndex = range.first + index
+                        val center = barX(barIndex.toDouble())
+                        val tint = pineCandleTints.firstNotNullOfOrNull { it.candleColor(barIndex) }
                         val width = candleWidth.body
                         val rising = candle.close >= candle.open
-                        drawLine(if (rising) colors.UpWick else colors.DownWick, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
+                        val color = tint ?: if (rising) colors.UpBody else colors.DownBody
+                        val border = tint ?: if (rising) colors.UpBorder else colors.DownBorder
+                        val wick = tint ?: if (rising) colors.UpWick else colors.DownWick
+                        drawLine(wick, Offset(center, scale.y(candle.high)), Offset(center, scale.y(candle.low)), candleWidth.wick)
                         val y = minOf(scale.y(candle.open), scale.y(candle.close))
                         val height = maxOf(abs(scale.y(candle.open) - scale.y(candle.close)), 1.6f)
                         // At subpixel density use the outline color so hollow candles remain visible on a light chart.
-                        val denseColor = if (rising) colors.UpBorder else colors.DownBorder
-                        drawRect(if (step < 2f) denseColor else color, Offset(center - width / 2, y), Size(width, height))
+                        drawRect(if (step < 2f) border else color, Offset(center - width / 2, y), Size(width, height))
                         // Borders would overlap neighbouring candles when a slot is less than two pixels wide.
-                        if (step >= 2f) drawRect(if (rising) colors.UpBorder else colors.DownBorder, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
+                        if (step >= 2f) drawRect(border, Offset(center - width / 2, y), Size(width, height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = minOf(density.density, width)))
                     }
                     paintPriceObjects(false)
                     drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }
@@ -860,7 +903,7 @@ fun TradingChart(
                         val paneRank = objectRanks[indicatorLayerKey(pane.config.id)] ?: 0L
                         drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) < paneRank }, plotRect, bounds.top, bounds.bottom) }
                         drawIndicatorPanes(listOf(pane), candles, range, range.first + readoutIndex, instrument, left, right, listOf(bounds), step,
-                            textMeasurer, labelStyle, colors, axis.left) { bar -> left + (bar - viewport.start(candles.size) + .5).toFloat() * step }
+                            textMeasurer, labelStyle, colors, axis.left, slots, periodMs, paneTextBudget, pineGeometryLimit, ::barX)
                         drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) >= paneRank } + listOfNotNull(frame.draft), plotRect, bounds.top, bounds.bottom) }
                     }
                     drawLine(colors.Border, Offset(if (axis.left) left else right, top), Offset(if (axis.left) left else right, bottom))
@@ -914,7 +957,7 @@ fun TradingChart(
                         val y = crosshairY?.takeIf { chrome.lockedCrosshairTime == null } ?: return@let
                         val value = when {
                             y in top..plotBottom -> axisPrice(scale.price(y, instrument.tickSize))
-                            y in plotBottom..bottom -> paneValueLabel(panes, y, paneLayout, range, instrument, labelHeight, labelPadding)
+                            y in plotBottom..bottom -> paneValueLabel(panes, y, paneLayout, range, instrument, labelHeight, labelPadding, slots, periodMs, candles)
                             else -> null
                         } ?: return@let
                         drawLine(line, Offset(left, y), Offset(right, y), 1f, pathEffect = dash)

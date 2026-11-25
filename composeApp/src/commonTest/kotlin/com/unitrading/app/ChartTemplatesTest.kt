@@ -8,6 +8,21 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartTemplatesTest {
+    @Test fun pineSourceSurvivesTemplateAndChartStorageWithoutLeakingToAnotherChart() = runTest {
+        val store = MemorySnapshotStore()
+        val pine = IndicatorConfig("pine", IndicatorKind.PINE, visible = false,
+            pineSource = "//@version=6\nindicator(\"自定义指标\", overlay=true)\nplot(close, color=#FF8800)")
+        val template = ChartTemplate("Pine layout", listOf(pine), PriceAxisSettings())
+        assertTrue(ChartTemplateController(store).save(template))
+        val saved = ChartTemplateController(store).templates.value.single()
+        assertEquals(template, saved)
+        val runtime = TradingRuntime(store)
+        assertTrue(runtime.indicatorsForChart("split1").apply(IndicatorSettings(saved.indicators)))
+        val reopened = TradingRuntime(store)
+        assertEquals(listOf(pine), reopened.indicatorsForChart("split1").settings.value.indicators)
+        assertEquals(emptyList(), reopened.indicatorsForChart("split2").settings.value.indicators)
+    }
+
     @Test fun savesReplacesAndRemovesTemplatesWithoutTouchingOtherSettings() = runTest {
         val store = MemorySnapshotStore()
         store.write("chart-v1", """{"showHistory":false}""")

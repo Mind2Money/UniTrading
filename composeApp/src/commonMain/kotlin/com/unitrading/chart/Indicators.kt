@@ -3,6 +3,7 @@ package com.unitrading.chart
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
 import com.unitrading.broker.formatFixed
+import com.unitrading.chart.pine.MAX_PINE_SOURCE_LENGTH
 import kotlinx.serialization.Serializable
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -55,7 +56,9 @@ enum class IndicatorKind(
         listOf(IndicatorLine("K"), IndicatorLine("D"), IndicatorLine("J")), 0.0..100.0),
     ATR("ATR", "平均真实波幅", IndicatorPane.SEPARATE, listOf(bars("period", "周期", 14.0)), listOf(IndicatorLine("ATR"))),
     VOLUME("VOL", "成交量", IndicatorPane.SEPARATE, emptyList(), listOf(IndicatorLine("成交量", histogram = true)), 0.0..0.0),
-    VWAP("VWAP", "当日成交量加权均价", IndicatorPane.OVERLAY, emptyList(), listOf(IndicatorLine("VWAP")));
+    VWAP("VWAP", "当日成交量加权均价", IndicatorPane.OVERLAY, emptyList(), listOf(IndicatorLine("VWAP"))),
+    // Pine scripts choose their pane with indicator(…, overlay=…).
+    PINE("Pine", "自定义 Pine 指标", IndicatorPane.SEPARATE, emptyList(), emptyList());
 
     fun param(key: String): IndicatorParam = params.first { it.key == key }
     /** Dashed reference levels drawn in a separate pane. */
@@ -90,6 +93,7 @@ data class IndicatorConfig(
     val referenceColors: Map<String, String> = emptyMap(),
     /** Output line styles keyed by line name; old settings retain the original appearance. */
     val lineStyles: Map<String, IndicatorLineStyle> = emptyMap(),
+    val pineSource: String? = null,
 ) {
     fun param(key: String): Double = params[key] ?: kind.param(key).default
     fun color(line: Int): String = colors[kind.lines[line].name] ?: indicatorPalette[line % indicatorPalette.size]
@@ -101,6 +105,9 @@ data class IndicatorConfig(
 
     fun validate() {
         require(id.isNotBlank()) { "指标缺少 ID" }
+        pineSource?.let {
+            require(kind == IndicatorKind.PINE && it.length <= MAX_PINE_SOURCE_LENGTH && it.isNotBlank()) { "Pine 源码须为 1–$MAX_PINE_SOURCE_LENGTH 个字符" }
+        }
         params.forEach { (key, value) ->
             val spec = kind.params.firstOrNull { it.key == key } ?: throw IllegalArgumentException("${kind.label} 没有参数 $key")
             require(value.isFinite() && value >= spec.min && value <= spec.max) { "${kind.label} ${spec.label} 须在 ${formatParam(spec.min)}–${formatParam(spec.max)}" }
@@ -151,6 +158,7 @@ fun computeIndicator(config: IndicatorConfig, candles: List<Candle>): List<Indic
         IndicatorKind.ATR -> listOf(atr(candles, count("period")))
         IndicatorKind.VOLUME -> listOf(DoubleArray(candles.size) { candles[it].volume?.takeIf { v -> v >= 0 }?.toDouble() ?: Double.NaN })
         IndicatorKind.VWAP -> listOf(currentSessionVwap(candles))
+        IndicatorKind.PINE -> error("Pine runs in the chart's background interpreter")
     }
     return lines.mapIndexed { index, values -> IndicatorSeries(config.kind.lines[index], values, config.color(index)) }
 }

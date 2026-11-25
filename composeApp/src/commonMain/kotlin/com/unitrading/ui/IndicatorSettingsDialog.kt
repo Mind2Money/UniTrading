@@ -9,15 +9,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.IndicatorController
 import com.unitrading.app.IndicatorSettings
 import com.unitrading.broker.parseFixed
 import com.unitrading.chart.*
+import com.unitrading.chart.pine.DEFAULT_PINE_SOURCE
+import com.unitrading.chart.pine.MAX_PINE_SOURCE_LENGTH
+import com.unitrading.chart.pine.pineScriptError
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 internal data class ReferenceLevelDraft(val value: String = "", val color: String = DEFAULT_INDICATOR_GUIDE_COLOR) {
@@ -34,6 +46,7 @@ internal data class IndicatorDraft(
     val visible: Boolean = true,
     val referenceLevels: List<ReferenceLevelDraft> = emptyList(),
     val lineStyles: Map<String, IndicatorLineStyle> = emptyMap(),
+    val pineSource: String? = null,
 ) {
     fun parse(spec: IndicatorParam): Double? {
         val text = params[spec.key]?.trim() ?: return null
@@ -52,7 +65,7 @@ internal data class IndicatorDraft(
         val guideColors = if (kind == IndicatorKind.RSI) referenceLevels.associate {
             formatParam(it.parse() ?: return null) to it.color.uppercase()
         } else emptyMap()
-        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels, guideColors, lineStyles)
+        val config = IndicatorConfig(id, kind, values, colors.mapValues { it.value.uppercase() }, visible, levels, guideColors, lineStyles, pineSource = pineSource)
         return config.takeIf { runCatching { it.validate() }.isSuccess }
     }
     companion object {
@@ -63,8 +76,10 @@ internal data class IndicatorDraft(
             config.visible,
             if (config.kind == IndicatorKind.RSI) config.guides.map { ReferenceLevelDraft(formatParam(it), config.guideColor(it)) } else emptyList(),
             config.lineStyles,
+            pineSource = config.pineSource,
         )
-        fun new(kind: IndicatorKind) = from(IndicatorConfig(Random.nextLong().toULong().toString(16), kind))
+        fun new(kind: IndicatorKind) = from(IndicatorConfig(Random.nextLong().toULong().toString(16), kind,
+            pineSource = DEFAULT_PINE_SOURCE.takeIf { kind == IndicatorKind.PINE }))
     }
 }
 
@@ -73,6 +88,10 @@ internal fun List<IndicatorDraft>.toSettings(): IndicatorSettings? {
     return IndicatorSettings(configs).takeIf { runCatching { it.validate() }.isSuccess }
 }
 
+private enum class IndicatorSavePhase { CHECKING_PINE, SAVING }
+
+private data class PineSaveFailure(val id: String, val source: String?, val message: String)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss: () -> Unit) {
@@ -80,41 +99,97 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
     var drafts by remember { mutableStateOf(saved.indicators.map(IndicatorDraft::from)) }
     val error by controller.error.collectAsState()
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
+    var savePhase by remember { mutableStateOf<IndicatorSavePhase?>(null) }
+    var pineFailure by remember { mutableStateOf<PineSaveFailure?>(null) }
     var editingColor by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var editingReferenceColor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val viewport = rememberReorderViewport()
-    val settings = drafts.toSettings()
+    val settings = remember(drafts) { drafts.toSettings() }
     val colors = TradingColors
-    fun update(index: Int, value: IndicatorDraft) { drafts = drafts.mapIndexed { i, d -> if (i == index) value else d } }
-    FormDialog("图表指标", "保存", settings != null && !busy, {
-        scope.launch { busy = true; try { if (settings != null && controller.apply(settings)) onDismiss() } finally { busy = false } }
-    }, onDismiss, "indicator-settings", "indicators-cancel", "indicators-save", dismissEnabled = !busy) {
+    val saving = savePhase == IndicatorSavePhase.SAVING
+
+    fun changeDrafts(value: List<IndicatorDraft>) {
+        if (savePhase == IndicatorSavePhase.SAVING) return
+        pineFailure?.let { failure ->
+            if (value.none { it.id == failure.id && it.pineSource == failure.source }) pineFailure = null
+        }
+        drafts = value
+    }
+    fun update(value: IndicatorDraft) = changeDrafts(drafts.map { if (it.id == value.id) value else it })
+    fun save() {
+        if (savePhase != null || pineFailure != null) return
+        val snapshot = drafts
+        val candidate = snapshot.toSettings() ?: return
+        val hasPine = candidate.indicators.any { it.kind == IndicatorKind.PINE }
+        savePhase = if (hasPine) IndicatorSavePhase.CHECKING_PINE else IndicatorSavePhase.SAVING
+        scope.launch {
+            try {
+                if (hasPine) {
+                    val failure = withContext(Dispatchers.Default) {
+                        candidate.indicators.firstNotNullOfOrNull { config ->
+                            ensureActive()
+                            if (config.kind != IndicatorKind.PINE) return@firstNotNullOfOrNull null
+                            val source = config.pineSource ?: DEFAULT_PINE_SOURCE
+                            pineScriptError(source)?.let { PineSaveFailure(config.id, config.pineSource, it) }
+                        }
+                    }
+                    // The form remains editable during compilation. Never commit an older draft.
+                    if (drafts != snapshot) return@launch
+                    if (failure != null) {
+                        pineFailure = failure
+                        return@launch
+                    }
+                    savePhase = IndicatorSavePhase.SAVING
+                }
+                if (controller.apply(candidate)) onDismiss()
+            } finally {
+                savePhase = null
+            }
+        }
+    }
+
+    FormDialog("图表指标", if (savePhase == IndicatorSavePhase.CHECKING_PINE) "校验中" else "保存",
+        settings != null && savePhase == null && pineFailure == null, ::save, {
+            if (savePhase != IndicatorSavePhase.SAVING) {
+                scope.coroutineContext.cancelChildren()
+                onDismiss()
+            }
+        }, "indicator-settings", "indicators-cancel", "indicators-save", dismissEnabled = !saving) {
+        val failure = pineFailure
+        val failedIndex = if (failure != null) drafts.indexOfFirst { it.id == failure.id } else -1
+        // Keep the failed script and line visible even when the editor is off-screen or the IME is open.
+        if (failure != null && failedIndex >= 0) {
+            Text("Pine ${failedIndex + 1} · ${failure.message}", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag("indicator-pine-error").semantics { liveRegion = LiveRegionMode.Polite },
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         Column(Modifier.weight(1f).then(viewport.scrolling).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("设置仅应用于当前图表，切换该图表的品种或周期后继续保留。", style = MaterialTheme.typography.bodyMedium, color = colors.Muted)
             Text("添加指标", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 IndicatorKind.entries.forEach { kind ->
-                    AssistChip({ drafts = drafts + IndicatorDraft.new(kind) }, { Text(kind.label) }, Modifier.testTag("add-indicator-${kind.name}"),
-                        enabled = drafts.size < IndicatorSettings.MAX_INDICATORS,
+                    AssistChip({ changeDrafts(drafts + IndicatorDraft.new(kind)) }, { Text(kind.label) }, Modifier.testTag("add-indicator-${kind.name}"),
+                        enabled = !saving && drafts.size < IndicatorSettings.MAX_INDICATORS,
                         leadingIcon = { Icon(AppIcons.Add, contentDescription = kind.title, Modifier.size(AssistChipDefaults.IconSize)) })
                 }
             }
             if (drafts.isEmpty()) EmptyState("尚未添加指标", "点击上方指标，可添加多个并分别设置参数、线条颜色、线宽和线型。", icon = AppIcons.Tune)
-            else ReorderableColumn(viewport, drafts, { it.id }, { it.kind.label }, { drafts = it }, spacing = 12.dp, heldShape = MaterialTheme.shapes.medium) { card ->
+            else ReorderableColumn(viewport, drafts, { it.id }, { it.kind.label }, ::changeDrafts, spacing = 12.dp, heldShape = MaterialTheme.shapes.medium) { card ->
                 val index = card.index
                 IndicatorEditor(index, card.value, card.grip,
-                    onChange = { update(index, it) },
-                    onRemove = { if (!card.dragging) drafts = drafts.filterIndexed { i, _ -> i != index } },
-                    onPickColor = { line -> editingColor = index to line },
-                    onPickReferenceColor = { row -> editingReferenceColor = index to row })
+                    pineError = failure?.takeIf { it.id == card.value.id }?.message,
+                    saving = saving,
+                    onChange = ::update,
+                    onRemove = { if (!card.dragging) changeDrafts(drafts.filterNot { it.id == card.value.id }) },
+                    onPickColor = { line -> if (savePhase != IndicatorSavePhase.SAVING) editingColor = index to line },
+                    onPickReferenceColor = { row -> if (savePhase != IndicatorSavePhase.SAVING) editingReferenceColor = index to row })
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
         editingColor?.let { (index, line) ->
             val draft = drafts.getOrNull(index) ?: return@let
             ColorPicker("${draft.kind.label} ${line}颜色", parseHexColor(draft.colors[line]) ?: colors.Accent, { editingColor = null }) { value ->
-                update(index, draft.copy(colors = draft.colors + (line to colorHex(value))))
+                update(draft.copy(colors = draft.colors + (line to colorHex(value))))
                 editingColor = null
             }
         }
@@ -123,7 +198,7 @@ internal fun IndicatorSettingsDialog(controller: IndicatorController, onDismiss:
             val row = draft.referenceLevels.getOrNull(rowIndex) ?: return@let
             ColorPicker("RSI 参考线 ${rowIndex + 1} 颜色", parseHexColor(row.color) ?: parseHexColor(DEFAULT_INDICATOR_GUIDE_COLOR)!!,
                 { editingReferenceColor = null }) { value ->
-                update(index, draft.copy(referenceLevels = draft.referenceLevels.mapIndexed { i, level ->
+                update(draft.copy(referenceLevels = draft.referenceLevels.mapIndexed { i, level ->
                     if (i == rowIndex) level.copy(color = colorHex(value)) else level
                 }))
                 editingReferenceColor = null
@@ -138,6 +213,8 @@ private fun IndicatorEditor(
     index: Int,
     draft: IndicatorDraft,
     grip: Modifier,
+    pineError: String?,
+    saving: Boolean,
     onChange: (IndicatorDraft) -> Unit,
     onRemove: () -> Unit,
     onPickColor: (String) -> Unit,
@@ -146,7 +223,8 @@ private fun IndicatorEditor(
     val colors = TradingColors
     val type = MaterialTheme.typography
     val scheme = MaterialTheme.colorScheme
-    val config = draft.toConfig()
+    val isPine = draft.kind == IndicatorKind.PINE
+    val config = if (isPine) null else remember(draft) { draft.toConfig() }
     Surface(Modifier.fillMaxWidth().testTag("indicator-$index"), shape = MaterialTheme.shapes.medium, color = scheme.surfaceContainerHighest) {
         Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -154,15 +232,20 @@ private fun IndicatorEditor(
                 Row(Modifier.weight(1f).offset(x = (-12).dp).then(grip), verticalAlignment = Alignment.CenterVertically) {
                     ReorderGrip("indicator-drag-$index")
                     Column(Modifier.weight(1f)) {
-                        Text(config?.label ?: draft.kind.label, style = type.titleSmall)
-                        Text(draft.kind.title + if (draft.kind.pane == IndicatorPane.OVERLAY) " · 叠加在 K 线上" else " · 独立副图", style = type.bodySmall, color = colors.Muted)
+                        Text(if (isPine) "Pine ${index + 1}" else config?.label ?: draft.kind.label, style = type.titleSmall)
+                        if (!isPine) Text(draft.kind.title + if (draft.kind.pane == IndicatorPane.OVERLAY) " · 叠加在 K 线上" else " · 独立副图", style = type.bodySmall, color = colors.Muted)
                     }
                 }
-                ActionIcon(AppIcons.Delete, "移除 ${draft.kind.label}", "remove-indicator-$index", onClick = onRemove)
+                ActionIcon(AppIcons.Delete, "移除 ${draft.kind.label}", "remove-indicator-$index", enabled = !saving, onClick = onRemove)
             }
             Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("显示", Modifier.weight(1f), style = type.bodyMedium)
-                Switch(draft.visible, { onChange(draft.copy(visible = it)) }, Modifier.testTag("indicator-visible-$index").semantics { contentDescription = "显示${draft.kind.label}" })
+                Switch(draft.visible, { onChange(draft.copy(visible = it)) },
+                    Modifier.testTag("indicator-visible-$index").semantics { contentDescription = "显示${draft.kind.label}" }, enabled = !saving)
+            }
+            if (isPine) {
+                PineSourceEditor(index, draft.pineSource ?: DEFAULT_PINE_SOURCE, pineError, saving) { onChange(draft.copy(pineSource = it)) }
+                return@Column
             }
             FlowRow(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 draft.kind.params.forEach { spec ->
@@ -210,6 +293,29 @@ private fun IndicatorEditor(
             if (draft.kind == IndicatorKind.MACD) Text("MACD 柱 = (DIF − DEA) × 2，按涨跌颜色绘制。", style = type.bodySmall, color = colors.Muted)
             if (config == null) Text("参数、颜色或参考值无效，请修改后保存。", style = type.bodySmall, color = scheme.error)
         }
+    }
+}
+
+@Composable
+private fun PineSourceEditor(index: Int, source: String, error: String?, saving: Boolean, onChange: (String) -> Unit) {
+    var overLimit by remember { mutableStateOf(false) }
+    val message = when {
+        overLimit -> "最多 $MAX_PINE_SOURCE_LENGTH 字符，超长输入未应用。"
+        source.isBlank() -> "请输入 Pine 源码。"
+        else -> error
+    }
+    Column(Modifier.fillMaxWidth().padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("仅支持 Pine v5/v6 子集。indicator(…, overlay=true) 叠加在 K 线上；省略 overlay 或设为 false 时显示为独立副图。",
+            style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+        OutlinedTextField(source, { value ->
+            // Reject an oversized paste as a whole rather than silently saving truncated code.
+            overLimit = value.length > MAX_PINE_SOURCE_LENGTH
+            if (!overLimit) onChange(value)
+        }, Modifier.fillMaxWidth().testTag("indicator-pine-source-$index"), enabled = !saving,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            label = { Text("Pine 源码") }, minLines = 3, maxLines = 6, isError = message != null,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+            supportingText = { Text(message ?: "${source.length} / $MAX_PINE_SOURCE_LENGTH 字符", Modifier.testTag("indicator-pine-support-$index")) })
     }
 }
 
