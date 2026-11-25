@@ -1,0 +1,175 @@
+name: Build system proxy previews
+on:
+  push:
+    branches: ['build/system-proxy-preview-20261126']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build signed debug APKs
+        run: |
+          set -euo pipefail
+          ./gradlew :androidApp:assembleStandardDebug :androidApp:assembleGeckoDebug --no-daemon
+          mkdir -p dist
+          cp androidApp/build/outputs/apk/standard/debug/androidApp-standard-debug.apk dist/UniTrading-System-Proxy-Android-preview.apk
+          cp androidApp/build/outputs/apk/gecko/debug/androidApp-gecko-debug.apk dist/UniTrading-System-Proxy-Android-webview-preview.apk
+          tool="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          for apk in dist/*.apk; do "$tool" verify --print-certs "$apk"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: System-Proxy-Android-Previews
+          path: dist/*.apk
+          compression-level: 0
+          if-no-files-found: error
+  android-proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test Android system HTTP proxy
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none
+          script: |
+            adb shell settings put global http_proxy 127.0.0.1:39173
+            ./gradlew :androidApp:connectedStandardDebugAndroidTest -PcredentialStoreTest=true -Pandroid.testInstrumentationRunnerArguments.class=com.unitrading.android.SystemProxyDeviceTest -Pandroid.testInstrumentationRunnerArguments.proxyPort=39173 --no-daemon
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: System-Proxy-Android-Test-Results
+          path: |
+            androidApp/build/outputs/androidTest-results/connected/**
+            androidApp/build/reports/androidTests/connected/**
+          if-no-files-found: warn
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Build Windows desktop preview
+        run: ./gradlew.bat :composeApp:createDistributable --no-daemon
+      - name: Verify and archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = 'composeApp/build/compose/binaries/main/app/UniTrading'
+          if (-not (Get-Content "$app/app/UniTrading.cfg" -Raw).Contains('-Djava.net.useSystemProxies=true')) { throw 'Missing system proxy startup flag' }
+          if (-not (Test-Path "$app/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin.exe")) { throw 'Login host missing' }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path $app -DestinationPath 'dist/UniTrading-System-Proxy-Windows-x64-preview.zip'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: System-Proxy-Windows-Preview
+          path: dist/*.zip
+          compression-level: 0
+          if-no-files-found: error
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
+      - name: Test and build macOS desktop preview
+        run: |
+          set -euo pipefail
+          ./gradlew :composeApp:desktopTest --tests 'com.unitrading.SystemProxyTest.brokerRequestsAndReconnectsFollowTheJvmProxySelector' --tests 'com.unitrading.SystemProxyTest.brokerWebSocketCanUseExplicitSocksProxy' --tests 'com.unitrading.SystemProxyTest.tradingPostIsNotAutomaticallyReplayed' :composeApp:createDistributable --no-daemon
+          app=composeApp/build/compose/binaries/main/app/UniTrading.app
+          grep -F -- '-Djava.net.useSystemProxies=true' "$app/Contents/app/UniTrading.cfg"
+          host="$app/Contents/app/resources/tradovate-login/1.1.1/UniTrading.TradovateLogin"
+          test -x "$host"
+          "$host" --self-test
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          mkdir -p dist
+          ditto -c -k --keepParent "$app" dist/UniTrading-System-Proxy-macOS-arm64-preview.zip
+      - name: Archive macOS preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: System-Proxy-macOS-Preview
+          path: dist/*.zip
+          compression-level: 0
+          if-no-files-found: error
+      - name: Test macOS system proxy
+        run: |
+          set -euo pipefail
+          device="$(route -n get default | awk '/interface:/{print $2;exit}')"
+          service="$(networksetup -listallhardwareports | awk -v d="$device" '/Hardware Port: /{p=substr($0,16)} $0=="Device: "d{print p;exit}')"
+          test -n "$service"
+          if networksetup -getwebproxy "$service" | grep -q 'Enabled: Yes' || networksetup -getsecurewebproxy "$service" | grep -q 'Enabled: Yes'; then
+            echo 'Existing system proxy must not be overwritten'; exit 1
+          fi
+          port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+          cleanup() { sudo networksetup -setwebproxystate "$service" off || true; sudo networksetup -setsecurewebproxystate "$service" off || true; }
+          trap cleanup EXIT
+          sudo networksetup -setwebproxy "$service" 127.0.0.1 "$port"
+          sudo networksetup -setsecurewebproxy "$service" 127.0.0.1 "$port"
+          UNITRADING_TEST_MAC_SYSTEM_PROXY="$port" JAVA_TOOL_OPTIONS="-Djava.net.useSystemProxies=true" ./gradlew :composeApp:desktopTest --tests '*brokerRequestsFollowMacSystemProxy' --offline --no-daemon
+      - name: Build unsigned iOS preview
+        run: |
+          set -euo pipefail
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/ios-build" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/ios-build/Build/Products/Release-iphoneos/UniTrading.app"
+          test -f "$app/UniTrading"
+          test -d "$app/PlugIns/UniTradingWidgets.appex"
+          mkdir -p Payload iosdist
+          cp -R "$app" Payload/
+          zip -qry iosdist/UniTrading-System-Proxy-iOS-unsigned-preview.ipa Payload
+          unzip -t iosdist/UniTrading-System-Proxy-iOS-unsigned-preview.ipa >/dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: System-Proxy-iOS-Unsigned-Preview
+          path: iosdist/*.ipa
+          compression-level: 0
+          if-no-files-found: error
