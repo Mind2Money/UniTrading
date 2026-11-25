@@ -795,6 +795,19 @@ class RithmicBrokerTest {
         assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == span })
     }
 
+    @Test fun pagedChartHistoryReachesTheNewestBarsOnABusySeries() = runTest {
+        val server = FakeRithmicServer().apply { bars = 7200; filterHistoryRange = true; maxHistoryReplyBars = 1000 }
+        val broker = broker(server)
+        broker.connect(); broker.watch("MESZ6", Timeframe.M1); runCurrent()
+        val bars = broker.history("MESZ6", Timeframe.M1)
+        val span = Timeframe.M1.millis
+        val latest = FAKE_TIME / span * span - span
+        assertEquals(RITHMIC_CHART_BARS, bars.size)
+        assertEquals(latest, bars.last().timeMs)
+        assertTrue(bars.zipWithNext().all { (a, b) -> b.timeMs - a.timeMs == span })
+        assertTrue(server.requests(Rt.REQUEST_TIME_BAR_REPLAY).size > 6)
+    }
+
     private suspend fun TestScope.chart(server: FakeRithmicServer, store: CandleCacheStore): RithmicBroker {
         // disconnect() cancels the broker's scope, and these tests go on with a second broker.
         val scope = CoroutineScope(backgroundScope.coroutineContext + Job(backgroundScope.coroutineContext[Job]))

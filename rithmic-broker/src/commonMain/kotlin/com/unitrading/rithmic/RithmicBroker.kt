@@ -1126,7 +1126,9 @@ class RithmicBroker(
         } else cached.lastOrNull()?.timeMs?.takeIf { it >= floor } ?: floor
         val bars = mutableListOf<Candle>()
         var from = start
-        for (page in 0 until 6) {
+        // A full 9,999-bar window can require ten 1,000-bar replies. Stopping at six
+        // could leave the newest part of a busy series missing from the chart.
+        for (page in 0 until 11) {
             val reply = plant.request(Rt.REQUEST_TIME_BAR_REPLAY, 60_000) {
                 string(Rf.SYMBOL, symbol); string(Rf.EXCHANGE, exchange)
                 int32(Rf.BAR_TYPE, barType(timeframe)); int32(Rf.BAR_PERIOD, barPeriod(timeframe))
