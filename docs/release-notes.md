@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 桌面端退出时默认自动保存图表和窗口布局，可在设置中关闭；回放记录列表支持逐条删除。
+
 - 非股指连续期货保留券商连续图表，使用最近三个未到期月份的最新成交价一次匹配买卖报价与下单月份；匹配后保留结果，行情栏可手动更新并并发查询。候选数据不全或价格相同时保持待确认；价格匹配是推断，需在券商模拟账户核验。
 
 - 修复回放 K 线倒计时和成交后残留的订单草稿；支持收起回放侧栏、在图表上提交和修改订单数量，并移除模拟持仓卡片。
@@ -23,6 +25,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- On desktop, save charts and window layouts automatically on exit by default; this can be disabled in settings. Replay records can be deleted individually.
 
 - Preserve broker continuous charts for non-index futures and match their latest price once against the three nearest unexpired months. The resulting quote and execution month stays fixed until manually refreshed; watch-list products resolve concurrently. Incomplete or ambiguous prices remain unconfirmed. This heuristic needs broker demo validation.
 

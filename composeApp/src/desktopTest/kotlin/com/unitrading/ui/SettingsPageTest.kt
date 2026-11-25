@@ -98,6 +98,17 @@ class SettingsPageTest {
         compose.onNodeWithTag("trading-chart").assertExists()
     }
 
+    @Test fun desktopExitSavingSwitchStartsOnAndCanBeChanged() {
+        val runtime = render(width = 1100, height = 900)
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("settings-save-workspace-on-exit").performScrollTo().assertIsOn().performClick()
+        compose.waitUntil(5_000) { !runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
+        compose.onNodeWithTag("settings-save-workspace-on-exit").assertIsOff()
+            .assertTextContains("放弃本次图表和窗口布局修改", substring = true)
+        compose.onNodeWithTag("settings-save-workspace-on-exit").performClick()
+        compose.waitUntil(5_000) { runtime.tradingPreferences.preferences.value.saveWorkspaceOnExit }
+    }
+
     @Test fun skipConfirmationSwitchAppliesImmediatelyAndResetStillRequiresConfirmation() {
         val runtime = render()
         compose.onNodeWithTag("nav-3").performClick()

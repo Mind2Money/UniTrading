@@ -2298,7 +2298,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.weight(1f).fillMaxWidth(), onConnectRithmic = connectRithmic, barActions = { barStatus() }, updates = updates,
-                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable)
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable,
+                                showDesktopExitSetting = nativeDesktop)
                         }
                     }
                     if (compact && !chartFirst && !rail) MobileNavigation(mobileTab, selectTab)
@@ -2328,7 +2329,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onActivity = { showActivity = true }, onConnect = { showConnection = true }, onDisconnect = ::disconnectCurrent,
                                 onForgotten = { selectBroker("") }, onSync = ::syncAccount, onReset = { confirmation = Confirmation.Reset },
                                 modifier = Modifier.fillMaxSize(), onClose = { showSettings = false }, onConnectRithmic = connectRithmic, updates = updates,
-                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable)
+                                showOrderLayout = !nativeDesktop && !tablet, showChartSessionControls = !desktopStyle || !splitAvailable,
+                                showDesktopExitSetting = nativeDesktop)
                         }
                     }
                 }

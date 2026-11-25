@@ -40,6 +40,7 @@ data class TradingPreferences(
     val tradeSounds: Boolean = true,
     val orderPanelLayout: OrderPanelLayout = OrderPanelLayout.SHEET,
     val orderMoreSettings: Boolean = false,
+    val saveWorkspaceOnExit: Boolean = true,
 )
 
 /** Device-wide trading interaction preferences, independent of account snapshots. */
@@ -62,6 +63,7 @@ class TradingPreferencesController(private val store: SnapshotStore) {
     suspend fun setOrderMoreSettings(open: Boolean): Boolean = update { it.copy(orderMoreSettings = open) }
     suspend fun setTradingKeys(keys: TradingKeys): Boolean = update { it.copy(tradingKeys = keys) }
     suspend fun setTradeSounds(enabled: Boolean): Boolean = update { it.copy(tradeSounds = enabled) }
+    suspend fun setSaveWorkspaceOnExit(enabled: Boolean): Boolean = update { it.copy(saveWorkspaceOnExit = enabled) }
 
     /** Saves the changed preferences first; a failed save leaves them as they were. */
     private suspend fun update(change: (TradingPreferences) -> TradingPreferences): Boolean = mutex.withLock {

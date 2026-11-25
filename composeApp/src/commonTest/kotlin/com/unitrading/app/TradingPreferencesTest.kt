@@ -4,6 +4,17 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class TradingPreferencesTest {
+    @Test fun exitSavingDefaultsOnForNewAndExistingSettingsAndSurvivesRestart() = runTest {
+        val store = MemorySnapshotStore().apply { write(TradingPreferencesController.KEY, """{"skipConfirmation":true}""") }
+        val controller = TradingPreferencesController(store)
+        assertTrue(controller.preferences.value.saveWorkspaceOnExit)
+        assertTrue(controller.setSaveWorkspaceOnExit(false))
+        assertFalse(TradingPreferencesController(store).preferences.value.saveWorkspaceOnExit)
+        assertTrue(TradingPreferencesController(store).preferences.value.skipConfirmation)
+        assertTrue(controller.setSaveWorkspaceOnExit(true))
+        assertTrue(TradingPreferencesController(store).preferences.value.saveWorkspaceOnExit)
+    }
+
     @Test fun confirmationDefaultsOnAndSettingSurvivesRestart() = runTest {
         val store = MemorySnapshotStore()
         val controller = TradingPreferencesController(store)
@@ -107,6 +118,7 @@ class TradingPreferencesTest {
         assertFalse(controller.setTradeSounds(false))
         assertFalse(controller.setOrderPanelLayout(OrderPanelLayout.DOCKED))
         assertFalse(controller.setOrderMoreSettings(true))
+        assertFalse(controller.setSaveWorkspaceOnExit(false))
         assertEquals(TradingPreferences(), controller.preferences.value, "keyboard trading never turns on without being saved")
     }
 }

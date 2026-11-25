@@ -56,6 +56,7 @@ internal fun SettingsPage(
     updates: AppUpdates? = null,
     showOrderLayout: Boolean = true,
     showChartSessionControls: Boolean = true,
+    showDesktopExitSetting: Boolean = false,
 ) {
     val colors = TradingColors
     val scheme = MaterialTheme.colorScheme
@@ -184,6 +185,18 @@ internal fun SettingsPage(
             }
 
             SettingsSection("外观与图表") {
+                if (showDesktopExitSetting) ListItem(
+                    headlineContent = { Text("退出时保存布局") },
+                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
+                        "退出时自动保存图表和窗口布局，不再询问。"
+                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
+                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
+                        .testTag("settings-save-workspace-on-exit"),
+                    colors = settingsRowColors(),
+                )
                 ListItem(headlineContent = { Text("商品代码与周期水印") },
                     supportingContent = { Text("在图表背景显示当前品种和周期") },
                     leadingContent = { Icon(AppIcons.Candlestick, contentDescription = null) },

@@ -128,11 +128,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var startTime by remember { mutableStateOf("") }
     var startCalendar by remember { mutableStateOf(false) }
     var recordId by remember { mutableStateOf("${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}") }
+    // Deleting the active session must not immediately recreate it through autosave or normal exit.
+    var currentRecordDeleted by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<ReplayRecord?>(null) }
     var description by remember { mutableStateOf("") }
     val equityPoints = remember { mutableStateListOf<ReplayEquityPoint>() }
     var savedRecords by remember { mutableStateOf<List<ReplayRecord>>(emptyList()) }
     var recordsExpanded by remember { mutableStateOf(false) }
+    var recordToDelete by remember { mutableStateOf<ReplayRecord?>(null) }
+    var recordDeleteError by remember { mutableStateOf<String?>(null) }
     val orderKind = draft.kind
     val orderPrice = draft.entry
     var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
@@ -443,20 +447,20 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             Clock.System.now().toEpochMilliseconds(), historyTrades, status, current.timeMs, finalEquity, samples, spec.priceDecimals, description,
             startedAtMs = bars[start].timeMs)
     }
-    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId, showSuccess, showFailure) {
-        if (started && !showSuccess && !showFailure && historyTrades.isNotEmpty() && records != null) {
+    LaunchedEffect(started, historyTrades, riskConfig.initialMicros, recordId, showSuccess, showFailure, currentRecordDeleted) {
+        if (started && !showSuccess && !showFailure && !currentRecordDeleted && historyTrades.isNotEmpty() && records != null) {
             runCatching { records.save(currentRecord()) }.onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
         }
     }
     fun restartReplay() {
         playing = false; started = false; state = ReplayState(start); risk = ReplayRiskState.initial(riskConfig)
-        equityPoints.clear(); description = ""; showFailure = false; showSuccess = false; message = null
+        equityPoints.clear(); description = ""; showFailure = false; showSuccess = false; message = null; currentRecordDeleted = false
         draft = OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))
         showDraft = false; orderToConfirm = null; lineToConfirm = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
     }
     fun finishReplay(after: () -> Unit) {
-        if (records == null || historyTrades.isEmpty()) { after(); return }
+        if (records == null || historyTrades.isEmpty() || currentRecordDeleted) { after(); return }
         runCatching { records.save(currentRecord("已结束")) }.onSuccess { after() }
             .onFailure { message = "回放记录保存失败：${it.message ?: "请检查存储"}" }
     }
@@ -671,6 +675,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         Text("查看本次回放或选择已保存的记录。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Button(onClick = { playing = false; report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
                         OutlinedButton(onClick = {
+                            playing = false
                             runCatching { records?.list().orEmpty().sortedByDescending { it.savedAtMs } }
                                 .onSuccess { savedRecords = it; recordsExpanded = true }
                                 .onFailure { message = "读取本地记录失败：${it.message ?: "请检查存储"}" }
@@ -740,11 +745,33 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             Text("${saved.status} · ${Instant.fromEpochMilliseconds(saved.savedAtMs).toString().replace('T', ' ').take(16)} UTC",
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        IconButton(onClick = { recordDeleteError = null; recordToDelete = saved },
+                            modifier = Modifier.testTag("replay-record-delete-${saved.id}")) {
+                            Icon(AppIcons.Delete, contentDescription = "删除回放记录", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         Icon(AppIcons.ChevronRight, null)
                     }
                 }
             }
         } }, confirmButton = { TextButton(onClick = { recordsExpanded = false }) { Text("关闭") } })
+    recordToDelete?.let { saved -> AlertDialog(
+        onDismissRequest = { recordToDelete = null; recordDeleteError = null },
+        title = { Text("删除回放记录？") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("将删除 ${saved.symbol} 的这条回放记录及其已平仓交易，删除后无法恢复。")
+            if (saved.id == recordId) Text("这是当前回放的记录；删除后本次回放将不再自动保存，可在考核结束时选择保存。")
+            recordDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("replay-record-delete-error")) }
+        } },
+        confirmButton = { TextButton(onClick = {
+            runCatching { requireNotNull(records).delete(saved.id) }.onSuccess {
+                if (saved.id == recordId) currentRecordDeleted = true
+                savedRecords = savedRecords.filterNot { it.id == saved.id }
+                recordToDelete = null; recordDeleteError = null
+            }.onFailure { recordDeleteError = "删除失败：${it.message ?: "请检查存储"}" }
+        }, modifier = Modifier.testTag("replay-record-delete-confirm")) { Text("删除") } },
+        dismissButton = { TextButton(onClick = { recordToDelete = null; recordDeleteError = null },
+            modifier = Modifier.testTag("replay-record-delete-cancel")) { Text("取消") } },
+    ) }
     report?.let { saved -> Dialog(onDismissRequest = { report = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f), shape = MaterialTheme.shapes.medium) {
             Column(Modifier.fillMaxSize()) {
