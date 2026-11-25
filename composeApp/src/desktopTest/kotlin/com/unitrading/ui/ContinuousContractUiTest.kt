@@ -45,7 +45,7 @@ class ContinuousContractUiTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("continuous-route").assertTextEquals("连续合约@TEST ${dated.symbol}")
+        compose.onNodeWithTag("continuous-route", useUnmergedTree = true).assertTextEquals("连续合约@TEST ${dated.symbol}")
             .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "价格匹配（非券商确认）"))
         compose.runOnIdle {
             assertEquals("@TEST", chartSymbol)
