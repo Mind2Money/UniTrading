@@ -74,6 +74,24 @@ private sealed interface PriceObject {
     data class Drawing(val scene: DrawingScene, override val rank: Long) : PriceObject
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContinuousRouteLabel(instrument: Instrument, color: Color) {
+    val label = "连续合约${instrument.symbol} ${instrument.executionLabel}"
+    val matching = instrument.tradeSymbolStatus?.takeIf {
+        instrument.tradeSymbol != null && it.startsWith("价格匹配")
+    }
+    val text: @Composable () -> Unit = {
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route")
+            .then(if (matching != null) Modifier.semantics { stateDescription = matching } else Modifier),
+            style = MaterialTheme.typography.labelSmall, color = color)
+    }
+    if (matching != null) {
+        TooltipBox(TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            { PlainTooltip { Text(matching) } }, rememberTooltipState(), focusable = false) { text() }
+    } else text()
+}
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TradingChart(
@@ -444,9 +462,7 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) Text("连续图表 ${instrument.symbol} · 下单 / 买卖报价 ${instrument.executionLabel}" +
-            if (instrument.tradeSymbol != null && instrument.tradeSymbolStatus?.startsWith("价格匹配") == true) " · 价格匹配，非券商确认" else "",
-            Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route"), style = MaterialTheme.typography.labelSmall, color = colors.Accent)
+        if (instrument.isContinuous) ContinuousRouteLabel(instrument, colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
@@ -809,7 +825,7 @@ fun TradingChart(
                         drawPineBackground(pane.result, pane.local(range), left, right, top, plotBottom, step) { barX(it + pane.offset) }
                     }
                     if (chrome.showWatermark) {
-                        val mark = textMeasurer.measure("${instrument.symbol} · ${timeframe.label}", TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 36.sp))
+                        val mark = textMeasurer.measure("${instrument.symbol} · ${timeframe.label}", TextStyle(color = colors.Muted.copy(alpha = .12f), fontSize = 40.sp))
                         drawText(mark, topLeft = Offset((left + right - mark.size.width) / 2f, (top + plotBottom - mark.size.height) / 2f))
                     }
                     if (activeDraft != null && draftEntry != null) {

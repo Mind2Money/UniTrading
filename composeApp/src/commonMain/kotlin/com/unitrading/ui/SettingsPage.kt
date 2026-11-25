@@ -125,8 +125,6 @@ internal fun SettingsPage(
                     { chooseOrderLayout = true }, enabled = !busy)
                 if (showChartSessionControls) SettingsRow("图表交易时段", chartPreferences.sessionForChart("main").label, AppIcons.History, "settings-chart-session",
                     { chooseChartSession = true }, navigates = true)
-                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.Language, "settings-chart-timezone",
-                    { chooseChartTimeZone = true }, navigates = true)
                 // What a key does depends on the selected sub-account: its cash amounts add protection, and its sizing takes the keys' orders away.
                 val riskRules by runtime.accountRisk.rules.collectAsState()
                 val brackets = riskRules[plugin.descriptor.id]?.get(accountId)?.brackets ?: AccountBrackets()
@@ -184,7 +182,9 @@ internal fun SettingsPage(
                 }
             }
 
-            SettingsSection("外观与图表") {
+            SettingsSection("外观与图表", Modifier.testTag("settings-appearance-section")) {
+                SettingsRow("图表时区", chartPreferences.chartTimeZone.labelAt(marketTime), AppIcons.Language, "settings-chart-timezone",
+                    { chooseChartTimeZone = true }, navigates = true)
                 ListItem(headlineContent = { Text("商品代码与周期水印") },
                     supportingContent = { Text("在图表背景显示当前品种和周期") },
                     leadingContent = { Icon(AppIcons.Candlestick, contentDescription = null) },
@@ -198,6 +198,18 @@ internal fun SettingsPage(
                         listOf(colors.Accent, colors.Up, colors.Down).forEach { Box(Modifier.size(12.dp).background(it, CircleShape)) }
                     }
                 }
+                if (showDesktopExitSetting) ListItem(
+                    headlineContent = { Text("退出时保存布局") },
+                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
+                        "退出时自动保存图表和窗口布局，不再询问。"
+                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
+                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
+                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
+                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
+                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
+                        .testTag("settings-save-workspace-on-exit"),
+                    colors = settingsRowColors(),
+                )
             }
 
             if (notificationsAvailable) SettingsSection("通知") { LivePnlSwitch(runtime.livePnl) }
@@ -216,18 +228,6 @@ internal fun SettingsPage(
 
             SettingsSection("其他", Modifier.testTag("settings-other-section")) {
                 SettingsRow("活动记录", "查看当前账户的交易与操作记录", AppIcons.History, "open-activity", onActivity, navigates = true)
-                if (showDesktopExitSetting) ListItem(
-                    headlineContent = { Text("退出时保存布局") },
-                    supportingContent = { Text(if (tradingPreferences.saveWorkspaceOnExit)
-                        "退出时自动保存图表和窗口布局，不再询问。"
-                    else "退出时放弃本次图表和窗口布局修改，不再询问。") },
-                    leadingContent = { Icon(AppIcons.ViewQuilt, contentDescription = null) },
-                    trailingContent = { Switch(tradingPreferences.saveWorkspaceOnExit, onCheckedChange = null, enabled = !savingTradingPreferences) },
-                    modifier = Modifier.toggleable(tradingPreferences.saveWorkspaceOnExit, enabled = !savingTradingPreferences, role = Role.Switch,
-                        onValueChange = { enabled -> preferenceScope.launch { runtime.tradingPreferences.setSaveWorkspaceOnExit(enabled) } })
-                        .testTag("settings-save-workspace-on-exit"),
-                    colors = settingsRowColors(),
-                )
             }
         }
     }
