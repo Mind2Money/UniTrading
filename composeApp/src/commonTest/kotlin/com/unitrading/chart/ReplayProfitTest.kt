@@ -25,6 +25,15 @@ class ReplayProfitTest {
         assertEquals(20_000_000L, closed.trades.single().pnlMicros)
     }
 
+    @Test fun softDailyLockDoesNotHideAConsistencyTriggerForAnExistingPosition() {
+        val before = opening()
+        val bar = Candle(start.timeMs + 60_000, 10_000, 10_500, 9_975, 10_500)
+        val after = before.advance(spec, bar)
+        val trigger = assertNotNull(replayProfitTrigger(spec, config, risk.copy(dailyLossHit = true), before, after, bar))
+        assertEquals(ReplayProfitKind.CONSISTENCY, trigger.kind)
+        assertEquals(10_400L, trigger.price)
+    }
+
     @Test fun zeroDisablesConsistencyAndTheTargetClosesAShortPosition() {
         val cfg = config.copy(consistencyPercent = 0)
         val before = opening(Side.SELL)
@@ -62,6 +71,15 @@ class ReplayProfitTest {
         val after = before.advance(spec, bar)
         assertEquals(1, after.positions.size)
         assertNull(replayProfitTrigger(spec, config, risk, before, after, bar))
+    }
+
+    @Test fun aPendingEntryKnownToFillAtTheOpenCanReachConsistencyInsideThatBar() {
+        val before = ReplayState(0).enqueue(spec, Side.BUY, OrderKind.LIMIT, 100, 9_900, null, null, 10_000)
+        val bar = Candle(start.timeMs + 60_000, 9_900, 10_400, 9_875, 9_900)
+        val after = before.advance(spec, bar)
+        val trigger = assertNotNull(replayProfitTrigger(spec, config, risk, before, after, bar))
+        assertEquals(ReplayProfitKind.CONSISTENCY, trigger.kind)
+        assertEquals(10_300L, trigger.price)
     }
 
     @Test fun accountCapBeforeTakeProfitIsNotSkipped() {

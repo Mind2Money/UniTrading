@@ -12,7 +12,9 @@ import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.OrderTagButtons
 import org.junit.Rule
 import org.junit.Test
+import java.time.Instant
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 @OptIn(ExperimentalTestApi::class)
 class ReplayDailyLossUiTest {
@@ -51,12 +53,122 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("replay-failure-save").performClick()
         compose.runOnIdle { assertEquals(1, records.list().size) }
     }
-    @Test fun softStopBlocksOpeningWithoutFailing() {
+    @Test fun softStopFlattensAndBlocksOpeningWithoutFailing() {
         val records = ReplayRecords(MemorySnapshotStore())
         open(ReplayDailyLoss.SOFT, records)
         compose.onNodeWithText("回放考核失败").assertDoesNotExist()
+        compose.onNodeWithTag("replay-realized").assertTextContains("-5.00", substring = true)
+        compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
+        val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+        assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
+        compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
+        compose.runOnIdle { assertEquals("每日软止损自动平仓", records.list().single().trades.single().reason) }
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test fun softStopRemainsLockedUntilTheNextChicagoTradingDay() {
+        val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
+        val timeline = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),
+            Candle(start + 60_000, 10_000, 10_500, 9_900, 10_500),
+            Candle(start + 120_000, 10_500, 10_525, 10_475, 10_500),
+            Candle(Instant.parse("2026-11-23T23:01:00Z").toEpochMilli(), 10_500, 10_525, 10_475, 10_500))
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 50_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.SOFT, consistencyPercent = 40)
+        val records = ReplayRecords(MemorySnapshotStore())
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, timeline, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-realized").assertTextContains("-5.00", substring = true)
+        compose.onNodeWithTag("replay-consistency-status").assertTextContains("每日", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun softStopPreventsALaterTotalLossOnTheSameCandle() {
+        val config = ReplayRiskConfig(50_000_000_000, 20_000_000, 50_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.SOFT)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithText("回放考核失败").assertDoesNotExist()
+        compose.onNodeWithTag("replay-realized").assertTextContains("-5.00", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test fun aGapBeyondTheTotalLossStillFailsTheEvaluation() {
+        val gap = listOf(Candle(1_700_000_000_000, 10_000, 10_025, 9_975, 10_000),
+            Candle(1_700_000_060_000, 9_500, 10_500, 9_475, 10_500))
+        val config = ReplayRiskConfig(50_000_000_000, 20_000_000, 50_000_000, ReplayDrawdown.STATIC,
+            maxDailyLossMicros = 5_000_000, dailyLossMode = ReplayDailyLoss.SOFT)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, gap, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithText("回放考核失败").assertIsDisplayed()
+        compose.onNodeWithText("账户触及最大总亏损。").assertExists()
+    }
+
+    private fun openHundredMclLots(lowAfterEntry: Long): ReplayRecords {
+        val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
+        val mcl = Instrument("@MCL", "Micro Crude Oil", "期货", 2, tickSize = 1, tickValueMicrosPerLot = 1_000_000,
+            minLotsHundredths = 100, maxLotsHundredths = 10_000, lotStepHundredths = 100, quantityDecimals = 0,
+            isContinuous = true, tradeSymbol = "MCLF7")
+        val timeline = listOf(Candle(start, 8_247, 8_248, 8_246, 8_247),
+            Candle(start + 60_000, 8_247, 8_274, lowAfterEntry, 8_274),
+            Candle(start + 120_000, 8_274, 8_275, 8_273, 8_274),
+            Candle(Instant.parse("2026-11-23T23:01:00Z").toEpochMilli(), 8_274, 8_275, 8_273, 8_274))
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.EOD,
+            maxDailyLossMicros = 1_000_000_000, dailyLossMode = ReplayDailyLoss.SOFT, consistencyPercent = 40)
+        val records = ReplayRecords(MemorySnapshotStore())
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(mcl, Timeframe.M5, false,
+            ChartTimeZone.SHANGHAI, timeline, emptyList(), rawFrame = Timeframe.M1, skipConfirmation = true, riskConfig = config), records = records) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("100")
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        return records
+    }
+
+    @Test fun mclConsistencyFlattensAtTwelveHundredAndBlocksNewOrders() {
+        val records = openHundredMclLots(8_246)
+        compose.onNodeWithTag("replay-realized").assertTextContains("+1200.00", substring = true)
+        compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
+        compose.onNodeWithTag("replay-consistency-status").assertTextContains("已触及", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+        assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
+        compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
+        compose.runOnIdle { assertEquals("一致性自动平仓", records.list().single().trades.single().reason) }
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun mclSoftLossFlattensBeforeTheSameBarRalliesPastConsistency() {
+        val records = openHundredMclLots(8_237)
+        compose.onNodeWithTag("replay-realized").assertTextContains("-1000.00", substring = true)
+        compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
+        assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
+        compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
+        compose.runOnIdle { assertEquals("每日软止损自动平仓", records.list().single().trades.single().reason) }
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
     }
     @Test fun noDailyStopAllowsTradingWhenTheDailyAmountIsCrossed() {
         val records = ReplayRecords(MemorySnapshotStore())

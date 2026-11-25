@@ -2,6 +2,7 @@ package com.unitrading.chart
 
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Instrument
+import com.unitrading.broker.OrderKind
 import com.unitrading.broker.Side
 import com.unitrading.broker.checkedAdd
 import com.unitrading.broker.commission
@@ -27,7 +28,7 @@ internal fun ReplayState.closingEquity(spec: Instrument, config: ReplayRiskConfi
  */
 internal fun replayProfitTrigger(spec: Instrument, config: ReplayRiskConfig, risk: ReplayRiskState,
     before: ReplayState, after: ReplayState, bar: Candle): ReplayProfitTrigger? {
-    if (risk.failed || risk.targetReached || risk.dailyLossHit && config.dailyLossMode == ReplayDailyLoss.SOFT) return null
+    if (risk.failed || risk.targetReached) return null
     val target = checkedAdd(config.initialMicros, config.targetMicros)
     val daily = config.consistencyLimitMicros?.takeUnless { risk.consistencyHit }?.let {
         if (risk.dayOpeningBalance > Long.MAX_VALUE - it) Long.MAX_VALUE else checkedAdd(risk.dayOpeningBalance, it)
@@ -36,8 +37,21 @@ internal fun replayProfitTrigger(spec: Instrument, config: ReplayRiskConfig, ris
     fun equity(price: Long) = after.closingEquity(spec, config, price)
     fun result(price: Long) = ReplayProfitTrigger(if (equity(price) >= target) ReplayProfitKind.TARGET else ReplayProfitKind.CONSISTENCY, price)
     if (after.positions.isEmpty()) return if (equity(bar.close) >= threshold) result(bar.close) else null
-    val sameForWholeBar = after.index == before.index + 1 && before.positions.isNotEmpty() &&
-        before.positions == after.positions && before.trades == after.trades && before.pending == after.pending &&
+    val newAtOpen = after.positions.singleOrNull()?.let { position ->
+        before.positions.isEmpty() && before.trades == after.trades && position.openedAtMs == bar.timeMs && before.pending.any { order ->
+            order.side == position.side && order.quantity == position.lotsHundredths && when (order.kind) {
+                OrderKind.LIMIT -> position.entryPrice == order.price &&
+                    if (order.side == Side.BUY) bar.open <= order.price else bar.open >= order.price
+                OrderKind.STOP -> position.entryPrice ==
+                    (if (order.side == Side.BUY) maxOf(bar.open, order.price) else minOf(bar.open, order.price)) &&
+                    if (order.side == Side.BUY) bar.open >= order.price else bar.open <= order.price
+                OrderKind.MARKET -> false
+            }
+        }
+    } == true
+    val unchanged = before.positions.isNotEmpty() && before.positions == after.positions &&
+        before.trades == after.trades && before.pending == after.pending
+    val sameForWholeBar = after.index == before.index + 1 && (unchanged || newAtOpen) &&
         after.positions.all { it.side == after.positions.first().side }
     if (!sameForWholeBar) return if (equity(bar.close) >= threshold) result(bar.close) else null
     if (equity(bar.open) >= threshold) return result(bar.open)

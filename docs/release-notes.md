@@ -2,6 +2,8 @@
 
 ## 简体中文
 
+- 修复回放的一致性盈利上限被软日损状态屏蔽；触及一致性上限或每日软止损时自动平仓、撤单，并禁止当日新开仓。
+
 - 回放达到盈利目标后可保存或临时保留记录，继续留在回放界面分析并重新开始；临时记录关闭回放后清除。
 
 - 设置的“其他”分组移至最下方；图表最多可显示约 2400 根 K 线，并扩大券商行情缓存以支持更远的缩放。
@@ -31,6 +33,8 @@
 - 普通买卖限价单不再受买一／卖一的价格方向限制，图表右键和长按菜单也可在同一价位选择两个方向。触及或越过对手价时可能立即成交，仍按所填限价提交，不转为市价单，也不保证成交。突破单、止损止盈和账户风控校验保持不变。
 
 ## English
+
+- Fix replay consistency limits being masked by a soft daily stop. Both limits flatten positions, cancel pending orders and block new entries for the trading day.
 
 - After reaching a replay profit target, save the result or keep it temporarily for analysis, and restart without leaving the replay. Temporary records are cleared when the replay closes.
 

@@ -214,9 +214,19 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         }
     }
     fun accept(next: ReplayState, evaluationBar: Candle? = null) {
-        val bar = evaluationBar ?: bars[next.index]
-        val realized = next.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
-        val floating = next.positions.fold(0L) { n, p -> checkedAdd(n,
+        val sourceBar = evaluationBar ?: bars[next.index]
+        val softPrice = replaySoftStopPrice(spec, riskConfig, risk, state, next, sourceBar)
+        var checked = next
+        if (softPrice != null) {
+            checked = checked.copy(pending = emptyList())
+            checked.positions.toList().forEach { position ->
+                checked = checked.close(spec, position, softPrice, sourceBar.timeMs, "每日软止损自动平仓")
+            }
+        }
+        // Once flattened, later prices in this OHLC bar cannot affect the closed position.
+        val bar = if (softPrice == null) sourceBar else sourceBar.copy(open = softPrice, high = softPrice, low = softPrice, close = softPrice)
+        val realized = checked.trades.fold(0L) { n, trade -> checkedAdd(n, trade.pnlMicros) }
+        val floating = checked.positions.fold(0L) { n, p -> checkedAdd(n,
             checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, bar.close),
                 -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths)))) }
         val balance = checkedAdd(riskConfig.initialMicros, realized)
@@ -226,8 +236,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         val wasConsistencyHit = risk.consistencyHit
         risk = risk.observe(riskConfig, bar.timeMs, balance, equity)
         // Intrabar prices can cross a risk line and recover before the candle closes.
-        if (next.index > state.index && next.positions.isNotEmpty()) {
-            val worstFloating = next.positions.fold(0L) { n, p ->
+        if (checked.index > state.index && checked.positions.isNotEmpty()) {
+            val worstFloating = checked.positions.fold(0L) { n, p ->
                 val price = if (p.side == Side.BUY) bar.low else bar.high
                 checkedAdd(n, checkedAdd(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, price),
                     -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
@@ -236,7 +246,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             risk = risk.observe(riskConfig, bar.timeMs, balance, observedEquity).copy(lastEquity = equity)
         }
         val softLocked = risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT
-        var accepted = if (risk.failed || softLocked) next.copy(pending = emptyList()) else next
+        var accepted = if (risk.failed || softLocked) checked.copy(pending = emptyList()) else checked
+        // A changed ledger may not have a safely reconstructible intrabar trigger; flatten at the known close.
+        if (softLocked && !risk.failed && accepted.positions.isNotEmpty()) {
+            accepted.positions.toList().forEach { position ->
+                accepted = accepted.close(spec, position, sourceBar.close, sourceBar.timeMs, "每日软止损自动平仓")
+            }
+            val settled = accepted.closingEquity(spec, riskConfig, sourceBar.close)
+            risk = risk.observe(riskConfig, sourceBar.timeMs, settled, settled).copy(dailyLossHit = true)
+        }
         val profitTrigger = replayProfitTrigger(spec, riskConfig, risk, state, accepted, bar)
         if (profitTrigger != null) {
             accepted = accepted.copy(pending = emptyList())
@@ -258,13 +276,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             if (equityPoints.size > 5_000) equityPoints.removeAt(0)
         }
         state = accepted
-        if (softLocked && !wasDailyHit) message = "触及每日软止损：已撤销挂单，下一交易日前禁止开仓。"
+        if (softLocked && !wasDailyHit) message = "触及每日软止损：已自动平仓并撤销挂单，下一交易日前禁止开仓。"
         if (!risk.dailyLossHit && wasDailyHit) message = "新交易日开始，已解除每日软止损限制。"
         if (risk.consistencyHit && !wasConsistencyHit) message = "达到今日一致性盈利上限：已自动平仓并撤销挂单，下一交易日恢复开仓。"
         if (!risk.consistencyHit && wasConsistencyHit) message = "新交易日开始，已解除一致性开仓限制。"
         if (risk.failed) { playing = false; showFailure = true; message = if (risk.dailyFailure) "触及最大日亏损，考核失败。" else "触及最大总亏损，考核失败。" }
         else if (risk.targetReached) { playing = false; showSuccess = true; message = null; orderToConfirm = null; lineToConfirm = null }
-        if (!risk.failed && !risk.targetReached && profitTrigger == null) next.lastNotice?.let { message = it }
+        if (!risk.failed && !risk.targetReached && !softLocked && !risk.consistencyHit && profitTrigger == null) next.lastNotice?.let { message = it }
     }
     fun flattenBeforeOvernight() {
         if (state.positions.isEmpty() && state.pending.isEmpty()) return
@@ -310,9 +328,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     val openingBar = nextBar.copy(high = nextBar.open, low = nextBar.open, close = nextBar.open)
                     accept(state.copy(index = state.index + 1, lastNotice = null), openingBar)
                 } else {
-                    val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
-                        state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
-                    accept(nextState)
+                    val softPrice = replaySoftStopBeforeAdvance(spec, riskConfig, risk, state, nextBar)
+                    if (softPrice != null) {
+                        val triggerBar = nextBar.copy(open = softPrice, high = softPrice, low = softPrice, close = softPrice)
+                        accept(state.copy(index = state.index + 1, lastNotice = null), triggerBar)
+                    } else {
+                        val nextState = if (replayProfitPrecedesTakeProfit(spec, riskConfig, risk, state, nextBar))
+                            state.copy(index = state.index + 1, lastNotice = null) else state.advance(spec, nextBar)
+                        accept(nextState)
+                    }
                 }
             }
             if (result.isFailure) { playing = false; message = result.exceptionOrNull()?.message ?: "回放撮合失败"; return }
