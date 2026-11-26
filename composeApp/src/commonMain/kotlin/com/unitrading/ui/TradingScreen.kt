@@ -183,7 +183,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton({ showConnection = true }, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Tradovate") }
                             connectRithmic?.let { OutlinedButton(it, Modifier.fillMaxWidth()) { Text("连接 / 重新登录 Rithmic") } }
-                            OutlinedButton({ showHyperpropCheck = true }, Modifier.fillMaxWidth()) { Text("Hyperprop 个人 API 连接测试") }
+                            OutlinedButton({ showHyperpropCheck = true }, Modifier.fillMaxWidth()) { Text("Hyperprop 个人 API 交易测试") }
                             TextButton({ disconnectCurrent() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("断开连接") }
                             SavedLoginControls(runtime) { selectBroker(registry.plugins.firstOrNull()?.descriptor?.id ?: "") }
                         }
@@ -838,7 +838,495 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 return
             }
             if (fromChart && skipConfirmation) {
-                val estimate = sessio…20080 tokens truncated…         standaloneEdit != null || flattenReview != null || flattening || flattenResults != null
+                val estimate = session.previewOrderChange(current.id, price, lots)
+                if (!estimate.valid) { showNotice(estimate.errors.firstOrNull() ?: "改单价格无效", attention = true); return }
+                perform { session.changeOrder(requestId(), current.id, current.version, price, lots) }
+                return
+            }
+            val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
+            showContract(current.request.symbol)
+            protection = null
+            pendingProtection = null
+            pendingEdit = null
+            showDraft = false
+            standaloneEdit = StandaloneOrderEdit(current, spec.formatPrice(price), spec.formatQuantity(lots))
+        }
+
+        fun editPending(order: PendingOrder, price: Long = order.request.entryPrice!!, fromChart: Boolean = false) {
+            if (busy) return
+            val current = session.state.value.orders.firstOrNull { it.id == order.id }
+            if (current == null || current.version != order.version || current.role != order.role || current.request != order.request) {
+                showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
+                return
+            }
+            // A stop or target that cannot move with its position moves on its own.
+            if (current.standaloneEditable) { changeAlone(current, price, current.request.lotsHundredths, fromChart); return }
+            if (!current.editable) {
+                showNotice("订单状态或保护关联已变化，请重新选择", attention = true)
+                return
+            }
+            if (current.isProtection) {
+                val position = session.state.value.positions.firstOrNull { it.id == current.positionId && it.protectionEditable }
+                if (position == null) { showNotice("保护单尚未唯一关联到当前仓位", attention = true); return }
+                pendingEdit = null
+                editProtection(position, if (current.role == OrderRole.STOP_LOSS) price else position.stopLoss,
+                    if (current.role == OrderRole.TAKE_PROFIT) price else position.takeProfit, fromChart)
+                return
+            }
+            if (current.role != OrderRole.ENTRY || !plugin.capabilities.modifyPendingOrders) return
+            if (fromChart && skipConfirmation) {
+                val estimate = session.previewOrderModification(current.id, price)
+                if (!estimate.valid) { showNotice(estimate.errors.firstOrNull() ?: "改单价格无效", attention = true); return }
+                perform { session.modifyOrder(requestId(), current.id, current.version, price) }
+                return
+            }
+            val spec = catalog.instruments.firstOrNull { it.symbol == current.request.symbol } ?: return
+            showContract(current.request.symbol)
+            protection = null
+            pendingProtection = null
+            showDraft = false
+            pendingEdit = PendingEntryEdit(current, spec.formatPrice(price))
+        }
+
+        Surface(Modifier.fillMaxSize(), color = colors.Shell) {
+            val density = LocalDensity.current
+            val imeBottom = WindowInsets.ime.getBottom(density)
+            val keyboardOpen = imeBottom > 0
+            val focusManager = LocalFocusManager.current
+            val windowChromeInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+            var chartFullscreen by remember { mutableStateOf(false) }
+            var fullscreenTicket by remember { mutableStateOf(false) }
+            val detachedFullscreen = remember { mutableStateMapOf<String, Boolean>() }
+            val detachedFullscreenTicket = remember { mutableStateMapOf<String, Boolean>() }
+            fun workspaceFullscreen(id: String) = if (id in detachedWorkspaces) detachedFullscreen[id] == true else chartFullscreen
+            LaunchedEffect(detachedWorkspaces) {
+                (detachedFullscreen.keys - detachedWorkspaces).forEach { detachedFullscreen.remove(it); detachedFullscreenTicket.remove(it) }
+            }
+            val fullscreenFocus = remember { FocusRequester() }
+            LaunchedEffect(chartFullscreen) { if (chartFullscreen) fullscreenFocus.requestFocus() }
+            BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(windowChromeInsets).focusRequester(fullscreenFocus).onPreviewKeyEvent { event ->
+                if (chartFullscreen && event.key == Key.Escape && event.type == KeyEventType.KeyDown) {
+                    chartFullscreen = false; fullscreenTicket = false; true
+                } else false
+            }.focusable()) {
+                val nativeDesktop = LocalChartPlatform.current == ChartPlatform.DESKTOP
+                // Measure the workspace outside IME padding. On platforms that resize the host view first,
+                // defer a height decrease briefly until the IME visibility signal has had time to arrive.
+                val unoccludedHeight = remember(maxWidth, nativeDesktop) { mutableStateOf(maxHeight) }
+                val observedHeight = maxHeight
+                LaunchedEffect(observedHeight, keyboardOpen) {
+                    if (!keyboardOpen) {
+                        if (observedHeight < unoccludedHeight.value) delay(1500)
+                        unoccludedHeight.value = observedHeight
+                    }
+                }
+                val layoutHeight = if (nativeDesktop) maxHeight else maxOf(unoccludedHeight.value, maxHeight)
+                // Tablet sizes use the desktop workspace in both orientations. The actual window host is
+                // still desktop-only, so tabs can be reordered on tablets but cannot become OS windows.
+                val systemBars = WindowInsets.systemBars
+                val direction = LocalLayoutDirection.current
+                val sizeWithBars = with(density) {
+                    DpSize(maxWidth + (systemBars.getLeft(density, direction) + systemBars.getRight(density, direction)).toDp(),
+                        layoutHeight + (systemBars.getTop(density) + systemBars.getBottom(density)).toDp())
+                }
+                val tablet = !nativeDesktop && minOf(sizeWithBars.width, sizeWithBars.height) >= 600.dp
+                val desktop = tablet || (maxWidth >= 900.dp && layoutHeight >= 600.dp)
+                val desktopStyle = nativeDesktop || tablet
+                val phoneScreen = !nativeDesktop && !tablet && !desktop
+                LaunchedEffect(desktop, desktopStyle) {
+                    if (!desktop || !desktopStyle) { chartFullscreen = false; fullscreenTicket = false }
+                }
+                val wide = desktop && maxWidth >= 1240.dp
+                val compact = !desktop
+                val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
+                val desktopPickerWidth = if (tablet) 264.dp else if (maxWidth >= 1200.dp) 340.dp else 280.dp
+                val tabletWorkspaces = tablet
+                SideEffect { tabletWorkspaceTabsVisible = tabletWorkspaces }
+                val chartWindowsShown = (nativeDesktop && desktop && panelWindows) || tabletWorkspaces
+                val splitAvailable = desktop || (maxWidth >= 600.dp && layoutHeight >= 550.dp)
+                LaunchedEffect(chartWindowsShown) {
+                    if (chartWindowsShown) activateChart(workspaceSelected[selectedWorkspace] ?: selectedWorkspace)
+                }
+                LaunchedEffect(chartWindowsShown, splitAvailable, activeChart) {
+                    val workspace = workspaceOf(activeChart)
+                    val visibleSplit = splitAvailable && workspace == MAIN_CHART &&
+                        (0 until layoutOf(MAIN_CHART).count).any { cellId(MAIN_CHART, it) == activeChart }
+                    if (!chartWindowsShown && !visibleSplit) activateChart(MAIN_CHART)
+                }
+                val compactShort = compact && layoutHeight < 550.dp
+                // Compact windows wide enough for side navigation: landscape phones and portrait tablets.
+                val rail = compact && (maxWidth >= 600.dp || (maxWidth >= 480.dp && maxWidth > layoutHeight))
+                val denseLandscape = compactShort && rail
+                val landscapeDock = rail && maxWidth > layoutHeight
+                val tradeDockHeight = if (denseLandscape) 48.dp else MobileTradeBarHeight
+                val environment = plugin.descriptor.environment
+                val syncAction: (() -> Unit)? = if (plugin.capabilities.resynchronize) ({ syncAccount() }) else null
+                val barStatus: @Composable () -> Unit = {
+                    EnvironmentBadge(environment)
+                    if (localDemo) Spacer(Modifier.width(12.dp)) else ConnectionStatusControl(market, compact = true, busy, syncAction)
+                }
+                val selectTab: (Int) -> Unit = { tab ->
+                    if (mobileTab != tab) { showActivity = false; showDom = false }
+                    showOrderFlow = false
+                    mobileTab = tab
+                }
+                // The order page of compact screens is the one chosen in the settings: the sheet over the chart, which shares
+                // the chart surface and never dims it, the dock measured alongside the chart, or a dialog.
+                val chartFirst = compact && mobileTab == 1 && !showOrderFlow
+                val unifiedChartBar = desktop || (tablet && chartFirst)
+                val orderLayout = tradingPreferences.orderPanelLayout
+                val useOrderPopup = orderLayout == OrderPanelLayout.POPUP
+                // Context-menu orders use the right-hand ticket even in a narrower desktop/tablet workspace.
+                var contextOrderSidebar by remember { mutableStateOf(false) }
+                var contextOrderRequest by remember { mutableIntStateOf(0) }
+                // The sheet and the dock stay on the chart page for as long as an order is being prepared; the popup does not.
+                val orderOnChart = orderActive && !useOrderPopup
+                val popupVisible = chartFirst && useOrderPopup && orderOpen && confirmation !is Confirmation.Place
+                val panelOpen = popupVisible || chartFirst && orderOnChart && orderOpen
+                @Composable fun phoneAccountRestore() {
+                    if (phoneScreen && chartFirst && phoneChartAccountsCollapsed && !orderOnChart)
+                        ActionIcon(AppIcons.ExpandMore, "展开账户栏", "expand-chart-accounts",
+                            modifier = Modifier.size(40.dp), iconSize = 20.dp) { phoneChartAccountsCollapsed = false }
+                }
+                // The receipt inside the dock's and the popup's form; the sheet shows it above its form, as it always did.
+                val orderNotice: @Composable () -> Unit = {
+                    shownNotice()?.let { current ->
+                        Box(Modifier.fillMaxWidth().heightIn(max = 96.dp).verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 2.dp)) {
+                            FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
+                        }
+                    }
+                }
+                fun closeOrder() {
+                    focusManager.clearFocus()
+                    orderPanelState = MobileOrderPanelState.CLOSED
+                    // The sheet clears the draft once it has slid away, so its form does not change while it leaves.
+                    if (orderLayout != OrderPanelLayout.SHEET) draft = OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10")
+                    showDraft = false
+                    if (confirmation is Confirmation.Place) confirmation = null
+                }
+                fun currentPlaceOrder(order: OrderRequest): OrderRequest {
+                    if (!brackets.enabled || order.kind != OrderKind.MARKET) return order
+                    val refreshed = bracketed(order, plugin.market.value.quotes[order.symbol], capacityFor(order).maximum)
+                    // A live quote can reduce a reviewed size; it cannot authorize a larger order.
+                    return if (sizeByRisk) refreshed.copy(lotsHundredths = minOf(order.lotsHundredths, refreshed.lotsHundredths)) else refreshed
+                }
+                fun openOrderEditor() {
+                    when {
+                        compact -> orderPanelState = MobileOrderPanelState.EDITING
+                        !wide && !orderDetached() -> showOrder = true
+                        !runtime.desktopLayout.preferences.value.orderOpen -> {
+                            runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                            scope.launch { runtime.desktopLayout.save() }
+                        }
+                    }
+                }
+                fun openChartOrderEditor(chartId: String) {
+                    val workspace = workspaceOf(chartId)
+                    if (desktopStyle && workspaceFullscreen(workspace)) {
+                        if (workspace in detachedWorkspaces) detachedFullscreenTicket[workspace] = true else fullscreenTicket = true
+                    } else if (desktop && workspace in detachedWorkspaces)
+                        detachedOrderRequests[workspace] = (detachedOrderRequests[workspace] ?: 0) + 1
+                    else if (desktop) {
+                        contextOrderSidebar = true
+                        contextOrderRequest++
+                        showOrder = false
+                        showDom = false
+                        runtime.desktopLayout.setDetached(WorkspacePanel.ORDER, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
+                        runtime.desktopLayout.setOpen(DesktopPanel.ORDER, true)
+                        scope.launch { runtime.desktopLayout.save() }
+                    }
+                    else openOrderEditor()
+                }
+                fun placePreview(order: OrderRequest): OrderPreview {
+                    val checked = session.preview(order).withCapacity(order, capacityFor(order))
+                    // A market order is repriced by the guard as it goes out. A priced entry has to meet the amounts as it
+                    // stands; an order that just reduces the position has none to meet.
+                    if (!checked.valid || order.kind == OrderKind.MARKET || !orderRule.bracketsApply(account, hedging, order)) return checked
+                    val error = brackets.refusal(order, instrument, session.account.currency, checked.entryPrice)
+                    return if (error == null) checked else checked.copy(errors = listOf(error))
+                }
+                fun executeTrade(action: Confirmation) {
+                    if (busy) return
+                    if (action !is Confirmation.Reset && !accountContextCurrent()) {
+                        showNotice("账户已切换，请重新检查后操作", attention = true)
+                        return
+                    }
+                    when (action) {
+                        is Confirmation.Place -> {
+                            if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
+                                showNotice("当前图表品种已变更或尚未加载，请重新检查订单", attention = true)
+                                return
+                            }
+                            val order = try { currentPlaceOrder(action.request) }
+                            catch (error: IllegalArgumentException) {
+                                showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
+                                return
+                            }
+                            val checked = placePreview(order)
+                            if (!checked.valid) { showNotice(checked.errors.firstOrNull() ?: "订单参数无效", attention = true); return }
+                            perform({ if (compact && !action.fromChart) closeOrder() }) { session.placeOrder(requestId(), order) }
+                        }
+                        is Confirmation.Close -> {
+                            val current = session.state.value.positions.firstOrNull { it.id == action.position.id }
+                            if (current == null || current.version != action.position.version) {
+                                showNotice("仓位已关闭或已更新，请重新选择", attention = true); return
+                            }
+                            perform { session.closePosition(requestId(), current.id) }
+                        }
+                        is Confirmation.Cancel -> {
+                            val current = session.state.value.orders.firstOrNull { it.id == action.order.id }
+                            if (current == null || current.version != action.order.version || current.request != action.order.request) {
+                                showNotice("挂单已成交、已撤销或已更新，请重新选择", attention = true); return
+                            }
+                            perform { session.cancelOrder(requestId(), current.id) }
+                        }
+                        Confirmation.Reset -> perform(requireCurrentAccount = false) { runtime.resetAll(); TradeResult(true, "已重置全部本地模拟数据") }
+                    }
+                }
+                fun reviewTrade(action: Confirmation) {
+                    if (busy) return
+                    if (action !is Confirmation.Reset && !accountContextCurrent()) {
+                        showNotice("账户已切换，请重新检查后操作", attention = true)
+                        return
+                    }
+                    if (action is Confirmation.Place) {
+                        if ((restoring != null && restoring != symbol) || action.request.symbol != executionSymbol) {
+                            showNotice("当前图表品种已变更或尚未加载，请重新检查订单", attention = true)
+                            return
+                        }
+                        // The guard's own classification, asked before a confirmation opens: an exit passes a lock and the limits.
+                        runtime.accountRisk.refusal(plugin, session, RiskCheck.Place(action.request))?.let {
+                            showNotice(it, attention = true)
+                            return
+                        }
+                    }
+                    if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
+                    else confirmation = action
+                }
+                // The order pages get this function as a reference and today compare it by instance. References to one local
+                // function are equal whatever draft each captured, so a page that compared them by equality would submit the
+                // draft it first saw; read through these states, every reference submits the draft as it is when pressed.
+                val latestMobileRequest by rememberUpdatedState(request)
+                val latestMobilePreview by rememberUpdatedState(preview)
+                fun reviewMobileOrder() {
+                    if (!busy && orderPanelState != MobileOrderPanelState.CLOSED && latestMobilePreview?.valid == true) {
+                        latestMobileRequest?.let { reviewTrade(Confirmation.Place(it)) }
+                    }
+                }
+                /** A button on an order line: the same paths as the trade list, so confirmations and version checks apply. */
+                fun runLineAction(action: LineAction) {
+                    when (action) {
+                        is LineAction.ClosePosition -> reviewTrade(Confirmation.Close(action.position))
+                        is LineAction.CancelOrder -> reviewTrade(Confirmation.Cancel(action.order))
+                        is LineAction.RemoveProtection -> acti…10080 tokens truncated…= skipConfirmation, onClose = dismissOrder,
+                                brackets = brackets, bracketOrder = request,
+                                onChartAdjust = if (popupVisible) dismissOrder else null,
+                                orderNotice = if (popupVisible) orderNotice else ({}),
+                                onDiscard = if (popupVisible) ({ closeOrder() }) else null,
+                                accountName = accountName, compactFloating = popupVisible && phoneScreen)
+                        }
+                    }
+                }
+
+                confirmation?.takeIf { action ->
+                    val target = when (action) {
+                        is Confirmation.Place -> action.request.symbol
+                        is Confirmation.Close -> action.position.symbol
+                        is Confirmation.Cancel -> action.order.request.symbol
+                        Confirmation.Reset -> null
+                    }
+                    target == null || catalog.instruments.any { it.symbol == target }
+                }?.let { action ->
+                    val title = when (action) { is Confirmation.Place -> if (localDemo) "确认模拟下单" else "确认 ${plugin.descriptor.environment.label} 下单"; is Confirmation.Close -> "确认平仓"; is Confirmation.Cancel -> "确认撤单"; Confirmation.Reset -> "重置全部模拟数据？" }
+                    val placeOrder = (action as? Confirmation.Place)?.let { runCatching { currentPlaceOrder(it.request) } }
+                    val liveOrder = placeOrder?.getOrNull()
+                    val livePreview = liveOrder?.let(::placePreview) ?: placeOrder?.exceptionOrNull()?.let {
+                        OrderPreview(null, errors = listOf(it.message ?: "无法计算金额止损止盈"))
+                    }
+                    val confirmLabel = when (action) { is Confirmation.Place -> action.request.side.label(); is Confirmation.Close -> "平仓"; is Confirmation.Cancel -> "撤单"; Confirmation.Reset -> "重置" }
+                    val confirmFocus = remember { FocusRequester() }
+                    val confirmColor = when (action) {
+                        is Confirmation.Place -> actionFill(if (action.request.side == Side.BUY) colors.Up else colors.Down)
+                        else -> actionFill(MaterialTheme.colorScheme.error)
+                    }
+                    if (desktopStyle && desktop && action is Confirmation.Place) {
+                        val r = liveOrder ?: action.request
+                        val bracketsApply = orderRule.bracketsApply(account, hedging, r)
+                        DesktopOrderConfirmation(title, loginName, accountName, environment.label, instrument, r, livePreview,
+                            placeConfirmationDisclosure(r, bracketsApply, brackets.enabled, sizeByRisk), action.fromKeys, busy,
+                            onCancel = { confirmation = null }, onConfirm = { confirmation = null; executeTrade(action) })
+                    } else AlertDialog(
+                        onDismissRequest = { if (!busy) confirmation = null },
+                        title = { Text(title) },
+                        // On a phone held sideways the rows do not fit: they scroll, and the buttons stay below them.
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("$loginName / $accountName / ${environment.label}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            when (action) {
+                                is Confirmation.Place -> {
+                                    val r = liveOrder ?: action.request
+                                    r.sourceSymbol?.let { Text("图表 / 指标 $it → 下单 ${r.symbol}", color = colors.Accent, style = MaterialTheme.typography.bodySmall) }
+                                    Text("${r.symbol} · ${r.side.label()}${r.kind.label()} · ${instrument.formatQuantity(r.lotsHundredths)} ${instrument.quantityUnit}", style = MaterialTheme.typography.titleSmall)
+                                    EstimateRow("当前预估入场", livePreview?.entryPrice?.let(instrument::formatPrice) ?: "—")
+                                    // Until a market order fills, its stop and target are estimates: the account's brackets are priced again
+                                    // from the quote as it is sent, and a broker that places them by distance moves them with the fill.
+                                    val estimated = if (r.kind == OrderKind.MARKET) "（预估）" else ""
+                                    EstimateRow("止损价$estimated", r.stopLoss?.let(instrument::formatPrice) ?: "未设置")
+                                    EstimateRow("止盈价$estimated", r.takeProfit?.let(instrument::formatPrice) ?: "未设置")
+                                    EstimateRow("预计保证金 USD", livePreview?.takeIf { it.marginKnown }?.let { money(it.marginMicros) } ?: "未知 / 服务器校验")
+                                    val bracketsApply = orderRule.bracketsApply(account, hedging, r)
+                                    Text(placeConfirmationDisclosure(r, bracketsApply, brackets.enabled, sizeByRisk),
+                                        style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    if (action.fromKeys) Text("键盘下单：按 Enter 确认，按 Esc 取消。", Modifier.testTag("confirm-keys-hint"), style = MaterialTheme.typography.bodySmall, color = colors.Muted)
+                                    // An error says why 确认 is disabled, so it comes before the broker's notes.
+                                    livePreview?.errors?.forEach { Text(it, Modifier.testTag("confirm-error"), color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                                    livePreview?.warnings?.forEach { Text(it, Modifier.testTag("confirm-warning"), color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
+                                }
+                                is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
+                                is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${shortId(action.order.id)}。" +
+                                    if (action.order.isProtection) "撤单后将移除这项保护，服务器也可能调整关联订单。" else "若已被触发，交易商将拒绝撤单。")
+                                Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
+                            }
+                        } },
+                        confirmButton = {
+                            Button({
+                                confirmation = null
+                                executeTrade(action)
+                            }, enabled = !busy && (livePreview == null || livePreview.valid), modifier = Modifier.testTag("confirm-action").focusRequester(confirmFocus),
+                                colors = ButtonDefaults.buttonColors(containerColor = confirmColor, contentColor = contentOn(confirmColor))) { Text(confirmLabel) }
+                            // An order asked for by a key is confirmed by one: Enter presses the focused button, Esc dismisses the dialog.
+                            if ((action as? Confirmation.Place)?.fromKeys == true) LaunchedEffect(action) { runCatching { confirmFocus.requestFocus() } }
+                        },
+                        dismissButton = { TextButton({ confirmation = null }, enabled = !busy) { Text("取消") } },
+                    )
+                }
+                flattenReview?.let { review ->
+                    FlattenConfirmation(review, onCancel = { flattenReview = null }) {
+                        if (!busy) {
+                            flattenReview = null
+                            busy = true
+                            flattening = true
+                            scope.launch {
+                                try {
+                                    flattenResults = runtime.accountRisk.flattenAccounts(registry, review.targets)
+                                    runtime.save()
+                                } finally {
+                                    flattening = false
+                                    busy = false
+                                }
+                            }
+                        }
+                    }
+                }
+                if (flattening) AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text("正在撤单和平仓") },
+                    text = { Text("等待券商逐项确认。") },
+                    confirmButton = {},
+                    properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+                )
+                flattenResults?.let { FlattenResults(it) { flattenResults = null } }
+                pendingEdit?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.order.request.symbol } }?.let { edit ->
+                    val order = edit.order
+                    val spec = catalog.instruments.first { it.symbol == order.request.symbol }
+                    val current = account.orders.firstOrNull { it.id == order.id }
+                    val price = spec.parsePrice(edit.entry)
+                    val estimate = price?.let { session.previewOrderModification(order.id, it) }
+                    val validVersion = current != null && current.version == order.version && current.role == OrderRole.ENTRY && current.editable
+                    AlertDialog(
+                        modifier = Modifier.testTag("pending-entry-dialog"),
+                        onDismissRequest = { if (!busy) pendingEdit = null },
+                        title = { Text("修改挂单入场价") },
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("${order.request.symbol} · ${order.request.side.label()}${order.request.kind.label()} · ${spec.formatQuantity(order.request.lotsHundredths)} ${spec.quantityUnit}", style = MaterialTheme.typography.titleSmall)
+                            Text("原入场价 ${spec.formatPrice(order.request.entryPrice!!)}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            PriceInput("新入场价", edit.entry, { pendingEdit = edit.copy(entry = it) }, "pending-entry")
+                            EstimateRow("预计保证金", estimate?.takeIf { it.marginKnown }?.let { "${money(it.marginMicros)} USD" } ?: "—")
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate?.stopLossPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate?.takeProfitPnlMicros?.let { "${money(it, true)} USD" } ?: "未设置")
+                            Text("本次只改入场价，订单类型、数量和 SL/TP 不变。确认后会按最新报价重新校验。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            if (!validVersion) Text("挂单已成交、已撤销或版本已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            if (price == null) Text("请输入符合品种精度的有效价格。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            estimate?.errors?.forEach { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                            estimate?.warnings?.forEach { Text(it, Modifier.testTag("pending-entry-warning"), color = colors.Caution, style = MaterialTheme.typography.bodySmall) }
+                        } },
+                        confirmButton = { Button({
+                            val newPrice = price ?: return@Button
+                            pendingEdit = null
+                            perform { session.modifyOrder(requestId(), order.id, order.version, newPrice) }
+                        }, Modifier.testTag("confirm-pending-entry"), enabled = !busy && validVersion && estimate?.valid == true, colors = brandButtonColors()) { Text(if (skipConfirmation) "应用改价" else "确认改价") } },
+                        dismissButton = { TextButton({ pendingEdit = null }, enabled = !busy) { Text("取消") } },
+                    )
+                }
+                standaloneEdit?.let { edit ->
+                    val spec = catalog.instruments.firstOrNull { it.symbol == edit.order.request.symbol } ?: return@let
+                    StandaloneOrderDialog(edit, spec, account.orders.firstOrNull { it.id == edit.order.id }, plugin.capabilities,
+                        { price, lots -> session.previewOrderChange(edit.order.id, price, lots) }, busy, skipConfirmation, { standaloneEdit = it },
+                        onConfirm = { price, lots ->
+                            standaloneEdit = null
+                            perform { session.changeOrder(requestId(), edit.order.id, edit.order.version, price, lots) }
+                        },
+                        onDismiss = { if (!busy) standaloneEdit = null })
+                }
+                pendingProtection?.let { edit ->
+                    val spec = catalog.instruments.firstOrNull { it.symbol == edit.order.request.symbol } ?: return@let
+                    PendingProtectionDialog(edit, spec, account.orders.firstOrNull { it.id == edit.order.id }, plugin.capabilities,
+                        { sl, tp -> session.previewOrderProtection(edit.order.id, sl, tp) }, busy, { pendingProtection = it },
+                        onConfirm = { sl, tp ->
+                            pendingProtection = null
+                            perform { session.modifyOrderProtection(requestId(), edit.order.id, edit.order.version, sl, tp) }
+                        },
+                        onDismiss = { if (!busy) pendingProtection = null }, skipConfirmation = skipConfirmation)
+                }
+                protection?.takeIf { edit -> catalog.instruments.any { it.symbol == edit.position.symbol } }?.let { edit ->
+                    val p = edit.position
+                    val spec = catalog.instruments.first { it.symbol == p.symbol }
+                    val current = account.positions.firstOrNull { it.id == p.id }
+                    val sl = if (edit.stopLoss.isBlank()) null else spec.parsePrice(edit.stopLoss)
+                    val tp = if (edit.takeProfit.isBlank()) null else spec.parsePrice(edit.takeProfit)
+                    val validInput = (edit.stopLoss.isBlank() || sl != null && sl > 0 && sl % spec.tickSize == 0L) && (edit.takeProfit.isBlank() || tp != null && tp > 0 && tp % spec.tickSize == 0L)
+                    val validVersion = current?.version == p.version
+                    val capabilityError = protectionEditError(plugin.capabilities, p, sl, tp)
+                    val priceError = if (validInput) positionProtectionError(spec, p, market.quotes[p.symbol], sl, tp) else null
+                    val addNote = protectionAddNote(plugin.capabilities, p, sl, tp)
+                    fun inputLabel(line: String, current: Long?) = when {
+                        current == null -> "$line（留空不设置）"
+                        plugin.capabilities.removeProtection -> "新$line（留空移除）"
+                        else -> "新$line（保留原价或修改）"
+                    }
+                    fun estimate(price: Long?): String = price?.takeIf { it > 0 }?.let {
+                        runCatching { "${money(grossPnl(spec, p.side, p.lotsHundredths, p.entryPrice, it) - p.entryFeeMicros - commission(spec, p.lotsHundredths), true)} USD" }.getOrDefault("超出范围")
+                    } ?: "未设置"
+                    AlertDialog(
+                        modifier = Modifier.testTag("protection-dialog"),
+                        onDismissRequest = { if (!busy) protection = null },
+                        title = { Text(if (addNote != null) "添加止损 / 止盈" else "修改止损 / 止盈") },
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("${p.symbol} · ${p.side.label()} ${spec.formatQuantity(p.lotsHundredths)} ${spec.quantityUnit} · #${shortId(p.id)}", style = MaterialTheme.typography.titleSmall)
+                            Text("原 SL ${p.stopLoss?.let(spec::formatPrice) ?: "—"} / TP ${p.takeProfit?.let(spec::formatPrice) ?: "—"}", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            PriceInput(inputLabel("止损 SL", p.stopLoss), edit.stopLoss, { protection = edit.copy(stopLoss = it) }, "protect-sl")
+                            PriceInput(inputLabel("止盈 TP", p.takeProfit), edit.takeProfit, { protection = edit.copy(takeProfit = it) }, "protect-tp")
+                            if (addNote != null) Text(addNote, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("protection-add-note"))
+                            else if (!plugin.capabilities.atomicProtectionEdit) Text("每次只能修改一条保护线。请等服务器确认后再修改另一条。", style = MaterialTheme.typography.bodySmall)
+                            capabilityError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall) }
+                            EstimateRow(if (spec.estimatesIncludeFees) "止损净盈亏" else "止损毛盈亏", estimate(sl))
+                            EstimateRow(if (spec.estimatesIncludeFees) "止盈净盈亏" else "止盈毛盈亏", estimate(tp))
+                            Text("当前显示预估结果。确认后由交易商校验并更新，跳空可能使实际结果与预估不同。", color = colors.Muted, style = MaterialTheme.typography.bodySmall)
+                            if (!validVersion) Text("仓位已关闭或止损/止盈已更新，请取消后重新选择。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            if (!validInput) Text("价格须大于零，并符合该品种的最小变动单位。", color = colors.Loss, style = MaterialTheme.typography.bodySmall)
+                            priceError?.let { Text(it, color = colors.Loss, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("protection-price-error")) }
+                        } },
+                        confirmButton = { Button({
+                            protection = null
+                            perform { session.modifyProtection(requestId(), p.id, p.version, sl, tp) }
+                        }, Modifier.testTag("confirm-protection"), enabled = validInput && validVersion && capabilityError == null && priceError == null && !busy, colors = brandButtonColors()) { Text(if (skipConfirmation) "应用修改" else "确认修改") } },
+                        dismissButton = { TextButton({ protection = null }, enabled = !busy) { Text("取消") } },
+                    )
+                }
+                }
+                val dialogsOpen = showIndicators || showOrder || popupVisible || confirmation != null || pendingEdit != null || pendingProtection != null || protection != null ||
+                    standaloneEdit != null || flattenReview != null || flattening || flattenResults != null
                 // A dialog stays in the window it opened in; notices follow the user from window to window. A window that
                 // has gone hands both back to the main one.
                 // Read as state where a window draws its overlay: that content belongs to another composition than this one.

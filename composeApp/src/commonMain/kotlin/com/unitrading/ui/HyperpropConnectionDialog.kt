@@ -8,44 +8,87 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.unitrading.app.HyperpropCheck
-import com.unitrading.app.checkHyperpropPersonalKey
+import com.unitrading.app.HyperpropPersonalSession
+import com.unitrading.app.HyperpropPendingOrder
+import com.unitrading.app.hyperpropOrderBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** Personal-key connection check; never stores the key or submits orders. */
+/** Isolated personal-API order test. No credentials are persisted. */
 @Composable
 internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
     var key by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf<HyperpropCheck?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var session by remember { mutableStateOf<HyperpropPersonalSession?>(null) }
+    var accountId by remember { mutableStateOf("") }
+    var menuOpen by remember { mutableStateOf(false) }
+    var contract by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("1") }
+    var price by remember { mutableStateOf("") }
+    var side by remember { mutableStateOf("buy") }
+    var kind by remember { mutableStateOf("market") }
+    var pending by remember { mutableStateOf<List<HyperpropPendingOrder>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var confirmOrder by remember { mutableStateOf(false) }
+    var cancelOrder by remember { mutableStateOf<HyperpropPendingOrder?>(null) }
     val scope = rememberCoroutineScope()
-    AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Hyperprop 个人 API · 连接测试") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("此测试版只验证个人密钥并读取账户，不支持 Hyperprop 下单、持仓或止盈止损。密钥仅在本次测试中使用，不会保存。", style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(key, { key = it; result = null; error = null }, label = { Text("个人 API 密钥（hpp_）") },
-                visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
-            Text("行情仍来自你已连接的 Tradovate 或 Rithmic。账户余额以 Hyperprop 返回值为准；接口未返回的净值和浮动盈亏不会用 0 代替。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+    DisposableEffect(session) { val current = session; onDispose { current?.close() } }
+    fun action(block: suspend () -> Unit) {
+        busy = true; message = null
+        scope.launch {
+            try { block() }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { message = "请求未能确认结果。请先在 Hyperprop 核对账户及订单，切勿重复提交。" }
+            finally { busy = false }
+        }
+    }
+    val active = session
+    AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("Hyperprop 个人 API · 交易测试") },
+        text = { Column(Modifier.widthIn(max = 520.dp).heightIn(max = 720.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (active == null) {
+                Text("输入个人密钥连接自己的账户。密钥只在本次会话使用，不保存。", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(key, { key = it }, label = { Text("个人 API 密钥（hpp_）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                Button(onClick = { action { val connected = HyperpropPersonalSession.connect(key); session = connected; accountId = connected.check.accounts.firstOrNull()?.id ?: ""; key = "" } }, enabled = !busy && key.isNotBlank()) { Text("连接") }
+            } else {
+                Text(if (active.check.scope == "trade") "读写密钥 · 测试交易" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
+                Box {
+                    OutlinedButton({ menuOpen = true }, enabled = !busy) { Text(active.check.accounts.firstOrNull { it.id == accountId }?.let { listOfNotNull(it.number, it.firm).joinToString(" · ") } ?: "选择账户") }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        active.check.accounts.forEach { account -> DropdownMenuItem(text = { Text(listOfNotNull(account.number, account.firm).joinToString(" · ")) }, onClick = { accountId = account.id; pending = emptyList(); menuOpen = false }) }
+                    }
+                }
+                Text("独立测试窗口：手动输入到期合约；暂不关联图表行情、持仓或止盈止损。请使用自己的模拟账户。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+                OutlinedTextField(contract, { contract = it.uppercase() }, label = { Text("到期合约，例如 MESZ6") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("buy" to "买入", "sell" to "卖出").forEach { (v, label) -> FilterChip(side == v, { side = v }, label = { Text(label) }, enabled = !busy) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("market" to "市价", "limit" to "限价", "stop" to "突破").forEach { (v, label) -> FilterChip(kind == v, { kind = v }, label = { Text(label) }, enabled = !busy) }
+                }
+                OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（张）") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                if (kind != "market") OutlinedTextField(price, { price = it }, label = { Text(if (kind == "limit") "限价" else "触发价") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                Button(onClick = {
+                    try { hyperpropOrderBody(accountId, contract, side, kind, quantity.toIntOrNull() ?: 0, price); confirmOrder = true }
+                    catch (e: IllegalArgumentException) { message = e.message ?: "请检查订单" }
+                }, enabled = !busy && active.check.scope == "trade" && accountId.isNotBlank()) { Text("检查并提交订单") }
+                HorizontalDivider()
+                OutlinedButton({ action { pending = active.pending(accountId); message = "已刷新挂单" } }, enabled = !busy && accountId.isNotBlank()) { Text("刷新挂单") }
+                Text("列表可能包含保护订单；撤销前请确认订单用途。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+                pending.forEach { order ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("${order.contract} · ${order.side} · ${order.type} · ${order.quantity} 张${order.price?.let { " @ $it" } ?: ""}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        TextButton({ cancelOrder = order }, enabled = !busy && active.check.scope == "trade") { Text("撤单") }
+                    }
+                }
+            }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            error?.let { Text(it, color = TradingColors.Loss, style = MaterialTheme.typography.bodySmall) }
-            result?.let { data ->
-                Text("连接成功 · ${if (data.scope == "read") "只读密钥" else "读写密钥（本测试仍只读）"}")
-                if (data.accounts.isEmpty()) Text("没有可访问的账户")
-                data.accounts.forEach { account -> Text(listOfNotNull(account.number, account.firm, account.balance?.let { "余额 $it" }).joinToString(" · ")) }
-            }
-        } },
-        confirmButton = { Button(onClick = {
-            busy = true; error = null; result = null
-            scope.launch {
-                try { result = checkHyperpropPersonalKey(key); key = "" }
-                catch (cancel: CancellationException) { throw cancel }
-                catch (_: Exception) { error = "连接未完成，请检查密钥格式、网络及账户权限。" }
-                finally { busy = false }
-            }
-        }, enabled = !busy && key.isNotBlank()) { Text("测试连接") } },
-        dismissButton = { TextButton(onDismiss, enabled = !busy) { Text("关闭") } },
-    )
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        } }, confirmButton = { TextButton(onDismiss, enabled = !busy) { Text("关闭") } })
+    if (confirmOrder && active != null) AlertDialog(onDismissRequest = { confirmOrder = false }, title = { Text("确认提交 Hyperprop 订单") },
+        text = { Text("账户：${active.check.accounts.firstOrNull { it.id == accountId }?.number}\n合约：$contract\n方向：${if (side == "buy") "买入" else "卖出"}\n类型：$kind\n数量：$quantity 张${if (kind != "market") "\n价格：$price" else ""}") },
+        confirmButton = { Button(onClick = { confirmOrder = false; action { val outcome = active.submit(accountId, contract, side, kind, quantity.toInt(), price); message = "${outcome.status} · 命令 ${outcome.id}" } }) { Text("确认提交") } },
+        dismissButton = { TextButton({ confirmOrder = false }) { Text("返回") } })
+    cancelOrder?.let { order -> AlertDialog(onDismissRequest = { cancelOrder = null }, title = { Text("确认撤单") }, text = { Text("撤销 ${order.contract} ${order.side} ${order.type} ${order.quantity} 张？") },
+        confirmButton = { Button(onClick = { cancelOrder = null; if (active != null) action { val outcome = active.cancel(order); message = "${outcome.status} · 命令 ${outcome.id}"; pending = active.pending(accountId) } }) { Text("确认撤单") } },
+        dismissButton = { TextButton({ cancelOrder = null }) { Text("返回") } }) }
 }
