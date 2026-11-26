@@ -76,18 +76,18 @@ internal fun DetachedWorkspace(
                 }
             }
             if (!fullscreen) {
-            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("detached-rail-$id"),
-                windowInsets = WindowInsets(0, 0, 0, 0), header = { Spacer(Modifier.height(8.dp)) }) {
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RailToggle(AppIcons.TrendingUp, "行情", "detached-rail-market-$id", side == DetachedSidePanel.MARKET) { toggle(DetachedSidePanel.MARKET) }
-                    if (dom != null) RailToggle(AppIcons.OrderBook, "DOM", "detached-rail-dom-$id", side == DetachedSidePanel.DOM) { toggle(DetachedSidePanel.DOM) }
-                    RailToggle(AppIcons.OrderEntry, "下单", "detached-rail-order-$id", side == DetachedSidePanel.ORDER) { toggle(DetachedSidePanel.ORDER) }
-                    RailToggle(if (tradeOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "detached-rail-terminal-$id", tradeOpen) {
-                        onActivate(); tradeOpen = !tradeOpen
+                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("detached-rail-$id"),
+                    windowInsets = WindowInsets(0, 0, 0, 0), header = { Spacer(Modifier.height(8.dp)) }) {
+                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                        RailToggle(AppIcons.TrendingUp, "行情", "detached-rail-market-$id", side == DetachedSidePanel.MARKET) { toggle(DetachedSidePanel.MARKET) }
+                        if (dom != null) RailToggle(AppIcons.OrderBook, "DOM", "detached-rail-dom-$id", side == DetachedSidePanel.DOM) { toggle(DetachedSidePanel.DOM) }
+                        RailToggle(AppIcons.OrderEntry, "下单", "detached-rail-order-$id", side == DetachedSidePanel.ORDER) { toggle(DetachedSidePanel.ORDER) }
+                        RailToggle(if (tradeOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "detached-rail-terminal-$id", tradeOpen) {
+                            onActivate(); tradeOpen = !tradeOpen
+                        }
                     }
                 }
-            }
             }
         }
     }

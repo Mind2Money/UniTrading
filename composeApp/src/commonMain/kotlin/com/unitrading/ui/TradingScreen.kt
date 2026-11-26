@@ -37,8 +37,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -2159,7 +2157,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 onBounds = { runtime.desktopLayout.setWindowBounds(window, it); scope.launch { runtime.desktopLayout.save() } },
                                 onClose = { dockWorkspace(id) }, header = { headerModifier ->
                                     var dragged by remember(id) { mutableStateOf(false) }
-                                    Row(headerModifier.heightIn(min = 40.dp).testTag("drag-workspace-$id")
+                                    Row(headerModifier.heightIn(min = 40.dp)
+                                        .clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp))
+                                        .background(MaterialTheme.colorScheme.surface).testTag("drag-workspace-$id")
                                         .pointerInput(id, chartWindows) {
                                             detectDragGestures(onDragStart = { dragged = false }, onDragEnd = {
                                                 if (dragged && chartWindows.canDockAtPointer()) dockWorkspace(id)
