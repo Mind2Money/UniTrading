@@ -9,9 +9,9 @@ class HyperpropSnapshotTest {
     private val spec = Instrument("MESZ6", "MES", "futures", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000)
     private fun obj(s: String) = Json.parseToJsonElement(s).jsonObject
     @Test fun mapsShortAndFractionalFillWithoutInventingProtection() {
-        val positions = hyperpropPositions(obj("""{"success":true,"data":[{"account_id":"a","contract":"MESZ6","quantity":-2,"avg_entry_price":5485.25,"state_version":7}]}"""), "a", listOf(spec))
+        val positions = hyperpropPositions(obj("""{"success":true,"data":[{"positionId":"p-rest","account_id":"a","contract":"MESZ6","quantity":-2,"avg_entry_price":5485.25,"state_version":7}]}"""), "a", listOf(spec))
         assertEquals(Side.SELL, positions.single().side); assertEquals(548525L, positions.single().entryPrice)
-        assertFalse(positions.single().protectionEditable); assertEquals(7L, positions.single().version)
+        assertFalse(positions.single().protectionEditable); assertEquals(7L, positions.single().version); assertEquals("p-rest", positions.single().id)
         val orders = hyperpropWorkingOrders(obj("""{"success":true,"data":[{"id":"1","account_id":"a","contract":"MESZ6","quantity":3,"filled_quantity":1,"side":"buy","order_type":"limit","limit_price":5485.25,"status":"partially_filled"}]}"""), "a", listOf(spec))
         assertEquals(100L, orders.single().filledLotsHundredths); assertEquals(OrderRole.UNRESOLVED, orders.single().role)
         assertFalse(orders.single().editable)

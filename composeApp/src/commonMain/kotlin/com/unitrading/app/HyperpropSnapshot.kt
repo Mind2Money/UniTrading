@@ -40,7 +40,7 @@ internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List
     require(qty != Long.MIN_VALUE && kotlin.math.abs(qty) <= 1_000_000) { "持仓数量超出支持范围" }
     val contract = row.text("contract") ?: throw IllegalArgumentException("持仓缺少到期合约")
     val spec = specFor(contract, specs)
-    Position(id = row.text("position_id") ?: "$accountId:$contract", symbol = contract, side = if (qty > 0) Side.BUY else Side.SELL,
+    Position(id = row.text("positionId") ?: row.text("position_id") ?: "$accountId:$contract", symbol = contract, side = if (qty > 0) Side.BUY else Side.SELL,
         lotsHundredths = kotlin.math.abs(qty) * 100, entryPrice = exactPrice(row, "avg_entry_price", spec),
         openedAtMs = time(row.text("opened_at")), marginMicros = 0, protectionEditable = false, feesKnown = false,
         version = row.text("state_version")?.toLongOrNull()?.takeIf { it > 0 } ?: 0,
