@@ -352,6 +352,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var pendingProtection by remember(accountKey) { mutableStateOf<PendingProtectionEdit?>(null) }
         var confirmation by remember(accountKey, symbol, executionSymbol) { mutableStateOf<Confirmation?>(null) }
         var mobileTab by remember { mutableStateOf(1) }
+        // A user fold is independent of the temporary hiding used by the order panel and keyboard.
+        var phoneChartAccountsCollapsed by rememberSaveable { mutableStateOf(false) }
         var showOverview by remember { mutableStateOf(false) }
         var accountTab by remember { mutableStateOf(0) }
         var showSettings by remember { mutableStateOf(false) }
@@ -923,6 +925,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val tablet = !nativeDesktop && minOf(sizeWithBars.width, sizeWithBars.height) >= 600.dp
                 val desktop = tablet || (maxWidth >= 900.dp && layoutHeight >= 600.dp)
                 val desktopStyle = nativeDesktop || tablet
+                val phoneScreen = !nativeDesktop && !tablet && !desktop
                 LaunchedEffect(desktop, desktopStyle) {
                     if (!desktop || !desktopStyle) { chartFullscreen = false; fullscreenTicket = false }
                 }
@@ -1341,6 +1344,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             allIndicators = chartIndicatorSettings.indicators,
                             objectLayers = runtime.objectLayersForChart(chartId),
                             keyboardTrading = tradingPreferences.keyboardTrading,
+                            phoneContextMenu = phoneScreen,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
                                 changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
                                 showDraft = true
@@ -1355,6 +1359,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         closeOrder(); showOrderFlow = true
                                     }
                                     if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
+                                    if (phoneScreen && chartFirst && phoneChartAccountsCollapsed && !orderOnChart)
+                                        ActionIcon(AppIcons.ExpandMore, "展开账户栏", "expand-chart-accounts",
+                                            modifier = Modifier.size(40.dp), iconSize = 20.dp) { phoneChartAccountsCollapsed = false }
                                 }
                             }))
 
@@ -1972,14 +1979,17 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         DividerLine()
                     }
                     if (compact && !unifiedChartBar) {
-                        val showAccountBar = !(chartFirst && orderOnChart) && (!keyboardOpen || popupVisible)
+                        val showAccountBar = !(chartFirst && (orderOnChart || phoneScreen && phoneChartAccountsCollapsed)) && (!keyboardOpen || popupVisible)
                         val accountBarHeight by animateDpAsState(
                             if (showAccountBar) { if (denseLandscape) 41.dp else 57.dp } else 0.dp, tween(180), label = "account-bar-height")
                         Box(Modifier.fillMaxWidth().height(accountBarHeight).clipToBounds()) {
-                            Column(Modifier.fillMaxWidth()) {
-                                AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
-                                    Modifier.fillMaxWidth().background(colors.Surface).padding(horizontal = 6.dp),
-                                    enabled = !busy && showAccountBar, dense = denseLandscape, aliases = runtime.accountAliases)
+                            if (accountBarHeight > 0.dp) Column(Modifier.fillMaxWidth()) {
+                                Row(Modifier.fillMaxWidth().background(colors.Surface).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    AccountContextBar(registry, plugin, accountId, ::chooseBroker, ::chooseAccount,
+                                        Modifier.weight(1f), enabled = !busy && showAccountBar, dense = denseLandscape, aliases = runtime.accountAliases)
+                                    if (phoneScreen && chartFirst) ActionIcon(AppIcons.ExpandLess, "收起账户栏", "collapse-chart-accounts",
+                                        modifier = Modifier.size(40.dp), iconSize = 20.dp) { phoneChartAccountsCollapsed = true }
+                                }
                                 DividerLine()
                             }
                         }

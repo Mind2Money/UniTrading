@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 手机图表支持收起和恢复账户栏，并提供适合窄屏的图表右键／长按菜单。
 - 修复回放图表周期收藏和自定义周期不能实时更新的问题，并让回放下单面板按可用高度显示，避免内容挤在一起。
 - Windows、macOS、iPad 和安卓平板支持图表全屏，隐藏侧栏和账户栏；图表下单入口打开居中的可拖动悬浮下单窗，桌面端可按 Esc 退出。
 - 优化历史回放控制栏，隐藏连续历史拼接提示；本交易日盈亏按平仓日归属，同时单列供风控使用的当日净值变化。
@@ -12,6 +13,7 @@
 
 ## English
 
+- Let phone users collapse and restore the chart account bar, and provide a compact plot context menu for touch and mouse.
 - Keep replay interval favorites and custom intervals in sync with the main chart, and size the replay order panel to its available height.
 - Add chart-only mode on desktop and tablets, with a centered, movable non-modal order ticket; Escape exits on desktop.
 - Refine playback controls, hide the continuous-history caveat, and show close-day trade P&L alongside the daily equity change used by risk limits.

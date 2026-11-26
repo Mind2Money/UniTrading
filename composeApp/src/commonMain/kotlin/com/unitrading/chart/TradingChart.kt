@@ -1048,12 +1048,13 @@ fun TradingChart(
                 }
                 lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
                 plotMenu?.let { menu ->
+                    val phoneMenu = chrome.phoneContextMenu && (menu.longPress || menu.desktop)
                     PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null }, onReset = ::resetView,
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
                         // A market order takes no price: it fills at the quote, as the trading keys' does.
                         onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price.takeUnless { order.kind == OrderKind.MARKET }) },
-                        stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection,
-                        desktopActions = if (!menu.desktop) null else PlotMenuActions(
+                        stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection, phone = phoneMenu,
+                        desktopActions = if (!menu.desktop && !phoneMenu) null else PlotMenuActions(
                             copyPrice = { clipboard.setText(AnnotatedString(instrument.formatPrice(menu.price))) },
                             pasteDrawing = chrome.drawings?.takeIf { it.canPaste }?.let { drawings -> { drawings.paste() } },
                             openOrder = chrome.onOpenOrderAt?.let { open -> { open(menu.price) } },
@@ -1188,6 +1189,8 @@ class ChartChrome(
     val allIndicators: List<IndicatorConfig>? = null,
     val onOpenOrderAt: ((Long) -> Unit)? = null,
     val keyboardTrading: Boolean = false,
+    /** A phone uses a smaller plot menu for touch and mouse input alike. */
+    val phoneContextMenu: Boolean = false,
     val domVisible: Boolean = false,
     val onDomToggle: (() -> Unit)? = null,
     val sharedToolbar: Boolean = false,
