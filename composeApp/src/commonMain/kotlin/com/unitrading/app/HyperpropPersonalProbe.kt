@@ -13,7 +13,7 @@ import kotlin.random.Random
 
 internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?)
 internal data class HyperpropCheck(val scope: String, val accounts: List<HyperpropAccountCheck>)
-internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?)
+internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?, val filledQuantity: String? = null)
 internal data class HyperpropCommand(val id: String, val status: String)
 internal class HyperpropConnectionException(message: String) : Exception(message)
 private fun JsonObject.stringValue(name: String): String? = (this[name] as? JsonPrimitive)?.contentOrNull
@@ -48,11 +48,11 @@ internal fun parseHyperpropPending(text: String, accountId: String): List<Hyperp
     require((result["success"] as? JsonPrimitive)?.booleanOrNull == true) { "挂单读取失败" }
     return result["data"]?.jsonArray?.mapNotNull { value ->
         val row = value.jsonObject
-        if (row.stringValue("account_id") != accountId || row.stringValue("status") !in setOf("pending", "working")) return@mapNotNull null
+        if (row.stringValue("account_id") != accountId || row.stringValue("status") !in setOf("pending", "working", "partially_filled")) return@mapNotNull null
         HyperpropPendingOrder(row.stringValue("id") ?: error("订单缺少 ID"), accountId,
             row.stringValue("contract") ?: error("订单缺少合约"), row.stringValue("side") ?: "?",
             row.stringValue("order_type") ?: "?", row.stringValue("quantity") ?: "?",
-            row.stringValue("limit_price") ?: row.stringValue("stop_price"))
+            row.stringValue("limit_price") ?: row.stringValue("stop_price"), row.stringValue("filled_quantity"))
     } ?: error("挂单列表缺失")
 }
 

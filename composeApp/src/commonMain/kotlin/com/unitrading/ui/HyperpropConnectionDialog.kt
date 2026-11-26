@@ -78,7 +78,7 @@ internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
                 Text("列表可能包含保护订单；撤销前请确认订单用途。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 pending.forEach { order ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("${order.contract} · ${order.side} · ${order.type} · ${order.quantity} 张${order.price?.let { " @ $it" } ?: ""}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        Text("${order.contract} · ${order.side} · ${order.type} · ${order.quantity} 张${order.filledQuantity?.takeIf { it != "0" }?.let { "（已成交 $it 张）" } ?: ""}${order.price?.let { " @ $it" } ?: ""}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                         TextButton({ cancelOrder = order }, enabled = !busy && active.check.scope == "trade") { Text("撤单") }
                     }
                 }

@@ -79,4 +79,8 @@ class HyperpropPersonalProbeTest {
         assertEquals(listOf("1"), pending.map { it.id })
         assertEquals("5485.25", pending.single().price)
     }
+    @Test fun partiallyFilledOrdersRemainAvailableForCancellation() {
+        val text = """{"success":true,"data":[{"id":"1","account_id":"a","contract":"MESZ6","side":"buy","order_type":"limit","quantity":3,"filled_quantity":1,"limit_price":5485.25,"status":"partially_filled"}]}"""
+        assertEquals(listOf("1"), parseHyperpropPending(text, "a").map { it.id })
+    }
 }
