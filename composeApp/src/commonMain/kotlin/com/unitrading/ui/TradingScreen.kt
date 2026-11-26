@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 50080)
-Total output lines: 2438
-
 package com.unitrading.ui
 
 import androidx.compose.animation.fadeIn
@@ -1120,7 +1117,447 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     when (action) {
                         is LineAction.ClosePosition -> reviewTrade(Confirmation.Close(action.position))
                         is LineAction.CancelOrder -> reviewTrade(Confirmation.Cancel(action.order))
-                        is LineAction.RemoveProtection -> acti…10080 tokens truncated…= skipConfirmation, onClose = dismissOrder,
+                        is LineAction.RemoveProtection -> action.position.let { p ->
+                            editProtection(p, p.stopLoss.takeUnless { action.stop }, p.takeProfit.takeIf { action.stop }, fromChart = true)
+                        }
+                        is LineAction.RemovePendingProtection -> action.order.request.let { r ->
+                            editPendingProtection(action.order, r.stopLoss.takeUnless { action.stop }, r.takeProfit.takeIf { action.stop }, fromChart = true)
+                        }
+                        is LineAction.RemoveDraftProtection -> changeDraft(
+                            if (sizeByRisk && action.stop) draft.withProtectionPrice(true, "")
+                            else draft.withProtectionEnabled(instrument, quote, action.stop, false)
+                        )
+                        LineAction.SubmitDraft -> {
+                            val order = request
+                            if (order == null || preview?.valid != true || order.lotsHundredths <= 0L)
+                                showNotice(preview?.errors?.firstOrNull() ?: "订单参数无效，请检查数量与报价", attention = true)
+                            else reviewTrade(Confirmation.Place(order, fromChart = true))
+                        }
+                        LineAction.EditDraftQuantity -> Unit
+                        LineAction.CloseDraft -> if (compact) closeOrder() else showDraft = false
+                    }
+                }
+                /**
+                 * An order requested by a trading shortcut. It uses the same quantity, account brackets and checks as the
+                 * order panel; unlike a market order, a limit carries the hovered [price].
+                 */
+                fun orderFromChart(side: Side, kind: OrderKind, price: Long?, fromKeys: Boolean = false) {
+                    val entry = price?.let(instrument::formatPrice).orEmpty()
+                    if (sizeByRisk) {
+                        draft = OrderDraft(side, kind, draft.quantity, entry)
+                        showDraft = true
+                        openChartOrderEditor(activeChart)
+                        return
+                    }
+                    val order = OrderDraft(side, kind, draft.quantity, entry).request(instrument)
+                    if (order == null) {
+                        showNotice(if (instrument.executionSymbol == null) "${instrument.executionLabel}，暂不可下单" else "请先在下单面板输入有效数量", attention = true)
+                        return
+                    }
+                    val protectedOrder = try { bracketed(order, quote, capacityFor(order).maximum) }
+                    catch (error: IllegalArgumentException) {
+                        showNotice(error.message ?: "无法计算金额止损止盈", attention = true)
+                        return
+                    }
+                    reviewTrade(Confirmation.Place(protectedOrder, fromChart = true, fromKeys = fromKeys))
+                }
+                /** Context-menu choices only prepare a draft; the user submits it from the order panel. */
+                fun prepareChartOrder(chartId: String, side: Side, kind: OrderKind, price: Long?) {
+                    val entry = price?.takeUnless { kind == OrderKind.MARKET }?.let(instrument::formatPrice).orEmpty()
+                    draft = OrderDraft(side, kind, draft.quantity, entry)
+                    showDraft = true
+                    activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
+                    if (phoneScreen && !sizeByRisk) orderPanelState = MobileOrderPanelState.MINIMIZED else openChartOrderEditor(chartId)
+                }
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = compact && showDom, onBackCompleted = { showDom = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = tablet && chartFullscreen && !keyboardOpen,
+                    onBackCompleted = { chartFullscreen = false; fullscreenTicket = false })
+                // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
+                    onBackCompleted = { if (!busy) closeOrder() })
+                val activate = rememberUpdatedState<(String) -> Unit> { id -> activateChart(id) }
+                // One chart window. The active one shows the screen's symbol, interval, draft and selection; any other shows
+                // its own symbol and interval and becomes the active one at the first press inside it.
+                // What every chart shows, as this pass of the screen saw it. A chart's content decides from these alone, never from
+                // the state behind them: in a window it is composed apart from the screen, and a newer active chart beside the
+                // instrument of the previous one would show a wrong chart for a frame and drop its view.
+                val workingChart = activeChart
+                val shownCharts = parkedCharts + (workingChart to ChartSlot(workingChart, symbol, timeframe))
+                // Keep the latest data already shown by each chart for the market list, even after a phone leaves the chart tab.
+                // These are display references only and must not enter the quote or order paths.
+                val chartCloses = remember(plugin) { mutableStateMapOf<String, Candle>() }
+                val layerStates = remember(plugin) { mutableMapOf<String, ChartLayerState>() }
+                fun layersFor(id: String) = layerStates.getOrPut(id) { ChartLayerState(historyVisible) }
+                val chartView: @Composable (String, Modifier, Boolean) -> Unit = { chartId, m, shared ->
+                    val active = chartId == workingChart
+                    val chartWorkspace = workspaceOf(chartId)
+                    val displayedAccountId = if (chartWorkspace in unresolvedDetachedAccounts) "" else detachedAccounts[chartWorkspace] ?: mainAccountId
+                    val displayedSession = remember(plugin, displayedAccountId, session, mainSession, catalog.accounts) {
+                        if (catalog.accounts.none { it.id == displayedAccountId }) null
+                        else if (displayedAccountId == accountId) session
+                        else if (displayedAccountId == mainAccountId) mainSession
+                        else runtime.accountRisk.guard(plugin, plugin.openSession(displayedAccountId))
+                    }
+                    val displayedAccount = if (displayedSession == null) AccountSnapshot(displayedAccountId, 0, balanceKnown = false, equityKnown = false, marginKnown = false)
+                    else {
+                        val current by key(displayedSession) { displayedSession.state.collectAsState() }
+                        current
+                    }
+                    val parked = shownCharts[chartId]
+                    val shownInstrument = if (active) instrument else parked?.let { slot -> catalog.instruments.firstOrNull { it.symbol == slot.symbol } }
+                    // A symbol this broker has not loaded: the window says so, and a press makes it the active chart, where another can be chosen.
+                    if (shownInstrument == null) Box(m.background(colors.Surface).pointerInput(chartId) { detectTapGestures { activate.value(chartId) } }.testTag("chart-unavailable-$chartId"),
+                        contentAlignment = Alignment.Center) {
+                        EmptyState("品种未加载", "${parked?.symbol.orEmpty()} 不在当前交易商已加载的合约里。点一下这里，再在图表上另选品种。", icon = AppIcons.Candlestick)
+                    } else {
+                    val shownTimeframe = parked?.timeframe ?: timeframe
+                    val shownExecution = shownInstrument.executionSymbol
+                    val shownQuote = if (active) quote else market.quotes[shownExecution]
+                    val regularSession = chartPreferences.sessionForChart(chartId) == ChartSession.REGULAR
+                    val sourceTimeframe = chartSessionSource(shownInstrument.symbol, shownTimeframe, regularSession)
+                    val rawCandles = remember(plugin, shownInstrument.symbol, sourceTimeframe, market.revision) { plugin.history(shownInstrument.symbol, sourceTimeframe) }
+                    val sessionResult = if (regularSession && shownTimeframe.seconds < Timeframe.DAY) {
+                        // Keep the previous result visible while a new history snapshot is aggregated. Changing chart
+                        // identity resets it immediately, so old candles never appear under another symbol or period.
+                        key(plugin, shownInstrument.symbol, shownTimeframe, regularSession) {
+                            val result by produceState(SessionResult(emptyList(), null), CandleSnapshotKey(rawCandles)) {
+                                val calculated = withContext(Dispatchers.Default) {
+                                    chartSessionCandles(rawCandles, shownInstrument.symbol, shownTimeframe, true) {
+                                        coroutineContext.ensureActive()
+                                    }
+                                }
+                                value = SessionResult(calculated.first, calculated.second)
+                            }
+                            result.candles to result.notice
+                        }
+                    } else rawCandles to null
+                    val shownCandles = sessionResult.first
+                    val latestChartCandle = shownCandles.lastOrNull()
+                    SideEffect {
+                        if (latestChartCandle != null && latestChartCandle.close > 0 &&
+                            (chartCloses[shownInstrument.symbol]?.timeMs ?: Long.MIN_VALUE) <= latestChartCandle.timeMs)
+                            chartCloses[shownInstrument.symbol] = latestChartCandle
+                    }
+                    /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
+                    fun onActive(block: () -> Unit) {
+                        if (!active) activateChart(chartId)
+                        else if (displayedSession != null && displayedAccountId == accountId && accountContextCurrent()) block()
+                    }
+                    // Minimizing hides only the form; the active draft remains editable on the chart.
+                    val draftShown = active && displayedAccountId == accountId && accountContextCurrent() && if (compact) orderActive else showDraft
+                    // Draft lines take a drop at once; pending orders and positions wait for the confirmation dialogs.
+                    val actions = ChartOrderActions(
+                        estimateDraft = { order ->
+                            try {
+                                val estimated = bracketed(order, quote, capacityFor(order).maximum)
+                                estimated to session.preview(estimated).withCapacity(estimated, capacityFor(estimated))
+                            } catch (error: IllegalArgumentException) {
+                                (if (sizeByRisk) order.copy(lotsHundredths = 0L) else order) to
+                                    OrderPreview(null, errors = listOf(error.message ?: "无法计算订单预览"))
+                            }
+                        },
+                        // A reduction on a sized account carries no stop, so its draft offers none to add either.
+                        draftStopManaged = brackets.controls(true) || reducible > 0,
+                        draftTargetManaged = brackets.controls(false),
+                        onDraftEntry = { price -> onActive { changeDraft(draft.copy(entry = instrument.formatPrice(price))) } },
+                        onDraftProtection = { stop, price ->
+                            onActive { changeDraft(draft.withProtectionPrice(stop, instrument.formatPrice(price))) }
+                        },
+                        editPending = plugin.capabilities.modifyPendingOrders,
+                        estimatePending = displayedSession?.let { target -> target::previewOrderModification } ?: { _, _ -> OrderPreview(null) },
+                        onPendingEntry = { order, price -> onActive { editPending(order, price, fromChart = true) } },
+                        editPendingProtection = plugin.capabilities.modifyPendingProtection,
+                        estimatePendingProtection = displayedSession?.let { target -> target::previewOrderProtection } ?: { _, _, _ -> OrderPreview(null) },
+                        onPendingProtection = { order, sl, tp -> onActive { editPendingProtection(order, sl, tp, fromChart = true) } },
+                        onProtection = { p, sl, tp -> onActive { editProtection(p, sl, tp, fromChart = true) } },
+                        onLineAction = { action -> onActive { runLineAction(action) } },
+                        draftQuantity = draft.quantity,
+                        onDraftQuantity = { value -> onActive { changeDraft(draft.copy(quantity = value)) } },
+                        inlineDraftQuantity = (desktopStyle || phoneScreen) && !sizeByRisk,
+                        directDraftSubmit = desktopStyle || phoneScreen,
+                        addProtection = plugin.capabilities.addProtection,
+                        addPositionProtection = plugin.capabilities.addPositionProtection,
+                        removeProtection = plugin.capabilities.removeProtection,
+                        entryKinds = plugin.capabilities.orderKinds,
+                        // A chart that is not the active one shows the quantity its symbol's order panel was left with.
+                        entryLots = if (sizeByRisk) request?.lotsHundredths.takeIf { active }
+                        else shownInstrument.parseQuantity(if (active) draft.quantity else
+                            orderSessions["$chartId/${shownInstrument.symbol}/$shownExecution"]?.draft?.value?.quantity ?: if (shownInstrument.quantityDecimals == 0) "1" else "0.10"),
+                        onEntryOrder = { side, kind, price -> onActive { prepareChartOrder(chartId, side, kind, price) } },
+                        onKeyboardEntryOrder = { side, kind, price -> onActive { orderFromChart(side, kind, price, fromKeys = true) } },
+                        estimateStandalone = { order, price -> displayedSession?.previewOrderChange(order.id, price, order.request.lotsHundredths) ?: OrderPreview(null) },
+                        onStandalone = { order, price -> onActive { changeAlone(order, price, order.request.lotsHundredths, fromChart = true) } },
+                        tradingKeys = tradingPreferences.tradingKeys.takeIf { tradingPreferences.keyboardTrading && OrderKind.MARKET in plugin.capabilities.orderKinds },
+                        instantOrders = skipConfirmation,
+                        stopRequiredForSizing = sizeByRisk,
+                        attachedProtection = listOfNotNull("SL".takeIf { brackets.controls(true) }, "TP".takeIf { brackets.controls(false) })
+                            .joinToString("/").ifEmpty { null },
+                        onMarketOrder = { side -> onActive { orderFromChart(side, OrderKind.MARKET, null, fromKeys = true) } },
+                    )
+                    // Every chart has its own tools and selection; the drawings themselves are shared through the library.
+                    val drawings = runtime.drawingsForChart(chartId)
+                    val indicatorController = runtime.indicatorsForChart(chartId)
+                    runtime.undoForChart(chartId, scope)
+                    val chartIndicatorSettings by indicatorController.settings.collectAsState()
+                    BoxWithConstraints(m.pointerInput(chartId) {
+                        // On the Initial pass and without consuming: the press that makes this chart the active one still does what it did.
+                        awaitPointerEventScope { while (true) { if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) activate.value(chartId) } }
+                    }.testTag("chart-view-$chartId")) {
+                    // Split cells can be narrower than the desktop window that contains them.
+                    val chartCompact = compact || maxWidth < 600.dp
+                    val chartShort = chartCompact && maxHeight < 550.dp
+                    Row(Modifier.fillMaxSize()) {
+                    if (!workspaceFullscreen(chartWorkspace) && !shared && (!chartCompact || drawings.toolbarOpen)) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
+                    TradingChart("$brokerId/$displayedAccountId/${plugin.hashCode()}", shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
+                        displayedAccount.positions.filter { it.symbol == shownExecution },
+                        displayedAccount.trades.filter { it.symbol == shownExecution },
+                        selectedPositionId.takeIf { active }, focusedTrade.takeIf { active }, chartDraft.takeIf { draftShown }, preview.takeIf { draftShown },
+                        displayedAccount.orders.filter { it.request.symbol == shownExecution }, actions,
+                        Modifier.weight(1f).fillMaxHeight(), environment = plugin.descriptor.environment, executions = displayedAccount.executions.filter { it.symbol == shownExecution }, indicators = if (drawings.hideIndicators) emptyList() else chartIndicatorSettings.indicators, onIndicators = { activateChart(chartId); indicatorChartId = chartId; showIndicators = true }, focusedExecution = focusedExecution.takeIf { active },
+                        instruments = watchInstruments, onSymbol = { value -> activateChart(chartId); chooseSymbol(value) }, intervals = intervals, connected = market.connected,
+                        indicatorPaneFractions = chartPreferences.indicatorPaneFractions,
+                        onIndicatorPaneFractions = { fractions -> scope.launch { runtime.chartPreferences.setIndicatorPaneFractions(fractions) } },
+                        onSide = { side -> onActive {
+                            val base = if (compact && orderPanelState == MobileOrderPanelState.CLOSED)
+                                OrderDraft(quantity = if (instrument.quantityDecimals == 0) "1" else "0.10") else draft
+                            changeDraft(base.withSide(side, instrument, quote))
+                            openChartOrderEditor(chartId)
+                        } },
+                        // The legend's fold is remembered once the user toggles it; until then short phone screens start folded.
+                        chrome = ChartChrome(chartCompact, if (desktopStyle) chartPreferences.chartLegendCollapsed[chartId] ?: false else chartPreferences.legendCollapsed ?: (compactShort || chartShort),
+                            { folded -> scope.launch { if (desktopStyle) runtime.chartPreferences.setChartLegendCollapsed(chartId, folded) else runtime.chartPreferences.setLegendCollapsed(folded) } },
+                            ordering = compact && orderOnChart && orderOpen, drawings = drawings, showDrawingFavorites = active && !shared, views = runtime.chartViews,
+                            showHistory = if (!shared || chartId == MAIN_CHART) historyVisible else null, onShowHistory = { visible ->
+                                runtime.chartPreferences.selectHistoryVisible(visible)
+                                scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
+                            },
+                            sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle || tablet,
+                            statusQuote = shownInstrument.priceSymbol?.let { market.quotes[it] },
+                            showWatermark = desktopStyle && chartPreferences.showChartWatermark,
+                            chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
+                            chartTimeZoneLabel = chartPreferences.chartTimeZone.labelAt(if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null),
+                            regularSession = regularSession && shownTimeframe.seconds < Timeframe.DAY && sessionResult.second == null,
+                            onOpenSettings = { showActivity = false; showSettings = true },
+                            priceAxis = priceAxis, onPriceAxis = { value ->
+                                runtime.chartPreferences.selectPriceAxis(value)
+                                scope.launch { runtime.chartPreferences.savePriceAxis() }
+                            },
+                            lockedCrosshairTime = lockedCrosshairTime,
+                            onLockedCrosshairTime = { runtime.chartLockedTime.value = it },
+                            templates = runtime.chartTemplates,
+                            onApplyTemplate = { template -> scope.launch {
+                                if (indicatorController.apply(IndicatorSettings(template.indicators))) {
+                                    runtime.chartPreferences.selectPriceAxis(template.axis)
+                                    runtime.chartPreferences.savePriceAxis()
+                                }
+                            } },
+                            onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
+                            allIndicators = chartIndicatorSettings.indicators,
+                            objectLayers = runtime.objectLayersForChart(chartId),
+                            keyboardTrading = tradingPreferences.keyboardTrading,
+                            phoneContextMenu = phoneScreen,
+                            onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {
+                                changeDraft(draft.copy(kind = OrderKind.LIMIT, entry = instrument.formatPrice(price)))
+                                showDraft = true
+                                openChartOrderEditor(chartId)
+                            } },
+                            domVisible = active && showDom,
+                            onDomToggle = if (!desktop && active && domSupported) ({ showDom = !showDom }) else null,
+                            locked = chartPreferences.chartLocked && !chartCompact,
+                            onLocked = if (chartCompact) null else { locked: Boolean -> scope.launch { runtime.chartPreferences.setChartLocked(locked) }; Unit }, toolbarEnd = {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (compact && orderFlowSupported) ActionIcon(AppIcons.TrendingUp, "订单流分析", "open-order-flow") {
+                                        closeOrder(); showOrderFlow = true
+                                    }
+                                    if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
+                                    phoneAccountRestore()
+                                }
+                            }))
+
+                    }
+                    if (!desktop && active && showDom) {
+                        DomPanel(plugin, shownInstrument, account.orders.filter { it.request.symbol == shownExecution },
+                            Modifier.align(Alignment.CenterEnd).padding(top = 48.dp, bottom = 8.dp, end = 4.dp)
+                                .fillMaxHeight(.83f).fillMaxWidth(.74f).widthIn(max = 320.dp)) { showDom = false }
+                    }
+                    }
+                    }
+                }
+                // A toolbar follows the last-selected chart in its own workspace.
+                @Composable fun sharedChartBar(workspace: String, modifier: Modifier, singleLine: Boolean) {
+                    var replayInput by remember { mutableStateOf<ReplayInput?>(null) }
+                    var replaySetup by remember { mutableStateOf(false) }
+                    var replayPrepared by remember { mutableStateOf<ReplayPrepared?>(null) }
+                    val replaySeries = remember { mutableStateMapOf<Pair<String, Timeframe>, List<Candle>>() }
+                    val replayLoading = remember { mutableStateMapOf<Pair<String, Timeframe>, Boolean>() }
+                    val replayJobs = remember { mutableMapOf<Pair<String, Timeframe>, kotlinx.coroutines.Job>() }
+                    var replayGeneration by remember { mutableIntStateOf(0) }
+                    var replayRevision by remember { mutableLongStateOf(0) }
+                    var replayError by remember { mutableStateOf<String?>(null) }
+                    val target = workspaceSelected[workspace] ?: workspace
+                    val slot = shownCharts[target]
+                    val selectedInstrument = if (target == workingChart) instrument else
+                        catalog.instruments.firstOrNull { it.symbol == slot?.symbol } ?: instrument
+                    val selectedFrame = slot?.timeframe ?: timeframe
+                    val currentLayers = layersFor(target)
+                    val indicatorController = runtime.indicatorsForChart(target)
+                    val indicatorSettings by indicatorController.settings.collectAsState()
+                    fun work(action: () -> Unit) { activateChart(target); action() }
+                    ChartToolbar(selectedInstrument, watchInstruments.ifEmpty { listOf(selectedInstrument) },
+                        { value -> work { chooseSymbol(value) } }, selectedFrame, { value -> work { timeframe = value } }, intervals,
+                        listOf(
+                            ChartToggle("仓位", currentLayers.showPositions) { currentLayers.showPositions = !currentLayers.showPositions },
+                            ChartToggle("挂单", currentLayers.showOrders) { currentLayers.showOrders = !currentLayers.showOrders },
+                            ChartToggle("历史", currentLayers.showHistory) {
+                                currentLayers.showHistory = !currentLayers.showHistory
+                                if (target == MAIN_CHART) {
+                                    runtime.chartPreferences.selectHistoryVisible(currentLayers.showHistory)
+                                    scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
+                                }
+                            },
+                            ChartToggle("数据表", currentLayers.showData) { currentLayers.showData = !currentLayers.showData },
+                        ) + listOfNotNull(if (!desktop && domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
+                        ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
+                            indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
+                        modifier, compact = compact && !singleLine, trailing = { phoneAccountRestore() },
+                        additionalControls = {
+                            ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
+                            if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
+                                onSession = { value -> scope.launch { runtime.chartPreferences.setChartSessionFor(target, value) } })
+                            if (desktopStyle) AssistChip(onClick = { replaySetup = true }, modifier = Modifier.testTag("open-historical-replay"), label = { Text("回放") },
+                                leadingIcon = { Icon(AppIcons.PlayArrow, null, Modifier.size(18.dp)) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
+                            if (desktopStyle) AssistChip(
+                                onClick = {
+                                    work {
+                                        if (workspace in detachedWorkspaces) {
+                                            val next = !workspaceFullscreen(workspace)
+                                            detachedFullscreen[workspace] = next
+                                            if (!next) detachedFullscreenTicket.remove(workspace)
+                                        } else { chartFullscreen = !chartFullscreen; if (!chartFullscreen) fullscreenTicket = false }
+                                    }
+                                }, modifier = Modifier.testTag("chart-fullscreen"),
+                                label = { Text(if (workspaceFullscreen(workspace)) "退出全屏" else "图表全屏") },
+                                leadingIcon = { Icon(if (workspaceFullscreen(workspace)) AppIcons.FullscreenExit else AppIcons.Fullscreen, null, Modifier.size(18.dp)) },
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
+                        }, singleRow = singleLine)
+                    val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
+                    if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
+                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
+                            replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
+                            replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
+                            replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
+                            val chosen = ready.instruments.firstOrNull { it.symbol == selectedInstrument.symbol } ?: ready.instruments.first()
+                            val replaySourceFrame = if (ready.initialFrame.isSeconds) ready.initialFrame else Timeframe.M1
+                            replayInput = ReplayInput(chosen, ready.initialFrame, chartPreferences.sessionForChart(target) == ChartSession.REGULAR,
+                                chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
+                                replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation, ready.riskConfig)
+                        })
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals,
+                        history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
+                        watch = { sym, frame ->
+                            val series = sym to frame
+                            val ready = replayPrepared
+                            if (ready != null && ready.instruments.any { it.symbol == sym } && series !in replaySeries && series !in replayLoading) {
+                                replayLoading[series] = true
+                                val generation = replayGeneration
+                                val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                                    try {
+                                        val (from, until) = ready.range.forFrame(frame)
+                                        val result = runtime.replayHistory.load(plugin, sym, frame, from, until,
+                                            enabled = ready.cacheEnabled, persistent = persistentReplayCache).result
+                                        if (generation == replayGeneration) {
+                                            replaySeries[series] = result.candles.sortedBy { it.timeMs }
+                                            replayError = result.warning ?: if (result.candles.isEmpty()) "券商没有 $sym ${frame.label} 的历史数据" else null
+                                            replayRevision++
+                                        }
+                                    } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+                                    catch (failure: Exception) { if (generation == replayGeneration) replayError = "读取 $sym ${frame.label} 失败：${failure.message ?: "请重试"}" }
+                                    finally { if (generation == replayGeneration) { replayLoading.remove(series); replayJobs.remove(series) } }
+                                }
+                                replayJobs[series] = job
+                                job.start()
+                            }
+                        },
+                        drawingDefaults = runtime.drawingLibrary,
+                        historyError = replayError,
+                        onDismiss = { replayGeneration++; replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear(); replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
+                }
+                @Composable fun workspaceView(workspace: String, m: Modifier, ownToolbar: Boolean) {
+                    val selected = workspaceSelected[workspace] ?: workspace
+                    val indicatorController = runtime.indicatorsForChart(selected)
+                    val indicatorSettings by indicatorController.settings.collectAsState()
+                    val currentDrawings = runtime.drawingsForChart(selected)
+                    runtime.undoForChart(selected, scope)
+                    Column(m) {
+                        if (ownToolbar || !unifiedChartBar) {
+                            sharedChartBar(workspace, Modifier.fillMaxWidth().padding(horizontal = 4.dp), ownToolbar)
+                            DividerLine()
+                        }
+                        Row(Modifier.weight(1f).fillMaxWidth()) {
+                            if (!workspaceFullscreen(workspace)) com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
+                                { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                            key(workspace) {
+                                ChartSplitWorkspace(layoutOf(workspace), selected, { id, cellModifier -> chartView(id, cellModifier, true) },
+                                    Modifier.weight(1f).fillMaxHeight(), chartId = { id ->
+                                        if (id == "main") workspace else cellId(workspace, id.removePrefix("split").toInt())
+                                    }, ratiosOverride = workspaceRatios[workspace], favoriteDrawings = currentDrawings)
+                            }
+                        }
+                    }
+                }
+                val chart: @Composable (Modifier) -> Unit = { m ->
+                    if (!splitAvailable) chartView(MAIN_CHART, m, false)
+                    else workspaceView(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, m, false)
+                }
+                // Notifications occupy overlay space, never alter chart/panel constraints, and do not dim the workspace.
+                val notices: @Composable BoxScope.(top: Dp, limit: Dp, end: Boolean) -> Unit = { top, limit, end ->
+                Column(Modifier.align(if (end) Alignment.TopEnd else Alignment.TopCenter)
+                    .padding(start = 12.dp, end = 12.dp, top = top)
+                    .widthIn(max = 420.dp).fillMaxWidth().heightIn(max = limit)
+                    .verticalScroll(rememberScrollState()).testTag("notification-overlay"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    storageError?.let { message ->
+                        FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "storage-notice", null,
+                            title = "保存失败", action = { TextButton({ scope.launch { runtime.save() } }, Modifier.testTag("retry-storage-save")) { Text("重试保存") } })
+                    }
+                    workspaceAccountError?.let { message ->
+                        FloatingNoticeCard(TradingNotice(0, message, NoticeTone.ATTENTION, persistent = true), "workspace-account-storage-notice", null,
+                            title = "子窗口账户设置")
+                    }
+                    shownNotice()?.takeUnless { panelOpen }?.let { current ->
+                        FloatingNoticeCard(current, "trade-notice", { dismissNotice(current) }, title = "操作提示")
+                    }
+                    loginMessage?.let { message -> key(message) {
+                        var dismissed by remember { mutableStateOf(false) }
+                        if (!dismissed) FloatingNoticeCard(TradingNotice(0, message, persistent = true), "saved-login-status", { dismissed = true }, title = "登录状态")
+                    } }
+                }
+                }
+                // Everything a trade or a chart can ask for in a dialog; it opens in the window the user is working in.
+                val tradeDialogs: @Composable () -> Unit = {
+                if (showIndicators) key(indicatorChartId) { IndicatorSettingsDialog(runtime.indicatorsForChart(indicatorChartId)) { showIndicators = false } }
+                if (showOrder || popupVisible) {
+                    // The phone's popup closes the way the dock minimizes: by its close button, by back or by a tap beside
+                    // it, the draft stays on the chart and "下单" opens it again. Only "取消订单" drops it.
+                    val dismissOrder: () -> Unit = { if (popupVisible) orderPanelState = MobileOrderPanelState.MINIMIZED else if (!busy) showOrder = false }
+                    Dialog(onDismissRequest = dismissOrder) {
+                        Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
+                                if (popupVisible) reviewMobileOrder()
+                                else request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
+                            }, Modifier.widthIn(max = if (popupVisible && phoneScreen) 340.dp else 420.dp)
+                                .fillMaxHeight(if (popupVisible && phoneScreen) .78f else .94f).imePadding().testTag("order-popup"), environment = environment, capacity = capacity,
+                                onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation, onClose = dismissOrder,
                                 brackets = brackets, bracketOrder = request,
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
