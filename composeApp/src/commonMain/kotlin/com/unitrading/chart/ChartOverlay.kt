@@ -36,6 +36,8 @@ import com.unitrading.ui.ActionIcon
 import com.unitrading.ui.AppIcons
 import com.unitrading.ui.SegmentedChoice
 import com.unitrading.ui.StatusDot
+import com.unitrading.ui.MarketSessionBadge
+import com.unitrading.ui.MarketSessionState
 import com.unitrading.ui.TradingColors
 import com.unitrading.ui.label
 import kotlin.math.abs
@@ -334,6 +336,7 @@ internal fun ChartLegend(
     readout: String? = null,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    marketState: MarketSessionState = MarketSessionState.WAITING,
     keysHint: String? = null,
     keysLive: Boolean = false,
     zoneId: String = "Asia/Shanghai",
@@ -349,8 +352,9 @@ internal fun ChartLegend(
     Column(modifier.background(colors.Surface.copy(alpha = .9f), MaterialTheme.shapes.small)
         .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp).testTag("chart-legend"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("${instrument.name} · ${timeframe.label} · ${instrument.category}", Modifier.weight(1f, fill = false), style = type.labelMedium)
+            Text("${instrument.name} · ${timeframe.label} · ${instrument.category}", Modifier.weight(1f, fill = false), style = type.labelMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             StatusDot(if (connected) colors.Profit else colors.Loss, Modifier.semantics { contentDescription = if (connected) "行情已连接" else "行情未连接" })
+            MarketSessionBadge(marketState)
             ActionIcon(if (collapsed) AppIcons.ExpandMore else AppIcons.ExpandLess, if (collapsed) "展开图例" else "收起图例", "legend-toggle", Modifier.size(28.dp), tint = colors.Muted, iconSize = 20.dp, onClick = onToggleCollapsed)
         }
         // A line drag's estimate shows even when the legend is folded: it is the only live feedback until the drag ends.
