@@ -43,6 +43,8 @@ internal fun MarketWatch(
     panel: Boolean = false,
     /** Folds the desktop market panel; its button closes the title row's actions. */
     onClose: (() -> Unit)? = null,
+    /** Last bars already shown in open charts; display-only, never a live quote. */
+    chartCloses: Map<String, Candle> = emptyMap(),
     barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
@@ -197,7 +199,8 @@ internal fun MarketWatch(
                         key(plugin, instrument.priceSymbol, account.accountId) {
                             val quote = market.quotes[instrument.priceSymbol]
                             val status = marketSessionState(instrument, quote, market.connected, statusNow, if (remote) connectedAt else statusNow)
-                            val reference = if (status != MarketSessionState.OPEN) quote?.lastTrade?.let { it to "最近成交" }
+                            val reference = if (status != MarketSessionState.OPEN) chartCloses[instrument.symbol]?.close?.takeIf { it > 0 }?.let { it to "图表收盘" }
+                                ?: quote?.lastTrade?.let { it to "最近成交" }
                                 ?: Timeframe.presets.mapNotNull { frame ->
                                     try { plugin.history(instrument.symbol, frame).lastOrNull() } catch (_: IllegalArgumentException) { null }
                                 }

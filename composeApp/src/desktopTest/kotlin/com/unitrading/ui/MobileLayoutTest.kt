@@ -60,6 +60,19 @@ class MobileLayoutTest {
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
 
+    @Test fun marketListKeepsTheLoadedChartCloseWhenQuoteIsStale() = phoneTest {
+        val broker = OfflineOrderBroker()
+        broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, quote) -> quote.copy(timeMs = 1L) })
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
+        compose.onNodeWithTag("trading-chart").assertExists()
+        compose.onNodeWithTag("nav-0").performClick()
+        compose.onNodeWithTag("market-reference-TESTZ6", useUnmergedTree = true).assertTextContains("图表收盘 5485.00")
+        assertTrue(broker.placed.isEmpty())
+    }
+
     @Test fun phoneContextOrderAllowsChartQuantityEditAndRequiresConfirmation() = phoneTest {
         val broker = OfflineOrderBroker()
         val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }

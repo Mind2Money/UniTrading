@@ -2,7 +2,7 @@
 
 ## 简体中文
 
-- 图表和行情列表显示推测的市场状态；休市或行情延迟时可显示最近 K 线收盘价，不将历史价格作为实时买卖价或用于确认主力合约。
+- 图表和行情列表显示推测的市场状态；休市或行情延迟时优先显示已加载图表的最近 K 线收盘价，不将历史价格作为实时买卖价或用于确认主力合约。
 - 手机图表价格轴按内容自动调整宽度；右键菜单移除对象树和图表模板，精简独立下单窗，图表订单预览支持修改数量和提交。平板全屏下单窗采用紧凑布局。
 - 手机图表支持收起和恢复账户栏，并提供适合窄屏的图表右键／长按菜单。
 - 修复回放图表周期收藏和自定义周期不能实时更新的问题，并让回放下单面板按可用高度显示，避免内容挤在一起。
@@ -15,7 +15,7 @@
 
 ## English
 
-- Show inferred market status in charts and watchlists; display the latest cached candle close during a closed session or delayed feed without treating it as a live bid/ask or confirming a continuous contract.
+- Show inferred market status in charts and watchlists; prefer the latest already displayed chart close during a closed session or delayed feed without treating it as a live bid/ask or confirming a continuous contract.
 - Size the phone price axis to its labels, remove object tree and chart templates from the phone context menu, compact floating tickets, and allow chart-draft quantity editing and submission; use a compact ticket in tablet chart-only mode.
 - Let phone users collapse and restore the chart account bar, and provide a compact plot context menu for touch and mouse.
 - Keep replay interval favorites and custom intervals in sync with the main chart, and size the replay order panel to its available height.

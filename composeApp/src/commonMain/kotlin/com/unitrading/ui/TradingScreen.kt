@@ -1186,6 +1186,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 // instrument of the previous one would show a wrong chart for a frame and drop its view.
                 val workingChart = activeChart
                 val shownCharts = parkedCharts + (workingChart to ChartSlot(workingChart, symbol, timeframe))
+                // Keep the latest data already shown by each chart for the market list, even after a phone leaves the chart tab.
+                // These are display references only and must not enter the quote or order paths.
+                val chartCloses = remember(plugin) { mutableStateMapOf<String, Candle>() }
                 val layerStates = remember(plugin) { mutableMapOf<String, ChartLayerState>() }
                 fun layersFor(id: String) = layerStates.getOrPut(id) { ChartLayerState(historyVisible) }
                 val chartView: @Composable (String, Modifier, Boolean) -> Unit = { chartId, m, shared ->
@@ -1232,6 +1235,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }
                     } else rawCandles to null
                     val shownCandles = sessionResult.first
+                    val latestChartCandle = shownCandles.lastOrNull()
+                    SideEffect {
+                        if (latestChartCandle != null && latestChartCandle.close > 0 &&
+                            (chartCloses[shownInstrument.symbol]?.timeMs ?: Long.MIN_VALUE) <= latestChartCandle.timeMs)
+                            chartCloses[shownInstrument.symbol] = latestChartCandle
+                    }
                     /** A step that belongs to the active chart. On any other chart it only makes that chart the active one, and the user repeats the step. */
                     fun onActive(block: () -> Unit) {
                         if (!active) activateChart(chartId)
@@ -2139,7 +2148,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.desktopLayout.save() }
                             }) else null,
                             market = { m, minimize -> MarketWatch(plugin, market, mainAccount, mainSlot?.symbol ?: symbol,
-                                { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize) },
+                                { value -> if (!dialogsOpen) { activateChart(mainTarget); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = minimize, chartCloses = chartCloses) },
                             chart = chart,
                             order = { m, minimize -> workspaceOrder(mainTarget, m, minimize) },
                             terminal = { m -> workspaceTerminal(mainTarget, m) }, terminalSummary = "持仓 ${mainAccount.positions.size} · 挂单 ${terminalOrders(mainAccount).rows.size}",
@@ -2244,7 +2253,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                             DetachedWorkspace(id,
                                                 chart = { m -> workspaceView(id, m, false) },
                                                 market = { m, close -> MarketWatch(plugin, market, childAccount, slot?.symbol ?: symbol,
-                                                    { value -> if (!dialogsOpen) { activateDetached(); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = close) },
+                                                    { value -> if (!dialogsOpen) { activateDetached(); chooseSymbol(value) } }, m, runtime.marketWatch, panel = true, onClose = close, chartCloses = chartCloses) },
                                                 order = { m, close -> workspaceOrder(target, m, close) },
                                                 terminal = { m -> workspaceTerminal(target, m) },
                                                 terminalSummary = "持仓 ${childAccount.positions.size} · 挂单 ${terminalOrders(childAccount).rows.size}",
@@ -2285,7 +2294,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     } else {
                         when (mobileTab) {
                             4 -> accountHub(Modifier.weight(1f).fillMaxWidth())
-                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, accountName) { barStatus() }
+                            0 -> MarketWatch(plugin, market, account, symbol, ::chooseSymbol, Modifier.weight(1f), runtime.marketWatch, accountName, chartCloses = chartCloses) { barStatus() }
                             1 -> key(orderSession) {
                                 val idleDock = if (rail) tradeDockHeight else tradeDockHeight + MobileNavigationHeight
                                 // Below the chart while no order page takes that place: the order button, and the navigation unless it is a rail.
