@@ -87,7 +87,7 @@ class MobileLayoutTest {
         compose.onNodeWithTag("confirm-action").assertExists()
         assertTrue(broker.placed.isEmpty(), "The chart button must still request confirmation")
         compose.onNodeWithTag("confirm-action").performClick()
-        compose.waitUntil(5_000) { broker.placed.isNotEmpty() }
+        compose.waitUntil(timeoutMillis = 5_000) { broker.placed.isNotEmpty() }
         assertEquals(200L, broker.placed.single().lotsHundredths)
     }
 
