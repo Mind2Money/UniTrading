@@ -709,9 +709,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         if (maxWidth >= 1100.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
                             if (!started) { Separator(); StartControls() }
-                        } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                            PlaybackControls()
-                            if (!started) { Separator(); StartControls() }
+                        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
+                            if (!started) {
+                                HorizontalDivider(color = colors.outlineVariant.copy(alpha = .6f))
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { StartControls() }
+                            }
                         }
                     }
                 }

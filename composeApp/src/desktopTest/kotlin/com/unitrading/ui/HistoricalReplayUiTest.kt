@@ -8,6 +8,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.toAwtImage
+import java.io.File
+import javax.imageio.ImageIO
+import com.unitrading.app.ThemeSettings
+import com.unitrading.app.ThemePreset
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -52,15 +57,17 @@ class HistoricalReplayUiTest {
         val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
         val bars = (0..30).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
-        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+        compose.setContent { TradingTheme(ThemeSettings(preset = ThemePreset.LIGHT)) { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
         awaitReplay()
+        val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/replay-consistency-ui").also { it.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", File(folder, "replay-light.png"))
         compose.onNodeWithTag("replay-speed-2").performClick()
         compose.onNodeWithTag("replay-start-time").performTextInput("2023-11-15 06:14")
         compose.onNodeWithTag("replay-start-time").assertTextContains("2023-11-15 06:14")
         compose.onNodeWithTag("replay-start-calendar").assertExists()
         compose.onNodeWithTag("replay-start-locate").assertExists()
-        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-next").performScrollTo().performClick()
         compose.onNodeWithTag("replay-start-controls").assertDoesNotExist()
     }
 
