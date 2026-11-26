@@ -129,7 +129,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         if (showRithmicConnection) RithmicConnectionDialog(runtime, ::selectBroker, { showRithmicConnection = false })
         val connectRithmic: (() -> Unit)? = if (RITHMIC_LOGIN_ENABLED) ({ showRithmicConnection = true }) else null
         var showHyperpropCheck by remember { mutableStateOf(false) }
-        if (showHyperpropCheck) HyperpropConnectionDialog { showHyperpropCheck = false }
+        if (showHyperpropCheck) HyperpropConnectionDialog(runtime, ::selectBroker) { showHyperpropCheck = false }
         val plugin = plugins.firstOrNull { it.descriptor.id == brokerId } ?: plugins.firstOrNull()
         // The pages in front of the trading screen have no notices of their own: an unread failure shows over them.
         val failureOverlay: @Composable BoxScope.() -> Unit = {

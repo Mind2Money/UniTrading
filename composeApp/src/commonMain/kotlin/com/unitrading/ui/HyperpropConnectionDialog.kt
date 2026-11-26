@@ -11,13 +11,15 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.HyperpropPersonalSession
 import com.unitrading.app.HyperpropConnectionException
 import com.unitrading.app.HyperpropPendingOrder
+import com.unitrading.app.HyperpropChartBroker
+import com.unitrading.app.TradingRuntime
 import com.unitrading.app.hyperpropOrderBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** Isolated personal-API order test. No credentials are persisted. */
 @Composable
-internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
+internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (String) -> Unit, onDismiss: () -> Unit) {
     var key by remember { mutableStateOf("") }
     var session by remember { mutableStateOf<HyperpropPersonalSession?>(null) }
     var accountId by remember { mutableStateOf("") }
@@ -32,8 +34,13 @@ internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var confirmOrder by remember { mutableStateOf(false) }
     var cancelOrder by remember { mutableStateOf<HyperpropPendingOrder?>(null) }
+    var transferred by remember { mutableStateOf<HyperpropPersonalSession?>(null) }
+    val connections by runtime.registry.state.collectAsState()
+    val feeds = connections.filter { it.descriptor.id.startsWith("tradovate-") || it.descriptor.id.startsWith("rithmic-") }
+    var selectedFeed by remember { mutableStateOf<String?>(null) }
+    var feedMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    DisposableEffect(session) { val current = session; onDispose { current?.close() } }
+    DisposableEffect(session) { val current = session; onDispose { if (current != transferred) current?.close() } }
     fun action(block: suspend () -> Unit) {
         busy = true; message = null
         scope.launch {
@@ -53,6 +60,22 @@ internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
                 Button(onClick = { action { val connected = HyperpropPersonalSession.connect(key); session = connected; accountId = connected.check.accounts.firstOrNull()?.id ?: ""; key = "" } }, enabled = !busy && key.isNotBlank()) { Text("连接") }
             } else {
                 Text(if (active.check.scope == "trade") "读写密钥 · 测试交易" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
+                Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情，账户、持仓和挂单同步仅供只读验证。", style = MaterialTheme.typography.bodySmall)
+                Box {
+                    val source = feeds.firstOrNull { it.descriptor.id == selectedFeed } ?: feeds.firstOrNull()
+                    OutlinedButton({ feedMenu = true }, enabled = !busy && feeds.isNotEmpty()) { Text(source?.descriptor?.name ?: "请先登录行情来源") }
+                    DropdownMenu(expanded = feedMenu, onDismissRequest = { feedMenu = false }) {
+                        feeds.forEach { feed -> DropdownMenuItem(text = { Text(feed.descriptor.name) }, onClick = { selectedFeed = feed.descriptor.id; feedMenu = false }) }
+                    }
+                }
+                Button(onClick = {
+                    val source = feeds.firstOrNull { it.descriptor.id == selectedFeed } ?: feeds.firstOrNull() ?: return@Button
+                    val broker = HyperpropChartBroker(source, active)
+                    runtime.registry.register(broker)
+                    transferred = active
+                    onAttached(broker.descriptor.id)
+                    onDismiss()
+                }, enabled = !busy && feeds.isNotEmpty()) { Text("连接主图（只读测试）") }
                 Box {
                     OutlinedButton({ menuOpen = true }, enabled = !busy) { Text(active.check.accounts.firstOrNull { it.id == accountId }?.let { listOfNotNull(it.number, it.firm).joinToString(" · ") } ?: "选择账户") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

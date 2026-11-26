@@ -14,7 +14,7 @@ import kotlin.random.Random
 internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?)
 internal data class HyperpropCheck(val scope: String, val accounts: List<HyperpropAccountCheck>)
 internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?, val filledQuantity: String? = null)
-internal data class HyperpropCommand(val id: String, val status: String)
+internal data class HyperpropCommand(val id: String, val status: String, val succeeded: Boolean? = null)
 internal class HyperpropConnectionException(message: String) : Exception(message)
 private fun JsonObject.stringValue(name: String): String? = (this[name] as? JsonPrimitive)?.contentOrNull
 private fun JsonObject.dataObject(): JsonObject = (this["data"] as? JsonObject) ?: this
@@ -73,7 +73,7 @@ internal fun hyperpropOrderBody(accountId: String, contract: String, side: Strin
 
 /** Ephemeral personal session: no credential persistence and no automatic command retries. */
 internal class HyperpropPersonalSession private constructor(private val client: HttpClient, private val token: String, val check: HyperpropCheck) {
-    private suspend fun read(path: String): JsonObject {
+    internal suspend fun read(path: String): JsonObject {
         val response = client.get("https://api.hyperprop.com$path") { bearerAuth(token) }
         require(response.status.value in 200..299) { "读取失败 HTTP ${response.status.value}" }
         val text = response.bodyAsText(); require(text.length <= 4_000_000) { "响应过大" }
@@ -83,10 +83,12 @@ internal class HyperpropPersonalSession private constructor(private val client: 
         require(check.accounts.any { it.id == accountId })
         return parseHyperpropPending(read("/trade/orders/pending").toString(), accountId)
     }
-    private suspend fun command(path: String, body: JsonObject): HyperpropCommand {
+    internal suspend fun command(path: String, body: JsonObject, idempotencyKey: String? = null): HyperpropCommand {
         require(check.scope == "trade") { "密钥只有只读权限" }
+        require(path in setOf("/trade/order", "/trade/order/cancel", "/trade/order/modify")) { "不支持的交易操作" }
         // Every click has a unique key; the HTTP client makes one attempt only. A timeout remains unknown.
-        val requestId = Random.Default.nextBytes(16).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        val requestId = idempotencyKey?.takeIf { it.isNotBlank() && it.length <= 255 && it.none { c -> c.code < 32 || c.code == 127 } }
+            ?: Random.Default.nextBytes(16).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
         val response = client.post("https://api.hyperprop.com$path") {
             bearerAuth(token); contentType(ContentType.Application.Json); header("x-idempotency-key", requestId); setBody(body.toString())
         }
@@ -99,8 +101,8 @@ internal class HyperpropPersonalSession private constructor(private val client: 
             delay(500)
             val status = read("/trade/commands/$id").dataObject()
             when (status.stringValue("status")) {
-                "succeeded" -> return HyperpropCommand(id, "服务器已处理；请刷新订单和持仓核对")
-                "failed" -> return HyperpropCommand(id, "服务器处理失败；请到 Hyperprop 核对")
+                "succeeded" -> return HyperpropCommand(id, "服务器已处理；请刷新订单和持仓核对", true)
+                "failed" -> return HyperpropCommand(id, "服务器处理失败；请到 Hyperprop 核对", false)
             }
         }
         return HyperpropCommand(id, "仍在处理，请到 Hyperprop 核对后再操作")
