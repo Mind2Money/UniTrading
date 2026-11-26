@@ -52,6 +52,7 @@ internal fun SettingsPage(
     modifier: Modifier = Modifier,
     onClose: (() -> Unit)? = null,
     onConnectRithmic: (() -> Unit)? = null,
+    onCheckHyperprop: (() -> Unit)? = null,
     barActions: @Composable RowScope.() -> Unit = {},
     updates: AppUpdates? = null,
     showOrderLayout: Boolean = true,
@@ -117,6 +118,7 @@ internal fun SettingsPage(
                     onSync, enabled = plugin.capabilities.resynchronize && market.connected && !busy)
                 SettingsRow("连接 Tradovate", "添加或重新登录 Demo / Live 账户", AppIcons.Add, "settings-connect", onConnect)
                 if (onConnectRithmic != null) SettingsRow("连接 Rithmic", "登录 Test / Paper / Live 系统", AppIcons.Add, "settings-connect-rithmic", onConnectRithmic)
+                if (onCheckHyperprop != null) SettingsRow("Hyperprop 个人 API 测试", "只读：验证密钥和账户", AppIcons.Add, "settings-check-hyperprop", onCheckHyperprop)
                 if (!localDemo) SettingsRow("断开 $loginName", if (loginSaved) "断开当前连接，保留本机登录" else "断开当前连接；这个登录未保存，本机分析缓存一并清除", AppIcons.Logout, "settings-disconnect", onDisconnect, destructive = true)
             }
 

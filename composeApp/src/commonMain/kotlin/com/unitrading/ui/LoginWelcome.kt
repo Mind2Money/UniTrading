@@ -24,7 +24,7 @@ internal fun GateHeader(title: String, detail: String? = null) {
 }
 
 @Composable
-internal fun LoginWelcome(runtime: TradingRuntime, onLogin: () -> Unit, onTheme: () -> Unit, onLoginRithmic: (() -> Unit)? = null) {
+internal fun LoginWelcome(runtime: TradingRuntime, onLogin: () -> Unit, onTheme: () -> Unit, onLoginRithmic: (() -> Unit)? = null, onCheckHyperprop: (() -> Unit)? = null) {
     val restoring by runtime.savedLogins.restoring.collectAsState()
     val message by runtime.savedLogins.message.collectAsState()
     val savedCount by runtime.savedLogins.savedCount.collectAsState()
@@ -39,6 +39,7 @@ internal fun LoginWelcome(runtime: TradingRuntime, onLogin: () -> Unit, onTheme:
                 message?.let { Text(it, Modifier.testTag("saved-login-status"), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
                 Button(onLogin, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login"), colors = brandButtonColors()) { Text("登录 Tradovate") }
                 if (onLoginRithmic != null) OutlinedButton(onLoginRithmic, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-login-rithmic")) { Text("登录 Rithmic") }
+                if (onCheckHyperprop != null) OutlinedButton(onCheckHyperprop, enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("welcome-check-hyperprop")) { Text("Hyperprop 个人 API 连接测试") }
                 if (savedCount > 0 || message != null) SavedLoginControls(runtime) {}
                 TextButton(onTheme, Modifier.testTag("open-theme")) {
                     Icon(AppIcons.Palette, contentDescription = null, Modifier.size(18.dp))
