@@ -29,6 +29,7 @@ internal fun DetachedWorkspace(
     orderRequest: Int,
     onDomOpenChange: (Boolean) -> Unit,
     onActivate: () -> Unit,
+    fullscreen: Boolean = false,
 ) {
     var side by remember(id) { mutableStateOf<DetachedSidePanel?>(DetachedSidePanel.MARKET) }
     var tradeOpen by remember(id) { mutableStateOf(false) }
@@ -45,7 +46,7 @@ internal fun DetachedWorkspace(
         Row(Modifier.fillMaxSize()) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 chart(Modifier.weight(1f).fillMaxWidth())
-                if (tradeOpen) {
+                if (!fullscreen && tradeOpen) {
                     DividerLine()
                     Column(Modifier.heightIn(min = 150.dp, max = 240.dp).fillMaxWidth().weight(.55f, fill = false)
                         .background(TradingColors.Surface).testTag("detached-terminal-$id")) {
@@ -54,7 +55,7 @@ internal fun DetachedWorkspace(
                         }
                         terminal(Modifier.weight(1f).fillMaxWidth())
                     }
-                } else {
+                } else if (!fullscreen) {
                     DividerLine()
                     PanelHeader("交易", Modifier.background(TradingColors.Surface), terminalSummary.ifBlank { null }) {
                         ActionIcon(AppIcons.ExpandLess, "展开交易面板", "detached-terminal-open-$id") {
@@ -63,7 +64,7 @@ internal fun DetachedWorkspace(
                     }
                 }
             }
-            if (side != null) {
+            if (!fullscreen && side != null) {
                 VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Box(Modifier.width(sideWidth).fillMaxHeight().testTag("detached-side-panel-$id")) {
                     when (side) {
@@ -74,6 +75,7 @@ internal fun DetachedWorkspace(
                     }
                 }
             }
+            if (!fullscreen) {
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             NavigationRail(Modifier.width((PANEL_RAIL - 1f).dp).fillMaxHeight().testTag("detached-rail-$id"),
                 windowInsets = WindowInsets(0, 0, 0, 0), header = { Spacer(Modifier.height(8.dp)) }) {
@@ -85,6 +87,7 @@ internal fun DetachedWorkspace(
                         onActivate(); tradeOpen = !tradeOpen
                     }
                 }
+            }
             }
         }
     }

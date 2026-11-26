@@ -30,6 +30,42 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class DesktopDetachedWorkspaceUiTest {
+    @Test fun detachedFullscreenUsesItsOwnAccountAndRestoresPanels() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val broker = RiskFixture(children = listOf(AccountInfo("100", "主窗口账户"), AccountInfo("200", "子窗口账户")))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        val windows = FakePanelWindows(strip = 760.dp)
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+            LocalPanelWindowHost provides windows) {
+            Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-new-workspace").performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").performClick()
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
+        val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val title = hasAnyAncestor(hasTestTag("detached-title-toolbar-chart-c1"))
+        onNode(hasTestTag("drag-workspace-c1") and title).assertExists()
+        onNode(hasTestTag("dock-workspace-c1") and title).assertExists()
+        onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("quick-account-200").performClick()
+        onNode(hasTestTag("chart-fullscreen") and child).performScrollTo().performClick()
+        onNode(hasTestTag("chart-fullscreen") and child).assertTextContains("退出全屏")
+        onNode(hasTestTag("detached-rail-c1") and child).assertDoesNotExist()
+        onNode(hasTestTag("detached-account-strip-c1") and child).assertDoesNotExist()
+        onNode(hasTestTag("drawing-toolbar") and child).assertDoesNotExist()
+        onNodeWithTag("desktop-panel-rail").assertExists()
+        onNode(hasTestTag("legend-buy") and child).performClick()
+        onNode(hasTestTag("fullscreen-order-ticket") and child).assertExists()
+        onNode(hasTestTag("review-order") and child).performScrollTo().performClick()
+        onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
+        onNodeWithTag("cancel-order-review").performClick()
+        assertTrue(broker.events.none { it.startsWith("place:") })
+        onNode(hasTestTag("chart-fullscreen") and child).performScrollTo().performClick()
+        onNode(hasTestTag("fullscreen-order-ticket") and child).assertDoesNotExist()
+        onNode(hasTestTag("detached-rail-c1") and child).assertExists()
+        onNode(hasTestTag("detached-account-strip-c1") and child).assertExists()
+    }
+
     @Test fun detachedWindowHasIndependentRailAndOrdersFollowItsChart() = runDesktopComposeUiTest(width = 1600, height = 1000) {
         val source = OfflineOrderBroker()
         val depthWatches = mutableListOf<String?>()

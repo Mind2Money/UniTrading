@@ -50,7 +50,7 @@ internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: Windo
 }
 
 @Composable
-private fun WindowButton(description: String, tag: String, mark: String, onClick: () -> Unit) {
+internal fun WindowButton(description: String, tag: String, mark: String, onClick: () -> Unit) {
     Box(Modifier.width(44.dp).fillMaxHeight().clickable(onClick = onClick).testTag(tag)
         .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
         Text(mark, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
