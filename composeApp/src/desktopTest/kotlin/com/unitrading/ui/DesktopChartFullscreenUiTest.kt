@@ -89,6 +89,7 @@ class DesktopChartFullscreenUiTest {
         runBlocking { assertTrue(runtime.tradingPreferences.setKeyboardTrading(true)); assertTrue(runtime.tradingPreferences.setSkipConfirmation(true)) }
         render(); enter()
         val chart = compose.onNodeWithTag("trading-chart")
+        val size = chart.fetchSemanticsNode().size
         chart.performMouseInput { moveTo(Offset(size.width * .4f, size.height * .6f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.onNodeWithTag("plot-menu-SELL-MARKET").performClick()
         compose.onNodeWithTag("fullscreen-order-ticket").assertExists()
