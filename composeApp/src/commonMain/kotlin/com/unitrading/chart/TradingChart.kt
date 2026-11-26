@@ -74,24 +74,6 @@ private sealed interface PriceObject {
     data class Drawing(val scene: DrawingScene, override val rank: Long) : PriceObject
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ContinuousRouteLabel(instrument: Instrument, color: Color) {
-    val label = "连续合约${instrument.symbol} ${instrument.executionLabel}"
-    val matching = instrument.tradeSymbolStatus?.takeIf {
-        instrument.tradeSymbol != null && it.startsWith("价格匹配")
-    }
-    val text: @Composable () -> Unit = {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route")
-            .then(if (matching != null) Modifier.semantics { stateDescription = matching } else Modifier),
-            style = MaterialTheme.typography.labelSmall, color = color)
-    }
-    if (matching != null) {
-        TooltipBox(TooltipDefaults.rememberPlainTooltipPositionProvider(),
-            { PlainTooltip { Text(matching) } }, rememberTooltipState(), focusable = false) { text() }
-    } else text()
-}
-
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TradingChart(
@@ -324,6 +306,10 @@ fun TradingChart(
         low = if (logarithmic) safeBase.low.coerceAtLeast(1.0) else safeBase.low,
         logarithmic = logarithmic, inverted = axis.inverted)
     val ratio = remember(axis.lockRatio, axis.mode, instrument.symbol, timeframe) { doubleArrayOf(Double.NaN) }
+    fun resetView() {
+        viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN
+        selectedTrade = null; selectedExecution = null
+    }
     val scale = if (axis.lockRatio && drag == null) {
         if (!ratio[0].isFinite()) ratio[0] = configuredScale.barRatio(viewport.count, plotWidth)
         configuredScale.withBarRatio(ratio[0], viewport.count, plotWidth)
@@ -462,7 +448,6 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) ContinuousRouteLabel(instrument, colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
@@ -568,9 +553,9 @@ fun TradingChart(
                                     // Nothing under the pointer: the plot's own menu, at the price the crosshair shows there.
                                     val price = currentScale.price(point.y, instrument.tickSize)
                                     val orders = plotOrders(price, currentQuote, currentActions.entryKinds)
-                                    if (touch && orders.isEmpty() && currentDrawingLayer == null) return false
                                     val index = currentViewport.slotAt(((point.x - left) / plotWidth).toDouble(), currentTotal)
-                                    plotMenu = PlotMenu(point, price, orders, desktop = !touch, timeMs = slotTime(currentCandles, index, periodMs))
+                                    plotMenu = PlotMenu(point, price, orders, desktop = !touch,
+                                        timeMs = slotTime(currentCandles, index, periodMs), longPress = touch)
                                 }
                                 return true
                             }
@@ -742,7 +727,7 @@ fun TradingChart(
                             // A key held down repeats its press, and an order that goes out at once must go out once: the repeats
                             // are swallowed until the key comes up. An order that asks first opens a dialog, which takes the keys.
                             else if (event.isAltPressed && !event.isShiftPressed && !event.isCtrlPressed && !event.isMetaPressed && event.key == Key.R) {
-                                viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN; selectedTrade = null; selectedExecution = null; true
+                                resetView(); true
                             }
                             else if (event.isShiftPressed && !event.isAltPressed && !event.isCtrlPressed && !event.isMetaPressed && event.key == Key.T && chrome.onOpenOrderAt != null) {
                                 hoverPoint?.takeIf { it.x in left..right && it.y in top..plotBottom }?.let { chrome.onOpenOrderAt.invoke(scale.price(it.y, instrument.tickSize)) }; true
@@ -1063,13 +1048,12 @@ fun TradingChart(
                 }
                 lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
                 plotMenu?.let { menu ->
-                    PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
+                    PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null }, onReset = ::resetView,
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
                         // A market order takes no price: it fills at the quote, as the trading keys' does.
                         onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price.takeUnless { order.kind == OrderKind.MARKET }) },
                         stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection,
                         desktopActions = if (!menu.desktop) null else PlotMenuActions(
-                            reset = { viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN; selectedTrade = null; selectedExecution = null },
                             copyPrice = { clipboard.setText(AnnotatedString(instrument.formatPrice(menu.price))) },
                             pasteDrawing = chrome.drawings?.takeIf { it.canPaste }?.let { drawings -> { drawings.paste() } },
                             openOrder = chrome.onOpenOrderAt?.let { open -> { open(menu.price) } },
@@ -1104,13 +1088,14 @@ fun TradingChart(
                     onZoomOut = { viewport = viewport.zoomAt(2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
-                    onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
+                    onReset = ::resetView,
                     locked = locked.takeIf { chrome.onLocked != null && !compact },
                     onLocked = { chrome.onLocked?.invoke(!locked) },
                     // On phones the small control sits bottom-left, away from the newest bars at the right edge.
-                    modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
+                    modifier = if (compact || chrome.tabletCompactAxis) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
                     compact = compact,
+                    resetOnly = chrome.tabletCompactAxis,
                 )
                 paneLayout.takeUnless { chrome.drawings?.lockIndicators == true }.orEmpty().forEachIndexed { index, pane ->
                     key(pane.id) {

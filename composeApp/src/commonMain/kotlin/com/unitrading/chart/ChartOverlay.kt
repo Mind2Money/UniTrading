@@ -287,20 +287,23 @@ internal fun ChartNavigation(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    resetOnly: Boolean = false,
     locked: Boolean? = null,
     onLocked: () -> Unit = {},
 ) {
-    val button = Modifier.size(36.dp)
+    val button = Modifier.size(if (resetOnly) 48.dp else 36.dp)
     ToolbarPill(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ActionIcon(AppIcons.ZoomIn, "放大图表", "chart-zoom-in", button, iconSize = 20.dp, onClick = onZoomIn)
-            ActionIcon(AppIcons.ZoomOut, "缩小图表", "chart-zoom-out", button, iconSize = 20.dp, onClick = onZoomOut)
-            if (!compact) {
+            if (!resetOnly) {
+                ActionIcon(AppIcons.ZoomIn, "放大图表", "chart-zoom-in", button, iconSize = 20.dp, onClick = onZoomIn)
+                ActionIcon(AppIcons.ZoomOut, "缩小图表", "chart-zoom-out", button, iconSize = 20.dp, onClick = onZoomOut)
+            }
+            if (!compact && !resetOnly) {
                 ActionIcon(AppIcons.ChevronLeft, "较早", "chart-earlier", button, iconSize = 20.dp, onClick = onEarlier)
                 ActionIcon(AppIcons.ChevronRight, "较新", "chart-later", button, iconSize = 20.dp, onClick = onLater)
             }
             ActionIcon(AppIcons.RestartAlt, "重置视图", "chart-reset", button, iconSize = 20.dp, onClick = onReset)
-            if (locked != null) ActionIcon(if (locked) AppIcons.Lock else AppIcons.LockOpen,
+            if (locked != null && !resetOnly) ActionIcon(if (locked) AppIcons.Lock else AppIcons.LockOpen,
                 if (locked) "已锁定：滚轮前后移动图表，点按解锁" else "锁定图表：滚轮改为前后移动", "chart-lock",
                 button.semantics { stateDescription = if (locked) "已锁定" else "未锁定" }, iconSize = 20.dp,
                 tint = if (locked) TradingColors.Accent else Color.Unspecified, onClick = onLocked)

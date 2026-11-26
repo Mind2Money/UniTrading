@@ -14,7 +14,6 @@ import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.PriceScale
 import com.unitrading.chart.OrderTagButtons
-import com.unitrading.chart.drawing.DrawingTool
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
@@ -280,7 +279,8 @@ class ChartContextMenuUiTest {
     @Test fun aLongPressKeepsTheTouchMenu() {
         render(skipConfirmation = true)
         longPress(549_000)
-        item("horizontal-line").assertTextContains("在 5490.00 画水平线")
+        compose.onNodeWithTag("plot-reset").assertTextContains("重置视图")
+        item("horizontal-line").assertDoesNotExist()
         item("BUY-MARKET").assertExists()
         item("SELL-STOP").assertExists()
         item("BUY-LIMIT").assertTextContains("买入限价 1 张 @ 5490.00")
@@ -299,9 +299,11 @@ class ChartContextMenuUiTest {
         chart().performTouchInput { click(at) }
         compose.waitForIdle()
         item("horizontal-line").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").assertDoesNotExist()
         chart().performTouchInput { swipe(at, at + Offset(120f, 0f), durationMillis = 1_000) }
         compose.waitForIdle()
         item("horizontal-line").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").assertDoesNotExist()
     }
 
     @Test fun aLongPressOnADrawingOpensTheDrawingsMenu() {
@@ -314,24 +316,25 @@ class ChartContextMenuUiTest {
         longPress(551_000)
         compose.onNodeWithTag("drawing-menu-settings").assertExists()
         item("horizontal-line").assertDoesNotExist()
+        compose.onNodeWithTag("plot-reset").assertDoesNotExist()
     }
 
-    @Test fun theTouchMenuDrawsAHorizontalLineAtThePriceUnderThePointer() {
+    @Test fun theTouchMenuResetsTheTimeViewAndManualPriceAxis() {
         render()
-        longPress(551_000)
-        item("horizontal-line").assertTextContains("在 5510.00 画水平线").performClick()
+        val size = chart().fetchSemanticsNode().size
+        chart().performMouseInput { moveTo(Offset(size.width * .7f, size.height * .6f)); scroll(-3f) }
+        chart().performMouseInput { moveTo(Offset(size.width - 10f, size.height * .3f)); scroll(4f) }
         compose.waitForIdle()
-        val line = runtime.drawings.drawings.single()
-        assertEquals(DrawingTool.HORIZONTAL_LINE, line.tool)
-        assertEquals(551_000.0, line.points.single().price)
+        assertTrue(chartState().getValue("bars").toDouble() < 80.0)
+        assertEquals("false", chartState().getValue("auto"))
+        chart().performTouchInput { longClick(Offset(size.width * .7f, size.height * .6f)) }
+        compose.onNodeWithTag("plot-reset").assertTextContains("重置视图").performClick()
+        compose.waitForIdle()
+        assertEquals(80.0, chartState().getValue("bars").toDouble())
+        assertEquals("true", chartState().getValue("auto"))
         item("horizontal-line").assertDoesNotExist()
-        compose.onNodeWithTag("drawing-bar").assertExists("the new line is selected, so its quick bar opens")
+        assertTrue(runtime.drawings.drawings.isEmpty())
         assertTrue(broker.placed.isEmpty())
-
-        // On the line the right click belongs to the drawing, as before.
-        rightClick(551_000)
-        compose.onNodeWithTag("drawing-menu-settings").assertExists()
-        item("horizontal-line").assertDoesNotExist()
     }
 
     @Test fun desktopContextMenuHasDistinctIconsWithoutRestoringRemovedItems() {

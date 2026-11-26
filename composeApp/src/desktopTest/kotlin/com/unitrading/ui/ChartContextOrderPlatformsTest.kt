@@ -6,6 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -14,6 +15,7 @@ import com.unitrading.app.TradingRuntime
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import kotlin.test.assertTrue
+import kotlin.test.assertEquals
 
 /** Android and iOS share the menu path; neither a phone nor a tablet may place from that menu. */
 @OptIn(ExperimentalTestApi::class)
@@ -31,6 +33,32 @@ class ChartContextOrderPlatformsTest {
             }
             val chart = onNodeWithTag("trading-chart")
             val size = chart.fetchSemanticsNode().size
+            fun state() = chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+                .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+            fun zoomIn() = chart.performTouchInput {
+                down(0, Offset(size.width * .32f, size.height * .40f)); down(1, Offset(size.width * .58f, size.height * .60f))
+                repeat(10) { i ->
+                    updatePointerTo(0, Offset(size.width * (.32f - .012f * (i + 1)), size.height * (.40f - .008f * (i + 1))))
+                    updatePointerTo(1, Offset(size.width * (.58f + .012f * (i + 1)), size.height * (.60f + .008f * (i + 1))))
+                    move()
+                }
+                up(0); up(1)
+            }
+            if (platform != ChartPlatform.DESKTOP) {
+                onNodeWithTag("chart-reset").assertIsDisplayed()
+                zoomIn()
+                waitForIdle()
+                assertTrue(state().getValue("bars").toDouble() < 80.0)
+                chart.performTouchInput { longClick(Offset(size.width * .70f, size.height * .70f)) }
+                onNodeWithTag("plot-menu-horizontal-line").assertDoesNotExist()
+                onNodeWithTag("plot-reset").assertTextContains("重置视图").performClick()
+                waitForIdle()
+                assertEquals(80.0, state().getValue("bars").toDouble())
+                zoomIn()
+                onNodeWithTag("chart-reset").performClick()
+                waitForIdle()
+                assertEquals(80.0, state().getValue("bars").toDouble())
+            }
             chart.performTouchInput { longClick(Offset(size.width * .70f, size.height * .70f)) }
             onNodeWithTag("plot-menu-SELL-MARKET").performClick()
             waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("order-side-SELL").fetchSemanticsNodes().isNotEmpty() }

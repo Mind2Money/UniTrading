@@ -36,10 +36,10 @@ internal data class PlotOrder(val side: Side, val kind: OrderKind)
  * on the tick grid, and the [orders] offered when it opened. They stay as they were while the menu is open, so a moving
  * quote does not change the item under the pointer.
  */
-internal data class PlotMenu(val at: Offset, val price: Long, val orders: List<PlotOrder>, val desktop: Boolean = false, val timeMs: Long? = null)
+internal data class PlotMenu(val at: Offset, val price: Long, val orders: List<PlotOrder>, val desktop: Boolean = false,
+    val timeMs: Long? = null, val longPress: Boolean = false)
 
 internal class PlotMenuActions(
-    val reset: () -> Unit,
     val copyPrice: () -> Unit,
     val pasteDrawing: (() -> Unit)?,
     val openOrder: (() -> Unit)?,
@@ -96,30 +96,31 @@ private fun PlotMenuIcon(icon: ImageVector, name: String, tint: Color = Material
 }
 
 /**
- * The plot's own context menu: a horizontal line at the clicked price when the chart has drawings ([onLine]), and the
- * entry orders of [menu]. [lotsHundredths] is the quantity an order would carry, shown in its label.
+ * A long press offers a view reset; the price-axis menu can still add a horizontal line. [lotsHundredths] is the
+ * quantity an order would carry, shown in its label.
  */
 @Composable
-internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit,
+internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit,
+    onReset: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit,
     stopRequiredForSizing: Boolean = false, attached: String? = null, desktopActions: PlotMenuActions? = null) {
     val colors = TradingColors
     Box(Modifier.offset { IntOffset(menu.at.x.roundToInt(), menu.at.y.roundToInt()) }) {
         DropdownMenu(true, onDismiss, Modifier.widthIn(min = 200.dp)) {
-            if (menu.desktop && desktopActions != null) {
-                DropdownMenuItem(text = { Text("重置图表视图") },
+            if (menu.longPress || (menu.desktop && desktopActions != null)) {
+                DropdownMenuItem(text = { Text(if (menu.longPress) "重置视图" else "重置图表视图") },
                     leadingIcon = { PlotMenuIcon(AppIcons.RestartAlt, "reset") },
-                    trailingIcon = { Text("Alt + R", style = MaterialTheme.typography.labelSmall, color = colors.Muted) },
-                    onClick = { onDismiss(); desktopActions.reset() }, modifier = Modifier.testTag("plot-reset"))
-                DividerLine()
+                    trailingIcon = if (menu.desktop) ({ Text("Alt + R", style = MaterialTheme.typography.labelSmall, color = colors.Muted) }) else null,
+                    onClick = { onDismiss(); onReset() }, modifier = Modifier.testTag("plot-reset"))
+                if (menu.desktop) DividerLine()
             }
-            if (!menu.desktop && onLine != null) DropdownMenuItem(
+            if (!menu.desktop && !menu.longPress && onLine != null) DropdownMenuItem(
                 text = { Text("在 ${instrument.formatPrice(menu.price)} 画水平线") },
                 onClick = { onDismiss(); onLine() },
                 modifier = Modifier.testTag("plot-menu-horizontal-line"),
             )
-            // The line, the market orders and the orders priced at the click, each group set apart from the one before.
+            // The reset or line, the market orders and priced orders form separate groups.
             val groups = listOf(menu.orders.filter { it.kind == OrderKind.MARKET }, menu.orders.filter { it.kind != OrderKind.MARKET })
-            var above = !menu.desktop && onLine != null
+            var above = !menu.desktop && (menu.longPress || onLine != null)
             groups.filter { it.isNotEmpty() }.forEach { group ->
                 if (above) DividerLine(Modifier.padding(vertical = 4.dp))
                 above = true

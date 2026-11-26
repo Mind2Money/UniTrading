@@ -1290,7 +1290,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 scope.launch { runtime.chartPreferences.saveHistoryVisibility() }
                             },
                             sharedToolbar = shared, layerState = if (shared) layersFor(chartId) else null,
-                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle,
+                            desktopAxisStyle = desktopStyle, tabletCompactAxis = tablet, showNavigation = !desktopStyle || tablet,
                             showWatermark = desktopStyle && chartPreferences.showChartWatermark,
                             chartTimeZone = chartPreferences.chartTimeZone, sessionNotice = sessionResult.second,
                             chartTimeZoneLabel = chartPreferences.chartTimeZone.labelAt(if (market.connected) market.quotes.values.maxOfOrNull { it.timeMs } else null),

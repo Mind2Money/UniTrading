@@ -2,7 +2,13 @@
 
 ## 简体中文
 
+- Android、iOS 和平板长按图表空白处时，可从菜单重置图表视图；平板保留单独的重置视图按钮。
+- 移除各平台图表顶部重复的蓝色连续合约说明，行情和下单面板中的合约信息保留。
+
 ## English
+
+- Reset the chart view from the long-press menu on Android, iOS, and tablets; tablets also keep a dedicated reset button.
+- Remove the redundant blue continuous-contract banner above charts on all platforms; contract details remain in the watchlist and order panel.
 
 # v1.8.1
 
