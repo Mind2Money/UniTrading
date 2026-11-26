@@ -47,8 +47,8 @@ class MobileLayoutTest {
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
 
-    private fun render(width: Dp = 400.dp, height: Dp = 800.dp, fontScale: Float = 1f) {
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
+    private fun render(width: Dp = 400.dp, height: Dp = 800.dp, fontScale: Float = 1f, platform: ChartPlatform = ChartPlatform.DESKTOP) {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale), LocalChartPlatform provides platform) {
             Box(Modifier.requiredSize(width, height).testTag("test-host")) { TradingScreen(runtime) }
         } }
         compose.waitForIdle()
@@ -141,7 +141,7 @@ class MobileLayoutTest {
 
     @Test fun legendFoldWithItsIndicatorListIsRememberedAcrossTabsAndRestarts() = phoneTest {
         runBlocking { assertTrue(runtime.indicators.apply(IndicatorSettings(listOf(IndicatorConfig("m", IndicatorKind.MA))))) }
-        render()
+        render(platform = ChartPlatform.ANDROID)
         compose.onNodeWithTag("indicator-readout").assertExists()
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("chart-readout").assertDoesNotExist()
