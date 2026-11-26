@@ -60,6 +60,10 @@ class DesktopChartFullscreenUiTest {
         render(); enter()
         compose.onNodeWithTag("legend-buy").performClick()
         compose.onNodeWithTag("fullscreen-order-ticket").assertExists()
+        val workspace = compose.onNodeWithTag("fullscreen-chart-workspace").fetchSemanticsNode().boundsInRoot
+        val ticket = compose.onNodeWithTag("fullscreen-order-ticket").fetchSemanticsNode().boundsInRoot
+        assertTrue(kotlin.math.abs(workspace.center.x - ticket.center.x) <= 1f &&
+            kotlin.math.abs(workspace.center.y - ticket.center.y) <= 1f, "The ticket should open in the center")
         compose.onNodeWithTag("order-kind-MARKET").assertExists()
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         val stop = 549_800L
@@ -69,7 +73,7 @@ class DesktopChartFullscreenUiTest {
         val scale = chart.chartAxis(.6f)
         val y = scale.y(stop)
         chart.performTouchInput {
-            down(Offset(size.width * .38f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up()
+            down(Offset(size.width * .20f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up()
         }
         val edited = compose.onNodeWithTag("order-sl").fetchSemanticsNode().config[SemanticsProperties.EditableText].text
         assertNotEquals("5498.00", edited, "Dragging a stop on the chart should update the open ticket")
@@ -90,11 +94,11 @@ class DesktopChartFullscreenUiTest {
         render(); enter()
         val chart = compose.onNodeWithTag("trading-chart")
         val size = chart.fetchSemanticsNode().size
-        chart.performMouseInput { moveTo(Offset(size.width * .4f, size.height * .6f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        chart.performMouseInput { moveTo(Offset(size.width * .2f, size.height * .6f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.onNodeWithTag("plot-menu-SELL-MARKET").performClick()
         compose.onNodeWithTag("fullscreen-order-ticket").assertExists()
         assertTrue(broker.placed.isEmpty(), "The right-click menu opens an editor rather than sending an order")
-        chart.performMouseInput { click(Offset(size.width * .4f, size.height * .6f)) }
+        chart.performMouseInput { click(Offset(size.width * .2f, size.height * .6f)) }
         chart.performKeyInput { keyDown(Key.W); keyUp(Key.W) }
         compose.waitUntil(5_000) { broker.placed.size == 1 }
     }

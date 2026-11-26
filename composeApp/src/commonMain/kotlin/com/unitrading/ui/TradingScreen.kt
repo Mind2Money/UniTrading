@@ -923,6 +923,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val tablet = !nativeDesktop && minOf(sizeWithBars.width, sizeWithBars.height) >= 600.dp
                 val desktop = tablet || (maxWidth >= 900.dp && layoutHeight >= 600.dp)
                 val desktopStyle = nativeDesktop || tablet
+                LaunchedEffect(desktop, desktopStyle) {
+                    if (!desktop || !desktopStyle) { chartFullscreen = false; fullscreenTicket = false }
+                }
                 val wide = desktop && maxWidth >= 1240.dp
                 val compact = !desktop
                 val accountPickerWidth = if (maxWidth >= 1200.dp) 320.dp else 240.dp
@@ -1005,7 +1008,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun openChartOrderEditor(chartId: String) {
                     val workspace = workspaceOf(chartId)
-                    if (nativeDesktop && workspaceFullscreen(workspace)) {
+                    if (desktopStyle && workspaceFullscreen(workspace)) {
                         if (workspace in detachedWorkspaces) detachedFullscreenTicket[workspace] = true else fullscreenTicket = true
                     } else if (desktop && workspace in detachedWorkspaces)
                         detachedOrderRequests[workspace] = (detachedOrderRequests[workspace] ?: 0) + 1
@@ -1160,6 +1163,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     isBackEnabled = compact && showOrderFlow, onBackCompleted = { showOrderFlow = false })
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && showDom, onBackCompleted = { showDom = false })
+                NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
+                    isBackEnabled = tablet && chartFullscreen && !keyboardOpen,
+                    onBackCompleted = { chartFullscreen = false; fullscreenTicket = false })
                 // The popup put away with its draft on the chart: back drops the draft, as back on a minimized sheet or dock does.
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = chartFirst && useOrderPopup && orderPanelState == MobileOrderPanelState.MINIMIZED && !keyboardOpen,
@@ -1406,7 +1412,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 leadingIcon = { Icon(AppIcons.PlayArrow, null, Modifier.size(18.dp)) },
                                 colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .94f)),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant))
-                            if (nativeDesktop) AssistChip(
+                            if (desktopStyle) AssistChip(
                                 onClick = {
                                     work {
                                         if (workspace in detachedWorkspaces) {
@@ -2095,7 +2101,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         val mainTarget = workspaceSelected[mainWorkspace] ?: mainWorkspace
                         val mainSlot = chartSlot(mainTarget)
                         val mainInstrument = catalog.instruments.firstOrNull { it.symbol == mainSlot?.symbol }
-                        if (nativeDesktop && chartFullscreen) {
+                        if (desktopStyle && chartFullscreen) {
                             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().testTag("fullscreen-chart-workspace")) {
                                 chart(Modifier.fillMaxSize())
                                 if (fullscreenTicket) FullscreenOrderOverlay(mainSlot?.symbol ?: symbol, { fullscreenTicket = false }) { m ->

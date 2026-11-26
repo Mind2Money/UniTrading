@@ -63,7 +63,7 @@ class DesktopDetachedWorkspaceUiTest {
         val chart = onNode(hasTestTag("trading-chart") and child)
         val size = chart.fetchSemanticsNode().size
         val y = chart.chartAxis(1f).y(549_800L)
-        chart.performTouchInput { down(Offset(size.width * .38f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
+        chart.performTouchInput { down(Offset(size.width * .20f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
         val stop = onNode(hasTestTag("order-sl") and child).fetchSemanticsNode().config[SemanticsProperties.EditableText].text
         assertTrue(stop != "5498.00", "Dragging on the child chart should update its floating order")
         onNode(hasTestTag("review-order") and child).performClick()

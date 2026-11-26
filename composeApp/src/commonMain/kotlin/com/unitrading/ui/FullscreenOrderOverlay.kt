@@ -29,9 +29,9 @@ internal fun FullscreenOrderOverlay(symbol: String, onClose: () -> Unit, content
         val maxX = with(density) { (maxWidth - w).toPx().coerceAtLeast(0f) }
         val maxY = with(density) { (maxHeight - h).toPx().coerceAtLeast(0f) }
         var left by remember { mutableFloatStateOf(Float.NaN) }
-        var top by remember { mutableFloatStateOf(8f) }
-        val x = if (left.isNaN()) maxX else left.coerceIn(0f, maxX)
-        val y = top.coerceIn(0f, maxY)
+        var top by remember { mutableFloatStateOf(Float.NaN) }
+        val x = if (left.isNaN()) maxX / 2f else left.coerceIn(0f, maxX)
+        val y = if (top.isNaN()) maxY / 2f else top.coerceIn(0f, maxY)
         Surface(Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.width(w).height(h)
             .testTag("fullscreen-order-ticket"), shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface, shadowElevation = 12.dp,
@@ -40,7 +40,7 @@ internal fun FullscreenOrderOverlay(symbol: String, onClose: () -> Unit, content
                 Row(Modifier.fillMaxWidth().height(44.dp).pointerInput(maxX, maxY) {
                     detectDragGestures { change, amount ->
                         left = ((if (left.isNaN()) x else left) + amount.x).coerceIn(0f, maxX)
-                        top = (top + amount.y).coerceIn(0f, maxY)
+                        top = ((if (top.isNaN()) y else top) + amount.y).coerceIn(0f, maxY)
                         change.consume()
                     }
                 }.testTag("fullscreen-ticket-drag").padding(start = 10.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
