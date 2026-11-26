@@ -4,6 +4,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.int
 
@@ -22,6 +30,41 @@ class HyperpropPersonalProbeTest {
     @Test fun rejectsInvalidSessionAndFailedAccountResponses() {
         assertFails { parseHyperpropCheck("""{"session_type":"partner","scope":"trade","account_ids":[]}""", """{"success":true,"data":[]}""") }
         assertFails { parseHyperpropCheck(session, """{"success":false,"data":[]}""") }
+    }
+    @Test fun connectsUsingTheOfficialWrappedSessionResponse() = runTest {
+        val requests = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            val path = request.url.encodedPath
+            requests.add(path)
+            when (path) {
+                "/trade/api-keys/session" -> respond(
+                    """{"success":true,"data":{"access_token":"fake-token","session_type":"personal_api_key","scope":"trade","account_ids":["a"]}}""",
+                    HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                "/trade/accounts" -> {
+                    assertEquals("Bearer fake-token", request.headers[HttpHeaders.Authorization])
+                    respond("""{"success":true,"data":[{"id":"a","account_number":"PRACTICE-1"}]}""",
+                        HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+                else -> error("Unexpected endpoint")
+            }
+        }
+        val connection = HyperpropPersonalSession.connect("hpp_test_example") { HttpClient(engine) }
+        try {
+            assertEquals("PRACTICE-1", connection.check.accounts.single().number)
+            assertEquals(listOf("/trade/api-keys/session", "/trade/accounts"), requests)
+        } finally { connection.close() }
+    }
+    @Test fun rejectsFailedOrMalformedWrappedSession() {
+        assertFails { parseHyperpropSession("""{"success":false,"data":{"access_token":"fake"}}""") }
+        assertFails { parseHyperpropSession("""{"success":true,"data":null}""") }
+    }
+    @Test fun authenticationFailureDisplaysStatusWithoutEchoingCredentials() = runTest {
+        val engine = MockEngine { respond("""{"error":"sensitive"}""", HttpStatusCode.Unauthorized) }
+        val error = assertFailsWith<HyperpropConnectionException> {
+            HyperpropPersonalSession.connect("hpp_test_example") { HttpClient(engine) }
+        }
+        assertEquals(true, error.message?.contains("401"))
+        assertEquals(false, error.message?.contains("sensitive"))
     }
     @Test fun buildsDatedOrderWithoutRoundingPriceOrAcceptingContinuousSymbols() {
         val order = hyperpropOrderBody("a", "MESZ6", "buy", "limit", 2, "5485.25")

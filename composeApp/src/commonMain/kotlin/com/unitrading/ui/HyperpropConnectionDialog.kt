@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.HyperpropPersonalSession
+import com.unitrading.app.HyperpropConnectionException
 import com.unitrading.app.HyperpropPendingOrder
 import com.unitrading.app.hyperpropOrderBody
 import kotlinx.coroutines.CancellationException
@@ -38,6 +39,7 @@ internal fun HyperpropConnectionDialog(onDismiss: () -> Unit) {
         scope.launch {
             try { block() }
             catch (cancel: CancellationException) { throw cancel }
+            catch (error: HyperpropConnectionException) { message = error.message }
             catch (_: Exception) { message = "请求未能确认结果。请先在 Hyperprop 核对账户及订单，切勿重复提交。" }
             finally { busy = false }
         }

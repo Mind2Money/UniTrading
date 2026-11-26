@@ -15,11 +15,18 @@ internal data class HyperpropAccountCheck(val id: String, val number: String, va
 internal data class HyperpropCheck(val scope: String, val accounts: List<HyperpropAccountCheck>)
 internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?)
 internal data class HyperpropCommand(val id: String, val status: String)
+internal class HyperpropConnectionException(message: String) : Exception(message)
 private fun JsonObject.stringValue(name: String): String? = (this[name] as? JsonPrimitive)?.contentOrNull
 private fun JsonObject.dataObject(): JsonObject = (this["data"] as? JsonObject) ?: this
 
+internal fun parseHyperpropSession(text: String): JsonObject {
+    val root = Json.parseToJsonElement(text).jsonObject
+    if ("success" in root) require((root["success"] as? JsonPrimitive)?.booleanOrNull == true) { "会话请求未成功" }
+    return if ("data" in root) root["data"] as? JsonObject ?: error("会话数据缺失") else root
+}
+
 internal fun parseHyperpropCheck(sessionText: String, accountsText: String): HyperpropCheck {
-    val session = Json.parseToJsonElement(sessionText).jsonObject
+    val session = parseHyperpropSession(sessionText)
     require(session.stringValue("session_type") == "personal_api_key") { "会话类型不匹配" }
     val scope = session.stringValue("scope")?.takeIf { it == "read" || it == "trade" } ?: error("会话权限不可识别")
     val allowed = session["account_ids"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet() ?: error("未返回授权账户")
@@ -108,24 +115,35 @@ internal class HyperpropPersonalSession private constructor(private val client: 
     }
     fun close() = client.close()
     companion object {
-        suspend fun connect(input: String): HyperpropPersonalSession {
+        suspend fun connect(input: String, clientFactory: () -> HttpClient = {
+            createBrokerHttpClient { followRedirects = false; install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 15_000 } }
+        }): HyperpropPersonalSession {
             val key = input.trim()
-            require(key.startsWith("hpp_") && key.length in 8..512 && key.none { it.isWhitespace() || it.code < 32 || it.code == 127 }) { "请输入 Hyperprop 个人密钥（hpp_ 开头）" }
-            val client = createBrokerHttpClient { followRedirects = false; install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 15_000 } }
+            if (!(key.startsWith("hpp_") && key.length in 8..512 && key.none { it.isWhitespace() || it.code < 32 || it.code == 127 }))
+                throw HyperpropConnectionException("请输入完整的 Hyperprop 个人密钥（以 hpp_ 开头）。")
+            val client = clientFactory()
+            var stage = "身份验证"
             try {
                 val response = client.post("https://api.hyperprop.com/trade/api-keys/session") {
                     contentType(ContentType.Application.Json); setBody(buildJsonObject { put("api_key", key) }.toString())
                 }
-                require(response.status.value in 200..299) { "登录失败 HTTP ${response.status.value}" }
+                if (response.status.value !in 200..299) throw HyperpropConnectionException(when (response.status.value) {
+                    401 -> "身份验证失败（HTTP 401）：请检查密钥是否完整、有效。"
+                    403 -> "身份验证被拒绝（HTTP 403）：请检查账户及密钥权限。"
+                    429 -> "请求过于频繁（HTTP 429）：请稍后重试。"
+                    else -> "身份验证失败（HTTP ${response.status.value}）：请检查网络或稍后重试。"
+                })
                 val sessionText = response.bodyAsText(); require(sessionText.length <= 1_000_000)
-                val data = Json.parseToJsonElement(sessionText).jsonObject
+                val data = parseHyperpropSession(sessionText)
                 val token = data.stringValue("access_token")?.takeIf { it.isNotBlank() && it.none { c -> c.isWhitespace() || c.code < 32 || c.code == 127 } } ?: error("缺少会话令牌")
+                stage = "读取账户"
                 val accounts = client.get("https://api.hyperprop.com/trade/accounts") { bearerAuth(token) }
-                require(accounts.status.value in 200..299) { "账户读取失败 HTTP ${accounts.status.value}" }
+                if (accounts.status.value !in 200..299) throw HyperpropConnectionException("读取账户失败（HTTP ${accounts.status.value}）：请检查账户权限或稍后重试。")
                 val accountsText = accounts.bodyAsText(); require(accountsText.length <= 4_000_000)
                 return HyperpropPersonalSession(client, token, parseHyperpropCheck(sessionText, accountsText))
             } catch (cancel: CancellationException) { client.close(); throw cancel }
-            catch (e: Exception) { client.close(); throw e }
+            catch (e: HyperpropConnectionException) { client.close(); throw e }
+            catch (_: Exception) { client.close(); throw HyperpropConnectionException("$stage 未完成：请检查网络或稍后重试；未发送订单。") }
         }
     }
 }
