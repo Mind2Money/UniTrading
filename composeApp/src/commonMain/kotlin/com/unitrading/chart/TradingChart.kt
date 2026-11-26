@@ -175,13 +175,15 @@ fun TradingChart(
     val axis = chrome.priceAxis
     var axisMenu by remember { mutableStateOf(false) }
     var axisPage by remember { mutableStateOf(0) }
+    // The phone axis is measured from its displayed labels after the price scale is known.
+    var phonePriceColumn by remember(instrument.symbol) { mutableStateOf(with(density) { 48.dp.toPx() }) }
     // Tablets reclaim chart width, while long symbols and prices still receive enough space.
     val priceColumn = if (chrome.tabletCompactAxis) {
         val samples = listOfNotNull(instrument.symbol, quote?.bid?.let(instrument::formatPrice),
             quote?.ask?.let(instrument::formatPrice), candles.maxOfOrNull { it.high }?.let(instrument::formatPrice),
             candles.minOfOrNull { it.low }?.let(instrument::formatPrice), "00:00:00")
         maxOf(with(density) { 68.dp.toPx() }, samples.maxOf { textMeasurer.measure(it, TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")).size.width.toFloat() } + with(density) { 12.dp.toPx() })
-    } else with(density) { 84.dp.toPx() }
+    } else if (chrome.phoneContextMenu) phonePriceColumn else with(density) { 84.dp.toPx() }
     val innerMargin = with(density) { 12.dp.toPx() }
     val left = if (axis.left) priceColumn else innerMargin
     val right = (size.width - if (axis.left) innerMargin else priceColumn).coerceAtLeast(left + 1)
@@ -245,6 +247,7 @@ fun TradingChart(
         }
     }
     val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
+    val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val chartQuote = if (chrome.regularSession && (nowMs == null || !isRegularChartTime(nowMs))) {
         candles.lastOrNull()?.close?.let { close -> quote?.copy(bid = close, ask = close) }
     } else quote
@@ -314,6 +317,20 @@ fun TradingChart(
         if (!ratio[0].isFinite()) ratio[0] = configuredScale.barRatio(viewport.count, plotWidth)
         configuredScale.withBarRatio(ratio[0], viewport.count, plotWidth)
     } else configuredScale
+    if (chrome.phoneContextMenu) {
+        val samples = buildList {
+            add(instrument.symbol)
+            add(axisPrice(scale.price(top, instrument.tickSize)))
+            add(axisPrice(scale.price(plotBottom, instrument.tickSize)))
+            chartQuote?.let { add(axisPrice(it.bid)); add(axisPrice(it.ask)) }
+            if (axis.showCountdown) countdown?.let(::add)
+        }
+        val textStyle = TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")
+        val measured = samples.maxOf { textMeasurer.measure(it, textStyle).size.width.toFloat() }
+        val desired = maxOf(with(density) { 44.dp.toPx() }, measured + with(density) { 14.dp.toPx() })
+        // Keep the plot and its hit regions stable while an order line is being dragged.
+        SideEffect { if (drag == null && phonePriceColumn != desired) phonePriceColumn = desired }
+    }
     var previousAxis by remember { mutableStateOf(Triple(axis.mode, axis.inverted, axis.left)) }
     LaunchedEffect(axis.mode, axis.inverted, axis.left) {
         val next = Triple(axis.mode, axis.inverted, axis.left)
@@ -431,7 +448,6 @@ fun TradingChart(
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
     var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
-    val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val layers = listOf(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
         ChartToggle("挂单", showOrders) { showOrders = !showOrders },
@@ -489,7 +505,7 @@ fun TradingChart(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it; chartMeasured = true }.testTag("trading-chart")
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             // Initial pass wins over drawing/order-line gestures. Once two fingers take
                             // ownership, consume through the LAST finger up: never commit a leftover drag.
                             awaitPointerEventScope {
@@ -537,12 +553,12 @@ fun TradingChart(
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
                                 } ?: "")
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0}"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0};priceColumn:$priceColumn"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
                         .pointerHoverIcon(chartCursor)
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio) {
                             /** The menu of the order line at [point], or else the plot's own; whether one opened. */
                             fun openChartMenu(point: Offset, touch: Boolean): Boolean {
                                 if ((if (axis.left) point.x < left else point.x > right) && point.y in top..currentPlotBottom) { axisPage = 0; axisMenu = true; return true }
@@ -602,7 +618,7 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent()
@@ -634,7 +650,7 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory, panes.size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, showHistory, panes.size, axis.left, axis.mode, axis.lockRatio) {
                             detectTapGestures(onTap = { point ->
                                 val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
                                 if (button != null) {
@@ -658,7 +674,7 @@ fun TradingChart(
                                 }
                             }, onLongPress = { point -> crosshair = visibleIndex(point.x); crosshairY = point.y })
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             var mode = ChartDragMode.NONE
                             var labelDragOffset = 0f
                             detectDragGestures(
@@ -1121,12 +1137,12 @@ fun TradingChart(
                 }
                 drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
-                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false })
+                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false }, phone = chrome.phoneContextMenu)
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,
                     chrome.allIndicators ?: indicators, axis, { template ->
                         chrome.onApplyTemplate.invoke(template)
                         if (template.axis.fitAllBars) { manualScale = null; ratio[0] = Double.NaN }
-                    }, { showTemplates = false })
+                    }, { showTemplates = false }, phone = chrome.phoneContextMenu)
                 if (showChartSettings) ChartSettingsDialog(axis, showHistory, chrome.onPriceAxis,
                     { visible -> setHistory(visible) },
                     { chrome.onPriceAxis(axis.copy(fitAllBars = true)); manualScale = null; ratio[0] = Double.NaN }, onIndicators,

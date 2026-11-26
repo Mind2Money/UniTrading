@@ -15,14 +15,14 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<IndicatorConfig>, layers: ChartObjectLayers,
-    onIndicators: ((List<IndicatorConfig>) -> Unit)?, onDismiss: () -> Unit) {
+    onIndicators: ((List<IndicatorConfig>) -> Unit)?, onDismiss: () -> Unit, phone: Boolean = false) {
     val scope = rememberCoroutineScope()
     val ranks = layers.forSymbol(drawings.symbol)
     @Composable fun LayerMenu(key: String) {
         var expanded by remember(key) { mutableStateOf(false) }
         Box {
-            TextButton(onClick = { expanded = true }, contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.testTag("object-layer-menu-$key")) { Text("层级") }
+            TextButton(onClick = { expanded = true }, contentPadding = PaddingValues(horizontal = if (phone) 4.dp else 8.dp),
+                modifier = (if (phone) Modifier.widthIn(min = 0.dp) else Modifier).testTag("object-layer-menu-$key")) { Text("层级", style = if (phone) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge) }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 listOf(true to "置于顶层", false to "置于底层").forEach { (front, label) ->
                     DropdownMenuItem(text = { Text(label) }, modifier = Modifier.testTag("object-layer-${if (front) "front" else "back"}-$key"), onClick = {
@@ -34,7 +34,8 @@ internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<Indica
         }
     }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("对象树") }, text = {
-        Column(Modifier.widthIn(min = 300.dp).heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column((if (phone) Modifier.fillMaxWidth().widthIn(max = 280.dp).heightIn(max = 280.dp) else Modifier.widthIn(min = 300.dp).heightIn(max = 420.dp))
+            .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (phone) 0.dp else 4.dp)) {
             layers.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Text("绘图 · ${drawings.drawings.size}", style = MaterialTheme.typography.titleSmall)
             if (drawings.drawings.isEmpty()) Text("当前品种没有绘图", style = MaterialTheme.typography.bodySmall)
@@ -43,9 +44,9 @@ internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<Indica
                     TextButton(onClick = { drawings.select(drawing.id); onDismiss() }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(drawing.tool.label, maxLines = 1) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         LayerMenu(drawingLayerKey(drawing.id))
-                        TextButton(onClick = { if (drawing.hidden) drawings.update(drawing.copy(hidden = false)) else drawings.hide(drawing.id) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-visibility-${drawing.id}")) { Text(if (drawing.hidden) "显示" else "隐藏") }
-                        TextButton(onClick = { drawings.update(drawing.copy(locked = !drawing.locked)) }, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(if (drawing.locked) "解锁" else "锁定") }
-                        TextButton(onClick = { drawings.remove(drawing.id) }, enabled = !drawing.locked, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("object-drawing-delete-${drawing.id}")) { Text("删除") }
+                        TextButton(onClick = { if (drawing.hidden) drawings.update(drawing.copy(hidden = false)) else drawings.hide(drawing.id) }, contentPadding = PaddingValues(horizontal = if (phone) 4.dp else 8.dp), modifier = (if (phone) Modifier.widthIn(min = 0.dp) else Modifier).testTag("object-drawing-visibility-${drawing.id}")) { Text(if (drawing.hidden) "显示" else "隐藏", style = if (phone) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge) }
+                        TextButton(onClick = { drawings.update(drawing.copy(locked = !drawing.locked)) }, contentPadding = PaddingValues(horizontal = if (phone) 4.dp else 8.dp), modifier = if (phone) Modifier.widthIn(min = 0.dp) else Modifier) { Text(if (drawing.locked) "解锁" else "锁定", style = if (phone) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge) }
+                        TextButton(onClick = { drawings.remove(drawing.id) }, enabled = !drawing.locked, contentPadding = PaddingValues(horizontal = if (phone) 4.dp else 8.dp), modifier = (if (phone) Modifier.widthIn(min = 0.dp) else Modifier).testTag("object-drawing-delete-${drawing.id}")) { Text("删除", style = if (phone) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge) }
                     }
                 }
             }
@@ -69,14 +70,15 @@ internal fun ChartObjectsDialog(drawings: ChartDrawings, indicators: List<Indica
 
 @Composable
 internal fun ChartTemplatesDialog(controller: ChartTemplateController, indicators: List<IndicatorConfig>, axis: PriceAxisSettings,
-    onApply: (ChartTemplate) -> Unit, onDismiss: () -> Unit) {
+    onApply: (ChartTemplate) -> Unit, onDismiss: () -> Unit, phone: Boolean = false) {
     val templates by controller.templates.collectAsState()
     val error by controller.error.collectAsState()
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("图表模板") }, text = {
-        Column(Modifier.widthIn(min = 300.dp).heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column((if (phone) Modifier.fillMaxWidth().widthIn(max = 280.dp).heightIn(max = 280.dp) else Modifier.widthIn(min = 300.dp).heightIn(max = 420.dp))
+            .verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (phone) 4.dp else 8.dp)) {
             Text("保存指标和价格轴设置，不包含订单、账户或绘图。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(value = name, onValueChange = { name = it.take(48) }, label = { Text("模板名称") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("chart-template-name"))
             TextButton(onClick = { scope.launch { busy = true; try { if (controller.save(ChartTemplate(name, indicators, axis))) name = "" } finally { busy = false } } },

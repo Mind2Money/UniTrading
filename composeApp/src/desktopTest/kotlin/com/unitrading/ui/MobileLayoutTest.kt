@@ -26,6 +26,7 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.PriceScale
+import com.unitrading.chart.OrderTagButtons
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
@@ -58,6 +59,37 @@ class MobileLayoutTest {
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
+
+    @Test fun phoneContextOrderAllowsChartQuantityEditAndRequiresConfirmation() = phoneTest {
+        val broker = OfflineOrderBroker()
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
+        compose.waitForIdle()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val state = chart.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+            .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+        val y = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(),
+            state.getValue("plotTop").toFloat(), state.getValue("plotBottom").toFloat()).y(549_000)
+        chart.performTouchInput { longClick(Offset(width * .7f, y)) }
+        compose.onNodeWithTag("plot-menu-BUY-LIMIT").performClick()
+        assertTrue(broker.placed.isEmpty(), "Choosing a draft must not send an order")
+        fun tapTag(hint: String) {
+            val center = assertNotNull(chart.fetchSemanticsNode().config[OrderTagButtons][hint]).center
+            chart.performTouchInput { click(center) }
+            compose.waitForIdle()
+        }
+        tapTag("编辑下单数量")
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        compose.onNodeWithContentDescription("关闭数量编辑").performClick()
+        tapTag("提交买入订单")
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty(), "The chart button must still request confirmation")
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(5_000) { broker.placed.isNotEmpty() }
+        assertEquals(200L, broker.placed.single().lotsHundredths)
+    }
 
     @Test fun historyToggleSurvivesLeavingAndReturningToChart() = phoneTest {
         render()

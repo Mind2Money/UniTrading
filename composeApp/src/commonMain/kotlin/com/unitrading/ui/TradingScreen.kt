@@ -1163,7 +1163,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     draft = OrderDraft(side, kind, draft.quantity, entry)
                     showDraft = true
                     activeWindow = workspaceOf(chartId).takeIf { it in detachedWorkspaces }?.let(::chartWindowKey)
-                    openChartOrderEditor(chartId)
+                    if (phoneScreen && !sizeByRisk) orderPanelState = MobileOrderPanelState.MINIMIZED else openChartOrderEditor(chartId)
                 }
                 NavigationBackHandler(rememberNavigationEventState(NavigationEventInfo.None),
                     isBackEnabled = compact && mobileTab == 3 && showActivity, onBackCompleted = { showActivity = false })
@@ -1267,8 +1267,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         onLineAction = { action -> onActive { runLineAction(action) } },
                         draftQuantity = draft.quantity,
                         onDraftQuantity = { value -> onActive { changeDraft(draft.copy(quantity = value)) } },
-                        inlineDraftQuantity = desktopStyle && !sizeByRisk,
-                        directDraftSubmit = desktopStyle,
+                        inlineDraftQuantity = (desktopStyle || phoneScreen) && !sizeByRisk,
+                        directDraftSubmit = desktopStyle || phoneScreen,
                         addProtection = plugin.capabilities.addProtection,
                         addPositionProtection = plugin.capabilities.addPositionProtection,
                         removeProtection = plugin.capabilities.removeProtection,
@@ -1541,13 +1541,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             OrderTicket(instrument, quote, plugin.capabilities, draft, ::changeDraft, preview, busy, {
                                 if (popupVisible) reviewMobileOrder()
                                 else request?.let { reviewTrade(Confirmation.Place(it)); showOrder = false }
-                            }, Modifier.widthIn(max = 420.dp).fillMaxHeight(.94f).imePadding().testTag("order-popup"), environment = environment, capacity = capacity,
+                            }, Modifier.widthIn(max = if (popupVisible && phoneScreen) 340.dp else 420.dp)
+                                .fillMaxHeight(if (popupVisible && phoneScreen) .78f else .94f).imePadding().testTag("order-popup"), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation, onClose = dismissOrder,
                                 brackets = brackets, bracketOrder = request,
                                 onChartAdjust = if (popupVisible) dismissOrder else null,
                                 orderNotice = if (popupVisible) orderNotice else ({}),
                                 onDiscard = if (popupVisible) ({ closeOrder() }) else null,
-                                accountName = accountName)
+                                accountName = accountName, compactFloating = popupVisible && phoneScreen)
                         }
                     }
                 }
@@ -2070,7 +2071,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
-                                accountName = accountName, floating = floating)
+                                accountName = accountName, floating = floating, compactFloating = floating && tablet)
                         }
                         @Composable fun workspaceTerminal(target: String, m: Modifier) {
                             val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))
@@ -2117,7 +2118,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         if (desktopStyle && chartFullscreen) {
                             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().testTag("fullscreen-chart-workspace")) {
                                 chart(Modifier.fillMaxSize())
-                                if (fullscreenTicket) FullscreenOrderOverlay(mainSlot?.symbol ?: symbol, { fullscreenTicket = false }) { m ->
+                                if (fullscreenTicket) FullscreenOrderOverlay(mainSlot?.symbol ?: symbol, { fullscreenTicket = false }, compact = tablet) { m ->
                                     workspaceOrder(mainTarget, m, { fullscreenTicket = false }, floating = true)
                                 }
                             }
@@ -2258,7 +2259,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                                 onDomOpenChange = { open -> if (open) detachedDomOpen[id] = true else detachedDomOpen.remove(id) },
                                                 onActivate = ::activateDetached, fullscreen = childFull)
                                             if (childFull && detachedFullscreenTicket[id] == true)
-                                                FullscreenOrderOverlay(slot?.symbol.orEmpty(), { detachedFullscreenTicket.remove(id) }) { m ->
+                                                FullscreenOrderOverlay(slot?.symbol.orEmpty(), { detachedFullscreenTicket.remove(id) }, compact = tablet) { m ->
                                                     workspaceOrder(target, m, { detachedFullscreenTicket.remove(id) }, floating = true)
                                                 }
                                         }

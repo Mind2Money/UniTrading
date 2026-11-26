@@ -103,7 +103,9 @@ internal fun OrderTicket(
     showPriceExplanation: Boolean = true,
     showEstimates: Boolean = true,
     floating: Boolean = false,
+    compactFloating: Boolean = false,
 ) {
+    var advanced by remember(instrument.symbol) { mutableStateOf(false) }
     Column(modifier) {
         if (!floating) PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
             EnvironmentBadge(environment)
@@ -116,7 +118,8 @@ internal fun OrderTicket(
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Text("取消订单") }
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
-            skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
+            skipConfirmation, showKinds = true, detailsOpen = !compactFloating, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
+            dockAdvanced = advanced, onDockAdvanced = if (compactFloating) ({ advanced = it }) else null,
             showPriceExplanation = showPriceExplanation, showEstimates = showEstimates, quoteFirst = floating)
     }
 }
