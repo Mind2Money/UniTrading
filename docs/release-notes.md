@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- 修复回放图表周期收藏和自定义周期不能实时更新的问题，并让回放下单面板按可用高度显示，避免内容挤在一起。
 - Windows、macOS、iPad 和安卓平板支持图表全屏，隐藏侧栏和账户栏；图表下单入口打开居中的可拖动悬浮下单窗，桌面端可按 Esc 退出。
 - 优化历史回放控制栏，隐藏连续历史拼接提示；本交易日盈亏按平仓日归属，同时单列供风控使用的当日净值变化。
 - 限价单、突破单提交后及成交后可调整止损止盈，市价单成交后也可调整，价格允许超出初始金额；保护腿加量和账户交易锁定仍受原有检查。
@@ -11,6 +12,7 @@
 
 ## English
 
+- Keep replay interval favorites and custom intervals in sync with the main chart, and size the replay order panel to its available height.
 - Add chart-only mode on desktop and tablets, with a centered, movable non-modal order ticket; Escape exits on desktop.
 - Refine playback controls, hide the continuous-history caveat, and show close-day trade P&L alongside the daily equity change used by risk limits.
 - Adjust protection beyond the initial cash amounts after submitting limit or stop entries and after fills; increased leg quantities and account trading locks retain their checks.

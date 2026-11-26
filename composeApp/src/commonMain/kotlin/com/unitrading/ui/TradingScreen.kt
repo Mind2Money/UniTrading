@@ -1439,7 +1439,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
                                 replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation, ready.riskConfig)
                         })
-                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords,
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals,
                         history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
                         watch = { sym, frame ->
                             val series = sym to frame

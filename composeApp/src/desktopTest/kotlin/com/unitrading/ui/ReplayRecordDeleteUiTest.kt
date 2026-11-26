@@ -54,7 +54,7 @@ class ReplayRecordDeleteUiTest {
     @Test fun deletingTheCurrentSessionIsNotUndoneByLaterTradesOrNormalExit() {
         val records = ReplayRecords(MemorySnapshotStore())
         open(records)
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         closePosition()
         compose.waitUntil(5_000) { records.list().size == 1 }
         val id = records.list().single().id
@@ -71,7 +71,7 @@ class ReplayRecordDeleteUiTest {
         compose.runOnIdle { assertEquals(emptyList(), records.list()) }
         compose.onNodeWithTag("replay-report-close").performClick()
         compose.onNodeWithTag("replay-tab-0").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         closePosition()
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(emptyList(), records.list()) }

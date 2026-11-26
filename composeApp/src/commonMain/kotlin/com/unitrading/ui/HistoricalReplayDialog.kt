@@ -69,6 +69,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
     watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
     historyError: String? = null,
+    intervals: IntervalOptions = input.intervals,
     onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
@@ -109,7 +110,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
                     } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError,
-                    records = records, temporaryRecords = temporaryRecords, onDismiss = onDismiss)
+                    records = records, temporaryRecords = temporaryRecords, intervals = intervals, onDismiss = onDismiss)
             }
         }
     }
@@ -120,7 +121,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
     revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?,
-    temporaryRecords: MutableList<ReplayRecord>, onDismiss: () -> Unit) {
+    temporaryRecords: MutableList<ReplayRecord>, intervals: IntervalOptions, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -560,7 +561,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             requestFinerHistory(frame)
                         } else message = null
                     }
-                }, input.intervals, emptyList(), ChartToggle("指标 ${indicatorSettings.indicators.size}", true) { showIndicators = true },
+                }, intervals, emptyList(), ChartToggle("指标 ${indicatorSettings.indicators.size}", true) { showIndicators = true },
                     Modifier.fillMaxWidth(), additionalControls = {
                         AssistChip(onClick = { showHistory = !showHistory }, modifier = Modifier.testTag("replay-history-toggle"),
                             label = { Text("历史订单") }, leadingIcon = { Icon(AppIcons.History, null, Modifier.size(18.dp)) },
@@ -723,7 +724,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             if (panelOpen) Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight().testTag("replay-side-panel"),
                 shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                Column(Modifier.fillMaxSize().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -739,16 +740,21 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         OrderTicket(ticketSpec, replayQuote, BrokerCapabilities(hedging = false), draft,
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
-                            modifier = Modifier.fillMaxWidth().height(500.dp).testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
+                            modifier = Modifier.weight(1f).fillMaxWidth().testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
                             accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false,
                             onClose = { panelOpen = false }, closeLabel = "收起下单面板", closeTag = "replay-order-collapse")
-                        if (state.pending.isNotEmpty()) ReplaySection("模拟挂单") {
-                            state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = { chartOrders.firstOrNull { it.id == "replay-order-${order.id}" }?.let { requestLine(LineAction.CancelOrder(it)) } }) { Text("撤单") }
-                            } }
+                        if (state.pending.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = 150.dp)
+                            .verticalScroll(rememberScrollState()).testTag("replay-pending-list")) {
+                            ReplaySection("模拟挂单") {
+                                state.pending.forEach { order -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${if (order.side == Side.BUY) "买" else "卖"} ${if (order.kind == OrderKind.LIMIT) "限价" else "止损"} ${spec.formatPrice(order.price)}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                    TextButton(onClick = { chartOrders.firstOrNull { it.id == "replay-order-${order.id}" }?.let { requestLine(LineAction.CancelOrder(it)) } }) { Text("撤单") }
+                                } }
+                            }
                         }
                     } else {
+                        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("回放分析", style = MaterialTheme.typography.titleLarge)
                         Text("查看本次回放或选择已保存的记录。", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Button(onClick = { playing = false; report = currentRecord() }, modifier = Modifier.fillMaxWidth().testTag("replay-current-report")) { Text("查看本次回放分析") }
@@ -766,8 +772,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                     }
                                 }
                         }, enabled = records != null || temporaryRecords.isNotEmpty(), modifier = Modifier.fillMaxWidth().testTag("replay-records-picker")) { Text("选择回放记录") }
-
-
+                        }
                     }
                 }
             }
