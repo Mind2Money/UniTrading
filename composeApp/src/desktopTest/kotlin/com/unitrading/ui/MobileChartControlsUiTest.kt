@@ -22,6 +22,17 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class MobileChartControlsUiTest {
+    @Test fun foldedAccountsCanBeRestoredInACompactSplitWorkspace() = runDesktopComposeUiTest(width = 800, height = 550) {
+        val broker = OfflineOrderBroker()
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(800.dp, 550.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("collapse-chart-accounts").performClick()
+        onNodeWithTag("expand-chart-accounts").assertIsDisplayed().performClick()
+        onNodeWithTag("quick-account-picker").assertIsDisplayed()
+    }
+
     @Test fun collapsedAccountControlStaysReachableWhenThePhoneRotates() = runDesktopComposeUiTest(width = 900, height = 900) {
         val broker = OfflineOrderBroker()
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }

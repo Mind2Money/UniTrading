@@ -976,6 +976,11 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val orderOnChart = orderActive && !useOrderPopup
                 val popupVisible = chartFirst && useOrderPopup && orderOpen && confirmation !is Confirmation.Place
                 val panelOpen = popupVisible || chartFirst && orderOnChart && orderOpen
+                @Composable fun phoneAccountRestore() {
+                    if (phoneScreen && chartFirst && phoneChartAccountsCollapsed && !orderOnChart)
+                        ActionIcon(AppIcons.ExpandMore, "展开账户栏", "expand-chart-accounts",
+                            modifier = Modifier.size(40.dp), iconSize = 20.dp) { phoneChartAccountsCollapsed = false }
+                }
                 // The receipt inside the dock's and the popup's form; the sheet shows it above its form, as it always did.
                 val orderNotice: @Composable () -> Unit = {
                     shownNotice()?.let { current ->
@@ -1359,9 +1364,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                         closeOrder(); showOrderFlow = true
                                     }
                                     if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
-                                    if (phoneScreen && chartFirst && phoneChartAccountsCollapsed && !orderOnChart)
-                                        ActionIcon(AppIcons.ExpandMore, "展开账户栏", "expand-chart-accounts",
-                                            modifier = Modifier.size(40.dp), iconSize = 20.dp) { phoneChartAccountsCollapsed = false }
+                                    phoneAccountRestore()
                                 }
                             }))
 
@@ -1410,7 +1413,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         ) + listOfNotNull(if (!desktop && domSupported) ChartToggle("DOM 盘口", showDom) { showDom = !showDom } else null),
                         ChartToggle(if (indicatorSettings.indicators.isEmpty()) "指标" else "指标 ${indicatorSettings.indicators.size}",
                             indicatorSettings.indicators.any { it.visible }) { work { indicatorChartId = target; showIndicators = true } },
-                        modifier, compact = compact && !singleLine,
+                        modifier, compact = compact && !singleLine, trailing = { phoneAccountRestore() },
                         additionalControls = {
                             ChartLayoutMenu(layoutOf(workspace)) { selectSplitLayout(workspace, it) }
                             if (desktopStyle) ChartSessionControls(chartPreferences.sessionForChart(target),
