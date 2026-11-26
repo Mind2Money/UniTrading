@@ -60,7 +60,7 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                 Button(onClick = { action { val connected = HyperpropPersonalSession.connect(key); session = connected; accountId = connected.check.accounts.firstOrNull()?.id ?: ""; key = "" } }, enabled = !busy && key.isNotBlank()) { Text("连接") }
             } else {
                 Text(if (active.check.scope == "trade") "读写密钥 · 测试交易" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
-                Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情，账户、持仓和挂单同步仅供只读验证。", style = MaterialTheme.typography.bodySmall)
+                Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情。只有服务器明确标识的模拟账户允许测试下单。", style = MaterialTheme.typography.bodySmall)
                 Box {
                     val source = feeds.firstOrNull { it.descriptor.id == selectedFeed } ?: feeds.firstOrNull()
                     OutlinedButton({ feedMenu = true }, enabled = !busy && feeds.isNotEmpty()) { Text(source?.descriptor?.name ?: "请先登录行情来源") }
@@ -75,7 +75,7 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                     transferred = active
                     onAttached(broker.descriptor.id)
                     onDismiss()
-                }, enabled = !busy && feeds.isNotEmpty()) { Text("连接主图（只读测试）") }
+                }, enabled = !busy && feeds.isNotEmpty()) { Text("连接主图（模拟测试）") }
                 Box {
                     OutlinedButton({ menuOpen = true }, enabled = !busy) { Text(active.check.accounts.firstOrNull { it.id == accountId }?.let { listOfNotNull(it.number, it.firm).joinToString(" · ") } ?: "选择账户") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

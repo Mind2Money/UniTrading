@@ -19,6 +19,18 @@ private fun exactPrice(row: JsonObject, field: String, spec: Instrument): Long =
         ?: throw IllegalArgumentException("$field 价格不可用或与最小变动不匹配")
 private fun time(value: String?): Long = value?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() } ?: 0L
 
+internal fun hyperpropAccountFigures(data: JsonObject, accountId: String, nowMs: Long): AccountSnapshot {
+    val rows = data.rows().filter { it.text("id") == accountId }
+    val row = rows.singleOrNull() ?: throw IllegalArgumentException("账户不存在或不唯一")
+    fun money(field: String) = row.text(field)?.let { parseFixed(it, 6) }
+    val balance = money("current_balance")
+    val equity = money("equity")
+    val daily = money("daily_pnl")
+    return AccountSnapshot(accountId, balance ?: 0, equityMicros = equity ?: 0, balanceKnown = balance != null,
+        equityKnown = equity != null, marginKnown = false,
+        dailyPnl = daily?.let { DailyPnl(it, updatedAtMs = nowMs) })
+}
+
 /** Parse only confirmed server positions; unknown data fails the entire snapshot instead of appearing flat. */
 internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List<Instrument>): List<Position> = data.rows().mapNotNull { row ->
     val returnedAccount = row.text("account_id") ?: throw IllegalArgumentException("持仓缺少账户标识")
@@ -31,7 +43,7 @@ internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List
     Position(id = row.text("position_id") ?: "$accountId:$contract", symbol = contract, side = if (qty > 0) Side.BUY else Side.SELL,
         lotsHundredths = kotlin.math.abs(qty) * 100, entryPrice = exactPrice(row, "avg_entry_price", spec),
         openedAtMs = time(row.text("opened_at")), marginMicros = 0, protectionEditable = false, feesKnown = false,
-        version = row.text("state_version")?.toLongOrNull()?.takeIf { it > 0 } ?: 1,
+        version = row.text("state_version")?.toLongOrNull()?.takeIf { it > 0 } ?: 0,
         protectionNote = "保护单关系尚未确认")
 }
 
@@ -53,7 +65,7 @@ internal fun hyperpropWorkingOrders(data: JsonObject, accountId: String, specs: 
     PendingOrder(id = id, request = OrderRequest(contract, side, kind, qty * 100, entryPrice = price),
         createdAtMs = time(row.text("created_at") ?: row.text("processed_at")), role = role,
         positionId = if (role == OrderRole.UNRESOLVED) null else row.text("position_id"),
-        editable = false, protectionEditable = false, filledLotsHundredths = filled * 100,
+        version = time(row.text("updated_at")), editable = false, protectionEditable = false, filledLotsHundredths = filled * 100,
         note = "订单与保护关系待确认，请在 Hyperprop 核对")
 }
 
@@ -66,7 +78,10 @@ internal fun hyperpropBindProtections(positions: List<Position>, orders: List<Pe
     }
     val stop = unique(OrderRole.STOP_LOSS)
     val target = unique(OrderRole.TAKE_PROFIT)
+    val complete = matching.size == listOfNotNull(stop, target).size && position.version > 0 &&
+        listOfNotNull(stop, target).isNotEmpty() && listOfNotNull(stop, target).all { it.version > 0 }
+    val revision = if (complete) listOfNotNull(stop, target).joinToString("|") { "${it.id}:${it.version}:${it.request.entryPrice}" } else null
     position.copy(stopLoss = stop?.request?.entryPrice, takeProfit = target?.request?.entryPrice,
-        stopLossOrderId = stop?.id, takeProfitOrderId = target?.id, protectionEditable = false,
-        protectionNote = if (matching.isEmpty()) "未确认保护单" else "保护单只读，修改功能正在验证")
+        stopLossOrderId = stop?.id, takeProfitOrderId = target?.id, protectionEditable = complete, protectionRevision = revision,
+        protectionNote = if (matching.isEmpty()) "未确认保护单" else if (complete) "按 Hyperprop 关联记录同步" else "保护单关联不完整，暂不可修改")
 }

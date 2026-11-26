@@ -258,11 +258,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         } else null
         val accountKey = "$brokerId/$accountId/${plugin.hashCode()}"
         val savedChart = remember(plugin) { runtime.chartPreferences.preferences.value }
+        val chartSourceId = plugin.chartSourceId
+        val chartSymbolsInMemory = remember { mutableMapOf<String, String>() }
         // The last chart symbol can load after the first catalog snapshot; keep it pending until it loads or the user picks one.
-        var restoring by remember(plugin) { mutableStateOf(savedChart.lastSymbols[plugin.descriptor.id]) }
+        var restoring by remember(plugin) { mutableStateOf(chartSymbolsInMemory[chartSourceId] ?: savedChart.lastSymbols[chartSourceId]) }
         var chosenSymbol by remember(plugin) { mutableStateOf(restoring?.takeIf { saved -> catalog.instruments.any { it.symbol == saved } } ?: catalog.instruments.first().symbol) }
         val instrument = catalog.instruments.firstOrNull { it.symbol == chosenSymbol } ?: catalog.instruments.first()
         val symbol = instrument.symbol
+        SideEffect { chartSymbolsInMemory[chartSourceId] = restoring ?: symbol }
         val executionSymbol = instrument.executionSymbol
         var previousExecutionSymbol by remember(accountKey, symbol) { mutableStateOf(executionSymbol) }
         val quote = market.quotes[executionSymbol]
@@ -277,7 +280,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var indicatorChartId by remember(plugin) { mutableStateOf(MAIN_CHART) }
         var parkedCharts by remember(plugin) {
             mutableStateOf((savedChart.extraCharts + savedChart.workspaceCells).associate {
-                it.id to ChartSlot(it.id, it.symbols[plugin.descriptor.id] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds))
+                it.id to ChartSlot(it.id, it.symbols[chartSourceId] ?: chosenSymbol, Timeframe.ofSeconds(it.timeframeSeconds))
             })
         }
         /** Each tab is a workspace with its own root chart and up to three subcharts. */
@@ -321,7 +324,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         var showResetLayout by remember { mutableStateOf(false) }
         // The chart's symbol menu lists the market page's watch list, in its order.
         val watchLists by runtime.marketWatch.lists.collectAsState()
-        val watchSymbols = watchLists[plugin.descriptor.id].orEmpty().toSet()
+        val watchSymbols = watchLists[chartSourceId].orEmpty().toSet()
         // Keep loading and verifying the saved list while mobile navigation shows another page. A chart window's symbol is
         // loaded, verified and quoted the same way, so its chart is complete before it is the one being worked on.
         val visibleWorkspaces = detachedWorkspaces + selectedWorkspace
@@ -341,7 +344,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
         LaunchedEffect(plugin, watchSymbols, chartSymbols) { plugin.watchQuotes(watchSymbols + chartSymbols) }
         DisposableEffect(plugin) { onDispose { plugin.watchQuotes(emptySet()) } }
-        val watchInstruments = watchLists[plugin.descriptor.id].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
+        val watchInstruments = watchLists[chartSourceId].orEmpty().mapNotNull { saved -> catalog.instruments.firstOrNull { it.symbol == saved } }
         val orderSessions = remember(accountKey) { mutableMapOf<String, MobileOrderSession>() }
         val orderSession = remember(accountKey, activeChart, symbol, executionSymbol) { orderSessions.getOrPut("$activeChart/$symbol/$executionSymbol") { MobileOrderSession(instrument) } }
         var draft by orderSession.draft
@@ -417,7 +420,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             }
         }
         val tradingPreferences by runtime.tradingPreferences.preferences.collectAsState()
-        val skipConfirmation = tradingPreferences.skipConfirmation
+        val skipConfirmation = tradingPreferences.skipConfirmation && plugin.descriptor.environment != BrokerEnvironment.HYPERPROP
         val chartPreferences by runtime.chartPreferences.preferences.collectAsState()
         val historyVisible by runtime.chartPreferences.historyVisible.collectAsState()
         val priceAxis by runtime.chartPreferences.priceAxis.collectAsState()
@@ -426,8 +429,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             onToggleFavorite = { frame -> scope.launch { runtime.chartPreferences.toggleFavorite(frame) } },
             onAddCustom = { frame -> scope.launch { runtime.chartPreferences.addCustom(frame) } })
         // The watch list's history is read ahead and cached, so a chart that opens only fetches the bars since.
-        val preload = remember(watchLists[plugin.descriptor.id], symbol, timeframe, chartPreferences.favorites) {
-            historyPreloadSeries(watchLists[plugin.descriptor.id].orEmpty(), symbol, timeframe, chartPreferences.favorites)
+        val preload = remember(watchLists[chartSourceId], symbol, timeframe, chartPreferences.favorites) {
+            historyPreloadSeries(watchLists[chartSourceId].orEmpty(), symbol, timeframe, chartPreferences.favorites)
         }
         LaunchedEffect(plugin, preload) { plugin.preloadHistory(preload) }
         DisposableEffect(plugin) { onDispose { plugin.preloadHistory(emptyList()) } }
@@ -524,7 +527,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 selectedPositionId = null; focusedTrade = null; focusedExecution = null; protection = null; pendingEdit = null; pendingProtection = null; standaloneEdit = null; confirmation = null
             }
         }
-        LaunchedEffect(plugin, catalog.instruments.isEmpty()) { runtime.marketWatch.initialize(plugin.descriptor.id, catalog.instruments, symbol) }
+        LaunchedEffect(plugin, catalog.instruments.isEmpty()) { runtime.marketWatch.initialize(chartSourceId, catalog.instruments, symbol) }
         // A saved remote symbol may need a server search; give up once the search cannot find it.
         LaunchedEffect(plugin, restoring, market.connected) {
             val saved = restoring ?: return@LaunchedEffect
@@ -540,10 +543,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val mainChart = chartSlot(MAIN_CHART) ?: ChartSlot(MAIN_CHART, symbol, timeframe)
         SideEffect { mainTimeframe[0] = mainChart.timeframe }
         // A symbol still being restored is the saved one itself, so saving it changes nothing until it loads or is given up.
-        LaunchedEffect(plugin, mainChart) { runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) }
+        LaunchedEffect(plugin, mainChart) { runtime.chartPreferences.setLastChart(chartSourceId, mainChart.symbol, mainChart.timeframe) }
         val extraCharts = chartOrder.mapNotNull(::chartSlot)
         LaunchedEffect(plugin, extraCharts) {
-            runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) })
+            runtime.chartPreferences.setExtraCharts(chartSourceId, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) })
         }
 
         val workspaceCellIds = (listOf(MAIN_CHART) + chartOrder).flatMap { ws -> (1..3).map { cellId(ws, it) } }
@@ -553,7 +556,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         val savedSelections = workspaceSelected.toMap()
         val savedDetachedAccounts = detachedAccounts.toMap()
         LaunchedEffect(plugin, workspaceCells, savedLayouts, savedRatios, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) {
-            runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
+            runtime.chartPreferences.setWorkspaces(chartSourceId, savedLayouts, savedRatios,
                 workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder)
         }
         LaunchedEffect(plugin, savedDetachedAccounts, detachedWorkspaces, supportsDetachedAccounts) {
@@ -561,9 +564,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
         }
 
         val saveDesktopWorkspace by rememberUpdatedState<suspend () -> Boolean>({
-            runtime.chartPreferences.setLastChart(plugin.descriptor.id, mainChart.symbol, mainChart.timeframe) &&
-                runtime.chartPreferences.setExtraCharts(plugin.descriptor.id, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
-                runtime.chartPreferences.setWorkspaces(plugin.descriptor.id, savedLayouts, savedRatios,
+            runtime.chartPreferences.setLastChart(chartSourceId, mainChart.symbol, mainChart.timeframe) &&
+                runtime.chartPreferences.setExtraCharts(chartSourceId, extraCharts.map { Triple(it.id, it.symbol, it.timeframe) }) &&
+                runtime.chartPreferences.setWorkspaces(chartSourceId, savedLayouts, savedRatios,
                     workspaceCells.map { Triple(it.id, it.symbol, it.timeframe) }, savedSelections, detachedWorkspaces, selectedWorkspace, workspaceOrder) &&
                 (!supportsDetachedAccounts || runtime.workspaceAccounts.save(plugin.descriptor.id, savedDetachedAccounts.filterKeys { it in detachedWorkspaces })) &&
                 runtime.desktopLayout.save() && runtime.flushChartDrawings()
@@ -1622,7 +1625,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 }
                                 is Confirmation.Close -> Text("平掉 ${action.position.symbol} 的 #${shortId(action.position.id)} 全部 ${catalog.instruments.first { it.symbol == action.position.symbol }.formatQuantity(action.position.lotsHundredths)} ${catalog.instruments.first { it.symbol == action.position.symbol }.quantityUnit}，按当前可成交报价执行。")
                                 is Confirmation.Cancel -> Text("撤销${action.order.role.label()} #${shortId(action.order.id)}。" +
-                                    if (action.order.isProtection) "撤单后将移除这项保护，服务器也可能调整关联订单。" else "若已被触发，交易商将拒绝撤单。")
+                                    if (action.order.isProtection) "撤单后将移除这项保护，服务器也可能调整关联订单。"
+                                    else if (action.order.role == OrderRole.UNRESOLVED) "订单用途未确认，可能是止盈或止损；撤销前请核对 Hyperprop。"
+                                    else "若已被触发，交易商将拒绝撤单。")
                                 Confirmation.Reset -> Text("将覆盖两个交易商的全部本地模拟余额、仓位、挂单和历史，并重新生成演示交易。此操作不能撤销。")
                             }
                         } },

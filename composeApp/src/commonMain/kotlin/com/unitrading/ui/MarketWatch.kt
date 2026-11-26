@@ -27,6 +27,7 @@ import androidx.navigationevent.compose.rememberNavigationEventState
 import com.unitrading.broker.*
 import com.unitrading.app.MarketWatchPreferences
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.chartSourceId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -52,7 +53,7 @@ internal fun MarketWatch(
     val catalog by plugin.catalog.collectAsState()
     val lists by preferences.lists.collectAsState()
     val saveError by preferences.error.collectAsState()
-    val broker = plugin.descriptor.id
+    val broker = plugin.chartSourceId
     var adding by remember(plugin) { mutableStateOf(false) }
     var editing by remember(plugin) { mutableStateOf(false) }
     var query by remember(plugin) { mutableStateOf("") }

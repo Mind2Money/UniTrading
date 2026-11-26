@@ -21,6 +21,14 @@ class HyperpropSnapshotTest {
         assertFails { hyperpropPositions(obj("""{"success":true,"data":[{"account_id":"a","contract":"NQZ6","quantity":1,"avg_entry_price":2}]}"""), "a", listOf(spec)) }
         assertFails { hyperpropWorkingOrders(obj("""{"success":true,"data":[{"id":"1","account_id":"a","contract":"MESZ6","quantity":1,"side":"buy","order_type":"limit","limit_price":5485.26,"status":"working"}]}"""), "a", listOf(spec)) }
     }
+    @Test fun withheldEquityAndMissingBalanceStayUnknown() {
+        val snapshot = hyperpropAccountFigures(obj("""{"success":true,"data":[{"id":"a","current_balance":50000,"equity":null,"daily_pnl":-1.25}]}"""), "a", 123)
+        assertEquals(50_000_000_000L, snapshot.balanceMicros)
+        assertTrue(snapshot.balanceKnown); assertFalse(snapshot.equityKnown)
+        assertEquals(-1_250_000L, snapshot.dailyPnl?.totalMicros)
+        assertNull(snapshot.dailyPnl?.tradingDay)
+        assertFails { hyperpropAccountFigures(obj("""{"success":true,"data":[]}"""), "a", 123) }
+    }
     @Test fun bindsOnlyExplicitlyLinkedFullPositionProtections() {
         val positions = hyperpropPositions(obj("""{"success":true,"data":[{"position_id":"p1","account_id":"a","contract":"MESZ6","quantity":1,"avg_entry_price":5485.25}]}"""), "a", listOf(spec))
         val rows = obj("""{"success":true,"data":[{"id":"sl1","position_id":"p1","bracket_type":"stop_loss","account_id":"a","contract":"MESZ6","quantity":1,"filled_quantity":0,"side":"sell","order_type":"stop","stop_price":5480,"status":"working"},{"id":"tp-other","bracket_type":"take_profit","account_id":"a","contract":"MESZ6","quantity":1,"side":"sell","order_type":"limit","limit_price":5490,"status":"working"}]}""")
@@ -30,5 +38,11 @@ class HyperpropSnapshotTest {
         assertNull(position.takeProfit)
         assertEquals("sl1", position.stopLossOrderId)
         assertFalse(position.protectionEditable)
+    }
+    @Test fun explicitPositionAndVersionAreRequiredForEditableProtection() {
+        val positions = hyperpropPositions(obj("""{"success":true,"data":[{"position_id":"p1","state_version":7,"account_id":"a","contract":"MESZ6","quantity":1,"avg_entry_price":5485.25}]}"""), "a", listOf(spec))
+        val orders = hyperpropWorkingOrders(obj("""{"success":true,"data":[{"id":"sl1","position_id":"p1","bracket_type":"stop_loss","updated_at":"2026-11-26T10:00:00Z","account_id":"a","contract":"MESZ6","quantity":1,"side":"sell","order_type":"stop","stop_price":5480,"status":"working"}]}"""), "a", listOf(spec))
+        assertTrue(hyperpropBindProtections(positions, orders).single().protectionEditable)
+        assertFalse(hyperpropBindProtections(positions, orders + orders).single().protectionEditable)
     }
 }

@@ -8,10 +8,16 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import kotlin.random.Random
+import kotlin.time.Clock
 
-internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?)
+internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?, val accountType: String? = null) {
+    /** Two independent server-provided indicators are required before main-window test trading is enabled. */
+    val isPractice: Boolean get() = number.startsWith("PRACTICE-", ignoreCase = true) && accountType?.lowercase() in setOf("practice", "demo", "sandbox")
+}
 internal data class HyperpropCheck(val scope: String, val accounts: List<HyperpropAccountCheck>)
 internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?, val filledQuantity: String? = null)
 internal data class HyperpropCommand(val id: String, val status: String, val succeeded: Boolean? = null)
@@ -37,7 +43,7 @@ internal fun parseHyperpropCheck(sessionText: String, accountsText: String): Hyp
         val id = item.stringValue("id") ?: error("账户 ID 缺失")
         require(id in allowed) { "服务器返回未授权账户" }
         HyperpropAccountCheck(id, item.stringValue("account_number") ?: id,
-            (item["organization"] as? JsonObject)?.stringValue("name"), item.stringValue("current_balance"))
+            (item["organization"] as? JsonObject)?.stringValue("name"), item.stringValue("current_balance"), item.stringValue("account_type"))
     } ?: error("账户列表缺失")
     require(accounts.map { it.id }.distinct().size == accounts.size) { "账户列表包含重复项" }
     return HyperpropCheck(scope, accounts)
@@ -72,9 +78,28 @@ internal fun hyperpropOrderBody(accountId: String, contract: String, side: Strin
 }
 
 /** Ephemeral personal session: no credential persistence and no automatic command retries. */
-internal class HyperpropPersonalSession private constructor(private val client: HttpClient, private val token: String, val check: HyperpropCheck) {
+internal class HyperpropPersonalSession private constructor(private val client: HttpClient, private val key: String,
+    private var token: String, private var refreshAtMs: Long, val check: HyperpropCheck) {
+    private val tokenLock = Mutex()
+    private suspend fun bearer(): String = tokenLock.withLock {
+        if (Clock.System.now().toEpochMilliseconds() < refreshAtMs) return@withLock token
+        val response = client.post("https://api.hyperprop.com/trade/api-keys/session") {
+            contentType(ContentType.Application.Json); setBody(buildJsonObject { put("api_key", key) }.toString())
+        }
+        require(response.status.value in 200..299) { "Hyperprop 会话续期失败" }
+        val text = response.bodyAsText(); require(text.length <= 1_000_000)
+        val session = parseHyperpropSession(text)
+        require(session.stringValue("session_type") == "personal_api_key" && session.stringValue("scope") == check.scope) { "会话权限已变化" }
+        val allowed = session["account_ids"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet() ?: error("会话账户不可用")
+        require(check.accounts.all { it.id in allowed }) { "账户授权已变化" }
+        val refreshed = session.stringValue("access_token")?.takeIf { it.isNotBlank() && it.none { c -> c.isWhitespace() || c.code < 32 || c.code == 127 } } ?: error("会话令牌不可用")
+        token = refreshed
+        refreshAtMs = sessionRefreshAt(session)
+        token
+    }
     internal suspend fun read(path: String): JsonObject {
-        val response = client.get("https://api.hyperprop.com$path") { bearerAuth(token) }
+        val freshToken = bearer()
+        val response = client.get("https://api.hyperprop.com$path") { bearerAuth(freshToken) }
         require(response.status.value in 200..299) { "读取失败 HTTP ${response.status.value}" }
         val text = response.bodyAsText(); require(text.length <= 4_000_000) { "响应过大" }
         return Json.parseToJsonElement(text).jsonObject
@@ -89,8 +114,9 @@ internal class HyperpropPersonalSession private constructor(private val client: 
         // Every click has a unique key; the HTTP client makes one attempt only. A timeout remains unknown.
         val requestId = idempotencyKey?.takeIf { it.isNotBlank() && it.length <= 255 && it.none { c -> c.code < 32 || c.code == 127 } }
             ?: Random.Default.nextBytes(16).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        val freshToken = bearer()
         val response = client.post("https://api.hyperprop.com$path") {
-            bearerAuth(token); contentType(ContentType.Application.Json); header("x-idempotency-key", requestId); setBody(body.toString())
+            bearerAuth(freshToken); contentType(ContentType.Application.Json); header("x-idempotency-key", requestId); setBody(body.toString())
         }
         require(response.status.value in 200..299) { "请求被拒绝 HTTP ${response.status.value}" }
         val text = response.bodyAsText(); require(text.length <= 1_000_000) { "响应过大" }
@@ -142,10 +168,16 @@ internal class HyperpropPersonalSession private constructor(private val client: 
                 val accounts = client.get("https://api.hyperprop.com/trade/accounts") { bearerAuth(token) }
                 if (accounts.status.value !in 200..299) throw HyperpropConnectionException("读取账户失败（HTTP ${accounts.status.value}）：请检查账户权限或稍后重试。")
                 val accountsText = accounts.bodyAsText(); require(accountsText.length <= 4_000_000)
-                return HyperpropPersonalSession(client, token, parseHyperpropCheck(sessionText, accountsText))
+                return HyperpropPersonalSession(client, key, token, sessionRefreshAt(data), parseHyperpropCheck(sessionText, accountsText))
             } catch (cancel: CancellationException) { client.close(); throw cancel }
             catch (e: HyperpropConnectionException) { client.close(); throw e }
             catch (_: Exception) { client.close(); throw HyperpropConnectionException("$stage 未完成：请检查网络或稍后重试；未发送订单。") }
         }
     }
+}
+
+private fun sessionRefreshAt(session: JsonObject): Long {
+    val seconds = session.stringValue("expires_in")?.toLongOrNull()?.takeIf { it in 1..86_400 } ?: 60L
+    val refreshIn = (seconds * 1_000L - 30_000L).coerceAtLeast(1_000L)
+    return Clock.System.now().toEpochMilliseconds() + refreshIn
 }
