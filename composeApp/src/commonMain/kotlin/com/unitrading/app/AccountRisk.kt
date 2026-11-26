@@ -435,9 +435,9 @@ internal class AccountRiskController(
                             amounts(order.request, changed.copy(entryPrice = action.price,
                                 stopLoss = changed.stopLoss?.plus(shift), takeProfit = changed.takeProfit?.plus(shift)))
                         }
-                        // A leg shared with an unfilled entry still protects future exposure, even when a position
-                        // already exists after a partial fill. Keep that entry's amounts in force.
-                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled) null else {
+                        // Price-only edits to a submitted protection leg are not capped by the initial amounts.
+                        // Increasing a leg's quantity still checks the entry or held position and exit coverage.
+                        OrderRole.STOP_LOSS, OrderRole.TAKE_PROFIT -> if (!rule.brackets.enabled || !effect.grows) null else {
                             val stop = order.role == OrderRole.STOP_LOSS
                             val pendingEntry = snapshot.orders.firstOrNull {
                                 it.role == OrderRole.ENTRY && it.remainingLots > 0 &&
@@ -446,12 +446,11 @@ internal class AccountRiskController(
                             val pendingError = pendingEntry?.request?.let { before ->
                                 amounts(before, if (stop) before.copy(stopLoss = action.price) else before.copy(takeProfit = action.price))
                             }
-                            pendingError ?: if (!effect.grows) null else
-                                snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
-                                    fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
-                                        held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
-                                    amounts(leg(order.request.entryPrice, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
-                                }
+                            pendingError ?: snapshot.positions.firstOrNull { it.symbol == order.request.symbol && it.side != order.request.side }?.let { held ->
+                                fun leg(price: Long?, lots: Long) = OrderRequest(held.symbol, held.side, OrderKind.MARKET, minOf(lots, held.lotsHundredths),
+                                    held.entryPrice, stopLoss = if (stop) price else null, takeProfit = if (stop) null else price)
+                                amounts(leg(order.request.entryPrice, order.remainingLots), leg(action.price, changed.lotsHundredths - order.filledLotsHundredths))
+                            }
                         }
                         OrderRole.UNRESOLVED -> null
                     }
@@ -472,7 +471,13 @@ internal class AccountRiskController(
             is RiskCheck.OrderStop -> snapshot.orders.firstOrNull { it.id == action.orderId }.let { order ->
                 paused(order != null && !stopLoosened(order.request.side, order.request.stopLoss, action.stopLoss))
                     ?: order?.takeIf { it.role == OrderRole.ENTRY }?.let {
-                        amounts(it.request, it.request.copy(stopLoss = action.stopLoss, takeProfit = action.takeProfit))
+                        when {
+                            (rule.brackets.loss != null || rule.brackets.sizingRisk != null) && it.request.stopLoss != null && action.stopLoss == null ->
+                                "该子账户设有风险金额，止损不能移除"
+                            rule.brackets.profit != null && it.request.takeProfit != null && action.takeProfit == null ->
+                                "该子账户设有利润金额，止盈不能移除"
+                            else -> null
+                        }
                     }
             }
         }

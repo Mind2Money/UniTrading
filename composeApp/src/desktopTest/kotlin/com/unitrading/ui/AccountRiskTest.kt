@@ -701,36 +701,37 @@ class AccountRiskTest {
         assertEquals(3, broker.placed.size)
     }
 
-    @Test fun filledPositionsCanMoveProtectionBeyondCashAmountsButPendingEntriesRemainBound() = runTest {
+    @Test fun submittedOrdersAndFilledPositionsCanMoveProtectionBeyondInitialAmounts() = runTest {
         val broker = RiskFixture()
         val risk = controller()
         val session = risk.guard(broker, broker.openSession("100"))
         assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
-        val loss = "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量"
-        val profit = "修改后的预估利润低于子账户设置；止盈只能设得更远"
-        val entry = riskOrder("entry", Side.BUY, OrderKind.LIMIT, 100, 549_000, stop = 547_000, target = 553_000)
-        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)), listOf(entry))
-        assertTrue(session.modifyProtection("loosen", "held", 1, 547_000, 554_000).accepted)
-        assertTrue(session.modifyProtection("nearer", "held", 1, 548_000, 552_000).accepted)
+        for (kind in listOf(OrderKind.LIMIT, OrderKind.STOP)) for (side in listOf(Side.BUY, Side.SELL)) {
+            val buy = side == Side.BUY
+            val stop = if (buy) 547_000L else 551_000L
+            val target = if (buy) 553_000L else 545_000L
+            val farther = if (buy) 546_000L else 552_000L
+            val closer = if (buy) 552_000L else 546_000L
+            val entry = riskOrder("entry", side, kind, 100, 549_000, stop = stop, target = target)
+            for (filled in listOf(0L, 50L)) {
+                broker.hold("100", orders = listOf(entry.copy(filledLotsHundredths = filled)))
+                assertTrue(session.modifyOrderProtection("stop", "entry", 1, farther, target).accepted, "$kind $side $filled")
+                assertTrue(session.modifyOrderProtection("target", "entry", 1, stop, closer).accepted, "$kind $side $filled")
+                assertEquals("该子账户设有风险金额，止损不能移除", session.modifyOrderProtection("remove", "entry", 1, null, target).message)
+                assertEquals("该子账户设有利润金额，止盈不能移除", session.modifyOrderProtection("remove-target", "entry", 1, stop, null).message)
+            }
+            val exit = if (buy) Side.SELL else Side.BUY
+            broker.hold("100", orders = listOf(entry.copy(filledLotsHundredths = 50, stopLossOrderId = "child"),
+                riskOrder("child", exit, OrderKind.STOP, 100, stop, OrderRole.STOP_LOSS)))
+            assertTrue(session.modifyOrder("child-stop", "child", 1, farther).accepted, "$kind $side shared child")
+        }
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)))
+        assertTrue(session.modifyProtection("long-stop", "held", 1, 547_000, 554_000).accepted)
+        assertTrue(session.modifyProtection("long-target", "held", 1, 548_000, 552_000).accepted)
         assertEquals("该子账户设有风险金额，止损不能移除", session.modifyProtection("remove", "held", 1, null, 554_000).message)
-        assertEquals("该子账户设有利润金额，止盈不能移除", session.modifyProtection("remove-target", "held", 1, 548_000, null).message)
-        assertEquals(loss, session.modifyOrderProtection("entry-stop", "entry", 1, 546_975, 553_000).message)
-        assertEquals(profit, session.modifyOrderProtection("entry-target", "entry", 1, 547_000, 552_975).message)
-        assertEquals(loss, session.modifyOrder("entry-price", "entry", 1, 549_025).message)
-        // The remaining unfilled entry remains checked even if a position already exists (partial fills).
-        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)),
-            listOf(entry.copy(filledLotsHundredths = 50)))
-        assertEquals(loss, session.modifyOrderProtection("partial", "entry", 1, 546_975, 553_000).message)
-        // An independently edited child shared with the remaining entry must still obey its amounts.
-        broker.hold("100", listOf(riskPosition(Side.BUY, 100)), listOf(
-            entry.copy(filledLotsHundredths = 50, stopLossOrderId = "child"),
-            riskOrder("child", Side.SELL, OrderKind.STOP, 100, 547_000, OrderRole.STOP_LOSS)))
-        assertEquals(loss, session.modifyOrder("shared-child", "child", 1, 546_975).message)
         broker.hold("100", listOf(riskPosition(Side.SELL, 100, stop = 552_000, target = 546_000)))
         assertTrue(session.modifyProtection("short-stop", "held", 1, 553_000, 546_000).accepted)
         assertTrue(session.modifyProtection("short-target", "held", 1, 552_000, 548_000).accepted)
-        assertEquals(listOf("protect:held:547000:554000", "protect:held:548000:552000",
-            "protect:held:553000:546000", "protect:held:552000:548000"), broker.events)
     }
 
     @Test fun filledProtectionLegPricesCanMoveButRaisingQuantityStillChecksRiskAndCoverage() = runTest {

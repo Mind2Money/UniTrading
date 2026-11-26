@@ -22,7 +22,7 @@ import androidx.compose.ui.window.WindowState
 @Composable
 internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: WindowState, title: String, onClose: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().height(40.dp).background(colors.surface).testTag("desktop-title-toolbar"),
+    Row(Modifier.fillMaxWidth().height(40.dp).background(colors.surfaceContainerHigh).testTag("desktop-title-toolbar"),
         verticalAlignment = Alignment.CenterVertically) {
         WindowDraggableArea {
             Row(Modifier.height(40.dp).padding(start = 7.dp, end = 9.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -34,10 +34,13 @@ internal fun WindowScope.WindowsTitleBar(slot: DesktopTitleBarSlot, state: Windo
         val tabs = slot.tabs
         if (tabs == null) WindowDraggableArea(Modifier.weight(1f).fillMaxHeight()) { }
         else Box(Modifier.weight(1f).fillMaxHeight()) {
+            // The scrolling tab strip wraps its content, leaving the empty title row to the native window drag handler.
+            WindowDraggableArea(Modifier.fillMaxSize().testTag("window-title-drag-area")) { }
             WorkspaceTabStrip(tabs.tabs, tabs.selected, slot::select, slot::detach, slot::close, slot::reorder,
-                Modifier.fillMaxWidth(), canDetach = tabs.canDetach, touchSized = tabs.touchSized, onAdd = slot::add, canAdd = tabs.canAdd)
+                Modifier.align(Alignment.CenterStart), canDetach = tabs.canDetach, touchSized = tabs.touchSized,
+                onAdd = slot::add, canAdd = tabs.canAdd, titleBarStyle = true)
         }
-        WindowDraggableArea(Modifier.width(55.dp).fillMaxHeight()) { }
+        WindowDraggableArea(Modifier.width(55.dp).fillMaxHeight().testTag("window-title-drag-spacer")) { }
         WindowButton("最小化", "window-minimize", "−") { state.isMinimized = true }
         WindowButton(if (state.placement == WindowPlacement.Maximized) "还原" else "最大化", "window-maximize", "□") {
             state.placement = if (state.placement == WindowPlacement.Maximized) WindowPlacement.Floating else WindowPlacement.Maximized

@@ -2,13 +2,15 @@
 
 ## 简体中文
 
-- 订单成交后，持仓止损止盈及单独保护腿的价格可拖动到原金额之外；未成交入场单、保护腿加量和账户交易锁定仍受原有检查。
+- 限价单、突破单提交后及成交后可调整止损止盈，市价单成交后也可调整，价格允许超出初始金额；保护腿加量和账户交易锁定仍受原有检查。
+- Windows 标签栏与工具栏使用分界色，标签栏空白处支持拖动窗口。
 - Android、iOS 和平板长按图表空白处时，可从菜单重置图表视图；平板保留单独的重置视图按钮。
 - 移除各平台图表顶部重复的蓝色连续合约说明，行情和下单面板中的合约信息保留。
 
 ## English
 
-- After a fill, position protection and individual protection-leg prices can be moved beyond the configured cash amounts. Pending entries, increased leg quantities, and account trading locks retain their checks.
+- Adjust protection beyond the initial cash amounts after submitting limit or stop entries and after fills; increased leg quantities and account trading locks retain their checks.
+- Distinguish the Windows tab row from the chart toolbar and allow dragging the window from empty title-row space.
 - Reset the chart view from the long-press menu on Android, iOS, and tablets; tablets also keep a dedicated reset button.
 - Remove the redundant blue continuous-contract banner above charts on all platforms; contract details remain in the watchlist and order panel.
 

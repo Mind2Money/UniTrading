@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
+import com.unitrading.app.AccountBrackets
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
@@ -277,6 +278,21 @@ class TradingScreenTest {
         compose.onNodeWithTag("confirm-pending-protection").performClick()
         compose.waitUntil(5_000) { session.state.value.orders.single().version == 2L }
         assertEquals(order.request.copy(stopLoss = updated), session.state.value.orders.single().request)
+    }
+    @Test fun pendingStopDragMayExceedConfiguredCashRisk() {
+        val q = plugin.market.value.quotes.getValue(instrument.symbol)
+        val entry = q.ask - 500
+        runBlocking {
+            assertNull(runtime.accountRisk.configureBrackets(plugin, session.account.id, AccountBrackets(loss = 1_000_000)))
+            assertTrue(session.placeOrder("ui-cash-risk", OrderRequest(instrument.symbol, Side.BUY, OrderKind.LIMIT, 10, entry, entry - 400, entry + 800)).accepted)
+        }
+        render()
+        val updated = dragLine(entry - 400, 1)
+        assertTrue(updated < entry - 400, "The drag loosens the initial stop")
+        compose.onNodeWithTag("pending-protection-dialog").assertExists()
+        compose.onNodeWithTag("confirm-pending-protection").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { session.state.value.orders.single().version == 2L }
+        assertEquals(updated, session.state.value.orders.single().request.stopLoss)
     }
     @Test fun pendingOrderRowOpensItsStopAndTarget() {
         val q = plugin.market.value.quotes.getValue(instrument.symbol)
