@@ -99,7 +99,7 @@ internal fun AccountBracketSettings(controller: AccountRiskController, broker: B
                     label = { Text("利润金额（${account.currency}）") }, singleLine = true, enabled = !saving,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = profit.isNotBlank() && profitValue == null)
-                Text("挂单提交后或市价单成交后可调整止损止盈，金额可能超出初始设置。留空可关闭对应设置。" + reductions("减仓单不附加止损止盈。") + "金额按毛盈亏估算，未计手续费与成交滑点。",
+                Text("挂单提交后或市价单成交后可调整止损止盈，金额可超出初始设置。留空可关闭对应设置。" + reductions("减仓单不附加止损止盈。") + "金额按毛盈亏估算，未计手续费与成交滑点。",
                     style = type.bodySmall, color = muted)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = type.bodySmall) }

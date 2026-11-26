@@ -71,6 +71,28 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
     }
 
+    @Test fun overnightCloseShowsFullTradePnlAndSeparateDailyRiskEquity() {
+        val mcl = Instrument("MCL", "Micro Crude Oil", "期货", 2, tickSize = 1,
+            tickValueMicrosPerLot = 1_000_000, minLotsHundredths = 100, lotStepHundredths = 100,
+            quantityDecimals = 0, commissionMicrosPerLot = 1_000_000)
+        val first = Instant.parse("2026-11-23T22:58:00Z").toEpochMilli()
+        val timeline = listOf(Candle(first, 8_000, 8_000, 8_000, 8_000),
+            Candle(first + 60_000, 8_300, 8_300, 8_300, 8_300),
+            Candle(Instant.parse("2026-11-23T23:01:00Z").toEpochMilli(), 8_400, 8_400, 8_400, 8_400))
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
+            allowOvernight = true, dailyLossMode = ReplayDailyLoss.NONE)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(mcl, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, timeline, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        closePositionOnChart()
+        compose.onNodeWithTag("replay-daily-pnl").assertTextContains("+398.00", substring = true)
+        compose.onNodeWithTag("replay-realized").assertTextContains("+398.00", substring = true)
+        compose.onNodeWithTag("replay-daily-equity").assertTextContains("+100.00", substring = true)
+    }
+
     @Test fun softStopRemainsLockedUntilTheNextChicagoTradingDay() {
         val start = Instant.parse("2026-11-23T22:57:00Z").toEpochMilli()
         val timeline = listOf(Candle(start, 10_000, 10_025, 9_975, 10_000),

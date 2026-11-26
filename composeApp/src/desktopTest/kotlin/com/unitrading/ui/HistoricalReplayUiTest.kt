@@ -48,6 +48,28 @@ class HistoricalReplayUiTest {
         }
     }
 
+    @Test fun replayControlBarKeepsPlaybackAndDateEntryUsable() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..30).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-speed-2").performClick()
+        compose.onNodeWithTag("replay-start-time").performTextInput("2023-11-15 06:14")
+        compose.onNodeWithTag("replay-start-time").assertTextContains("2023-11-15 06:14")
+        compose.onNodeWithTag("replay-start-calendar").assertExists()
+        compose.onNodeWithTag("replay-start-locate").assertExists()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-start-controls").assertDoesNotExist()
+    }
+
+    @Test fun continuousHistoryNoticeIsHiddenButErrorsRemainVisible() {
+        assertEquals(null, visibleReplayHistoryError("@MCL：券商连续历史的拼接或复权规则未确认"))
+        assertEquals("读取历史失败", visibleReplayHistoryError("@MCL：券商连续历史的拼接或复权规则未确认；读取历史失败"))
+        assertEquals("读取历史失败", visibleReplayHistoryError("读取历史失败"))
+    }
+
     @Test fun replayObjectTreeActuallyHidesShowsAndDeletesIndicators() {
         val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)

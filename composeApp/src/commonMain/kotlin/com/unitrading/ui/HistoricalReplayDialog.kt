@@ -1,6 +1,10 @@
 package com.unitrading.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -10,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -47,6 +53,11 @@ internal data class ReplayInput(val instrument: Instrument, val timeframe: Timef
     val intervals: IntervalOptions = IntervalOptions(), val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val skipConfirmation: Boolean = false,
     val riskConfig: ReplayRiskConfig = defaultReplayRiskConfig())
+
+/** Hide the broker's continuous-series caveat in replay, without hiding actual data-loading errors. */
+internal fun visibleReplayHistoryError(message: String?): String? = message?.split("；")
+    ?.filterNot { "券商连续历史的拼接或复权规则未确认" in it }
+    ?.joinToString("；")?.takeIf { it.isNotBlank() }
 
 private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val price: Long?, val quantity: Long,
     val stop: Long?, val target: Long?)
@@ -533,7 +544,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
         }
         Spacer(Modifier.height(4.dp))
-        historyError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
+        visibleReplayHistoryError(historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
         Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 ChartToolbar(spec, input.instruments, { sym ->
@@ -622,12 +633,26 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                 }, Modifier.weight(1f).fillMaxHeight(), favoriteDrawings = drawings)
                 }
-                Surface(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("replay-controls"), shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                Surface(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("replay-controls"),
+                    shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    val colors = MaterialTheme.colorScheme
+                    @Composable fun Choice(label: String, selected: Boolean, tag: String? = null, action: () -> Unit) {
+                        Surface(onClick = action, shape = RoundedCornerShape(6.dp),
+                            color = if (selected) colors.secondaryContainer else Color.Transparent,
+                            modifier = Modifier.height(32.dp).then(if (tag != null) Modifier.testTag(tag) else Modifier)) {
+                            Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
+                                Text(label, style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant, maxLines = 1)
+                            }
+                        }
+                    }
+                    @Composable fun Separator() = VerticalDivider(Modifier.height(22.dp).padding(horizontal = 5.dp), color = colors.outlineVariant)
                     @Composable fun PlaybackControls() {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            IconButton(onClick = { playing = !playing; started = true }, enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
+                            FilledTonalIconButton(onClick = { playing = !playing; started = true },
+                                enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
                                 modifier = Modifier.size(36.dp).testTag("replay-play")) {
                                 Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(20.dp))
                             }
@@ -635,29 +660,39 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 modifier = Modifier.size(36.dp).testTag("replay-next")) {
                                 Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(20.dp))
                             }
-                            Text("步长", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
-                            stepChoices.forEach { frame -> TextButton(onClick = { stepFrame = frame }, modifier = Modifier.testTag("replay-step-${frame.id}"), contentPadding = PaddingValues(horizontal = 7.dp)) {
-                                Text(replayStepLabel(frame), color = if (selectedStep == frame) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                            } }
-                            VerticalDivider(Modifier.height(24.dp).padding(horizontal = 3.dp))
-                            listOf(1, 2, 5, 10).forEach { n -> TextButton(onClick = { speed = n }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                                Text("${n}x", color = if (speed == n) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                            } }
+                            Separator()
+                            Text("步长", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 3.dp))
+                            stepChoices.forEach { frame -> Choice(replayStepLabel(frame), selectedStep == frame, "replay-step-${frame.id}") { stepFrame = frame } }
+                            Separator()
+                            Text("速度", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 3.dp))
+                            listOf(1, 2, 5, 10).forEach { n -> Choice("${n}x", speed == n, "replay-speed-$n") { speed = n } }
+                            Separator()
+                            Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId),
+                                modifier = Modifier.padding(horizontal = 6.dp).testTag("replay-time"), style = MaterialTheme.typography.labelMedium,
+                                color = colors.onSurface, maxLines = 1)
                             TextButton(onClick = {
                                 playing = false
                                 if (completionFinalized && risk.targetReached) restartReplay() else confirmReset = true
-                            }, modifier = Modifier.testTag("replay-reset")) { Text("重选起点") }
-                            Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId), modifier = Modifier.testTag("replay-time"), style = MaterialTheme.typography.bodySmall)
+                            }, modifier = Modifier.height(36.dp).testTag("replay-reset"), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重选起点") }
                         }
                     }
                     @Composable fun StartControls() {
-                        Row(Modifier.testTag("replay-start-controls"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("回放起点", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        Row(Modifier.testTag("replay-start-controls"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("起点", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 1)
                             Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
-                                valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(145.dp).testTag("replay-start"))
-                            OutlinedTextField(startTime, { startTime = it }, placeholder = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm", style = MaterialTheme.typography.bodySmall) },
-                                modifier = Modifier.width(180.dp).testTag("replay-start-time"), singleLine = true)
-                            IconButton(onClick = { startCalendar = true }, modifier = Modifier.testTag("replay-start-calendar")) { Icon(AppIcons.Calendar, "选择起点日期", Modifier.size(20.dp)) }
+                                valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(110.dp).testTag("replay-start"))
+                            Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceContainerLow,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
+                                BasicTextField(startTime, { startTime = it }, singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.onSurface),
+                                    modifier = Modifier.width(156.dp).height(36.dp).testTag("replay-start-time"),
+                                    decorationBox = { inner -> Box(Modifier.fillMaxSize().padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
+                                        if (startTime.isEmpty()) Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm",
+                                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1)
+                                        inner()
+                                    } })
+                            }
+                            IconButton(onClick = { startCalendar = true }, modifier = Modifier.size(36.dp).testTag("replay-start-calendar")) { Icon(AppIcons.Calendar, "选择起点日期", Modifier.size(18.dp)) }
                             TextButton(onClick = {
                                 val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
                                     else parseChartTime(startTime, input.zone.zoneId)
@@ -667,19 +702,16 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                     val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
                                     start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
                                 }
-                            }, modifier = Modifier.testTag("replay-start-locate")) { Text("定位") }
+                            }, modifier = Modifier.height(36.dp).testTag("replay-start-locate"), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("定位") }
                         }
                     }
-                    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        if (maxWidth >= 900.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)) {
+                        if (maxWidth >= 1100.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
-                            if (!started) {
-                                VerticalDivider(Modifier.height(28.dp).padding(horizontal = 4.dp))
-                                StartControls()
-                            }
+                            if (!started) { Separator(); StartControls() }
                         } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                             PlaybackControls()
-                            if (!started) { VerticalDivider(Modifier.height(28.dp).padding(horizontal = 4.dp)); StartControls() }
+                            if (!started) { Separator(); StartControls() }
                         }
                     }
                 }
@@ -750,8 +782,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 val balance = realized?.let { runCatching { checkedAdd(riskConfig.initialMicros, it) }.getOrNull() }
                 val equity = if (balance != null && floating != null) runCatching { checkedAdd(balance, floating) }.getOrNull() else null
-                val daily = runCatching { checkedAdd(risk.lastEquity, -risk.dayOpeningBalance) }.getOrNull()
-                Metric("本交易日盈亏", daily?.let { money(it, true) } ?: "—", color = TradingColors.pnl(daily), valueTag = "replay-daily-pnl")
+                val daily = floating?.let { value -> runCatching { replayTradeDayPnl(current.timeMs, state.trades, value) }.getOrNull() }
+                val dailyEquity = runCatching { checkedAdd(risk.lastEquity, -risk.dayOpeningBalance) }.getOrNull()
+                Metric("本交易日盈亏 · 交易口径", daily?.let { money(it, true) } ?: "—", color = TradingColors.pnl(daily), valueTag = "replay-daily-pnl")
+                Metric("当日净值变化 · 风控口径", dailyEquity?.let { money(it, true) } ?: "—", color = TradingColors.pnl(dailyEquity), valueTag = "replay-daily-equity")
                 Metric("模拟余额 · ${spec.currency}", balance?.let { money(it) } ?: "—")
                 Metric("净值 · ${spec.currency}", equity?.let { money(it) } ?: "—")
                 Metric("已实现盈亏", realized?.let { money(it, true) } ?: "—", color = TradingColors.pnl(realized), valueTag = "replay-realized")
