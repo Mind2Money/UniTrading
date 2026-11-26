@@ -102,9 +102,10 @@ internal fun OrderTicket(
     accountName: String? = null,
     showPriceExplanation: Boolean = true,
     showEstimates: Boolean = true,
+    floating: Boolean = false,
 ) {
     Column(modifier) {
-        PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
+        if (!floating) PanelHeader("新建订单", subtitle = listOfNotNull(accountName, instrument.symbol, "${instrument.currency} 结算").joinToString(" · ")) {
             EnvironmentBadge(environment)
             if (onClose != null) ActionIcon(AppIcons.Close, closeLabel, closeTag, onClick = onClose) else Spacer(Modifier.width(12.dp))
         }
@@ -116,7 +117,7 @@ internal fun OrderTicket(
         }
         OrderForm(instrument, quote, capabilities, draft, onDraft, preview, busy, onSubmit, Modifier.weight(1f), environment, capacity, onRefreshCapacity,
             skipConfirmation, showKinds = true, detailsOpen = true, brackets = brackets, bracketOrder = bracketOrder, orderNotice = orderNotice,
-            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates)
+            showPriceExplanation = showPriceExplanation, showEstimates = showEstimates, quoteFirst = floating)
     }
 }
 

@@ -38,6 +38,8 @@ internal object AppIcons {
         }.build()
     }
 
+    val Fullscreen by lazy { icon("Fullscreen", paths = arrayOf("M7 14H5v5h5v-2H7v-3zM5 10h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z")) }
+    val FullscreenExit by lazy { icon("FullscreenExit", paths = arrayOf("M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z")) }
     val Add by lazy { icon("Add", paths = arrayOf("M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")) }
     val Language by lazy { icon("Language", paths = arrayOf("M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10s10 -4.48 10 -10S17.52 2 12 2zM19.93 11h-3.07a15.65 15.65 0 0 0 -1.38 -5.18A8.03 8.03 0 0 1 19.93 11zM12 4.04c0.83 1.2 1.77 3.55 1.98 6.96h-3.96C10.23 7.59 11.17 5.24 12 4.04zM8.52 5.82A15.65 15.65 0 0 0 7.14 11H4.07a8.03 8.03 0 0 1 4.45 -5.18zM4.07 13h3.07c0.18 1.87 0.65 3.62 1.38 5.18A8.03 8.03 0 0 1 4.07 13zM12 19.96c-0.83 -1.2 -1.77 -3.55 -1.98 -6.96h3.96c-0.21 3.41 -1.15 5.76 -1.98 6.96zM15.48 18.18A15.65 15.65 0 0 0 16.86 13h3.07a8.03 8.03 0 0 1 -4.45 5.18z")) }
     /** Order ticket, depth ladder, performance bars and a new window use distinct silhouettes. */

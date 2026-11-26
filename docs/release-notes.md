@@ -2,6 +2,7 @@
 
 ## 简体中文
 
+- Windows 和 macOS 支持图表全屏，隐藏侧栏和账户栏；可用图表快捷入口打开非模态悬浮下单窗，按 Esc 退出。
 - 优化历史回放控制栏，隐藏连续历史拼接提示；本交易日盈亏按平仓日归属，同时单列供风控使用的当日净值变化。
 - 限价单、突破单提交后及成交后可调整止损止盈，市价单成交后也可调整，价格允许超出初始金额；保护腿加量和账户交易锁定仍受原有检查。
 - Windows 标签栏与工具栏使用分界色，标签栏空白处支持拖动窗口。
@@ -10,6 +11,7 @@
 
 ## English
 
+- Add chart-only desktop mode with a non-modal floating order ticket and Escape to exit.
 - Refine playback controls, hide the continuous-history caveat, and show close-day trade P&L alongside the daily equity change used by risk limits.
 - Adjust protection beyond the initial cash amounts after submitting limit or stop entries and after fills; increased leg quantities and account trading locks retain their checks.
 - Distinguish the Windows tab row from the chart toolbar and allow dragging the window from empty title-row space.

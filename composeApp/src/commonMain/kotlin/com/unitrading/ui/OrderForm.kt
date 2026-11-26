@@ -55,6 +55,7 @@ internal fun OrderForm(
     orderNotice: @Composable () -> Unit = {},
     showPriceExplanation: Boolean = true,
     showEstimates: Boolean = true,
+    quoteFirst: Boolean = false,
 ) {
     val colors = TradingColors
     val type = MaterialTheme.typography
@@ -69,7 +70,7 @@ internal fun OrderForm(
             .padding(horizontal = if (docked) 12.dp else 16.dp, vertical = if (docked) 2.dp else 8.dp),
             verticalArrangement = Arrangement.spacedBy(if (docked) 4.dp else 8.dp)) {
             if (instrument.isContinuous && !docked) Text("图表 / 指标 ${instrument.symbol} · 下单 / 报价 ${instrument.executionLabel}", color = colors.Accent, style = type.bodySmall)
-            if (showKinds) OrderKindChoice(instrument, quote, capabilities, draft, onDraft, !busy, Modifier.fillMaxWidth())
+            if (showKinds && !quoteFirst) OrderKindChoice(instrument, quote, capabilities, draft, onDraft, !busy, Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Side.SELL, Side.BUY).forEach { side ->
                     OrderSideButton(side, quote?.let { instrument.formatPrice(if (side == Side.SELL) it.bid else it.ask) } ?: "—",
@@ -77,6 +78,7 @@ internal fun OrderForm(
                         modifier = Modifier.weight(1f).testTag("order-side-${side.name}"), dense = docked) { onDraft(draft.withSide(side, instrument, quote)) }
                 }
             }
+            if (showKinds && quoteFirst) OrderKindChoice(instrument, quote, capabilities, draft, onDraft, !busy, Modifier.fillMaxWidth())
             // An account that sizes its orders types a quantity only for one against its position: a reduction, of no more than that position.
             val reducible = capacity.reducible
             if (sizingRisk == null || reducible != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
