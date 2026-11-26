@@ -198,7 +198,9 @@ internal fun MarketWatch(
                             val quote = market.quotes[instrument.priceSymbol]
                             val status = marketSessionState(instrument, quote, market.connected, statusNow, if (remote) connectedAt else statusNow)
                             val reference = if (status != MarketSessionState.OPEN) quote?.lastTrade?.let { it to "最近成交" }
-                                ?: Timeframe.presets.mapNotNull { plugin.history(instrument.symbol, it).lastOrNull() }
+                                ?: Timeframe.presets.mapNotNull { frame ->
+                                    try { plugin.history(instrument.symbol, frame).lastOrNull() } catch (_: IllegalArgumentException) { null }
+                                }
                                     .maxByOrNull { it.timeMs }?.close?.takeIf { it > 0 }?.let { it to "最近K线收盘" } else null
                             MarketQuoteRow(instrument, quote,
                                 activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
