@@ -66,7 +66,7 @@ class DesktopDetachedWorkspaceUiTest {
         chart.performTouchInput { down(Offset(size.width * .38f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
         val stop = onNode(hasTestTag("order-sl") and child).fetchSemanticsNode().config[SemanticsProperties.EditableText].text
         assertTrue(stop != "5498.00", "Dragging on the child chart should update its floating order")
-        onNode(hasTestTag("review-order") and child).performScrollTo().performClick()
+        onNode(hasTestTag("review-order") and child).performClick()
         onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
         onNodeWithTag("cancel-order-review").performClick()
         assertTrue(broker.events.none { it.startsWith("place:") })
