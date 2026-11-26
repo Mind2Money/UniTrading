@@ -152,11 +152,13 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                     trailingIcon = { Text("Shift + T", style = MaterialTheme.typography.labelSmall, color = colors.Muted) },
                     onClick = { onDismiss(); desktopActions.openOrder?.invoke() }, modifier = Modifier.testTag("plot-open-order"))
                 DividerLine()
-                DropdownMenuItem(text = { Text("对象树", style = itemText) }, enabled = desktopActions.showObjects != null,
-                    leadingIcon = { PlotMenuIcon(AppIcons.Layers, "objects", phone = phone) }, onClick = { onDismiss(); desktopActions.showObjects?.invoke() }, modifier = itemSize.testTag("plot-objects"))
-                DropdownMenuItem(text = { Text("图表模板", style = itemText) }, enabled = desktopActions.showTemplates != null,
-                    leadingIcon = { PlotMenuIcon(AppIcons.ViewQuilt, "templates", phone = phone) }, onClick = { onDismiss(); desktopActions.showTemplates?.invoke() }, modifier = itemSize.testTag("plot-templates"))
-                DividerLine()
+                if (!phone) {
+                    DropdownMenuItem(text = { Text("对象树", style = itemText) }, enabled = desktopActions.showObjects != null,
+                        leadingIcon = { PlotMenuIcon(AppIcons.Layers, "objects") }, onClick = { onDismiss(); desktopActions.showObjects?.invoke() }, modifier = itemSize.testTag("plot-objects"))
+                    DropdownMenuItem(text = { Text("图表模板", style = itemText) }, enabled = desktopActions.showTemplates != null,
+                        leadingIcon = { PlotMenuIcon(AppIcons.ViewQuilt, "templates") }, onClick = { onDismiss(); desktopActions.showTemplates?.invoke() }, modifier = itemSize.testTag("plot-templates"))
+                    DividerLine()
+                }
                 if (!phone) DropdownMenuItem(text = { Text("移除 ${desktopActions.indicatorCount} 个指标") }, enabled = desktopActions.removeIndicators != null && desktopActions.indicatorCount > 0,
                     leadingIcon = { PlotMenuIcon(AppIcons.Tune, "remove-indicators") },
                     onClick = { onDismiss(); desktopActions.removeIndicators?.invoke() }, modifier = Modifier.testTag("plot-remove-indicators"))

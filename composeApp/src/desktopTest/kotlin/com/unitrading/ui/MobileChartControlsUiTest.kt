@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
+import com.unitrading.chart.OrderTagButtons
 import org.junit.Test
 import java.io.File
 import javax.imageio.ImageIO
@@ -95,8 +96,8 @@ class MobileChartControlsUiTest {
         onNodeWithTag("plot-menu-SELL-MARKET").assertExists()
         onNodeWithTag("plot-menu-BUY-LIMIT").assertExists()
         onNodeWithTag("plot-menu-SELL-LIMIT").assertExists()
-        onNodeWithTag("plot-objects").assertIsEnabled()
-        onNodeWithTag("plot-templates").assertIsEnabled()
+        onNodeWithTag("plot-objects").assertDoesNotExist()
+        onNodeWithTag("plot-templates").assertDoesNotExist()
         onNodeWithTag("plot-remove-drawings").assertExists()
         onNodeWithTag("plot-settings").assertDoesNotExist()
         onNodeWithTag("plot-remove-indicators").assertDoesNotExist()
@@ -107,14 +108,8 @@ class MobileChartControlsUiTest {
             val folder = File("../artifacts/mobile-chart-controls").also { it.mkdirs() }
             ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(folder, "phone-context-menu.png"))
         }
-        onNodeWithTag("plot-objects").performScrollTo().performClick()
-        onNodeWithTag("chart-object-tree").assertExists()
-        onNode(hasText("关闭") and hasAnyAncestor(hasTestTag("chart-object-tree"))).performClick()
-        if (mouse) chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
-        else chart.performTouchInput { longClick(at) }
         onNodeWithTag("plot-menu-BUY-LIMIT").performClick()
-        onNodeWithTag("order-kind-LIMIT").assertIsSelected()
-        onNodeWithTag("order-entry").assertExists()
+        assertTrue(chart.fetchSemanticsNode().config[OrderTagButtons].containsKey("提交买入订单"))
         assertTrue(broker.placed.isEmpty(), "A menu selection must only prepare a draft")
     }
 
