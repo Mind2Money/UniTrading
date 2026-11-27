@@ -12,6 +12,7 @@ class ReplayStepTest {
         val fiveMinute = listOf(5, 15, 30, 60, 1440).map(Timeframe::ofMinutes)
         assertEquals(fiveMinute, replayStepOptions(Timeframe.M5, Timeframe.M5))
         assertTrue(Timeframe.ofSeconds(1) in replayStepOptions(Timeframe.M1, Timeframe.ofSeconds(1)))
+        assertFalse(Timeframe.D1 in replayStepOptions(Timeframe.M1, Timeframe.ofSeconds(1)))
     }
     @Test fun advancingUsesTimeAndSkipsMissingBars() {
         val bars = listOf(0L, 60_000L, 300_000L, 360_000L).map { Candle(it, 100, 100, 100, 100) }
