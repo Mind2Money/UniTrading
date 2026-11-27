@@ -27,7 +27,15 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     private val key = "copy-source-orders-v1"
     private val codec = ListSerializer(CopySourceOrder.serializer())
     private val mutex = Mutex()
-    private val loaded = runCatching { store.read(key)?.takeIf(String::isNotBlank)?.let { Json.decodeFromString(codec, it) }.orEmpty() }
+    private val loaded = runCatching {
+        val rows = store.read(key)?.takeIf(String::isNotBlank)?.let { Json.decodeFromString(codec, it) }.orEmpty()
+        require(rows.all { it.brokerId.isNotBlank() && it.leaderId.isNotBlank() && it.requestId.isNotBlank() &&
+            if (it.state == CopySourceState.ACCEPTED) !it.brokerOrderId.isNullOrBlank() else it.brokerOrderId == null })
+        require(rows.map { it.requestId }.distinct().size == rows.size)
+        val ids = rows.mapNotNull { it.brokerOrderId }
+        require(ids.distinct().size == ids.size)
+        rows
+    }
     private var unreadable = loaded.isFailure
     private var records = loaded.getOrDefault(emptyList())
 
