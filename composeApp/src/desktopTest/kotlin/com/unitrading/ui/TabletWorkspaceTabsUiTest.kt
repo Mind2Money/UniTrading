@@ -69,10 +69,20 @@ class TabletWorkspaceTabsUiTest {
                 .also { it.parentFile.mkdirs() }
             ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", expanded)
             onNodeWithTag("quick-login-picker").performClick()
+            val loginChoices = onNodeWithTag("tablet-account-choices").fetchSemanticsNode().boundsInRoot
+            val menuLevels = onNodeWithTag("tablet-account-levels").fetchSemanticsNode().boundsInRoot
+            assertTrue(loginChoices.right <= menuLevels.left, "Login choices must open to the left")
+            assertTrue(onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot.top == chart.top, "Account menu must not move the chart")
             onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
             onNodeWithTag("tablet-expanded-accounts").assertDoesNotExist()
             onNodeWithTag("tablet-account-toggle").performClick()
             onNodeWithTag("quick-account-picker").performClick()
+            val childChoices = onNodeWithTag("tablet-account-choices").fetchSemanticsNode().boundsInRoot
+            val childLevels = onNodeWithTag("tablet-account-levels").fetchSemanticsNode().boundsInRoot
+            assertTrue(childChoices.right <= childLevels.left, "Child account choices must open to the left")
+            val childShot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-account-choices.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", childShot)
             onNodeWithTag("quick-account-${account.id}").performClick()
             onNodeWithTag("tablet-expanded-accounts").assertDoesNotExist()
             onNodeWithTag("tablet-account-toggle").performClick()
@@ -137,6 +147,28 @@ class TabletWorkspaceTabsUiTest {
 
     @Test fun ipadKeepsLayoutAndFlattenControlsSeparate() =
         verifySeparatedTabletActions(ChartPlatform.IOS, 1024, 768)
+
+    @Test fun tabletSwitchesLoginAndOnlyShowsItsOwnSubaccounts() = runDesktopComposeUiTest(width = 1024, height = 768) {
+        val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+        val first = runtime.registry.plugins[0]
+        val second = runtime.registry.plugins[1]
+        val alternate = first.accounts[1]
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(1024.dp, 768.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("tablet-account-toggle").performClick()
+        onNodeWithTag("quick-account-picker").performClick()
+        onNodeWithTag("quick-account-${alternate.id}").performClick()
+        onNodeWithTag("tablet-account-toggle").assertTextContains(alternate.name, substring = true)
+        onNodeWithTag("tablet-account-toggle").performClick()
+        onNodeWithTag("quick-login-picker").performClick()
+        onNodeWithTag("quick-login-${second.descriptor.id}").performClick()
+        onNodeWithTag("tablet-account-toggle").assertTextContains(second.descriptor.name, substring = true)
+        onNodeWithTag("tablet-account-toggle").performClick()
+        onNodeWithTag("quick-account-picker").performClick()
+        onNodeWithTag("quick-account-${alternate.id}").assertDoesNotExist()
+        onNodeWithTag("quick-account-${second.accounts[0].id}").assertExists()
+    }
 
     @Test fun tabletPanelResizingPersistsSeparatelyFromDesktop() = runDesktopComposeUiTest(width = 1440, height = 900) {
         val store = MemorySnapshotStore()

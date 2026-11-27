@@ -4,11 +4,13 @@
 
 - 平板顶部栏采用桌面标签样式，账户切换可展开或收起；批量平仓入口移至交易面板，底栏精简，并缩小行情、下单和分析面板。
 - 平板回放设置与下单界面采用紧凑布局，回放覆盖可用屏幕并隐藏底部统计栏；模拟风控和交易计算不变。
+- 平板账户菜单分两级向左展开，分别选择登录账户和子账户；桌面及平板右侧的交易入口改名为持仓。
 
 ## English
 
 - Give tablets desktop-style tabs and a collapsible account selector, move bulk close actions into the trading panel, and compact the account strip and side panels.
 - Compact tablet replay setup and order controls, fill the available screen, and hide the bottom statistics strip while retaining simulated trading and risk calculations.
+- Open tablet login and subaccount choices in a two-level menu expanding left; rename the desktop and tablet trading rail entry to Positions.
 
 # v1.8.2
 

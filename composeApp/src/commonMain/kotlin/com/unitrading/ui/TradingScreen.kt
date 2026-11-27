@@ -1944,39 +1944,14 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                     }
                     if (tabletWorkspaces && (desktop || chartFirst)) {
-                        var accountsExpanded by rememberSaveable { mutableStateOf(false) }
                         Row(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
-                            TextButton(onClick = { accountsExpanded = !accountsExpanded },
-                                modifier = Modifier.widthIn(min = 160.dp, max = 230.dp).height(40.dp).testTag("tablet-account-toggle"),
-                                enabled = !accountOperationPending(),
-                                shape = RoundedCornerShape(7.dp),
-                                colors = ButtonDefaults.textButtonColors(containerColor = colors.Surface),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(aliases.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelSmall, color = colors.Muted)
-                                    Text(accountName, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                }
-                                Icon(if (accountsExpanded) AppIcons.ExpandLess else AppIcons.ExpandMore,
-                                    if (accountsExpanded) "收起账户栏" else "展开账户栏", Modifier.size(18.dp))
-                            }
-                        }
-                        if (accountsExpanded) {
-                            Row(Modifier.fillMaxWidth().background(colors.Surface).padding(horizontal = 8.dp, vertical = 4.dp)
-                                .testTag("tablet-expanded-accounts"), verticalAlignment = Alignment.CenterVertically) {
-                                AccountContextBar(registry, plugin, mainAccountId,
-                                    { value -> chooseBroker(value); accountsExpanded = false },
-                                    { value -> chooseAccount(value); accountsExpanded = false },
-                                    Modifier.widthIn(max = 560.dp).fillMaxWidth(), enabled = !accountOperationPending(),
-                                    dense = true, aliases = runtime.accountAliases, emphasize = true,
-                                    inline = true, inlineLoginLabel = "平台")
-                            }
+                            TabletAccountMenu(registry, plugin, mainAccountId, runtime.accountAliases,
+                                enabled = !accountOperationPending(), onBroker = ::chooseBroker, onAccount = ::chooseAccount)
                         }
                         DividerLine()
                     }

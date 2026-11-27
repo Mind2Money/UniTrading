@@ -83,7 +83,7 @@ internal fun DetachedWorkspace(
                         RailToggle(AppIcons.TrendingUp, "行情", "detached-rail-market-$id", side == DetachedSidePanel.MARKET) { toggle(DetachedSidePanel.MARKET) }
                         if (dom != null) RailToggle(AppIcons.OrderBook, "DOM", "detached-rail-dom-$id", side == DetachedSidePanel.DOM) { toggle(DetachedSidePanel.DOM) }
                         RailToggle(AppIcons.OrderEntry, "下单", "detached-rail-order-$id", side == DetachedSidePanel.ORDER) { toggle(DetachedSidePanel.ORDER) }
-                        RailToggle(if (tradeOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "detached-rail-terminal-$id", tradeOpen) {
+                        RailToggle(if (tradeOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "持仓", "detached-rail-terminal-$id", tradeOpen) {
                             onActivate(); tradeOpen = !tradeOpen
                         }
                     }
