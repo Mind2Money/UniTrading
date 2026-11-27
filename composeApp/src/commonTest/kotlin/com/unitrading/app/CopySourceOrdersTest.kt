@@ -4,19 +4,20 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class CopySourceOrdersTest {
-    private fun intent(id: String) = CopySourceOrder("tradovate-demo-42", "leader", id)
+    private fun intent(id: String) = CopySourceOrder("tradovate-demo-42", "leader", id, "group")
 
     @Test fun recordsTheAppOrderBeforeAcceptingItsBrokerId() = runTest {
         val storage = MemorySnapshotStore()
         val source = CopySourceOrders(storage)
         assertTrue(source.begin(intent("request-1")))
-        assertNull(source.acceptedIds("tradovate-demo-42", "leader"))
+        assertNull(source.acceptedIds("tradovate-demo-42", "leader", "group"))
         assertFalse(source.begin(intent("request-1")))
         assertTrue(source.accepted("request-1", "order-1"))
         val restored = CopySourceOrders(storage).read()!!
         assertEquals(CopySourceState.ACCEPTED, restored.single().state)
         assertEquals("order-1", restored.single().brokerOrderId)
-        assertEquals(setOf("order-1"), source.acceptedIds("tradovate-demo-42", "leader"))
+        assertEquals(setOf("order-1"), source.acceptedIds("tradovate-demo-42", "leader", "group"))
+        assertEquals(emptySet(), source.acceptedIds("tradovate-demo-42", "leader", "new-group"))
         assertFalse(source.accepted("request-1", "order-2"))
     }
 
@@ -26,7 +27,7 @@ class CopySourceOrdersTest {
         assertTrue(source.uncertain("a"))
         assertFalse(source.accepted("a", "order-a"))
         assertEquals(CopySourceState.UNCERTAIN, source.read()!!.single().state)
-        assertNull(source.acceptedIds("tradovate-demo-42", "leader"))
+        assertNull(source.acceptedIds("tradovate-demo-42", "leader", "group"))
     }
 
     @Test fun cannotBindOneBrokerOrderToTwoRequests() = runTest {

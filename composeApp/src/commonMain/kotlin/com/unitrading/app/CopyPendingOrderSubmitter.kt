@@ -20,7 +20,7 @@ internal class CopyPendingOrderSubmitter(
     private val journal: CopyPendingOrderJournal,
     private val now: () -> Long,
 ) {
-    suspend fun submit(broker: BrokerPlugin, leaderId: String, follower: CopyFollower, sourceOrderId: String,
+    suspend fun submit(broker: BrokerPlugin, leaderId: String, groupId: String, follower: CopyFollower, sourceOrderId: String,
         requestId: String): CopyPendingSubmission {
         fun stopped(reason: String) = CopyPendingSubmission.Stopped(reason)
         if (!broker.descriptor.id.startsWith("tradovate-") || broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO ||
@@ -38,7 +38,7 @@ internal class CopyPendingOrderSubmitter(
             val rev = leader.copyRevision ?: return null
             if (destination.copyRevision != rev || leader.copyEpoch == null || leader.copyEpoch != destination.copyEpoch ||
                 !leader.copyPositionsComplete || !destination.copyPositionsComplete || !leader.copyOrdersComplete || !destination.copyOrdersComplete) return null
-            val originIds = sources.acceptedIds(broker.descriptor.id, leaderId) ?: return null
+            val originIds = sources.acceptedIds(broker.descriptor.id, leaderId, groupId) ?: return null
             val order = leader.orders.singleOrNull { it.id == sourceOrderId } ?: return null
             if (leader.positions.any { it.symbol == order.request.symbol } || destination.positions.any { it.symbol == order.request.symbol } ||
                 destination.orders.any { it.request.symbol == order.request.symbol }) return null

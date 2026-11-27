@@ -41,7 +41,7 @@ class CopyPendingOrderSubmitterTest {
     }
 
     private suspend fun register(store: SnapshotStore): CopySourceOrders = CopySourceOrders(store).also {
-        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", kind = OrderKind.LIMIT)))
+        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group", kind = OrderKind.LIMIT)))
         assertTrue(it.accepted("source-request", "source-order"))
     }
 
@@ -53,8 +53,8 @@ class CopyPendingOrderSubmitterTest {
         val journal = CopyPendingOrderJournal(store)
         val service = CopyPendingOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), register(store), journal) { 1000 }
         val follower = CopyFollower("follower", 1, 2, fixedContracts = 1)
-        assertIs<CopyPendingSubmission.Accepted>(service.submit(broker, "leader", follower, "source-order", "copy-a"))
-        assertIs<CopyPendingSubmission.Stopped>(service.submit(broker, "leader", follower, "source-order", "copy-b"))
+        assertIs<CopyPendingSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "source-order", "copy-a"))
+        assertIs<CopyPendingSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "source-order", "copy-b"))
         assertEquals(1, target.writes)
         assertEquals(CopyPendingState.ACCEPTED, journal.read()!!.single().state)
     }
@@ -67,8 +67,8 @@ class CopyPendingOrderSubmitterTest {
         val journal = CopyPendingOrderJournal(store)
         val service = CopyPendingOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), register(store), journal) { 1000 }
         val follower = CopyFollower("follower", 1, 2, fixedContracts = 1)
-        assertIs<CopyPendingSubmission.Review>(service.submit(broker, "leader", follower, "source-order", "copy-a"))
-        assertIs<CopyPendingSubmission.Stopped>(service.submit(broker, "leader", follower, "source-order", "copy-b"))
+        assertIs<CopyPendingSubmission.Review>(service.submit(broker, "leader", "group", follower, "source-order", "copy-a"))
+        assertIs<CopyPendingSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "source-order", "copy-b"))
         assertEquals(1, target.writes)
         assertEquals(CopyPendingState.UNCERTAIN, journal.read()!!.single().state)
     }
@@ -87,7 +87,7 @@ class CopyPendingOrderSubmitterTest {
             }
         }
         val service = CopyPendingOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources, CopyPendingOrderJournal(store)) { 1000 }
-        assertIs<CopyPendingSubmission.Review>(service.submit(broker, "leader", CopyFollower("follower", 1, 2), "source-order", "copy-a"))
+        assertIs<CopyPendingSubmission.Review>(service.submit(broker, "leader", "group", CopyFollower("follower", 1, 2), "source-order", "copy-a"))
         assertEquals(0, target.writes)
     }
 }

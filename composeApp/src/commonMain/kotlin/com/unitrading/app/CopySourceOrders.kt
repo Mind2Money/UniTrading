@@ -16,6 +16,8 @@ internal data class CopySourceOrder(
     val brokerId: String,
     val leaderId: String,
     val requestId: String,
+    /** Freshly generated for every manual start; old source orders are never replayed into a new group. */
+    val groupId: String,
     val state: CopySourceState = CopySourceState.INTENDED,
     val brokerOrderId: String? = null,
     val kind: OrderKind = OrderKind.MARKET,
@@ -31,7 +33,7 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     private val mutex = Mutex()
     private val loaded = runCatching {
         val rows = store.read(key)?.takeIf(String::isNotBlank)?.let { Json.decodeFromString(codec, it) }.orEmpty()
-        require(rows.all { it.brokerId.isNotBlank() && it.leaderId.isNotBlank() && it.requestId.isNotBlank() &&
+        require(rows.all { it.brokerId.isNotBlank() && it.leaderId.isNotBlank() && it.requestId.isNotBlank() && it.groupId.isNotBlank() &&
             if (it.state == CopySourceState.ACCEPTED) !it.brokerOrderId.isNullOrBlank() else it.brokerOrderId == null })
         require(rows.map { it.requestId }.distinct().size == rows.size)
         val ids = rows.mapNotNull { it.brokerOrderId }
@@ -42,7 +44,7 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     private var records = loaded.getOrDefault(emptyList())
 
     suspend fun begin(order: CopySourceOrder): Boolean = mutex.withLock {
-        if (unreadable || order.brokerId.isBlank() || order.leaderId.isBlank() || order.requestId.isBlank() ||
+        if (unreadable || order.brokerId.isBlank() || order.leaderId.isBlank() || order.requestId.isBlank() || order.groupId.isBlank() ||
             order.state != CopySourceState.INTENDED || order.brokerOrderId != null || records.any { it.requestId == order.requestId }) return@withLock false
         persist(records + order)
     }
@@ -64,11 +66,11 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     suspend fun read(): List<CopySourceOrder>? = mutex.withLock { if (unreadable) null else records.toList() }
 
     /** Pending or uncertain origins must be reconciled before their account can follow any new fill. */
-    suspend fun acceptedIds(brokerId: String, leaderId: String): Set<String>? = mutex.withLock {
-        if (unreadable || brokerId.isBlank() || leaderId.isBlank()) return@withLock null
+    suspend fun acceptedIds(brokerId: String, leaderId: String, groupId: String): Set<String>? = mutex.withLock {
+        if (unreadable || brokerId.isBlank() || leaderId.isBlank() || groupId.isBlank()) return@withLock null
         val own = records.filter { it.brokerId == brokerId && it.leaderId == leaderId }
         if (own.any { it.state == CopySourceState.INTENDED || it.state == CopySourceState.UNCERTAIN }) return@withLock null
-        own.filter { it.state == CopySourceState.ACCEPTED }.mapNotNull { it.brokerOrderId }.toSet()
+        own.filter { it.state == CopySourceState.ACCEPTED && it.groupId == groupId }.mapNotNull { it.brokerOrderId }.toSet()
     }
 
     private fun transition(requestId: String, transform: (CopySourceOrder) -> CopySourceOrder?): Boolean {

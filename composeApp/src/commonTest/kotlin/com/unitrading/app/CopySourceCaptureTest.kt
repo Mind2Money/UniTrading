@@ -12,10 +12,10 @@ class CopySourceCaptureTest {
         val capture = CopySourceCapture(journal) { fail(it) }
         var sent = 0
         suspend fun accepted(): TradeResult { sent++; return TradeResult(true, "accepted", "order-1") }
-        assertTrue(capture.submit("tradovate", "leader", "follower", "outside", request, true, ::accepted).accepted)
-        assertTrue(capture.submit("tradovate", "leader", "leader", "automatic", request.copy(automated = true), true, ::accepted).accepted)
+        assertTrue(capture.submit("tradovate", "leader", "group", "follower", "outside", request, true, ::accepted).accepted)
+        assertTrue(capture.submit("tradovate", "leader", "group", "leader", "automatic", request.copy(automated = true), true, ::accepted).accepted)
         assertTrue(journal.read()!!.isEmpty())
-        assertTrue(capture.submit("tradovate", "leader", "leader", "user-order", request, true, ::accepted).accepted)
+        assertTrue(capture.submit("tradovate", "leader", "group", "leader", "user-order", request, true, ::accepted).accepted)
         assertEquals(3, sent)
         assertEquals("order-1", journal.read()!!.single().brokerOrderId)
     }
@@ -28,7 +28,7 @@ class CopySourceCaptureTest {
         var sent = false
         var stopped = false
         val capture = CopySourceCapture(CopySourceOrders(storage)) { stopped = true }
-        val result = capture.submit("tradovate", "leader", "leader", "user", request, true) {
+        val result = capture.submit("tradovate", "leader", "group", "leader", "user", request, true) {
             sent = true; TradeResult(true, "accepted", "order")
         }
         assertFalse(result.accepted)
@@ -39,7 +39,7 @@ class CopySourceCaptureTest {
     @Test fun remembersWhetherSourceWasAnIndependentPendingOrder() = runTest {
         val journal = CopySourceOrders(MemorySnapshotStore())
         val capture = CopySourceCapture(journal) { fail(it) }
-        capture.submit("tradovate", "leader", "leader", "pending", request.copy(kind = OrderKind.LIMIT, entryPrice = 500), true) {
+        capture.submit("tradovate", "leader", "group", "leader", "pending", request.copy(kind = OrderKind.LIMIT, entryPrice = 500), true) {
             TradeResult(true, "accepted", "order")
         }
         assertEquals(OrderKind.LIMIT, journal.read()!!.single().kind)
@@ -50,13 +50,13 @@ class CopySourceCaptureTest {
         var sent = 0
         var stopped = false
         val capture = CopySourceCapture(journal) { stopped = true }
-        val result = capture.submit("tradovate", "leader", "leader", "user", request, true) {
+        val result = capture.submit("tradovate", "leader", "group", "leader", "user", request, true) {
             sent++; TradeResult(false, "unknown", outcome = CommandOutcome.UNKNOWN)
         }
         assertEquals(CommandOutcome.UNKNOWN, result.outcome)
         assertTrue(stopped)
         assertEquals(CopySourceState.UNCERTAIN, journal.read()!!.single().state)
-        val retry = capture.submit("tradovate", "leader", "leader", "user", request, true) { sent++; TradeResult(true, "accepted", "order") }
+        val retry = capture.submit("tradovate", "leader", "group", "leader", "user", request, true) { sent++; TradeResult(true, "accepted", "order") }
         assertFalse(retry.accepted)
         assertEquals(1, sent)
     }
