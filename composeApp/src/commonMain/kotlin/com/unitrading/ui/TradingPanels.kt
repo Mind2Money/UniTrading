@@ -165,7 +165,7 @@ internal fun AccountStrip(account: AccountSnapshot, modifier: Modifier = Modifie
             Metric("今日盈亏 USD（券商）", figures.daily, color = figures.dailyColor, valueTag = "daily-pnl-value")
             figures.funds.forEach { (label, value, color) -> Metric(label, value, color = color) }
             DrawdownStrip(account.drawdown, connected)
-            figures.others.forEach { (label, value, color) -> Metric(label, value, color = color) }
+            if (!compact) figures.others.forEach { (label, value, color) -> Metric(label, value, color = color) }
             if (compact) Column(horizontalAlignment = Alignment.End) {
                 Text(figures.dailySource, Modifier.testTag("daily-pnl-source"), color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 if (note != null) Text(note, color = TradingColors.Muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)

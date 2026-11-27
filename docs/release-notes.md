@@ -2,11 +2,11 @@
 
 ## 简体中文
 
-- 平板顶部栏采用桌面标签样式，账户切换可展开或收起；批量平仓入口移至交易面板。
+- 平板顶部栏采用桌面标签样式，账户切换可展开或收起；批量平仓入口移至交易面板，底栏精简，并缩小行情、下单和分析面板。
 
 ## English
 
-- Give tablets desktop-style tabs and a collapsible account selector, and move bulk close actions into the trading panel.
+- Give tablets desktop-style tabs and a collapsible account selector, move bulk close actions into the trading panel, and compact the account strip and side panels.
 
 # v1.8.2
 

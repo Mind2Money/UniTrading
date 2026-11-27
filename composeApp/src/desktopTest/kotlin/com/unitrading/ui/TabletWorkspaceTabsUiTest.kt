@@ -15,6 +15,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopPanel
+import com.unitrading.app.DesktopLayoutController
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.ThemePreset
@@ -53,8 +54,10 @@ class TabletWorkspaceTabsUiTest {
             val figures = onNodeWithTag("tablet-account-bar").fetchSemanticsNode().boundsInRoot
             assertTrue(rail.width <= 64f && header.height <= 44f, "Tablet controls must leave more chart space")
             assertTrue(figures.top >= tradeBar.top && figures.bottom <= tradeBar.bottom, "Account figures must share the trade bar")
+            onNodeWithTag("tablet-trade-divider").assertExists()
             onNodeWithTag("daily-pnl-value").assertExists()
             onNodeWithTag("drawdown-room-value", useUnmergedTree = true).assertExists()
+            listOf("浮动盈亏", "已用保证金", "可用保证金", "保证金比例").forEach { onNodeWithText(it).assertDoesNotExist() }
             assertTrue(accountToggle.top >= header.top && accountToggle.bottom <= header.bottom && accountToggle.right <= width)
             assertTrue(header.bottom <= chart.top && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top)
             onNodeWithTag("open-order").assertDoesNotExist()
@@ -81,8 +84,27 @@ class TabletWorkspaceTabsUiTest {
 
             onNodeWithTag("rail-order").performClick()
             onNodeWithTag("desktop-order").assertIsDisplayed()
+            assertTrue(onNodeWithTag("desktop-order").fetchSemanticsNode().boundsInRoot.width <= 272f)
+            onNodeWithTag("order-more").assertExists()
+            onNodeWithTag("order-quantity").assertExists()
+            onNodeWithTag("review-order").assertIsDisplayed()
+            val orderShot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-order.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", orderShot)
             onNodeWithTag("desktop-order-minimize").performClick()
             onNodeWithTag("desktop-order").assertDoesNotExist()
+            onNodeWithTag("rail-market").performClick()
+            assertTrue(onNodeWithTag("desktop-sidebar").fetchSemanticsNode().boundsInRoot.width <= 280f)
+            val marketShot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-market.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", marketShot)
+            onNodeWithTag("rail-analytics").performClick()
+            assertTrue(onNodeWithTag("desktop-analytics").fetchSemanticsNode().boundsInRoot.width <= 460f)
+            val analyticsShot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-analytics.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", analyticsShot)
+            onNodeWithTag("rail-analytics").performClick()
+            onNodeWithTag("rail-market").performClick()
             onNodeWithTag("chart-layout-menu").performScrollTo().performClick()
             onNodeWithTag("chart-layout-TWO_COLUMNS").assertExists()
             onNodeWithText("平仓全部子账户？").assertDoesNotExist()
@@ -115,6 +137,24 @@ class TabletWorkspaceTabsUiTest {
 
     @Test fun ipadKeepsLayoutAndFlattenControlsSeparate() =
         verifySeparatedTabletActions(ChartPlatform.IOS, 1024, 768)
+
+    @Test fun tabletPanelResizingPersistsSeparatelyFromDesktop() = runDesktopComposeUiTest(width = 1440, height = 900) {
+        val store = MemorySnapshotStore()
+        val runtime = TradingRuntime(store, includeDemoBrokers = true).apply { paused.value = true }
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(1440.dp, 900.dp)) { TradingScreen(runtime) }
+        } }
+        val before = runtime.desktopLayout.preferences.value
+        onNodeWithTag("resize-sidebar").performTouchInput { swipe(center, center + Offset(-35f, 0f)) }
+        onNodeWithTag("resize-order").performTouchInput { swipe(center, center + Offset(-35f, 0f)) }
+        val after = runtime.desktopLayout.preferences.value
+        assertTrue(after.tabletSidebarWidth > before.tabletSidebarWidth)
+        assertTrue(after.tabletOrderWidth > before.tabletOrderWidth)
+        assertEquals(before.sidebarWidth, after.sidebarWidth)
+        assertEquals(before.orderWidth, after.orderWidth)
+        assertTrue(runBlocking { runtime.desktopLayout.save() })
+        assertEquals(after, DesktopLayoutController(store).preferences.value)
+    }
 
     @Test fun androidTabletCreatesSwitchesReordersAndRestoresTabsWithoutDetaching() = runDesktopComposeUiTest(width = 1440, height = 900) {
         val store = MemorySnapshotStore()

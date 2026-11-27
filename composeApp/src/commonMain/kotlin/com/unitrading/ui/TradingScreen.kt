@@ -2105,7 +2105,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
-                                accountName = accountName, floating = floating, compactFloating = floating && tablet)
+                                accountName = accountName, floating = floating, compactFloating = tablet)
                         }
                         @Composable fun workspaceTerminal(target: String, m: Modifier) {
                             val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))

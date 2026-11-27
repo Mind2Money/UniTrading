@@ -23,8 +23,8 @@ import kotlin.math.roundToInt
 internal fun FullscreenOrderOverlay(symbol: String, onClose: () -> Unit, compact: Boolean = false, content: @Composable (Modifier) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val colors = TradingColors
-        val w = minOf(if (compact) 320.dp else 380.dp, (maxWidth - 16.dp).coerceAtLeast(1.dp))
-        val h = minOf(if (compact) 560.dp else 720.dp, (maxHeight - 16.dp).coerceAtLeast(1.dp))
+        val w = minOf(if (compact) 288.dp else 380.dp, (maxWidth - 16.dp).coerceAtLeast(1.dp))
+        val h = minOf(if (compact) 460.dp else 720.dp, (maxHeight - 16.dp).coerceAtLeast(1.dp))
         val density = LocalDensity.current
         val maxX = with(density) { (maxWidth - w).toPx().coerceAtLeast(0f) }
         val maxY = with(density) { (maxHeight - h).toPx().coerceAtLeast(0f) }
