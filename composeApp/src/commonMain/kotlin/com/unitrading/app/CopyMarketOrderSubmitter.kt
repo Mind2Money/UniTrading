@@ -26,7 +26,7 @@ internal class CopyMarketOrderSubmitter(
         if (!broker.descriptor.id.startsWith("tradovate-") || broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO ||
             registry.plugins.none { it === broker } || requestId.isBlank() || symbol.isBlank()) return stopped("仅允许已连接的 Tradovate Demo")
         val source = try { broker.openSession(leaderId) } catch (_: Exception) { return stopped("主账户不可用") }
-        val target = try { risk.guard(broker, broker.openAutomatedSession(follower.accountId) ?: return stopped("券商不支持自动订单")) }
+        val target = try { broker.openSession(follower.accountId) }
             catch (_: Exception) { return stopped("跟随账户不可用") }
 
         data class Prepared(val revision: Long, val epoch: Long, val leg: CopyDispatchLeg, val before: Int, val after: Int, val signed: Int)
@@ -83,11 +83,13 @@ internal class CopyMarketOrderSubmitter(
         val request = OrderRequest(symbol, if (first.signed > 0) Side.BUY else Side.SELL, OrderKind.MARKET,
             kotlin.math.abs(first.signed.toLong()) * 100, automated = true, copyExpectedRevision = first.revision)
         if (!target.preview(request).valid) return stopped("跟随订单未通过账户校验")
+        val automated = try { risk.guard(broker, broker.openAutomatedSession(follower.accountId, first.revision) ?: return stopped("券商不支持自动订单")) }
+            catch (_: Exception) { return stopped("跟随账户不可用") }
         val intent = CopyDispatch(broker.descriptor.id, leaderId, fill.orderId, fill.executionId, follower.accountId, first.leg,
             requestId, first.signed, first.before, first.after)
         if (!journal.begin(intent)) return stopped("成交已记录或日志保存失败，未发送")
         if (prepared() != first) return CopyMarketSubmission.Review("账户状态已变化，未发送；请核对已保存记录")
-        val result = try { withTimeoutOrNull(20_000) { target.placeOrder(requestId, request) } }
+        val result = try { withTimeoutOrNull(20_000) { automated.placeOrder(requestId, request) } }
             catch (cancel: CancellationException) {
                 withContext(NonCancellable) { journal.uncertain(requestId) }
                 throw cancel

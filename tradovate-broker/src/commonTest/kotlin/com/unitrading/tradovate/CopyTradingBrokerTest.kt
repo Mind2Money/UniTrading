@@ -67,9 +67,27 @@ class CopyTradingBrokerTest {
         }
         val broker = TradovateBroker(session(), wire, backgroundScope, { now })
         broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
-        val automated = assertNotNull(broker.openAutomatedSession("100"))
+        val revision = assertNotNull(broker.openSession("100").state.value.copyRevision)
+        val stale = assertNotNull(broker.openAutomatedSession("100", revision + 1))
+        assertFalse(stale.cancelOrder("stale", "710").accepted)
+        assertTrue(wire.requests.none { it.path == "order/cancelorder" })
+        val nextRevision = assertNotNull(broker.openSession("100").state.value.copyRevision)
+        val automated = assertNotNull(broker.openAutomatedSession("100", nextRevision))
         assertFalse(automated.placeOrder("manual", OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).accepted)
-        assertTrue(automated.cancelOrder("copy-cancel", "710").accepted)
+        val freshRevision = assertNotNull(broker.openSession("100").state.value.copyRevision)
+        assertTrue(assertNotNull(broker.openAutomatedSession("100", freshRevision)).cancelOrder("copy-cancel", "710").accepted)
         assertEquals(true, wire.requests.last { it.path == "order/cancelorder" }.body?.bool("isAutomated"))
+    }
+
+    @Test fun manualSessionCancellationKeepsTheManualFlag() = runTest {
+        val wire = MockTradovateWire().apply {
+            snapshot = JsonObject(snapshot + mapOf(
+                "orders" to json("""[{"id":710,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Working","timestamp":"2026-10-28T12:00:00Z"}]"""),
+                "orderVersions" to json("""[{"id":1110,"orderId":710,"orderQty":1,"orderType":"Limit","price":5490}]""")))
+        }
+        val broker = TradovateBroker(session(), wire, backgroundScope, { now })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        assertTrue(broker.openSession("100").cancelOrder("manual-cancel", "710").accepted)
+        assertEquals(false, wire.requests.last { it.path == "order/cancelorder" }.body?.bool("isAutomated"))
     }
 }
