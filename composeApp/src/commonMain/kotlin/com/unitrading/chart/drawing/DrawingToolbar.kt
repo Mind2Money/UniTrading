@@ -243,22 +243,26 @@ internal fun DrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemo
 
 /** The starred tools in a small bar that can be dragged out of the way. */
 @Composable
-internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = Modifier, onDrag: ((Offset) -> Unit)? = null) {
+internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = Modifier, onDrag: ((Offset) -> Unit)? = null, onDragEnd: (() -> Unit)? = null) {
     if (drawings.favorites.isEmpty() || !drawings.favoritesBarVisible) return
     val density = LocalDensity.current.density
     val savedOffset = drawings.favoriteChartOffset
-    val offset = if (onDrag != null || savedOffset == null) IntOffset.Zero else IntOffset((savedOffset.x * density).roundToInt(), (savedOffset.y * density).roundToInt())
+    var offset by remember { mutableStateOf(savedOffset?.let { IntOffset((it.x * density).roundToInt(), (it.y * density).roundToInt()) } ?: IntOffset.Zero) }
     val currentOnDrag by rememberUpdatedState(onDrag)
-    Surface(modifier.offset { offset }.testTag("drawing-favorites"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentDrawings by rememberUpdatedState(drawings)
+    val currentDensity by rememberUpdatedState(density)
+    Surface(modifier.offset { if (currentOnDrag != null) IntOffset.Zero else offset }.testTag("drawing-favorites"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(width = 16.dp, height = 36.dp).testTag("drawing-favorites-drag").pointerInput(drawings, density) {
-                detectDragGestures { change, amount ->
+            Box(Modifier.size(width = 16.dp, height = 36.dp).testTag("drawing-favorites-drag").pointerInput(Unit) {
+                fun savePosition() {
+                    if (currentOnDrag != null) currentOnDragEnd?.invoke()
+                    else currentDrawings.setFavoriteChartOffset(offset.x / currentDensity, offset.y / currentDensity)
+                }
+                detectDragGestures(onDragEnd = { savePosition() }, onDragCancel = { savePosition() }) { change, amount ->
                     change.consume()
                     if (currentOnDrag != null) currentOnDrag?.invoke(amount)
-                    else {
-                        val before = drawings.favoriteChartOffset ?: FavoriteBarPosition(0f, 0f)
-                        drawings.setFavoriteChartOffset(before.x + amount.x / density, before.y + amount.y / density)
-                    }
+                    else offset = IntOffset(offset.x + amount.x.roundToInt(), offset.y + amount.y.roundToInt())
                 }
             }, contentAlignment = Alignment.Center) { Icon(AppIcons.DragIndicator, contentDescription = "拖动收藏栏", Modifier.size(14.dp), tint = TradingColors.Muted) }
             drawings.favorites.forEach { tool ->
@@ -279,7 +283,7 @@ internal fun WorkspaceFavoriteDrawingsBar(drawings: ChartDrawings) {
         val density = LocalDensity.current
         var size by remember { mutableStateOf(IntSize.Zero) }
         val saved = drawings.favoriteWorkspacePosition
-        var position by remember(drawings, density.density) { mutableStateOf(saved?.let { Offset(it.x * density.density, it.y * density.density) }) }
+        var position by remember { mutableStateOf(saved?.let { Offset(it.x * density.density, it.y * density.density) }) }
         val maxX = (constraints.maxWidth - size.width).coerceAtLeast(0).toFloat()
         val maxY = (constraints.maxHeight - size.height).coerceAtLeast(0).toFloat()
         val startX = (maxX - with(density) { 92.dp.toPx() }).coerceAtLeast(0f)
@@ -290,10 +294,10 @@ internal fun WorkspaceFavoriteDrawingsBar(drawings: ChartDrawings) {
         FavoriteDrawingsBar(drawings,
             Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.onSizeChanged { size = it },
             onDrag = { delta ->
-                val before = Offset(x, y)
+                val before = (position ?: Offset(startX, startY)).let { Offset(it.x.coerceIn(0f, maxX), it.y.coerceIn(0f, maxY)) }
                 val moved = Offset((before.x + delta.x).coerceIn(0f, maxX), (before.y + delta.y).coerceIn(0f, maxY))
                 position = moved
-                drawings.setFavoriteWorkspacePosition(moved.x / density.density, moved.y / density.density)
-            })
+            },
+            onDragEnd = { position?.let { drawings.setFavoriteWorkspacePosition(it.x / density.density, it.y / density.density) } })
     }
 }

@@ -80,7 +80,7 @@ class ChartWindowsUiTest {
         val left = compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().boundsInRoot
         val right = compose.onNodeWithTag("split-cell-split1").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("drawing-favorites-drag").performTouchInput {
-            down(center); moveBy(Offset(-(right.left - left.left), 0f)); up()
+            down(center); repeat(4) { moveBy(Offset(-(right.left - left.left) / 4f, 0f)) }; up()
         }
         compose.waitForIdle()
         val moved = compose.onNodeWithTag("drawing-favorites").fetchSemanticsNode().boundsInRoot

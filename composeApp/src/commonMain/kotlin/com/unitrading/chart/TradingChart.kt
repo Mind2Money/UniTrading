@@ -958,7 +958,7 @@ fun TradingChart(
                         val boundary = barX((range.first + index).toDouble()).coerceIn(left, right)
                         if (boundary < right) {
                             drawRect(brush = Brush.horizontalGradient(
-                                colors = listOf(colors.Chart.copy(alpha = .08f), colors.Chart.copy(alpha = .96f)),
+                                colors = listOf(colors.Chart.copy(alpha = .30f), colors.Chart.copy(alpha = .96f)),
                                 startX = boundary, endX = right), topLeft = Offset(boundary, top), size = Size(right - boundary, bottom - top))
                         }
                         drawLine(colors.Brand, Offset(boundary, top), Offset(boundary, bottom), 1.5.dp.toPx())
