@@ -41,8 +41,9 @@ class CopyMarketOrderSubmitterTest {
         override fun history(symbol: String, timeframe: Timeframe): List<Candle> = emptyList()
     }
 
-    private suspend fun sources(store: SnapshotStore) = CopySourceOrders(store).also {
-        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group")))
+    private suspend fun sources(store: SnapshotStore, side: Side = Side.BUY, stopLoss: Long? = null) = CopySourceOrders(store).also {
+        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group",
+            request = OrderRequest("MESZ6", side, OrderKind.MARKET, 200, stopLoss = stopLoss))))
         assertTrue(it.accepted("source-request", "source-order"))
     }
 
@@ -72,7 +73,7 @@ class CopyMarketOrderSubmitterTest {
         val broker = FakeBroker(source, target, spec)
         val store = MemorySnapshotStore()
         val journal = CopyDispatchJournal(store)
-        val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store), journal)
+        val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store, Side.SELL), journal)
         val follower = CopyFollower("follower", 1, 5)
         assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "close"))
         target.state.value = state("follower")
@@ -98,5 +99,17 @@ class CopyMarketOrderSubmitterTest {
         assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-b"))
         assertEquals(1, target.writes.size)
         assertEquals(CopyDispatchState.UNCERTAIN, journal.read()!!.single().state)
+    }
+
+    @Test fun sourceWithProtectionIsNotCopiedUntilProtectedExecutionIsImplemented() = runTest {
+        val fill = CopySourceFill("fill", "source-order", "leader", 1, 0, 1)
+        val source = FakeSession(AccountInfo("leader", "Leader"), state("leader", listOf(position(Side.BUY)),
+            listOf(Execution("fill", "MESZ6", Side.BUY, 100, 10_100, 1000, "source-order"))))
+        val target = FakeSession(AccountInfo("follower", "Follower"), state("follower"))
+        val broker = FakeBroker(source, target, spec)
+        val store = MemorySnapshotStore()
+        val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store, stopLoss = 9_900), CopyDispatchJournal(store))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", CopyFollower("follower", 1, 2), "MESZ6", fill, "copy-a"))
+        assertTrue(target.writes.isEmpty())
     }
 }

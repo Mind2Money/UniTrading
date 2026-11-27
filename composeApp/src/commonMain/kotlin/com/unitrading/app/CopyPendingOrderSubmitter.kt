@@ -40,6 +40,13 @@ internal class CopyPendingOrderSubmitter(
                 !leader.copyPositionsComplete || !destination.copyPositionsComplete || !leader.copyOrdersComplete || !destination.copyOrdersComplete) return null
             val originIds = sources.acceptedIds(broker.descriptor.id, leaderId, groupId) ?: return null
             val order = leader.orders.singleOrNull { it.id == sourceOrderId } ?: return null
+            val origin = sources.read()?.singleOrNull { it.brokerId == broker.descriptor.id && it.leaderId == leaderId &&
+                it.groupId == groupId && it.brokerOrderId == sourceOrderId && it.state == CopySourceState.ACCEPTED } ?: return null
+            val sourceRequest = origin.request ?: return null
+            if (sourceRequest.symbol != order.request.symbol || sourceRequest.side != order.request.side ||
+                sourceRequest.kind != order.request.kind || sourceRequest.lotsHundredths != order.request.lotsHundredths ||
+                sourceRequest.entryPrice != order.request.entryPrice || sourceRequest.stopLoss != order.request.stopLoss ||
+                sourceRequest.takeProfit != order.request.takeProfit) return null
             if (leader.positions.any { it.symbol == order.request.symbol } || destination.positions.any { it.symbol == order.request.symbol } ||
                 destination.orders.any { it.request.symbol == order.request.symbol }) return null
             val spec = broker.catalog.value.instruments.singleOrNull { it.symbol == order.request.symbol } ?: return null

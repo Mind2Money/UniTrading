@@ -12,7 +12,7 @@ internal class CopySourceCapture(private val journal: CopySourceOrders, private 
     suspend fun submit(brokerId: String, leaderId: String, groupId: String, accountId: String, requestId: String, request: OrderRequest,
         active: Boolean, send: suspend () -> TradeResult): TradeResult {
         if (!active || accountId != leaderId || request.automated) return send()
-        if (!journal.begin(CopySourceOrder(brokerId, leaderId, requestId, groupId, kind = request.kind))) {
+        if (!journal.begin(CopySourceOrder(brokerId, leaderId, requestId, groupId, kind = request.kind, request = request))) {
             stop("主订单来源无法保存，跟单已停止")
             return TradeResult(false, "无法保存跟单记录，未提交主订单")
         }

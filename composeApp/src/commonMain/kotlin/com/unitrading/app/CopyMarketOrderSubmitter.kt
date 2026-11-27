@@ -55,9 +55,12 @@ internal class CopyMarketOrderSubmitter(
             val originIds = sources.acceptedIds(broker.descriptor.id, leaderId, groupId) ?: return null
             val origin = registered.singleOrNull { it.brokerId == broker.descriptor.id && it.leaderId == leaderId &&
                 it.brokerOrderId == fill.orderId && it.groupId == groupId && it.state == CopySourceState.ACCEPTED && it.kind == OrderKind.MARKET } ?: return null
-            if (origin.brokerOrderId !in originIds || fill.mode != CopySourceExecutionMode.FOLLOW_FILLS) return null
+            val brokerOrderId = origin.brokerOrderId ?: return null
+            val sourceRequest = origin.request ?: return null
+            if (sourceRequest.symbol != symbol || sourceRequest.stopLoss != null || sourceRequest.takeProfit != null) return null
+            if (brokerOrderId !in originIds || fill.mode != CopySourceExecutionMode.FOLLOW_FILLS) return null
             val execution = leader.executions.singleOrNull { it.id == fill.executionId && it.orderId == fill.orderId && it.symbol == symbol } ?: return null
-            if (execution.lotsHundredths <= 0 || execution.lotsHundredths % 100 != 0L ||
+            if (execution.side != sourceRequest.side || execution.lotsHundredths <= 0 || execution.lotsHundredths % 100 != 0L ||
                 execution.lotsHundredths / 100 * (if (execution.side == Side.BUY) 1 else -1) != fill.signedContracts.toLong() ||
                 net(leader) != fill.leaderAfter) return null
             val before = net(destination) ?: return null

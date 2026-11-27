@@ -41,7 +41,7 @@ class CopyPendingOrderSubmitterTest {
     }
 
     private suspend fun register(store: SnapshotStore): CopySourceOrders = CopySourceOrders(store).also {
-        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group", kind = OrderKind.LIMIT)))
+        assertTrue(it.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group", kind = OrderKind.LIMIT, request = order.request)))
         assertTrue(it.accepted("source-request", "source-order"))
     }
 

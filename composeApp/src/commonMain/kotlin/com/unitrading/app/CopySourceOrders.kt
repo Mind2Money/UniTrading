@@ -1,6 +1,7 @@
 package com.unitrading.app
 
 import com.unitrading.broker.OrderKind
+import com.unitrading.broker.OrderRequest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -21,6 +22,7 @@ internal data class CopySourceOrder(
     val state: CopySourceState = CopySourceState.INTENDED,
     val brokerOrderId: String? = null,
     val kind: OrderKind = OrderKind.MARKET,
+    val request: OrderRequest? = null,
 )
 
 /**
@@ -34,6 +36,7 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     private val loaded = runCatching {
         val rows = store.read(key)?.takeIf(String::isNotBlank)?.let { Json.decodeFromString(codec, it) }.orEmpty()
         require(rows.all { it.brokerId.isNotBlank() && it.leaderId.isNotBlank() && it.requestId.isNotBlank() && it.groupId.isNotBlank() &&
+            (it.request == null || (!it.request.automated && it.request.kind == it.kind && it.request.symbol.isNotBlank())) &&
             if (it.state == CopySourceState.ACCEPTED) !it.brokerOrderId.isNullOrBlank() else it.brokerOrderId == null })
         require(rows.map { it.requestId }.distinct().size == rows.size)
         val ids = rows.mapNotNull { it.brokerOrderId }
@@ -45,6 +48,7 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
 
     suspend fun begin(order: CopySourceOrder): Boolean = mutex.withLock {
         if (unreadable || order.brokerId.isBlank() || order.leaderId.isBlank() || order.requestId.isBlank() || order.groupId.isBlank() ||
+            (order.request != null && (order.request.automated || order.request.kind != order.kind || order.request.symbol.isBlank())) ||
             order.state != CopySourceState.INTENDED || order.brokerOrderId != null || records.any { it.requestId == order.requestId }) return@withLock false
         persist(records + order)
     }

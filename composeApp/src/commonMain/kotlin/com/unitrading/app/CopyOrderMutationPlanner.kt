@@ -29,7 +29,12 @@ internal object CopyOrderMutationPlanner {
     }
 
     fun cancel(link: CopyPendingLink, leaderId: String, followerId: String, follower: PendingOrder?): CopyOrderMutation {
-        linked(link, leaderId, followerId, follower)?.let { return CopyOrderMutation.Stop(it) }
-        return CopyOrderMutation.Cancel(follower!!.id)
+        // A partially filled linked entry can still have a working remainder. Cancelling that remainder is safe;
+        // the executor must separately reconcile the already filled position after broker confirmation.
+        if (link.leaderOrderId.isBlank() || link.followerOrderId.isBlank() || link.followerAccountId.isBlank() ||
+            link.leaderOrderId != leaderId || link.followerAccountId != followerId || follower == null ||
+            follower.id != link.followerOrderId || follower.role != OrderRole.ENTRY)
+            return CopyOrderMutation.Stop("跟随订单不存在或关联未确认")
+        return CopyOrderMutation.Cancel(follower.id)
     }
 }

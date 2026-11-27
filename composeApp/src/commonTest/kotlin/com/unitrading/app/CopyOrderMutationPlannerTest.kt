@@ -19,4 +19,9 @@ class CopyOrderMutationPlannerTest {
         assertIs<CopyOrderMutation.Stop>(CopyOrderMutationPlanner.changePrice(link, "leader-order", "follower", order.copy(filledLotsHundredths = 100), 4999))
         assertIs<CopyOrderMutation.Stop>(CopyOrderMutationPlanner.cancel(link, "leader-order", "follower", order.copy(role = OrderRole.UNRESOLVED)))
     }
+
+    @Test fun cancelMayRemoveTheRemainderOfAPartiallyFilledLinkedEntry() {
+        val partial = order.copy(request = order.request.copy(lotsHundredths = 200), filledLotsHundredths = 100, editable = false)
+        assertEquals(CopyOrderMutation.Cancel("follower-order"), CopyOrderMutationPlanner.cancel(link, "leader-order", "follower", partial))
+    }
 }
