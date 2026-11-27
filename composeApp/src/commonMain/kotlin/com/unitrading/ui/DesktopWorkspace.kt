@@ -113,7 +113,7 @@ internal fun DesktopWorkspace(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline, showAnalytics, railWidth)
+            val layout = desktopPanelGeometry(maxWidth.value, maxHeight.value, wide, preferred.copy(marketOpen = sidebarInline, orderOpen = orderInline), flowInline, domInline, showAnalytics, railWidth, tablet)
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     // With the chart in its own window and no order flow beside it, the trade list takes the chart's room.
@@ -153,8 +153,8 @@ internal fun DesktopWorkspace(
                 }
                 if (orderInline) {
                     PanelResizeHandle("下单栏宽度", "resize-order", horizontal = true, dimension = layout.order, direction = -1f,
-                        onChange = { controller.update(preferred.copy(orderWidth = it)) }, onFinish = ::save,
-                        onReset = { controller.update(preferred.copy(orderWidth = defaults.orderWidth)); save() })
+                        onChange = { controller.update(if (tablet) preferred.copy(tabletOrderWidth = it) else preferred.copy(orderWidth = it)) }, onFinish = ::save,
+                        onReset = { controller.update(if (tablet) preferred.copy(tabletOrderWidth = defaults.tabletOrderWidth) else preferred.copy(orderWidth = defaults.orderWidth)); save() })
                     order(Modifier.width(layout.order.value.dp).fillMaxHeight().testTag("desktop-order")) { setOpen(DesktopPanel.ORDER, false) }
                 }
                 if (domInline) {
@@ -167,8 +167,18 @@ internal fun DesktopWorkspace(
                 }
                 if (sidebarInline) {
                     PanelResizeHandle(if (showAnalytics) "分析栏宽度" else "行情栏宽度", "resize-sidebar", horizontal = true, dimension = layout.sidebar, direction = -1f,
-                        onChange = { controller.update(if (showAnalytics) preferred.copy(analyticsWidth = it) else preferred.copy(sidebarWidth = it)) }, onFinish = ::save,
-                        onReset = { controller.update(if (showAnalytics) preferred.copy(analyticsWidth = defaults.analyticsWidth) else preferred.copy(sidebarWidth = defaults.sidebarWidth)); save() })
+                        onChange = { controller.update(when {
+                            tablet && showAnalytics -> preferred.copy(tabletAnalyticsWidth = it)
+                            tablet -> preferred.copy(tabletSidebarWidth = it)
+                            showAnalytics -> preferred.copy(analyticsWidth = it)
+                            else -> preferred.copy(sidebarWidth = it)
+                        }) }, onFinish = ::save,
+                        onReset = { controller.update(when {
+                            tablet && showAnalytics -> preferred.copy(tabletAnalyticsWidth = defaults.tabletAnalyticsWidth)
+                            tablet -> preferred.copy(tabletSidebarWidth = defaults.tabletSidebarWidth)
+                            showAnalytics -> preferred.copy(analyticsWidth = defaults.analyticsWidth)
+                            else -> preferred.copy(sidebarWidth = defaults.sidebarWidth)
+                        }); save() })
                     Box(Modifier.width(layout.sidebar.value.dp).fillMaxHeight().background(TradingColors.Surface).testTag("desktop-sidebar")) {
                         if (showAnalytics) analytics?.invoke(Modifier.fillMaxSize().testTag("desktop-analytics")) { analyticsOpen = false }
                         else market(Modifier.fillMaxSize().testTag("desktop-market")) { setOpen(DesktopPanel.MARKET, false) }
@@ -192,7 +202,7 @@ internal fun DesktopWorkspace(
                             if (onCompactOrderOpen != null && !wide) onCompactOrderOpen()
                             else setOpen(DesktopPanel.ORDER, !preferred.orderOpen)
                         }
-                    RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "交易", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
+                    RailToggle(if (preferred.terminalOpen) AppIcons.ReceiptLongFilled else AppIcons.ReceiptLong, "持仓", "rail-terminal", preferred.terminalOpen) { setOpen(DesktopPanel.TERMINAL, !preferred.terminalOpen) }
                     if (analytics != null) RailToggle(AppIcons.Analytics, "分析", "rail-analytics", showAnalytics) { analyticsOpen = !analyticsOpen }
                     if (onOpenSettings != null)
                         RailToggle(AppIcons.Settings, "设置", "open-settings", false, onToggle = onOpenSettings)
@@ -280,6 +290,8 @@ private fun TerminalBar(summary: String, open: Boolean, extra: @Composable RowSc
                 Text("交易", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                 if (summary.isNotBlank()) Text(summary, style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted, maxLines = 1)
             }
+            Box(Modifier.padding(end = 8.dp).width(1.dp).height(30.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f)).testTag("tablet-trade-divider"))
             tabletAccountBar(Modifier.weight(1f).testTag("tablet-account-bar"))
             extra()
             ActionIcon(if (open) AppIcons.ExpandMore else AppIcons.ExpandLess, if (open) "收起交易面板" else "展开交易面板", "desktop-terminal-toggle", onClick = onToggle)

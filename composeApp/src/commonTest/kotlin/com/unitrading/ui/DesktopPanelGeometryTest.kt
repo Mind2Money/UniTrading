@@ -4,6 +4,22 @@ import com.unitrading.app.DesktopLayoutPreferences
 import kotlin.test.*
 
 class DesktopPanelGeometryTest {
+    @Test fun tabletsUseIndependentCompactWidthsAndKeepTheChartUsable() {
+        val pref = DesktopLayoutPreferences()
+        val tablet = desktopPanelGeometry(1440f, 900f, true, pref, railWidth = 65f, tablet = true)
+        assertEquals(280f, tablet.sidebar.value)
+        assertEquals(272f, tablet.order.value)
+        val analysis = desktopPanelGeometry(1440f, 900f, true, pref, analyticsOpen = true, railWidth = 65f, tablet = true)
+        assertEquals(460f, analysis.sidebar.value)
+        val custom = pref.copy(tabletSidebarWidth = 350f, tabletOrderWidth = 300f, tabletAnalyticsWidth = 500f)
+        assertEquals(350f, desktopPanelGeometry(1440f, 900f, true, custom, railWidth = 65f, tablet = true).sidebar.value)
+        assertEquals(500f, desktopPanelGeometry(1440f, 900f, true, custom, analyticsOpen = true, railWidth = 65f, tablet = true).sidebar.value)
+        val desktop = desktopPanelGeometry(1440f, 900f, true, custom)
+        assertEquals(pref.sidebarWidth, desktop.sidebar.value)
+        assertEquals(pref.orderWidth, desktop.order.value)
+        val narrow = desktopPanelGeometry(800f, 700f, true, custom, analyticsOpen = true, railWidth = 65f, tablet = true)
+        assertTrue(800f - 65f - 2 * PANEL_DIVIDER - narrow.sidebar.value - narrow.order.value >= 320f)
+    }
     @Test fun analyticsFitsBesideDomAndRestoresMarketWidth() {
         val pref = DesktopLayoutPreferences(sidebarWidth = 320f, analyticsWidth = 640f, domWidth = 300f)
         val analysis = desktopPanelGeometry(1800f, 900f, true, pref, domOpen = true, analyticsOpen = true)

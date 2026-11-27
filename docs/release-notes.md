@@ -1,5 +1,23 @@
 # Unreleased
 
+## 简体中文
+
+- 平板顶部栏采用桌面标签样式，账户切换可展开或收起；批量平仓入口移至交易面板，底栏精简，并缩小行情、下单和分析面板。
+- 平板回放设置与下单界面采用紧凑布局，回放覆盖可用屏幕并隐藏底部统计栏；模拟风控和交易计算不变。
+- 平板账户菜单分两级向左展开，分别选择登录账户和子账户；桌面及平板右侧的交易入口改名为持仓。
+- 缩窄平板标签栏并移除连接处的分隔线；桌面和平板回放控制居中，支持图表选 K 线、日期及随机起点，并按历史数据可用精度选择回放速度和更新周期。
+- 回放选择 K 线时，以从 30% 不透明度开始的渐变遮罩提示后续行情；收藏绘图工具栏保留原有拖动手感并记住拖动位置。
+- 新绘图可选择仅当前图表、当前布局或本机全部布局同步；也可通过右键单独切换已有绘图的同步范围，不同品种的绘图保持隔离。
+
+## English
+
+- Give tablets desktop-style tabs and a collapsible account selector, move bulk close actions into the trading panel, and compact the account strip and side panels.
+- Compact tablet replay setup and order controls, fill the available screen, and hide the bottom statistics strip while retaining simulated trading and risk calculations.
+- Open tablet login and subaccount choices in a two-level menu expanding left; rename the desktop and tablet trading rail entry to Positions.
+- Slim the tablet tab row and join it to the chart toolbar; center replay controls on desktop and tablets, with bar, date and random start selection and data-aware playback speed and update intervals.
+- Fade future bars with a mask starting at 30% opacity when selecting a replay start; keep the favorite toolbar's original drag behavior and restore its saved position.
+- Choose whether new drawings stay on the current chart or synchronize within a layout or across layouts on this device; change an existing drawing's scope from its context menu. Drawings remain isolated by symbol.
+
 # v1.8.2
 
 ## 简体中文

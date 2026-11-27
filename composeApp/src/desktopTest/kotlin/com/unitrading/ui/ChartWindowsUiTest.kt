@@ -32,6 +32,9 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.chart.drawing.DrawingTool
 import org.junit.Rule
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
+import com.unitrading.chart.drawing.DrawingSyncScope
+import com.unitrading.chart.drawing.DrawingPoint
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.*
@@ -51,6 +54,21 @@ class ChartWindowsUiTest {
     private val m5 = Timeframe.M5
     private val m15 = Timeframe.M15
 
+    @Test fun drawingSyncMenuChangesOnlyNewDrawings() {
+        render()
+        val main = runtime.drawingsForChart(MAIN_CHART)
+        val old = compose.runOnIdle { main.addHorizontalLine(DrawingPoint(1_000L, 100.0)); main.drawings.single() }
+        compose.onNodeWithTag("drawing-sync-menu").performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-sync-LAYOUT").performClick()
+        assertEquals(DrawingSyncScope.LAYOUT, main.newDrawingSyncScope)
+        assertEquals(DrawingSyncScope.LOCAL, old.syncScope)
+        compose.onNodeWithTag("drawing-sync-menu").performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-sync-GLOBAL").performClick()
+        assertEquals(DrawingSyncScope.GLOBAL, main.newDrawingSyncScope)
+        compose.runOnIdle { main.addHorizontalLine(DrawingPoint(2_000L, 120.0)) }
+        assertEquals(DrawingSyncScope.GLOBAL, main.drawings.last().syncScope)
+    }
+
     private fun newRuntime() = TradingRuntime(store, listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
 
     @Test fun favoritesFloatAcrossSplitChartsAndTargetTheSelectedChart() {
@@ -62,7 +80,7 @@ class ChartWindowsUiTest {
         val left = compose.onNodeWithTag("split-cell-main").fetchSemanticsNode().boundsInRoot
         val right = compose.onNodeWithTag("split-cell-split1").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("drawing-favorites-drag").performTouchInput {
-            down(center); moveBy(Offset(-(right.left - left.left), 0f)); up()
+            down(center); repeat(4) { moveBy(Offset(-(right.left - left.left) / 4f, 0f)) }; up()
         }
         compose.waitForIdle()
         val moved = compose.onNodeWithTag("drawing-favorites").fetchSemanticsNode().boundsInRoot
@@ -76,6 +94,14 @@ class ChartWindowsUiTest {
         compose.onNodeWithTag("favorite-TREND_LINE").performClick()
         assertEquals(DrawingTool.TREND_LINE, runtime.drawingsForChart("split1").tool)
         assertNull(runtime.drawingsForChart(MAIN_CHART).tool)
+        val workspace = compose.onNodeWithTag("split-workspace").fetchSemanticsNode().boundsInRoot
+        val relative = Offset(moved.left - workspace.left, moved.top - workspace.top)
+        assertTrue(runBlocking { runtime.flushChartDrawings() })
+        restart()
+        val restoredWorkspace = compose.onNodeWithTag("split-workspace").fetchSemanticsNode().boundsInRoot
+        val restored = compose.onNodeWithTag("drawing-favorites").fetchSemanticsNode().boundsInRoot
+        assertTrue(kotlin.math.abs((restored.left - restoredWorkspace.left) - relative.x) <= 2f)
+        assertTrue(kotlin.math.abs((restored.top - restoredWorkspace.top) - relative.y) <= 2f)
     }
 
     private fun render(windowed: Boolean = true) {
@@ -98,7 +124,10 @@ class ChartWindowsUiTest {
     private fun saved() = ChartPreferencesController(store).preferences.value
     private fun awaitSaved(what: (ChartPreferences) -> Boolean) = compose.waitUntil(5_000) { what(saved()) }
     private fun newChart() {
-        compose.onNodeWithTag("rail-new-chart").performScrollTo().performClick()
+        val id = generateSequence(1) { it + 1 }.map { "c$it" }.first { "chart-$it" !in windows.open }
+        compose.onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("detach-workspace-$id").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("detach-workspace-$id").performClick()
         compose.waitForIdle()
     }
     /** A node of the chart window [chart]; the main chart is the one in the workspace. */
@@ -357,7 +386,7 @@ class ChartWindowsUiTest {
         render()
         repeat(ChartPreferences.MAX_EXTRA_CHARTS) { newChart() }
         assertEquals(ChartPreferences.MAX_EXTRA_CHARTS, windows.open.size)
-        compose.onNodeWithTag("rail-new-chart").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("chart-new-workspace").performScrollTo().assertIsNotEnabled()
     }
 
     @Test fun aPlatformWithoutWindowsShowsOnlyTheMainChart() {

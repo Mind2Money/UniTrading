@@ -29,7 +29,7 @@ internal data class DesktopPanelGeometry(
 )
 
 /** Sizes for the panels of a [width] by [height] workspace; a folded panel takes no width, so the chart gets its space. */
-internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false, domOpen: Boolean = false, analyticsOpen: Boolean = false, railWidth: Float = PANEL_RAIL): DesktopPanelGeometry {
+internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, preferred: DesktopLayoutPreferences, orderFlowOpen: Boolean = false, domOpen: Boolean = false, analyticsOpen: Boolean = false, railWidth: Float = PANEL_RAIL, tablet: Boolean = false): DesktopPanelGeometry {
     fun dimension(value: Float, minimum: Float, maximum: Float): PanelDimension {
         val max = maximum.coerceAtLeast(0f)
         val min = minimum.coerceAtMost(max)
@@ -41,13 +41,17 @@ internal fun desktopPanelGeometry(width: Float, height: Float, wide: Boolean, pr
     val chartMinimum = if (orderFlowOpen) 488f else CHART_MIN_WIDTH
     val dividerCount = listOf(preferred.marketOpen, orderOpen, domOpen).count { it }
     val totalRoom = width - railWidth - PANEL_DIVIDER * dividerCount - chartMinimum
-    val sidebarMinimum = if (analyticsOpen) 440f else 280f
-    val domRoom = totalRoom - (if (preferred.marketOpen) sidebarMinimum else 0f) - (if (orderOpen) 260f else 0f)
+    val sidebarMinimum = if (analyticsOpen) { if (tablet) 360f else 440f } else if (tablet) 252f else 280f
+    val orderMinimum = if (tablet) 248f else 260f
+    val domRoom = totalRoom - (if (preferred.marketOpen) sidebarMinimum else 0f) - (if (orderOpen) orderMinimum else 0f)
     val dom = if (domOpen) dimension(preferred.domWidth, 220f, minOf(520f, domRoom)) else closed
     val room = totalRoom - dom.value
-    val sidebar = if (preferred.marketOpen) dimension(if (analyticsOpen) preferred.analyticsWidth else preferred.sidebarWidth, sidebarMinimum,
-        minOf(if (analyticsOpen) 900f else 520f, room - if (orderOpen) 260f else 0f)) else closed
-    val order = if (orderOpen) dimension(preferred.orderWidth, 260f, minOf(560f, room - sidebar.value)) else closed
+    val sidebarPreference = if (analyticsOpen) { if (tablet) preferred.tabletAnalyticsWidth else preferred.analyticsWidth }
+        else if (tablet) preferred.tabletSidebarWidth else preferred.sidebarWidth
+    val sidebar = if (preferred.marketOpen) dimension(sidebarPreference, sidebarMinimum,
+        minOf(if (analyticsOpen) 900f else 520f, room - if (orderOpen) orderMinimum else 0f)) else closed
+    val order = if (orderOpen) dimension(if (tablet) preferred.tabletOrderWidth else preferred.orderWidth,
+        orderMinimum, minOf(560f, room - sidebar.value)) else closed
     val availableHeight = (height - PANEL_DIVIDER).coerceAtLeast(0f)
     // Leave room for the trading header, section tabs and the list in a short window.
     val terminalMin = minOf(160f, availableHeight * .35f)

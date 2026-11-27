@@ -9,7 +9,8 @@ class DesktopLayoutTest {
         val store = MemorySnapshotStore()
         store.write("chart-v1", "unchanged")
         val controller = DesktopLayoutController(store)
-        val custom = DesktopLayoutPreferences(310f, 370f, 300f, orderFlowFraction = .65f)
+        val custom = DesktopLayoutPreferences(310f, 370f, 300f, orderFlowFraction = .65f,
+            tabletSidebarWidth = 295f, tabletOrderWidth = 280f, tabletAnalyticsWidth = 490f)
         controller.update(custom)
         assertNull(store.read("desktop-layout-v1"), "dragging only updates memory")
         assertTrue(controller.save())

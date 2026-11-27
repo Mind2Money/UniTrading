@@ -5,14 +5,19 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.MemorySnapshotStore
+import com.unitrading.app.ThemePreset
+import com.unitrading.app.ThemeSettings
 import com.unitrading.app.TradingRuntime
 import org.junit.Test
+import java.io.File
+import javax.imageio.ImageIO
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -23,7 +28,10 @@ class TabletChartFullscreenUiTest {
     private fun verifyFullscreen(platform: ChartPlatform, width: Int, height: Int) =
         runDesktopComposeUiTest(width = width, height = height) {
             val broker = OfflineOrderBroker()
-            val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+            val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply {
+                paused.value = true
+                theme.settings.value = ThemeSettings(preset = ThemePreset.LIGHT)
+            }
             setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides platform) {
                 Box(Modifier.requiredSize(width.dp, height.dp)) { TradingScreen(runtime) }
             } }
@@ -39,6 +47,14 @@ class TabletChartFullscreenUiTest {
             val workspace = onNodeWithTag("fullscreen-chart-workspace").fetchSemanticsNode().boundsInRoot
             val ticket = onNodeWithTag("fullscreen-order-ticket").fetchSemanticsNode().boundsInRoot
             assertTrue(abs(workspace.center.x - ticket.center.x) <= 1f && abs(workspace.center.y - ticket.center.y) <= 1f)
+            assertTrue(ticket.width <= 288f && ticket.height <= 460f)
+            onNodeWithTag("review-order").assertIsDisplayed()
+            val shot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-fullscreen-order.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", shot)
+            onNodeWithTag("order-more").performClick()
+            onNodeWithTag("reference-protection").assertExists()
+            onNodeWithTag("order-more").performScrollTo().performClick()
 
             onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
             onNodeWithTag("order-sl").performTextReplacement("5498.00")

@@ -159,6 +159,10 @@ enum class ChartCursor(val label: String) { CROSS("十字线"), DOT("圆点"), A
 @Serializable
 enum class MagnetMode(val label: String) { OFF("关闭"), WEAK("弱磁铁"), STRONG("强磁铁") }
 
+/** Synchronization applies only to newly created drawings; existing drawings keep their scope. */
+@Serializable
+enum class DrawingSyncScope(val label: String) { LOCAL("仅此图表"), LAYOUT("新绘图在布局中同步"), GLOBAL("新绘图在本机全局同步") }
+
 @Serializable
 enum class DrawingDash(val label: String) { SOLID("实线"), DOTTED("点线"), DASHED("虚线") }
 
@@ -228,6 +232,7 @@ data class Drawing(
     val locked: Boolean = false,
     val hidden: Boolean = false,
     val hiddenIntervals: Set<IntervalBucket> = emptySet(),
+    val syncScope: DrawingSyncScope = DrawingSyncScope.LOCAL,
 ) {
     fun param(key: String, fallback: Double = 0.0): Double = params[key] ?: fallback
 }

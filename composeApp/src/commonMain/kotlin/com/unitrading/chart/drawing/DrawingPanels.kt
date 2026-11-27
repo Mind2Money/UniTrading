@@ -36,6 +36,7 @@ import com.unitrading.ui.FormDialog
 import com.unitrading.ui.SegmentedChoice
 import com.unitrading.ui.TradingColors
 import com.unitrading.ui.colorHex
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private val HUES = listOf("#F23645", "#FF9800", "#FFEB3B", "#4CAF50", "#089981", "#00BCD4", "#2962FF", "#673AB7", "#9C27B0", "#E91E63")
@@ -144,6 +145,7 @@ internal fun DrawingFloatingBar(drawings: ChartDrawings, modifier: Modifier = Mo
 internal fun DrawingContextMenu(drawings: ChartDrawings) {
     val at = drawings.menuAt ?: return
     val d = drawings.selected ?: return
+    val scope = rememberCoroutineScope()
     Box(Modifier.offset { IntOffset(at.x.roundToInt(), at.y.roundToInt()) }) {
         DropdownMenu(true, { drawings.closeMenu() }, Modifier.widthIn(min = 180.dp)) {
             @Composable fun item(label: String, tag: String, onClick: () -> Unit) = DropdownMenuItem(text = { Text(label) }, onClick = onClick, modifier = Modifier.testTag("drawing-menu-$tag"))
@@ -151,6 +153,21 @@ internal fun DrawingContextMenu(drawings: ChartDrawings) {
             if (d.tool.hasText) item("编辑文字…", "text") { drawings.openText(d.id) }
             item("克隆", "clone") { drawings.clone(d.id) }
             item("复制", "copy") { drawings.copySelected(); drawings.closeMenu() }
+            if (drawings.supportsDrawingSync) {
+                DividerLine(Modifier.padding(vertical = 4.dp))
+                Text("此绘图的同步范围", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium)
+                DrawingSyncScope.entries.forEach { choice ->
+                    val label = when (choice) {
+                        DrawingSyncScope.LOCAL -> "不同步"
+                        DrawingSyncScope.LAYOUT -> "在布局中同步"
+                        DrawingSyncScope.GLOBAL -> "在本机全局同步"
+                    }
+                    DropdownMenuItem(text = { Text(label) },
+                        trailingIcon = { if (d.syncScope == choice) Icon(AppIcons.Check, "当前同步范围") },
+                        onClick = { scope.launch { drawings.changeSyncScope(d.id, choice); drawings.closeMenu() } },
+                        modifier = Modifier.testTag("drawing-menu-sync-${choice.name}"))
+                }
+            }
             DividerLine(Modifier.padding(vertical = 4.dp))
             item("置于顶层", "front") { drawings.moveOrder(d.id, Int.MAX_VALUE) }
             item("上移一层", "forward") { drawings.moveOrder(d.id, 1) }
@@ -425,7 +442,7 @@ internal fun BoxScope.DrawingChartOverlays(layer: DrawingLayer, compact: Boolean
     DrawingValuesTooltip(layer)
     // A phone's legend and toolbar leave no room at the top, so the bar sits above the navigation there.
     DrawingFloatingBar(drawings, if (compact) Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp) else Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 92.dp))
-    if (showFavorites) FavoriteDrawingsBar(drawings, Modifier.align(Alignment.BottomEnd).padding(bottom = 38.dp, end = 92.dp))
+    if (showFavorites) WorkspaceFavoriteDrawingsBar(drawings)
     DrawingTextDialog(drawings)
     DrawingSettingsDialog(layer)
     // Phones have no room for the toolbar by default; this tab on the plot's edge brings it in and out.

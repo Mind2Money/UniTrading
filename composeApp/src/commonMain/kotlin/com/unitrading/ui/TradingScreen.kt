@@ -625,6 +625,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chartOpening = true
             scope.launch {
                 try {
+                    if (!runtime.prepareNewDrawingLayout(id)) error("新布局的绘图设置无法保存")
                     runtime.drawingsForChart(id).copySymbolFrom(runtime.drawingsForChart(sourceId), sourceSymbol)
                     if (!runtime.indicatorsForChart(id).apply(sourceIndicators)) error("指标设置无法保存")
                     parkedCharts = parkedCharts + (id to ChartSlot(id, sourceSymbol, sourceFrame))
@@ -1449,7 +1450,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
                     if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
-                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
+                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, tablet = tablet, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
@@ -1459,7 +1460,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
                                 replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation, ready.riskConfig)
                         })
-                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals,
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals, tablet = tablet,
                         history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
                         watch = { sym, frame ->
                             val series = sym to frame
@@ -1854,7 +1855,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val titleContent: @Composable () -> Unit = {
                     WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
                         Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces,
-                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
+                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
+                        titleBarStyle = tabletWorkspaces)
                 }
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop, titleOwner) {
                     onDispose { titleBarSlot?.clear(titleOwner) }
@@ -1943,16 +1945,15 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                     }
                     if (tabletWorkspaces && (desktop || chartFirst)) {
-                        Row(Modifier.fillMaxWidth().height(44.dp).background(colors.Surface)
+                        Row(Modifier.fillMaxWidth().height(40.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
-                            desktopControls(null, true, false)
-                            Spacer(Modifier.width(40.dp))
+                            TabletAccountMenu(registry, plugin, mainAccountId, runtime.accountAliases,
+                                enabled = !accountOperationPending(), onBroker = ::chooseBroker, onAccount = ::chooseAccount)
                         }
-                        DividerLine()
                     }
                     if (unifiedChartBar) {
                         val toolbarStatus: @Composable () -> Unit = {
@@ -1978,14 +1979,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } else if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                         }
                         Column(Modifier.fillMaxWidth().background(colors.Surface).testTag("app-toolbar")) {
-                            Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 48.dp else 56.dp).padding(start = 6.dp, end = 4.dp),
+                            Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 44.dp else 56.dp).padding(start = 6.dp, end = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
-                                if (desktopStyle && desktop) {
-                                    // Tablet flatten controls live in the workspace header; keep the account pickers
-                                    // beside status, outside the scrolling chart tools.
-                                    desktopControls(null, !tablet, true)
+                                if (desktopStyle && desktop && !tablet) {
+                                    desktopControls(null, true, true)
                                 }
                                 toolbarStatus()
                             }
@@ -2081,7 +2080,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 m.background(colors.Surface), environment = environment, capacity = capacity,
                                 onRefreshCapacity = refreshCapacity, skipConfirmation = skipConfirmation,
                                 onClose = minimize, closeLabel = "收起下单面板", closeTag = "desktop-order-minimize", brackets = brackets, bracketOrder = request,
-                                accountName = accountName, floating = floating, compactFloating = floating && tablet)
+                                accountName = accountName, floating = floating, compactFloating = tablet)
                         }
                         @Composable fun workspaceTerminal(target: String, m: Modifier) {
                             val (targetSession, targetSnapshot) = workspaceAccount(workspaceOf(target))
@@ -2090,6 +2089,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 accountId -> analyticsTrades
                                 mainAccountId -> mainAnalyticsTrades
                                 else -> mergeAnalyticsTrades(cachedByAccount[targetSession?.account?.id].orEmpty(), targetAccount.trades)
+                            }
+                            fun tabletAccountStillCurrent(): Boolean {
+                                val currentBroker = registry.plugins.firstOrNull { it.descriptor.id == brokerId } ?: registry.plugins.firstOrNull()
+                                val currentId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } }
+                                    ?: catalog.accounts.firstOrNull()?.id
+                                return currentBroker === plugin && targetSession != null && targetSession.account.id == currentId
                             }
                             var section by remember(plugin, targetSession?.account?.id, target) { mutableStateOf(TerminalSection.POSITIONS) }
                             val sections = listOf(TerminalSection.POSITIONS to "持仓 ${targetAccount.positions.size}",
@@ -2108,6 +2113,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                     if (targetSession != null) AccountRiskNotice(runtime.accountRisk.restriction(plugin, targetSession),
                                         runtime.accountRisk.lockingTrigger(plugin, targetSession), targetSession.account.currency, Modifier.padding(horizontal = 12.dp))
+                                    if (tablet) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                                            .testTag("tablet-terminal-flatten-actions"),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            val actionColors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                            OutlinedButton(onClick = {
+                                                if (!accountOperationPending() && targetSession != null && tabletAccountStillCurrent())
+                                                    flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
+                                            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp).testTag("flatten-selected-account"),
+                                                enabled = !accountOperationPending() && targetSession != null && !targetSession.account.readOnly &&
+                                                    (targetAccount.positions.isNotEmpty() || targetAccount.orders.isNotEmpty()),
+                                                colors = actionColors, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                                Text("平仓此子账户", maxLines = 1)
+                                            }
+                                            OutlinedButton(onClick = {
+                                                if (!accountOperationPending() && targetSession != null && tabletAccountStillCurrent()) {
+                                                    val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                                    if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                                }
+                                            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp).testTag("flatten-all-accounts"),
+                                                enabled = !accountOperationPending() && targetSession != null,
+                                                colors = actionColors, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                                Text("平仓全部账户", maxLines = 1)
+                                            }
+                                        }
+                                    }
                                 }
                                 TradeTerminal(plugin, targetAccount, market, selectedPositionId.takeIf { readyForWorkspace(target) }, false,
                                     onSelectPosition = { p -> selectWorkspacePosition.value(target, p) },

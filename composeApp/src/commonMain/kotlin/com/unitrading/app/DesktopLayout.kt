@@ -47,9 +47,14 @@ data class DesktopLayoutPreferences(
     val windows: Map<String, WindowBounds> = emptyMap(),
     val domWidth: Float = 300f,
     val analyticsWidth: Float = 600f,
+    /** Tablet widths are independent, so resizing one device does not change desktop defaults. */
+    val tabletSidebarWidth: Float = 280f,
+    val tabletOrderWidth: Float = 272f,
+    val tabletAnalyticsWidth: Float = 460f,
 ) {
     fun validate() {
-        require(listOf(sidebarWidth, domWidth, orderWidth, terminalHeight, analyticsWidth).all { it.isFinite() && it in 1f..4000f }) {
+        require(listOf(sidebarWidth, domWidth, orderWidth, terminalHeight, analyticsWidth,
+            tabletSidebarWidth, tabletOrderWidth, tabletAnalyticsWidth).all { it.isFinite() && it in 1f..4000f }) {
             "面板尺寸超出范围"
         }
         require(orderFlowFraction.isFinite() && orderFlowFraction > 0f && orderFlowFraction < 1f) {
