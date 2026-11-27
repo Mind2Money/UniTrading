@@ -43,7 +43,7 @@ internal class CopyPendingMutationSubmitter(
                 !leader.copyOrdersComplete || !follower.copyOrdersComplete) return null
             val mutations = sourceMutations.read() ?: return null
             val sameGroup = mutations.filter { it.brokerId == broker.descriptor.id && it.leaderId == leaderId && it.groupId == groupId }
-            if (sameGroup.any { it.state == CopySourceMutationState.INTENDED || it.state == CopySourceMutationState.UNCERTAIN }) return null
+            if (sameGroup.any { it.state == CopySourceMutationState.INTENDED || it.state == CopySourceMutationState.ACCEPTED || it.state == CopySourceMutationState.UNCERTAIN }) return null
             val origin = sameGroup.singleOrNull { it.requestId == sourceMutationId && it.state == CopySourceMutationState.CONFIRMED } ?: return null
             if (sources.acceptedSource(broker.descriptor.id, leaderId, groupId, origin.sourceOrderId) == null) return null
             val saved = links.read()?.singleOrNull { it.brokerId == broker.descriptor.id && it.leaderId == leaderId &&

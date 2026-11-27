@@ -43,7 +43,8 @@ class CopyPendingMutationSubmitterTest {
         override fun openAutomatedSession(accountId: String, expectedRevision: Long): AccountSession = openSession(accountId)
         override fun history(symbol: String, timeframe: Timeframe): List<Candle> = emptyList()
     }
-    private data class Fixture(val broker: Broker, val service: CopyPendingMutationSubmitter, val journal: CopyPendingMutationJournal)
+    private data class Fixture(val broker: Broker, val service: CopyPendingMutationSubmitter, val journal: CopyPendingMutationJournal,
+        val sourceMutations: CopySourceMutationJournal)
     private suspend fun fixture(cancel: Boolean = false, sourceStatus: String = "Canceled"): Fixture {
         val store = MemorySnapshotStore()
         val sources = CopySourceOrders(store)
@@ -63,7 +64,7 @@ class CopyPendingMutationSubmitterTest {
         val follower = Session(AccountInfo("follower", "Follower"), snapshot("follower", listOf(followerOrder)))
         val broker = Broker(source, follower)
         val journal = CopyPendingMutationJournal(store)
-        return Fixture(broker, CopyPendingMutationSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources, mutations, links, journal), journal)
+        return Fixture(broker, CopyPendingMutationSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources, mutations, links, journal), journal, mutations)
     }
     @Test fun modificationIsSentOnceAndNeedsBrokerConfirmation() = runTest {
         val f = fixture()
@@ -80,6 +81,14 @@ class CopyPendingMutationSubmitterTest {
         assertIs<CopyPendingMutationSubmission.Stopped>(f.service.submit(f.broker, "leader", "group", "follower", "source-change", "another"))
         assertEquals(1, f.broker.follower.writes)
         assertEquals(CopyPendingMutationState.UNCERTAIN, f.journal.read()!!.single().state)
+    }
+    @Test fun laterUnconfirmedSourceChangeBlocksOlderFollowerMutation() = runTest {
+        val f = fixture()
+        assertTrue(f.sourceMutations.begin(CopySourceMutation("tradovate-demo-42", "leader", "group", "source", "later-change", 2,
+            CopySourceMutationKind.CHANGE_ENTRY_PRICE, newPrice = 5_025)))
+        assertTrue(f.sourceMutations.accepted("later-change"))
+        assertIs<CopyPendingMutationSubmission.Stopped>(f.service.submit(f.broker, "leader", "group", "follower", "source-change", "action"))
+        assertEquals(0, f.broker.follower.writes)
     }
     @Test fun cancellationRequiresCanceledSourceAndTargetConfirmation() = runTest {
         val wrong = fixture(cancel = true, sourceStatus = "Filled")
