@@ -1,5 +1,6 @@
 package com.unitrading.app
 
+import com.unitrading.broker.OrderKind
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -17,6 +18,7 @@ internal data class CopySourceOrder(
     val requestId: String,
     val state: CopySourceState = CopySourceState.INTENDED,
     val brokerOrderId: String? = null,
+    val kind: OrderKind = OrderKind.MARKET,
 )
 
 /**
@@ -60,6 +62,14 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
 
     /** Null means storage is unreadable; an empty list is a valid registry. */
     suspend fun read(): List<CopySourceOrder>? = mutex.withLock { if (unreadable) null else records.toList() }
+
+    /** Pending or uncertain origins must be reconciled before their account can follow any new fill. */
+    suspend fun acceptedIds(brokerId: String, leaderId: String): Set<String>? = mutex.withLock {
+        if (unreadable || brokerId.isBlank() || leaderId.isBlank()) return@withLock null
+        val own = records.filter { it.brokerId == brokerId && it.leaderId == leaderId }
+        if (own.any { it.state == CopySourceState.INTENDED || it.state == CopySourceState.UNCERTAIN }) return@withLock null
+        own.filter { it.state == CopySourceState.ACCEPTED }.mapNotNull { it.brokerOrderId }.toSet()
+    }
 
     private fun transition(requestId: String, transform: (CopySourceOrder) -> CopySourceOrder?): Boolean {
         if (unreadable) return false

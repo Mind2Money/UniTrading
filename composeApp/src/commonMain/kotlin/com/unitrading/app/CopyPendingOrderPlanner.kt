@@ -32,7 +32,7 @@ internal object CopyPendingOrderPlanner {
             return stop("跟随订单数量超过上限或合约规格")
         if (quote == null || quote.bid <= 0 || quote.ask <= 0 || quote.ask < quote.bid || nowMs - quote.timeMs !in 0..15_000)
             return stop("缺少有效报价，不能确认挂单价格")
-        val price = order.entryPrice
+        val price = order.entryPrice ?: return stop("挂单价格不可用")
         val crossed = when (order.kind) {
             OrderKind.LIMIT -> if (order.side == Side.BUY) price >= quote.ask else price <= quote.bid
             OrderKind.STOP -> if (order.side == Side.BUY) price <= quote.ask else price >= quote.bid

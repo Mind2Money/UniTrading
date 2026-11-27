@@ -36,6 +36,15 @@ class CopySourceCaptureTest {
         assertTrue(stopped)
     }
 
+    @Test fun remembersWhetherSourceWasAnIndependentPendingOrder() = runTest {
+        val journal = CopySourceOrders(MemorySnapshotStore())
+        val capture = CopySourceCapture(journal) { fail(it) }
+        capture.submit("tradovate", "leader", "leader", "pending", request.copy(kind = OrderKind.LIMIT, entryPrice = 500), true) {
+            TradeResult(true, "accepted", "order")
+        }
+        assertEquals(OrderKind.LIMIT, journal.read()!!.single().kind)
+    }
+
     @Test fun uncertainOutcomeIsRecordedAndNeverRetried() = runTest {
         val journal = CopySourceOrders(MemorySnapshotStore())
         var sent = 0

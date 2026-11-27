@@ -21,6 +21,7 @@ class CopyTradingBrokerTest {
         assertEquals(one.copyRevision, two.copyRevision)
         assertTrue(one.copyPositionsComplete)
         assertTrue(one.copyOrdersClear)
+        assertTrue(one.copyOrdersComplete)
     }
 
     @Test fun omittedPositionOrUnmappedWorkingOrderFailClosed() = runTest {
@@ -36,6 +37,7 @@ class CopyTradingBrokerTest {
         assertTrue(state.orders.isEmpty())
         assertFalse(state.copyPositionsComplete)
         assertFalse(state.copyOrdersClear)
+        assertFalse(state.copyOrdersComplete)
     }
 
     @Test fun malformedSnapshotIsNotTreatedAsEmpty() = runTest {

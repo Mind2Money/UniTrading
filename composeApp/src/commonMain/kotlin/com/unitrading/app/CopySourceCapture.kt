@@ -12,7 +12,7 @@ internal class CopySourceCapture(private val journal: CopySourceOrders, private 
     suspend fun submit(brokerId: String, leaderId: String, accountId: String, requestId: String, request: OrderRequest,
         active: Boolean, send: suspend () -> TradeResult): TradeResult {
         if (!active || accountId != leaderId || request.automated) return send()
-        if (!journal.begin(CopySourceOrder(brokerId, leaderId, requestId))) {
+        if (!journal.begin(CopySourceOrder(brokerId, leaderId, requestId, kind = request.kind))) {
             stop("主订单来源无法保存，跟单已停止")
             return TradeResult(false, "无法保存跟单记录，未提交主订单")
         }
@@ -23,6 +23,11 @@ internal class CopySourceCapture(private val journal: CopySourceOrders, private 
             journal.uncertain(requestId)
             stop("主订单结果未知，请核对")
             return TradeResult(false, "主订单结果未知，请在券商端核对，未自动重发", outcome = CommandOutcome.UNKNOWN)
+        }
+        if (result.accepted != (result.outcome == CommandOutcome.ACCEPTED) && result.outcome != CommandOutcome.UNKNOWN) {
+            journal.uncertain(requestId)
+            stop("主订单回执不一致，请核对")
+            return TradeResult(false, "主订单回执不一致，请在券商端核对，未自动重发", outcome = CommandOutcome.UNKNOWN)
         }
         val recorded = when (result.outcome) {
             CommandOutcome.ACCEPTED -> result.entityId?.takeIf(String::isNotBlank)?.let { journal.accepted(requestId, it) } ?: false

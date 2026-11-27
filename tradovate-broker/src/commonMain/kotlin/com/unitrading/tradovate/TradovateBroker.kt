@@ -1907,7 +1907,9 @@ class TradovateBroker(
                 dailyPnl = financials[aid]?.dailyPnl, drawdown = drawdown, copyRevision = revision, copyEpoch = copyEpoch,
                 copyPositionsComplete = identifiable && positions.size == rawPositions.size,
                 // Unknown statuses fail closed; live orders are never inferred from the UI's filtered list.
-                copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") })
+                copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") },
+                copyOrdersComplete = identifiable && orders.all { it.str("ordStatus") in setOf("Working", "Suspended", "Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") } &&
+                    pending.size == active.size)
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()

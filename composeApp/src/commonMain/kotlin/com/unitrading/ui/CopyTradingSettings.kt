@@ -53,7 +53,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     if (confirm && valid) AlertDialog(
         onDismissRequest = { confirm = false },
         title = { Text("确认启动 Demo 跟单") },
-        text = { Text("主账户：${leader?.name}\n跟随账户：${selectedFollowers.joinToString("、") { account -> val input = inputs[account.id] ?: CopyFollowerInput(); "${account.name}（${if (input.fixed) "固定 ${input.quantity} 张" else "${input.quantity} 倍"}，最多 ${input.maximum} 张）" }}\n合约：${dated?.symbol}\n\nDemo 账户可能是考核账户。只复制成交后的净仓，使用市价单；不复制挂单、止盈止损。固定张数模式在主账户有仓位时保持该张数，主账户平仓后跟随平仓；所有账户须空仓无挂单。") },
+        text = { Text("主账户：${leader?.name}\n跟随账户：${selectedFollowers.joinToString("、") { account -> val input = inputs[account.id] ?: CopyFollowerInput(); "${account.name}（${if (input.fixed) "固定 ${input.quantity} 张" else "${input.quantity} 倍"}，最多 ${input.maximum} 张）" }}\n合约：${dated?.symbol}\n\n跟单功能尚未完成，暂不能启动。") },
         confirmButton = { TextButton({
             val settings = CopyPlanSettings(leaderId, followers, dated!!.symbol)
             error = runtime.copyTrading.start(broker, settings)

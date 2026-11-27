@@ -24,6 +24,12 @@ class CopyExecutionPlannerTest {
         assertNull(seen.observe(first.copy(signedContracts = 2, leaderAfter = 2)))
     }
 
+    @Test fun anIndependentlyMirroredPendingOrderDoesNotGenerateAnotherMarketOrder() {
+        val event = fill("partial", 1, 0, 1).copy(mode = CopySourceExecutionMode.INDEPENDENT_PENDING)
+        assertEquals(CopyFillPlan.IndependentlyMirrored, plan(event))
+        assertIs<CopyFillPlan.Blocked>(plan(event.copy(orderId = "external")))
+    }
+
     @Test fun fixedPartialReductionAndLeaderFlatNeverReverseFollower() {
         assertEquals(CopyFillPlan.Ready(3, 2, 0), plan(fill("reduce", -1, 3, 2), position = 5))
         assertEquals(CopyFillPlan.Ready(0, 3, 0), plan(fill("flat", -2, 2, 0), position = 3))

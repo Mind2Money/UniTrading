@@ -316,6 +316,8 @@ data class AccountSnapshot(
     val copyPositionsComplete: Boolean = false,
     /** True only if all order statuses are understood and no order is active. */
     val copyOrdersClear: Boolean = false,
+    /** True only when every active broker order is represented in this account's order snapshot. */
+    val copyOrdersComplete: Boolean = false,
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

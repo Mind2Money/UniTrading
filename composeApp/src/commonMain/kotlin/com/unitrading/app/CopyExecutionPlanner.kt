@@ -1,6 +1,8 @@
 package com.unitrading.app
 
 /** A broker execution is eligible only after its exact source order has been registered by this application. */
+internal enum class CopySourceExecutionMode { FOLLOW_FILLS, INDEPENDENT_PENDING }
+
 internal data class CopySourceFill(
     val executionId: String,
     val orderId: String,
@@ -8,11 +10,13 @@ internal data class CopySourceFill(
     val signedContracts: Int,
     val leaderBefore: Int,
     val leaderAfter: Int,
+    val mode: CopySourceExecutionMode = CopySourceExecutionMode.FOLLOW_FILLS,
 )
 
 internal sealed interface CopyFillPlan {
     data class Ready(val followerAfter: Int, val closeContracts: Int, val openContracts: Int) : CopyFillPlan
     data class Blocked(val reason: String) : CopyFillPlan
+    data object IndependentlyMirrored : CopyFillPlan
 }
 
 /** Pure calculation only: it never submits an order or decides that an accepted order has filled. */
@@ -30,6 +34,8 @@ internal object CopyExecutionPlanner {
             fill.leaderBefore.toLong() !in -100_000L..100_000L || fill.leaderAfter.toLong() !in -100_000L..100_000L ||
             followerBefore.toLong() !in -follower.maxContracts.toLong()..follower.maxContracts.toLong())
             return stop("主账户成交或跟随账户仓位无效")
+        // Its follower order was already sent independently; copying a later source fill would send it twice.
+        if (fill.mode == CopySourceExecutionMode.INDEPENDENT_PENDING) return CopyFillPlan.IndependentlyMirrored
         fun sign(value: Int) = when { value > 0 -> 1; value < 0 -> -1; else -> 0 }
         val priorDirection = sign(fill.leaderBefore)
         val direction = sign(fill.signedContracts)
