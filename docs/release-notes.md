@@ -1,5 +1,13 @@
 # Unreleased
 
+## 简体中文
+
+- 平板顶部栏采用桌面标签样式，账户切换可展开或收起；批量平仓入口移至交易面板。
+
+## English
+
+- Give tablets desktop-style tabs and a collapsible account selector, and move bulk close actions into the trading panel.
+
 # v1.8.2
 
 ## 简体中文

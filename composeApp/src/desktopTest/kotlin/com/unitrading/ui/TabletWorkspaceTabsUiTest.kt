@@ -17,6 +17,8 @@ import androidx.compose.ui.unit.dp
 import com.unitrading.app.DesktopPanel
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.app.TradingRuntime
+import com.unitrading.app.ThemePreset
+import com.unitrading.app.ThemeSettings
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
@@ -28,7 +30,10 @@ import kotlin.test.assertTrue
 class TabletWorkspaceTabsUiTest {
     private fun verifySeparatedTabletActions(platform: ChartPlatform, width: Int, height: Int) =
         runDesktopComposeUiTest(width = width, height = height) {
-            val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply { paused.value = true }
+            val runtime = TradingRuntime(MemorySnapshotStore(), includeDemoBrokers = true).apply {
+                paused.value = true
+                theme.settings.value = ThemeSettings(preset = ThemePreset.LIGHT)
+            }
             runtime.desktopLayout.setOpen(DesktopPanel.MARKET, false)
             runtime.desktopLayout.setOpen(DesktopPanel.TERMINAL, false)
             val broker = runtime.registry.plugins.first()
@@ -42,24 +47,34 @@ class TabletWorkspaceTabsUiTest {
             val order = onNodeWithTag("rail-order").fetchSemanticsNode().boundsInRoot
             val market = onNodeWithTag("rail-market").fetchSemanticsNode().boundsInRoot
             val terminal = onNodeWithTag("rail-terminal").fetchSemanticsNode().boundsInRoot
-            val actions = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
-            val accountPicker = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
-            val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
-            val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
+            val accountToggle = onNodeWithTag("tablet-account-toggle").fetchSemanticsNode().boundsInRoot
             val rail = onNodeWithTag("desktop-panel-rail").fetchSemanticsNode().boundsInRoot
             val tradeBar = onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
             val figures = onNodeWithTag("tablet-account-bar").fetchSemanticsNode().boundsInRoot
             assertTrue(rail.width <= 64f && header.height <= 44f, "Tablet controls must leave more chart space")
             assertTrue(figures.top >= tradeBar.top && figures.bottom <= tradeBar.bottom, "Account figures must share the trade bar")
-            assertTrue(kotlin.math.abs(actions.left - accountPicker.left) <= 4f && kotlin.math.abs(actions.right - accountPicker.right) <= 4f, "Flatten and account controls should align: actions=$actions accounts=$accountPicker")
             onNodeWithTag("daily-pnl-value").assertExists()
             onNodeWithTag("drawdown-room-value", useUnmergedTree = true).assertExists()
-            assertTrue(actions.top >= header.top && actions.bottom <= header.bottom, "Flatten actions must stay in the workspace header")
-            assertTrue(actions.bottom <= chart.top && chart.right <= accountPicker.left, "Keep chart controls separate from account and flatten actions")
-            assertTrue(accountPicker.right <= width && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top, "Place order on the right rail before trading")
+            assertTrue(accountToggle.top >= header.top && accountToggle.bottom <= header.bottom && accountToggle.right <= width)
+            assertTrue(header.bottom <= chart.top && order.right >= width - 12f && market.bottom <= order.top && order.bottom <= terminal.top)
             onNodeWithTag("open-order").assertDoesNotExist()
-            assertTrue(selected.right + 7f <= all.left && selected.height >= 40f && all.height >= 40f,
-                "Flatten targets must remain separated and touchable")
+            onNodeWithTag("flatten-selected-account").assertDoesNotExist()
+            onNodeWithTag("tablet-account-toggle").performClick()
+            onNodeWithTag("quick-login-picker").assertIsDisplayed()
+            onNodeWithTag("quick-account-picker").assertIsDisplayed()
+            val expanded = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-accounts.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", expanded)
+            onNodeWithTag("quick-login-picker").performClick()
+            onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
+            onNodeWithTag("tablet-expanded-accounts").assertDoesNotExist()
+            onNodeWithTag("tablet-account-toggle").performClick()
+            onNodeWithTag("quick-account-picker").performClick()
+            onNodeWithTag("quick-account-${account.id}").performClick()
+            onNodeWithTag("tablet-expanded-accounts").assertDoesNotExist()
+            onNodeWithTag("tablet-account-toggle").performClick()
+            onNodeWithTag("tablet-account-toggle").performClick()
+            onNodeWithTag("tablet-expanded-accounts").assertDoesNotExist()
             val screenshot = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}.png")
                 .also { it.parentFile.mkdirs() }
             ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", screenshot)
@@ -72,6 +87,15 @@ class TabletWorkspaceTabsUiTest {
             onNodeWithTag("chart-layout-TWO_COLUMNS").assertExists()
             onNodeWithText("平仓全部子账户？").assertDoesNotExist()
             onNodeWithTag("chart-layout-SINGLE").performClick()
+            onNodeWithTag("rail-terminal").performClick()
+            val openTradeBar = onNodeWithTag("desktop-terminal-bar").fetchSemanticsNode().boundsInRoot
+            val actions = onNodeWithTag("tablet-terminal-flatten-actions").fetchSemanticsNode().boundsInRoot
+            val selected = onNodeWithTag("flatten-selected-account").fetchSemanticsNode().boundsInRoot
+            val all = onNodeWithTag("flatten-all-accounts").fetchSemanticsNode().boundsInRoot
+            assertTrue(actions.top >= openTradeBar.bottom && selected.right + 7f <= all.left && selected.height >= 40f && all.height >= 40f)
+            val trading = File("../artifacts/desktop-tabs/tablet-${platform.name.lowercase()}-${width}x${height}-trading.png")
+                .also { it.parentFile.mkdirs() }
+            ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", trading)
             onNodeWithTag("flatten-selected-account").assertIsEnabled().performClick()
             onNodeWithText("平仓此子账户？").assertExists()
             onNodeWithTag("confirm-bulk-flatten").assertTextEquals("确认平仓此子账户")
@@ -109,15 +133,12 @@ class TabletWorkspaceTabsUiTest {
         onNodeWithTag("tablet-workspace-header").assertIsDisplayed()
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
         onNodeWithTag("desktop-panel-rail").assertIsDisplayed()
-        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
-        onNodeWithTag("desktop-trade-accounts").assertIsDisplayed()
-        val flatten = onNodeWithTag("desktop-flatten-actions").fetchSemanticsNode().boundsInRoot
-        val accounts = onNodeWithTag("desktop-trade-accounts").fetchSemanticsNode().boundsInRoot
+        onNodeWithTag("tablet-account-toggle").assertIsDisplayed()
+        onNodeWithTag("tablet-terminal-flatten-actions").assertIsDisplayed()
         val chartToolbar = onNodeWithTag("chart-toolbar").fetchSemanticsNode().boundsInRoot
         val header = onNodeWithTag("tablet-workspace-header").fetchSemanticsNode().boundsInRoot
         val order = onNodeWithTag("rail-order").fetchSemanticsNode().boundsInRoot
-        assertTrue(flatten.top >= header.top && flatten.bottom <= header.bottom && flatten.bottom <= chartToolbar.top)
-        assertTrue(chartToolbar.right <= accounts.left && order.right >= 1428f)
+        assertTrue(header.bottom <= chartToolbar.top && order.right >= 1428f)
         onNodeWithTag("open-order").assertDoesNotExist()
         onNodeWithTag("desktop-trade-tab-POSITIONS").assertIsDisplayed()
         onNodeWithTag("rail-analytics").performScrollTo().performClick()
@@ -185,8 +206,9 @@ class TabletWorkspaceTabsUiTest {
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
         onNodeWithTag("rail-order").assertIsDisplayed()
         onNodeWithTag("open-order").assertDoesNotExist()
-        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
+        onNodeWithTag("tablet-account-toggle").performClick()
         onNodeWithTag("quick-account-picker").assertIsDisplayed()
+        onNodeWithTag("tablet-account-toggle").performClick()
         onNodeWithTag("rail-analytics").assertExists()
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
@@ -205,7 +227,7 @@ class TabletWorkspaceTabsUiTest {
         } }
         onNodeWithTag("desktop-workspace").assertIsDisplayed()
         onNodeWithTag("rail-analytics").assertExists()
-        onNodeWithTag("desktop-flatten-actions").assertIsDisplayed()
+        onNodeWithTag("tablet-account-toggle").assertIsDisplayed()
         onNodeWithTag("chart-new-workspace").performScrollTo().performClick()
         waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
         onNodeWithTag("detach-workspace-c1").assertDoesNotExist()

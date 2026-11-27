@@ -1854,7 +1854,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 val titleContent: @Composable () -> Unit = {
                     WorkspaceTabStrip(tabs, selectedWorkspace, ::selectWorkspace, ::detachWorkspace, ::closeChart, ::reorderWorkspaces,
                         Modifier.fillMaxWidth(), canDetach = canDetachWorkspaces, touchSized = tabletWorkspaces,
-                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS)
+                        onAdd = { openChart() }, canAdd = !chartOpening && chartOrder.size < ChartPreferences.MAX_EXTRA_CHARTS,
+                        titleBarStyle = tabletWorkspaces)
                 }
                 DisposableEffect(titleBarSlot, nativeDesktop, desktop, titleOwner) {
                     onDispose { titleBarSlot?.clear(titleOwner) }
@@ -1943,14 +1944,39 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                     }
                     if (tabletWorkspaces && (desktop || chartFirst)) {
-                        Row(Modifier.fillMaxWidth().height(44.dp).background(colors.Surface)
+                        var accountsExpanded by rememberSaveable { mutableStateOf(false) }
+                        Row(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
                             Text("UniTrading", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                             Box(Modifier.weight(1f).fillMaxHeight()) { titleContent() }
-                            desktopControls(null, true, false)
-                            Spacer(Modifier.width(40.dp))
+                            TextButton(onClick = { accountsExpanded = !accountsExpanded },
+                                modifier = Modifier.widthIn(min = 160.dp, max = 230.dp).height(40.dp).testTag("tablet-account-toggle"),
+                                enabled = !accountOperationPending(),
+                                shape = RoundedCornerShape(7.dp),
+                                colors = ButtonDefaults.textButtonColors(containerColor = colors.Surface),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(aliases.login(plugin.descriptor), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall, color = colors.Muted)
+                                    Text(accountName, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                }
+                                Icon(if (accountsExpanded) AppIcons.ExpandLess else AppIcons.ExpandMore,
+                                    if (accountsExpanded) "收起账户栏" else "展开账户栏", Modifier.size(18.dp))
+                            }
+                        }
+                        if (accountsExpanded) {
+                            Row(Modifier.fillMaxWidth().background(colors.Surface).padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("tablet-expanded-accounts"), verticalAlignment = Alignment.CenterVertically) {
+                                AccountContextBar(registry, plugin, mainAccountId,
+                                    { value -> chooseBroker(value); accountsExpanded = false },
+                                    { value -> chooseAccount(value); accountsExpanded = false },
+                                    Modifier.widthIn(max = 560.dp).fillMaxWidth(), enabled = !accountOperationPending(),
+                                    dense = true, aliases = runtime.accountAliases, emphasize = true,
+                                    inline = true, inlineLoginLabel = "平台")
+                            }
                         }
                         DividerLine()
                     }
@@ -1982,10 +2008,8 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 verticalAlignment = Alignment.CenterVertically) {
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)
-                                if (desktopStyle && desktop) {
-                                    // Tablet flatten controls live in the workspace header; keep the account pickers
-                                    // beside status, outside the scrolling chart tools.
-                                    desktopControls(null, !tablet, true)
+                                if (desktopStyle && desktop && !tablet) {
+                                    desktopControls(null, true, true)
                                 }
                                 toolbarStatus()
                             }
@@ -2091,6 +2115,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 mainAccountId -> mainAnalyticsTrades
                                 else -> mergeAnalyticsTrades(cachedByAccount[targetSession?.account?.id].orEmpty(), targetAccount.trades)
                             }
+                            fun tabletAccountStillCurrent(): Boolean {
+                                val currentBroker = registry.plugins.firstOrNull { it.descriptor.id == brokerId } ?: registry.plugins.firstOrNull()
+                                val currentId = chosenAccountId.takeIf { id -> catalog.accounts.any { it.id == id } }
+                                    ?: catalog.accounts.firstOrNull()?.id
+                                return currentBroker === plugin && targetSession != null && targetSession.account.id == currentId
+                            }
                             var section by remember(plugin, targetSession?.account?.id, target) { mutableStateOf(TerminalSection.POSITIONS) }
                             val sections = listOf(TerminalSection.POSITIONS to "持仓 ${targetAccount.positions.size}",
                                 TerminalSection.ORDERS to "挂单 ${terminalOrders(targetAccount).rows.size}",
@@ -2108,6 +2138,32 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                     }
                                     if (targetSession != null) AccountRiskNotice(runtime.accountRisk.restriction(plugin, targetSession),
                                         runtime.accountRisk.lockingTrigger(plugin, targetSession), targetSession.account.currency, Modifier.padding(horizontal = 12.dp))
+                                    if (tablet) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                                            .testTag("tablet-terminal-flatten-actions"),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            val actionColors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                            OutlinedButton(onClick = {
+                                                if (!accountOperationPending() && targetSession != null && tabletAccountStillCurrent())
+                                                    flattenReview = FlattenReview(false, listOf(FlattenTarget(plugin, targetSession.account)))
+                                            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp).testTag("flatten-selected-account"),
+                                                enabled = !accountOperationPending() && targetSession != null && !targetSession.account.readOnly &&
+                                                    (targetAccount.positions.isNotEmpty() || targetAccount.orders.isNotEmpty()),
+                                                colors = actionColors, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                                Text("平仓此子账户", maxLines = 1)
+                                            }
+                                            OutlinedButton(onClick = {
+                                                if (!accountOperationPending() && targetSession != null && tabletAccountStillCurrent()) {
+                                                    val (targets, skipped) = bulkFlattenTargets(registry.plugins)
+                                                    if (targets.isNotEmpty() || skipped.isNotEmpty()) flattenReview = FlattenReview(true, targets, skipped)
+                                                }
+                                            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp).testTag("flatten-all-accounts"),
+                                                enabled = !accountOperationPending() && targetSession != null,
+                                                colors = actionColors, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                                Text("平仓全部账户", maxLines = 1)
+                                            }
+                                        }
+                                    }
                                 }
                                 TradeTerminal(plugin, targetAccount, market, selectedPositionId.takeIf { readyForWorkspace(target) }, false,
                                     onSelectPosition = { p -> selectWorkspacePosition.value(target, p) },
