@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 import kotlin.time.Instant
 import kotlin.time.Clock
 import kotlin.random.Random
+import kotlin.math.roundToLong
 
 internal data class ReplayInput(val instrument: Instrument, val timeframe: Timeframe, val regular: Boolean,
     val zone: ChartTimeZone, val raw: List<Candle>, val indicators: List<IndicatorConfig>,
@@ -61,6 +62,7 @@ internal fun visibleReplayHistoryError(message: String?): String? = message?.spl
 
 private data class ReplayOrderIntent(val side: Side, val kind: OrderKind, val price: Long?, val quantity: Long,
     val stop: Long?, val target: Long?)
+private enum class ReplayStartChoice { BAR, DATE, EARLIEST, RANDOM }
 
 /** A separate modal and ledger: no AccountSession is passed into the replay at any point. */
 @Composable
@@ -130,8 +132,12 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var state by remember { mutableStateOf(ReplayState(start)) }
     var playing by remember { mutableStateOf(false) }
     var started by remember { mutableStateOf(false) }
-    var speed by remember { mutableIntStateOf(1) }
+    var speed by remember { mutableDoubleStateOf(1.0) }
     var stepFrame by remember { mutableStateOf(sourceFrame) }
+    var autoStep by remember { mutableStateOf(true) }
+    var selectingBar by remember { mutableStateOf(false) }
+    var pendingStartChoice by remember { mutableStateOf<ReplayStartChoice?>(null) }
+    var startDateEntry by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(OrderDraft(quantity = spec.formatQuantity(spec.minLotsHundredths.coerceAtLeast(spec.lotStepHundredths)))) }
     var showDraft by remember { mutableStateOf(false) }
     var lineToConfirm by remember { mutableStateOf<LineAction?>(null) }
@@ -175,7 +181,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var requestedRegularChart by remember { mutableStateOf<String?>(null) }
     var priceAxis by remember { mutableStateOf(input.priceAxis) }
     val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
-    val selectedStep = stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
+    val selectedStep = if (autoStep) stepChoices.first() else stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
     var showIndicators by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(true) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
@@ -369,10 +375,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         if (state.index == bars.lastIndex) playing = false
     }
     LaunchedEffect(playing, speed, state.index) {
-        if (playing) { delay((1000L / speed).coerceAtLeast(50)); step() }
+        if (playing) { delay((1000.0 / speed).roundToLong().coerceAtLeast(50)); step() }
     }
     fun executeOrder(order: ReplayOrderIntent) {
         runCatching {
+            require(!selectingBar) { "请先选择回放起点或取消选择" }
             require(!risk.failed) { "已触及模拟回撤限额，不能新开仓" }
             require(!risk.targetReached) { "已达到盈利目标，不能新开仓" }
             require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
@@ -509,6 +516,28 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         showDraft = false; orderToConfirm = null; lineToConfirm = null
         recordId = "${Clock.System.now().toEpochMilliseconds()}-${Random.nextLong()}"
     }
+    fun chooseStartIndex(index: Int) {
+        start = index.coerceIn(0, bars.lastIndex - 1)
+        state = ReplayState(start)
+        selectingBar = false
+        message = null
+    }
+    fun applyStartChoice(choice: ReplayStartChoice) {
+        when (choice) {
+            ReplayStartChoice.BAR -> { selectingBar = true; message = "请选择图表上的 K 线作为回放起点" }
+            ReplayStartChoice.DATE -> { selectingBar = false; startDateEntry = true }
+            ReplayStartChoice.EARLIEST -> chooseStartIndex(0)
+            ReplayStartChoice.RANDOM -> chooseStartIndex(Random.nextInt(bars.lastIndex))
+        }
+    }
+    fun requestStartChoice(choice: ReplayStartChoice) {
+        playing = false
+        if (completionFinalized && risk.targetReached) {
+            restartReplay(); applyStartChoice(choice)
+        } else if (started || state.positions.isNotEmpty() || state.pending.isNotEmpty() || state.trades.isNotEmpty()) {
+            pendingStartChoice = choice; confirmReset = true
+        } else applyStartChoice(choice)
+    }
     fun finishReplay(after: () -> Unit) {
         if (records == null || historyTrades.isEmpty() || currentRecordDeleted || completionFinalized) { after(); return }
         runCatching { records.save(currentRecord("已结束")) }.onSuccess { after() }
@@ -597,10 +626,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         if (useSource) emptyList() else history(spec.symbol, brokerFrame)
                     }
                     val cutoff = if (current.timeMs > Long.MAX_VALUE - sourceFrame.millis) Long.MAX_VALUE else current.timeMs + sourceFrame.millis
-                    val visible = remember(bars, state.index, sourceFrame, frame, cellRegular, brokerBars, cutoff) {
-                        if (useSource) runCatching { replayChartBars(bars, state.index, sourceFrame, frame, spec.symbol, cellRegular) }.getOrElse { emptyList() }
+                    val visible = remember(bars, state.index, sourceFrame, frame, cellRegular, brokerBars, cutoff, selectingBar) {
+                        if (useSource) runCatching { replayChartBars(bars, if (selectingBar) bars.lastIndex else state.index, sourceFrame, frame, spec.symbol, cellRegular) }.getOrElse { emptyList() }
                         else {
-                            val completed = replayCompletedBrokerBars(brokerBars, brokerFrame, cutoff)
+                            val selectionCutoff = if (selectingBar) bars.last().timeMs + sourceFrame.millis else cutoff
+                            val completed = replayCompletedBrokerBars(brokerBars, brokerFrame, selectionCutoff)
                             if (cellRegular && frame.seconds < Timeframe.DAY)
                                 runCatching { chartSessionCandles(completed, spec.symbol, frame, true).first }.getOrElse { emptyList() }
                             else completed
@@ -624,6 +654,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                                 objectLayers = objectLayers,
                                 desktopAxisStyle = true, tabletCompactAxis = tablet, compactContextMenu = tablet,
+                                onReplayStartSelection = if (selectingBar) { at ->
+                                    val index = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
+                                    chooseStartIndex(index)
+                                } else null,
                                 showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -636,91 +670,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                 }, Modifier.weight(1f).fillMaxHeight(), favoriteDrawings = drawings)
                 }
-                Surface(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("replay-controls"),
-                    shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                    val colors = MaterialTheme.colorScheme
-                    @Composable fun Choice(label: String, selected: Boolean, tag: String? = null, action: () -> Unit) {
-                        Surface(onClick = action, shape = RoundedCornerShape(6.dp),
-                            color = if (selected) colors.secondaryContainer else Color.Transparent,
-                            modifier = Modifier.height(32.dp).then(if (tag != null) Modifier.testTag(tag) else Modifier)) {
-                            Box(Modifier.padding(horizontal = 9.dp), contentAlignment = Alignment.Center) {
-                                Text(label, style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant, maxLines = 1)
-                            }
-                        }
-                    }
-                    @Composable fun Separator() = VerticalDivider(Modifier.height(22.dp).padding(horizontal = 5.dp), color = colors.outlineVariant)
-                    @Composable fun PlaybackControls() {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            FilledTonalIconButton(onClick = { playing = !playing; started = true },
-                                enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
-                                modifier = Modifier.size(36.dp).testTag("replay-play")) {
-                                Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(20.dp))
-                            }
-                            IconButton(onClick = { playing = false; step() }, enabled = state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
-                                modifier = Modifier.size(36.dp).testTag("replay-next")) {
-                                Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(20.dp))
-                            }
-                            Separator()
-                            Text("步长", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 3.dp))
-                            stepChoices.forEach { frame -> Choice(replayStepLabel(frame), selectedStep == frame, "replay-step-${frame.id}") { stepFrame = frame } }
-                            Separator()
-                            Text("速度", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 3.dp))
-                            listOf(1, 2, 5, 10).forEach { n -> Choice("${n}x", speed == n, "replay-speed-$n") { speed = n } }
-                            Separator()
-                            Text(chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId),
-                                modifier = Modifier.padding(horizontal = 6.dp).testTag("replay-time"), style = MaterialTheme.typography.labelMedium,
-                                color = colors.onSurface, maxLines = 1)
-                            TextButton(onClick = {
-                                playing = false
-                                if (completionFinalized && risk.targetReached) restartReplay() else confirmReset = true
-                            }, modifier = Modifier.height(36.dp).testTag("replay-reset"), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("重选起点") }
-                        }
-                    }
-                    @Composable fun StartControls() {
-                        Row(Modifier.testTag("replay-start-controls"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("起点", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                            Slider(value = start.toFloat(), onValueChange = { start = it.toInt().coerceIn(0, bars.lastIndex - 1); state = ReplayState(start) },
-                                valueRange = 0f..(bars.lastIndex - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.width(110.dp).testTag("replay-start"))
-                            Surface(shape = RoundedCornerShape(6.dp), color = colors.surfaceContainerLow,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
-                                BasicTextField(startTime, { startTime = it }, singleLine = true,
-                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = colors.onSurface),
-                                    modifier = Modifier.width(156.dp).height(36.dp).testTag("replay-start-time"),
-                                    decorationBox = { inner -> Box(Modifier.fillMaxSize().padding(horizontal = 9.dp), contentAlignment = Alignment.CenterStart) {
-                                        if (startTime.isEmpty()) Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm",
-                                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1)
-                                        inner()
-                                    } })
-                            }
-                            IconButton(onClick = { startCalendar = true }, modifier = Modifier.size(36.dp).testTag("replay-start-calendar")) { Icon(AppIcons.Calendar, "选择起点日期", Modifier.size(18.dp)) }
-                            TextButton(onClick = {
-                                val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
-                                    else parseChartTime(startTime, input.zone.zoneId)
-                                if (at == null) message = "请输入有效的图表时区日期和时间"
-                                else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
-                                else {
-                                    val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
-                                    start = found.coerceIn(0, bars.lastIndex - 1); state = ReplayState(start); message = null
-                                }
-                            }, modifier = Modifier.height(36.dp).testTag("replay-start-locate"), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("定位") }
-                        }
-                    }
-                    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)) {
-                        if (maxWidth >= 1100.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
-                            if (!started) { Separator(); StartControls() }
-                        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { PlaybackControls() }
-                            if (!started) {
-                                HorizontalDivider(color = colors.outlineVariant.copy(alpha = .6f))
-                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) { StartControls() }
-                            }
-                        }
-                    }
-                }
+
             }
 
             if (panelOpen) Surface(Modifier.widthIn(min = if (tablet) 240.dp else 260.dp, max = if (tablet) 272.dp else 310.dp).fillMaxHeight().testTag("replay-side-panel"),
@@ -740,7 +690,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                     if (sideTab == 0) {
                         OrderTicket(ticketSpec, replayQuote, BrokerCapabilities(hedging = false), draft,
-                            onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
+                            onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = selectingBar,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
                             modifier = Modifier.weight(1f).fillMaxWidth().testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
                             accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false, compactFloating = tablet,
@@ -786,6 +736,91 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     label = { Text("分析") }, modifier = Modifier.testTag("replay-tab-1"))
             }
         }
+        Surface(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("replay-controls"),
+            shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            val colors = MaterialTheme.colorScheme
+            var startMenu by remember { mutableStateOf(false) }
+            var speedMenu by remember { mutableStateOf(false) }
+            var periodMenu by remember { mutableStateOf(false) }
+            val buttonSize = if (tablet) 48.dp else 40.dp
+            val speeds = listOf(10.0, 7.0, 5.0, 3.0, 2.0, 1.0, .5, .3, .2, .1)
+            fun speedLabel(value: Double) = if (value >= 1) "${value.toInt()}x" else "${value}x"
+            fun stepLabel(frame: Timeframe) = when {
+                frame.seconds % Timeframe.DAY == 0 -> "${frame.seconds / Timeframe.DAY}天"
+                frame.seconds % Timeframe.HOUR == 0 -> "${frame.seconds / Timeframe.HOUR}小时"
+                frame.seconds % Timeframe.MINUTE == 0 -> "${frame.seconds / Timeframe.MINUTE}分"
+                else -> "${frame.seconds}秒"
+            }
+            Box(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), contentAlignment = Alignment.Center) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(if (tablet) 4.dp else 2.dp)) {
+                    Box {
+                        TextButton(onClick = { startMenu = true }, modifier = Modifier.height(buttonSize).testTag("replay-reset"),
+                            contentPadding = PaddingValues(horizontal = if (tablet) 12.dp else 8.dp)) {
+                            Icon(AppIcons.ArrowBack, null, Modifier.size(if (tablet) 22.dp else 19.dp))
+                            Spacer(Modifier.width(4.dp)); Text("选择K线", maxLines = 1)
+                            Icon(AppIcons.ExpandMore, null, Modifier.size(18.dp))
+                        }
+                        DropdownMenu(startMenu, { startMenu = false }, modifier = Modifier.widthIn(min = 200.dp)) {
+                            listOf(Triple("K线", ReplayStartChoice.BAR, "replay-start-bar"),
+                                Triple("日期…", ReplayStartChoice.DATE, "replay-start-date"),
+                                Triple("最早可用日期", ReplayStartChoice.EARLIEST, "replay-start-earliest"),
+                                Triple("随机K线", ReplayStartChoice.RANDOM, "replay-start-random")).forEach { (label, choice, tag) ->
+                                DropdownMenuItem(text = { Text(label) }, onClick = { startMenu = false; requestStartChoice(choice) },
+                                    modifier = Modifier.heightIn(min = if (tablet) 48.dp else 40.dp).testTag(tag))
+                            }
+                        }
+                    }
+                    VerticalDivider(Modifier.height(24.dp).padding(horizontal = 4.dp), color = colors.outlineVariant)
+                    IconButton(onClick = { playing = !playing; started = true },
+                        enabled = !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
+                        modifier = Modifier.size(buttonSize).testTag("replay-play")) {
+                        Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(if (tablet) 24.dp else 21.dp))
+                    }
+                    IconButton(onClick = { playing = false; step() }, enabled = !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
+                        modifier = Modifier.size(buttonSize).testTag("replay-next")) {
+                        Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(if (tablet) 24.dp else 21.dp))
+                    }
+                    Box {
+                        TextButton(onClick = { speedMenu = true }, modifier = Modifier.height(buttonSize).testTag("replay-speed-menu"),
+                            contentPadding = PaddingValues(horizontal = if (tablet) 12.dp else 8.dp)) { Text(speedLabel(speed), fontWeight = FontWeight.SemiBold) }
+                        DropdownMenu(speedMenu, { speedMenu = false }, modifier = Modifier.widthIn(min = 220.dp).heightIn(max = if (tablet) 560.dp else 500.dp)) {
+                            speeds.forEach { value ->
+                                val detail = if (value >= 1) "每1秒更新${value.toInt()}次" else "约每${(1.0 / value * 10).roundToLong() / 10.0}秒更新1次"
+                                DropdownMenuItem(text = { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(speedLabel(value), fontWeight = if (speed == value) FontWeight.SemiBold else FontWeight.Normal)
+                                    Text(detail, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                                } }, onClick = { speed = value; speedMenu = false },
+                                    modifier = Modifier.heightIn(min = if (tablet) 48.dp else 40.dp).testTag("replay-speed-${if (value >= 1) value.toInt().toString() else value.toString()}"),
+                                    trailingIcon = if (speed == value) ({ Icon(AppIcons.Check, "当前速度", Modifier.size(18.dp)) }) else null)
+                            }
+                        }
+                    }
+                    Box {
+                        TextButton(onClick = { periodMenu = true }, modifier = Modifier.height(buttonSize).testTag("replay-period-menu"),
+                            contentPadding = PaddingValues(horizontal = if (tablet) 12.dp else 8.dp)) { Text(stepLabel(selectedStep), fontWeight = FontWeight.SemiBold) }
+                        DropdownMenu(periodMenu, { periodMenu = false }, modifier = Modifier.widthIn(min = 220.dp).heightIn(max = if (tablet) 560.dp else 500.dp)) {
+                            DropdownMenuItem(text = { Text("1 tick · 当前数据不支持") }, onClick = {}, enabled = false)
+                            val options = (listOf(Timeframe.ofSeconds(1), Timeframe.M1, Timeframe.ofMinutes(3), Timeframe.M5, Timeframe.M15) + stepChoices)
+                                .distinct().sortedBy { it.seconds }
+                            options.forEach { frame ->
+                                val available = frame in stepChoices
+                                DropdownMenuItem(text = { Text(stepLabel(frame) + if (available) "" else " · 不可用") },
+                                    onClick = { stepFrame = frame; autoStep = false; periodMenu = false }, enabled = available,
+                                    modifier = Modifier.heightIn(min = if (tablet) 48.dp else 40.dp).testTag("replay-step-${frame.id}"),
+                                    trailingIcon = if (selectedStep == frame) ({ Icon(AppIcons.Check, "当前更新周期", Modifier.size(18.dp)) }) else null)
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("自动选择周期") }, onClick = { autoStep = !autoStep },
+                                trailingIcon = { Switch(checked = autoStep, onCheckedChange = { autoStep = it }, modifier = Modifier.testTag("replay-auto-step")) })
+                        }
+                    }
+                    if (selectingBar) TextButton(onClick = { selectingBar = false; message = null },
+                        modifier = Modifier.height(buttonSize).testTag("replay-cancel-bar")) { Text("取消选择") }
+                }
+            }
+        }
         if (!tablet) Surface(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
             color = TradingColors.Surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -812,6 +847,26 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             }
         }
     }
+    if (startDateEntry) AlertDialog(onDismissRequest = { startDateEntry = false }, title = { Text("选择回放日期和时间") },
+        text = { Column(Modifier.testTag("replay-start-controls"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(startTime, { startTime = it }, modifier = Modifier.fillMaxWidth().testTag("replay-start-time"),
+                label = { Text(if (sourceFrame.seconds >= Timeframe.DAY) "YYYY-MM-DD" else "YYYY-MM-DD HH:mm") }, singleLine = true,
+                trailingIcon = { IconButton(onClick = { startDateEntry = false; startCalendar = true }, modifier = Modifier.testTag("replay-start-calendar")) {
+                    Icon(AppIcons.Calendar, "选择起点日期")
+                } })
+            Text("图表时区：${input.zone.region}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        } }, confirmButton = { TextButton(onClick = {
+            val at = if (sourceFrame.seconds >= Timeframe.DAY) runCatching { Instant.parse(startTime.trim() + "T00:00:00Z").toEpochMilliseconds() }.getOrNull()
+                else parseChartTime(startTime, input.zone.zoneId)
+            if (at == null) message = "请输入有效的图表时区日期和时间"
+            else if (at < bars.first().timeMs || at > bars.last().timeMs) message = "该时间不在已加载的历史范围内"
+            else {
+                val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
+                chooseStartIndex(found); startDateEntry = false
+            }
+        }, modifier = Modifier.testTag("replay-start-locate")) { Text("定位") } },
+        dismissButton = { TextButton(onClick = { startDateEntry = false }) { Text("取消") } })
     if (startCalendar) ReplayCalendarDialog(
         runCatching { chartBarDateTime(current.timeMs, sourceFrame, input.zone.zoneId).take(10) }.getOrDefault("1970-01-01"),
         onDismiss = { startCalendar = false }) { date ->
@@ -823,7 +878,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             val found = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
             if (found !in 0 until bars.lastIndex || chartBarDateTime(bars[found].timeMs, sourceFrame, input.zone.zoneId).take(10) != date)
                 message = "所选日期没有可用的回放起点"
-            else { start = found; state = ReplayState(start); message = null }
+            else chooseStartIndex(found)
         }
         startCalendar = false
     }
@@ -913,11 +968,15 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         text = { Text("切换品种会结束当前回放，模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") },
         confirmButton = { TextButton(onClick = { finishReplay { switchTo = null; changeSymbol(symbol) } }) { Text("切换品种") } },
         dismissButton = { TextButton(onClick = { switchTo = null }) { Text("取消") } }) }
-    if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("结束本次回放？") },
+    if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false; pendingStartChoice = null }, title = { Text("结束本次回放？") },
         text = { Text(if (temporaryRecords.isNotEmpty()) "本次模拟仓位和挂单将清除；已保存和临时回放记录仍可用于分析，临时记录将在关闭回放后清除。"
             else "本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {
-            TextButton(onClick = { finishReplay { confirmReset = false; restartReplay() } }, modifier = Modifier.testTag("replay-confirm-reset")) { Text("重选起点") }
-        }, dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
+            TextButton(onClick = { finishReplay {
+                val choice = pendingStartChoice
+                confirmReset = false; pendingStartChoice = null; restartReplay()
+                if (choice != null) applyStartChoice(choice)
+            } }, modifier = Modifier.testTag("replay-confirm-reset")) { Text("重选起点") }
+        }, dismissButton = { TextButton(onClick = { confirmReset = false; pendingStartChoice = null }) { Text("取消") } })
     if (confirmExit) AlertDialog(onDismissRequest = { confirmExit = false }, title = { Text("关闭回放？") },
         text = { Text(if (temporaryRecords.isNotEmpty()) "本次模拟仓位和挂单将清除；临时回放记录将随回放界面关闭而删除，已保存的记录仍可用于分析。"
             else "本次模拟仓位和挂单将清除；已保存的平仓记录可用于分析。") }, confirmButton = {

@@ -343,6 +343,7 @@ fun TradingChart(
     val currentScale by rememberUpdatedState(scale)
     val drawingLayer = chrome.drawings?.let { rememberDrawingLayer(it, instrument.symbol, instrument, timeframe, candles, timeframe.millis, viewport, scale, Rect(left, top, right, plotBottom), bottom, colors, chrome.chartTimeZone.zoneId) }
     val currentVisible by rememberUpdatedState(visible)
+    val currentReplayStartSelection by rememberUpdatedState(chrome.onReplayStartSelection)
     val currentCandles by rememberUpdatedState(candles)
     val currentTrades by rememberUpdatedState(trades)
     val currentExecutions by rememberUpdatedState(executions)
@@ -655,6 +656,12 @@ fun TradingChart(
                         }
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, showHistory, panes.size, axis.left, axis.mode, axis.lockRatio) {
                             detectTapGestures(onTap = { point ->
+                                if (currentReplayStartSelection != null) {
+                                    if (point.x in left..right && point.y in top..plotBottom) {
+                                        currentVisible.getOrNull(visibleIndex(point.x))?.let { currentReplayStartSelection?.invoke(it.timeMs) }
+                                    }
+                                    return@detectTapGestures
+                                }
                                 val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
                                 if (button != null) {
                                     if (button.cell.action == LineAction.EditDraftQuantity) quantityMenu = true
@@ -1237,6 +1244,8 @@ class ChartChrome(
     val chartTimeZoneLabel: String? = null,
     val onOpenSettings: (() -> Unit)? = null,
     val objectLayers: ChartObjectLayers? = null,
+    /** When choosing a replay start, a tap selects a visible bar instead of a chart action. */
+    val onReplayStartSelection: ((Long) -> Unit)? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

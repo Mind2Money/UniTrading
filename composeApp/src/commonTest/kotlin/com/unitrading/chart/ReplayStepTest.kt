@@ -5,13 +5,13 @@ import com.unitrading.broker.Timeframe
 import kotlin.test.*
 
 class ReplayStepTest {
-    @Test fun choicesAreFinerThanTheChartAndSupportedBySource() {
-        assertEquals(listOf(Timeframe.M1, Timeframe.M5), replayStepOptions(Timeframe.M15, Timeframe.M1))
-        assertEquals(listOf(Timeframe.M1, Timeframe.M5, Timeframe.M15), replayStepOptions(Timeframe.ofMinutes(30), Timeframe.M1))
-        assertEquals(listOf(Timeframe.M1), replayStepOptions(Timeframe.M5, Timeframe.M1))
-        assertEquals(listOf(Timeframe.M1), replayStepOptions(Timeframe.M1, Timeframe.M1))
-        assertEquals(listOf(Timeframe.M5), replayStepOptions(Timeframe.M5, Timeframe.M5))
-        assertEquals(listOf(Timeframe.M5, Timeframe.M15), replayStepOptions(Timeframe.ofMinutes(30), Timeframe.M5))
+    @Test fun choicesAdvanceOnlyOverLoadedSourceBars() {
+        val minutes = listOf(1, 3, 5, 15, 30, 60, 1440).map(Timeframe::ofMinutes)
+        assertEquals(minutes, replayStepOptions(Timeframe.M15, Timeframe.M1))
+        assertEquals(minutes, replayStepOptions(Timeframe.M1, Timeframe.M1))
+        val fiveMinute = listOf(5, 15, 30, 60, 1440).map(Timeframe::ofMinutes)
+        assertEquals(fiveMinute, replayStepOptions(Timeframe.M5, Timeframe.M5))
+        assertTrue(Timeframe.ofSeconds(1) in replayStepOptions(Timeframe.M1, Timeframe.ofSeconds(1)))
     }
     @Test fun advancingUsesTimeAndSkipsMissingBars() {
         val bars = listOf(0L, 60_000L, 300_000L, 360_000L).map { Candle(it, 100, 100, 100, 100) }

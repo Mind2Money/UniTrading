@@ -5,8 +5,9 @@ import com.unitrading.broker.Timeframe
 
 /** Only offer intervals that can be advanced with actual loaded source bars. */
 internal fun replayStepOptions(chart: Timeframe, source: Timeframe): List<Timeframe> {
-    val candidates = listOf(1, 5, 15, 30, 60, 1440).map(Timeframe::ofMinutes)
-    return candidates.filter { it.seconds < chart.seconds && it.seconds >= source.seconds && it.seconds % source.seconds == 0 }
+    val candidates = (listOf(1, 5, 15, 30).map(Timeframe::ofSeconds) +
+        listOf(1, 3, 5, 15, 30, 60, 1440).map(Timeframe::ofMinutes) + listOf(source, chart)).distinct().sortedBy { it.seconds }
+    return candidates.filter { it.seconds >= source.seconds && it.seconds % source.seconds == 0 }
         .ifEmpty { listOf(source) }
 }
 

@@ -1944,7 +1944,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                     }
                     if (tabletWorkspaces && (desktop || chartFirst)) {
-                        Row(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        Row(Modifier.fillMaxWidth().height(40.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .testTag("tablet-workspace-header").padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             AppLogo(22.dp)
@@ -1953,7 +1953,6 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             TabletAccountMenu(registry, plugin, mainAccountId, runtime.accountAliases,
                                 enabled = !accountOperationPending(), onBroker = ::chooseBroker, onAccount = ::chooseAccount)
                         }
-                        DividerLine()
                     }
                     if (unifiedChartBar) {
                         val toolbarStatus: @Composable () -> Unit = {
@@ -1979,7 +1978,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             } else if (!localDemo) ConnectionStatusControl(market, compact = true, busy, syncAction)
                         }
                         Column(Modifier.fillMaxWidth().background(colors.Surface).testTag("app-toolbar")) {
-                            Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 48.dp else 56.dp).padding(start = 6.dp, end = 4.dp),
+                            Row(Modifier.fillMaxWidth().heightIn(min = if (tablet) 44.dp else 56.dp).padding(start = 6.dp, end = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 if (desktop && !desktopStyle && !tabletWorkspaces) AppLogo(22.dp)
                                 sharedChartBar(if (chartWindowsShown) selectedWorkspace else MAIN_CHART, Modifier.weight(1f), true)

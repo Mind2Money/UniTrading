@@ -44,6 +44,11 @@ class TabletReplayUiTest {
             assertTrue(abs(replay.width - width) < 2f && abs(replay.height - height) < 2f, "Replay should fill the available window: $replay")
             onNodeWithTag("replay-account-strip").assertDoesNotExist()
             onNodeWithTag("replay-daily-pnl").assertDoesNotExist()
+            val controls = onNodeWithTag("replay-controls").fetchSemanticsNode().boundsInRoot
+            val startButton = onNodeWithTag("replay-reset").fetchSemanticsNode().boundsInRoot
+            val periodButton = onNodeWithTag("replay-period-menu").fetchSemanticsNode().boundsInRoot
+            assertTrue(onNodeWithTag("replay-play").fetchSemanticsNode().boundsInRoot.height >= 48f)
+            assertTrue(abs((startButton.left + periodButton.right) / 2f - controls.center.x) < 12f, "Replay controls must be centered")
             val panel = onNodeWithTag("replay-side-panel").fetchSemanticsNode().boundsInRoot
             val fields = onNodeWithTag("order-fields").fetchSemanticsNode().boundsInRoot
             val actions = onNodeWithTag("order-actions").fetchSemanticsNode().boundsInRoot
@@ -53,6 +58,20 @@ class TabletReplayUiTest {
             onNodeWithTag("reference-protection").performScrollTo().assertIsDisplayed()
             onNodeWithTag("order-more").performScrollTo().performClick()
             ImageIO.write(onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", File(out, "${platform.name.lowercase()}-${width}x${height}-order.png"))
+            onNodeWithTag("replay-reset").performClick()
+            ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(out, "${platform.name.lowercase()}-${width}x${height}-start-menu.png"))
+            onNodeWithTag("replay-start-earliest").performClick()
+            onNodeWithTag("replay-speed-menu").performClick()
+            ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(out, "${platform.name.lowercase()}-${width}x${height}-speed-menu.png"))
+            onNodeWithTag("replay-speed-7").performScrollTo().performClick()
+            onNodeWithTag("replay-speed-menu").assertTextContains("7x")
+            onNodeWithTag("replay-speed-menu").performClick()
+            onNodeWithTag("replay-speed-0.3").performScrollTo().performClick()
+            onNodeWithTag("replay-speed-menu").assertTextContains("0.3x")
+            onNodeWithTag("replay-period-menu").performClick()
+            onNodeWithTag("replay-step-1s").assertIsNotEnabled()
+            ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(out, "${platform.name.lowercase()}-${width}x${height}-period-menu.png"))
+            onNodeWithTag("replay-step-15").performScrollTo().performClick()
             onNodeWithTag("replay-order-collapse").performClick()
             val chart = onAllNodesWithTag("trading-chart").onLast()
             val size = chart.fetchSemanticsNode().size

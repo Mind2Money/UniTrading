@@ -113,11 +113,15 @@ class HistoricalReplayUiTest {
         awaitReplay()
         val folder = File(System.getenv("GITHUB_WORKSPACE") ?: ".", "composeApp/build/replay-consistency-ui").also { it.mkdirs() }
         ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", File(folder, "replay-light.png"))
+        compose.onNodeWithTag("replay-speed-menu").performClick()
         compose.onNodeWithTag("replay-speed-2").performClick()
+        compose.onNodeWithTag("replay-reset").performClick()
+        compose.onNodeWithTag("replay-start-date").performClick()
         compose.onNodeWithTag("replay-start-time").performTextInput("2023-11-15 06:14")
         compose.onNodeWithTag("replay-start-time").assertTextContains("2023-11-15 06:14")
         compose.onNodeWithTag("replay-start-calendar").assertExists()
         compose.onNodeWithTag("replay-start-locate").assertExists()
+        compose.onNodeWithTag("replay-start-locate").performClick()
         compose.onNodeWithTag("replay-next").performScrollTo().performClick()
         compose.onNodeWithTag("replay-start-controls").assertDoesNotExist()
     }
@@ -126,6 +130,48 @@ class HistoricalReplayUiTest {
         assertEquals(null, visibleReplayHistoryError("@MCL：券商连续历史的拼接或复权规则未确认"))
         assertEquals("读取历史失败", visibleReplayHistoryError("@MCL：券商连续历史的拼接或复权规则未确认；读取历史失败"))
         assertEquals("读取历史失败", visibleReplayHistoryError("读取历史失败"))
+    }
+
+    @Test fun pickingReplayStartRequiresConfirmationAndBlocksOrders() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..150).map { Candle(1_700_000_000_000L + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-reset").performClick()
+        compose.onNodeWithTag("replay-start-bar").performClick()
+        compose.onNodeWithText("结束本次回放？").assertExists()
+        compose.onNodeWithTag("replay-confirm-reset").performClick()
+        compose.onNodeWithTag("replay-cancel-bar").assertIsDisplayed()
+        compose.onNodeWithTag("replay-play").assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val size = chart.fetchSemanticsNode().size
+        chart.performMouseInput { click(Offset(size.width * .7f, size.height * .5f)) }
+        compose.onNodeWithTag("replay-cancel-bar").assertDoesNotExist()
+        compose.onNodeWithTag("replay-play").assertIsEnabled()
+    }
+
+    @Test fun fifteenMinuteUpdatesStillProcessIntermediateStopLoss() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val bars = (0..20).map { index -> Candle(1_700_000_000_000L + index * 60_000L,
+            10_000, 10_025, if (index == 10) 9_900 else 9_975, 10_000) }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
+        compose.onNodeWithTag("order-sl").performTextClearance()
+        compose.onNodeWithTag("order-sl").performTextInput("99.50")
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("replay-confirm-order").performClick()
+        compose.onNodeWithTag("replay-period-menu").performClick()
+        compose.onNodeWithTag("replay-step-15").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-trade-count").assertTextContains("成交 1 笔", substring = true)
+        compose.onNodeWithTag("replay-realized").assertTextContains("-2.50", substring = true)
     }
 
     @Test fun replayObjectTreeActuallyHidesShowsAndDeletesIndicators() {
@@ -238,7 +284,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("replay-header-logo").assertExists()
         compose.onNodeWithTag("replay-close").assertContentDescriptionEquals("关闭回放")
         compose.onNodeWithTag("replay-controls").assert(hasAnyDescendant(hasTestTag("replay-play")))
-        compose.onNodeWithTag("replay-controls").assert(hasAnyDescendant(hasTestTag("replay-start-controls")))
+        compose.onNodeWithTag("replay-controls").assert(hasAnyDescendant(hasTestTag("replay-reset")))
         compose.onNodeWithTag("replay-account-strip").assertExists()
         val controlsBottom = compose.onNodeWithTag("replay-controls").fetchSemanticsNode().boundsInRoot.bottom
         val stripTop = compose.onNodeWithTag("replay-account-strip").fetchSemanticsNode().boundsInRoot.top
@@ -298,9 +344,11 @@ class HistoricalReplayUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M15, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), rawFrame = Timeframe.M1)) {} } }
         awaitReplay()
+        compose.onNodeWithTag("replay-period-menu").performClick()
         compose.onNodeWithTag("replay-step-1").assertExists()
         compose.onNodeWithTag("replay-step-5").assertExists()
-        compose.onNodeWithTag("replay-step-15").assertDoesNotExist()
+        compose.onNodeWithTag("replay-step-15").assertIsEnabled()
+        compose.onNodeWithTag("replay-step-1").performClick()
         compose.onNodeWithTag("price-axis-menu-button").performClick()
         compose.onNodeWithText("自动适应屏幕", substring = true).performClick()
         compose.onNodeWithTag("price-axis-menu-button").performClick()
@@ -404,7 +452,7 @@ class HistoricalReplayUiTest {
         assertTrue(hasPosition())
         compose.onNodeWithTag("interval-inline-1").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M1) in requested); available = true; revision++ }
-        compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-1").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("replay-period-menu") and hasText("1分")).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(hasPosition())
         compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 1分钟")
     }
@@ -425,7 +473,7 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("interval-inline-5").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(("MES" to Timeframe.M5) in requested); available = true; revision++ }
-        compose.waitUntil(5_000) { compose.onAllNodesWithTag("replay-step-5").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5_000) { compose.onAllNodes(hasTestTag("replay-period-menu") and hasText("5分")).fetchSemanticsNodes().isNotEmpty() }
         assertTrue(hasPosition())
         compose.onNodeWithTag("replay-chart-main").assertContentDescriptionEquals("回放 MES 5分钟")
     }
