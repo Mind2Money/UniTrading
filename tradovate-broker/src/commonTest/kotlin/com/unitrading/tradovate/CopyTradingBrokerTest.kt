@@ -58,4 +58,18 @@ class CopyTradingBrokerTest {
         assertEquals(true, wire.requests.single { it.path == "order/placeorder" }.body?.bool("isAutomated"))
         assertFalse(order.copy(automated = false).automated)
     }
+
+    @Test fun automatedSessionMarksCancellationAndRejectsManualNewOrders() = runTest {
+        val wire = MockTradovateWire().apply {
+            snapshot = JsonObject(snapshot + mapOf(
+                "orders" to json("""[{"id":710,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Working","timestamp":"2026-10-28T12:00:00Z"}]"""),
+                "orderVersions" to json("""[{"id":1110,"orderId":710,"orderQty":1,"orderType":"Limit","price":5490}]""")))
+        }
+        val broker = TradovateBroker(session(), wire, backgroundScope, { now })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val automated = assertNotNull(broker.openAutomatedSession("100"))
+        assertFalse(automated.placeOrder("manual", OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100)).accepted)
+        assertTrue(automated.cancelOrder("copy-cancel", "710").accepted)
+        assertEquals(true, wire.requests.last { it.path == "order/cancelorder" }.body?.bool("isAutomated"))
+    }
 }

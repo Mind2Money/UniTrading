@@ -13,7 +13,8 @@ internal data class CopyTradingStatus(val running: Boolean = false, val message:
 internal data class CopyRecovery(val brokerId: String, val accountIds: List<String>, val symbol: String, val requestId: String)
 
 /** Demo-only and in-memory. There is no automatic resume, replay, or retry after a process or connection interruption. */
-internal class CopyTradingController(private val registry: BrokerRegistry, private val risk: AccountRiskController, private val store: SnapshotStore) {
+internal class CopyTradingController(private val registry: BrokerRegistry, private val risk: AccountRiskController, private val store: SnapshotStore,
+    private val allowLegacyForTests: Boolean = false) {
     private val key = "copy-unconfirmed-v1"
     private val loaded = runCatching { store.read(key)?.takeIf { it.isNotBlank() }?.let { Json.decodeFromString<CopyRecovery>(it) } }
     private val mutableRecovery = MutableStateFlow(loaded.getOrNull())
@@ -29,6 +30,8 @@ internal class CopyTradingController(private val registry: BrokerRegistry, priva
     private var group: Group? = null
 
     fun start(broker: BrokerPlugin, settings: CopyPlanSettings): String? {
+        // The old net-position follower does not distinguish orders from other clients. Keep it inaccessible from the app.
+        if (!allowLegacyForTests) return "跟单功能尚未完成，暂不可启动"
         if (group != null) return "已有跟单组运行"
         if (inFlight) return "上一笔跟单仍在处理，请等待并核对账户"
         if (recoveryUnreadable || mutableRecovery.value != null) return "存在待核对的跟单记录，请先同步并核对账户"

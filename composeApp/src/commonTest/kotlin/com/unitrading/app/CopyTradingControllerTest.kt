@@ -63,9 +63,18 @@ class CopyTradingControllerTest {
 
     private val settings = CopyPlanSettings("leader", listOf(CopyFollower("follower", 1, 2)), "MESZ6")
 
+    @Test fun incompleteCopierCannotStartThroughApplicationDefault() = runTest {
+        val broker = FakeBroker()
+        val store = MemorySnapshotStore()
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(store), store)
+        assertNotNull(controller.start(broker, settings))
+        assertFalse(controller.status.value.running)
+        assertTrue(broker.writes.isEmpty())
+    }
+
     @Test fun copiesOnlyConfirmedChangesAndNeverDuplicatesAnOrder() = runTest {
         val broker = FakeBroker()
-        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore())
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore(), allowLegacyForTests = true)
         assertNull(controller.start(broker, settings))
         val monitor = backgroundScope.launch { controller.monitor() }
         broker.change("leader", 1)
@@ -87,14 +96,14 @@ class CopyTradingControllerTest {
     @Test fun unknownOutcomeStopsWithoutRetry() = runTest {
         val broker = FakeBroker(CommandOutcome.UNKNOWN)
         val store = MemorySnapshotStore()
-        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(store), store)
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(store), store, allowLegacyForTests = true)
         assertNull(controller.start(broker, settings))
         backgroundScope.launch { controller.monitor() }
         broker.change("leader", 1)
         advanceTimeBy(4_000); runCurrent()
         assertFalse(controller.status.value.running)
         assertEquals(1, broker.writes.size)
-        val reopened = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(store), store)
+        val reopened = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(store), store, allowLegacyForTests = true)
         assertNotNull(reopened.recovery.value)
         assertNotNull(reopened.start(broker, settings))
         broker.change("leader", 0)
@@ -104,7 +113,7 @@ class CopyTradingControllerTest {
 
     @Test fun disconnectStopsAndDoesNotResume() = runTest {
         val broker = FakeBroker()
-        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore())
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore(), allowLegacyForTests = true)
         assertNull(controller.start(broker, settings))
         backgroundScope.launch { controller.monitor() }
         broker.market.value = MarketSnapshot(connected = false, tradingReady = false)
@@ -118,7 +127,7 @@ class CopyTradingControllerTest {
 
     @Test fun aResynchronizationStopsRatherThanSilentlyResuming() = runTest {
         val broker = FakeBroker()
-        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore())
+        val controller = CopyTradingController(BrokerRegistry(listOf(broker)), AccountRiskController(MemorySnapshotStore()), MemorySnapshotStore(), allowLegacyForTests = true)
         assertNull(controller.start(broker, settings))
         backgroundScope.launch { controller.monitor() }
         broker.simulateResync()

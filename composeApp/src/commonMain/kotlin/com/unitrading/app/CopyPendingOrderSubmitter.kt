@@ -26,7 +26,8 @@ internal class CopyPendingOrderSubmitter(
         if (!broker.descriptor.id.startsWith("tradovate-") || broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO ||
             registry.plugins.none { it === broker } || requestId.isBlank()) return stopped("仅允许已连接的 Tradovate Demo")
         val source = try { broker.openSession(leaderId) } catch (_: Exception) { return stopped("主账户不可用") }
-        val target = try { risk.guard(broker, broker.openSession(follower.accountId)) } catch (_: Exception) { return stopped("跟随账户不可用") }
+        val target = try { risk.guard(broker, broker.openAutomatedSession(follower.accountId) ?: return stopped("券商不支持自动订单")) }
+            catch (_: Exception) { return stopped("跟随账户不可用") }
 
         suspend fun prepared(): Pair<CopyPendingPreparation.Ready, Long>? {
             if (registry.plugins.none { it === broker } || !broker.market.value.let { it.connected && it.tradingReady } ||

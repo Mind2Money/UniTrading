@@ -1958,7 +1958,11 @@ class TradovateBroker(
         wire.request(credentials.hosts, credentials.accessToken, method, path, body)
     }
 
-    override fun openSession(accountId: String): AccountSession {
+    override fun openSession(accountId: String): AccountSession = session(accountId, automatedMutations = false)
+    override fun openAutomatedSession(accountId: String): AccountSession? =
+        if (credentials.environment == TradovateEnvironment.DEMO) session(accountId, automatedMutations = true) else null
+
+    private fun session(accountId: String, automatedMutations: Boolean): AccountSession {
         val info = accounts.firstOrNull { it.id == accountId } ?: error("当前授权中没有该账户")
         val flow = accountFlows.getValue(accountId)
         return object : AccountSession {
@@ -2019,10 +2023,11 @@ class TradovateBroker(
                     val limit = order.request.kind == OrderKind.LIMIT
                     sendWrite(accountId, requestId, "modify", orderId.toLong(), "order/modifyorder", buildJsonObject {
                         put("orderId", orderId.toLong()); put("orderQty", lotsHundredths / 100); put("orderType", if (limit) "Limit" else "Stop")
-                        put(if (limit) "price" else "stopPrice", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
+                        put(if (limit) "price" else "stopPrice", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations)
                     })
                 }
             override suspend fun placeOrder(requestId: String, request: OrderRequest) = command(accountId, requestId, "place:$request") {
+                require(!automatedMutations || request.automated) { "自动交易会话只接受自动订单" }
                 request.sourceSymbol?.let { refreshContinuous(it) }
                 val estimate = estimate(accountId, request)
                 require(estimate.valid) { estimate.errors.joinToString("；") }
@@ -2049,7 +2054,7 @@ class TradovateBroker(
                     put("orderId", orderId.toLong()); put("orderQty", request.lotsHundredths / 100)
                     put("orderType", if (request.kind == OrderKind.LIMIT) "Limit" else "Stop")
                     put(if (request.kind == OrderKind.LIMIT) "price" else "stopPrice", jsonNumber(entryPrice, spec.priceDecimals))
-                    put("clOrdId", tag(requestId)); put("isAutomated", false)
+                    put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations)
                 })
             }
             override suspend fun modifyOrderProtection(requestId: String, orderId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) =
@@ -2074,17 +2079,17 @@ class TradovateBroker(
                     }
                     sendWrite(accountId, requestId, "modify", binding.first, "order/modifyorder", buildJsonObject {
                         put("orderId", binding.first); put("orderQty", binding.second); put("orderType", if (stop) "Stop" else "Limit")
-                        put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
+                        put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations)
                     })
                 }
             override suspend fun cancelOrder(requestId: String, orderId: String) = command(accountId, requestId, "cancel:$orderId") {
                 require(state.value.orders.any { it.id == orderId }) { "挂单已结束或不属于当前账户" }
-                sendWrite(accountId, requestId, "cancel", orderId.toLong(), "order/cancelorder", buildJsonObject { put("orderId", orderId.toLong()); put("clOrdId", tag(requestId)); put("isAutomated", false) })
+                sendWrite(accountId, requestId, "cancel", orderId.toLong(), "order/cancelorder", buildJsonObject { put("orderId", orderId.toLong()); put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations) })
             }
             override suspend fun closePosition(requestId: String, positionId: String) = command(accountId, requestId, "close:$positionId") {
                 val p = state.value.positions.firstOrNull { it.id == positionId } ?: errorArgument("仓位已结束或不属于当前账户")
                 val cid = positionId.substringAfter(':').toLong()
-                sendWrite(accountId, requestId, "close", cid, "order/liquidateposition", buildJsonObject { put("accountId", accountId.toLong()); put("contractId", cid); put("admin", false); put("isAutomated", false) })
+                sendWrite(accountId, requestId, "close", cid, "order/liquidateposition", buildJsonObject { put("accountId", accountId.toLong()); put("contractId", cid); put("admin", false); put("isAutomated", automatedMutations) })
             }
             override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = command(accountId, requestId, "protect:$positionId:$expectedVersion:$stopLoss:$takeProfit") {
                 val p = state.value.positions.firstOrNull { it.id == positionId } ?: errorArgument("仓位已结束或不属于当前账户")
@@ -2096,7 +2101,7 @@ class TradovateBroker(
                 require(fresh(quotes[p.symbol])) { "止损/止盈修改需要有效的实时报价" }
                 positionProtectionError(spec, p, quotes[p.symbol], stopLoss, takeProfit)?.let { errorArgument(it) }
                 if (p.stopLoss == null && stopLoss != null || p.takeProfit == null && takeProfit != null) {
-                    return@command addProtection(accountId, requestId, p, spec, stopLoss, takeProfit)
+                    return@command addProtection(accountId, requestId, p, spec, stopLoss, takeProfit, automatedMutations)
                 }
                 require(stop != (p.takeProfit != takeProfit)) { "每次只能修改一条保护线，服务器不支持将两次修改作为一个操作执行" }
                 val price = requireNotNull(if (stop) stopLoss else takeProfit)
@@ -2111,7 +2116,7 @@ class TradovateBroker(
                 val id = binding.first
                 sendWrite(accountId, requestId, "modify", id, "order/modifyorder", buildJsonObject {
                     put("orderId", id); put("orderQty", binding.second); put("orderType", if (stop) "Stop" else "Limit")
-                    put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", false)
+                    put(if (stop) "stopPrice" else "price", jsonNumber(price, spec.priceDecimals)); put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations)
                 })
             }
         }
@@ -2123,7 +2128,7 @@ class TradovateBroker(
      * cancels it, waits for the server to show it cancelled and not filled, and places both as an OCO pair: Tradovate cannot
      * link a new order to a working one, and the position goes without that line in between. Runs inside [command].
      */
-    private suspend fun addProtection(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?): TradeResult {
+    private suspend fun addProtection(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?, automatedMutations: Boolean): TradeResult {
         val contract = p.id.substringAfter(':').toLong()
         val existing = lock.withLock {
             val resolution = ProtectionClassifier(book, accountId.toLong()).forPosition(contract, p.side, p.lotsHundredths / 100)
@@ -2135,12 +2140,12 @@ class TradovateBroker(
         fun placed(result: TradeResult, what: String) =
             if (result.accepted) result.copy(message = "$what 已提交：${result.message}") else result
         if (existing.isEmpty()) return placed(sendWrite(accountId, requestId, "protect", null, if (pair) "order/placeoco" else "order/placeorder",
-            protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit)), if (pair) "止损+止盈 OCO" else if (stopLoss != null) "止损单" else "止盈单")
+            protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit, automatedMutations)), if (pair) "止损+止盈 OCO" else if (stopLoss != null) "止损单" else "止盈单")
         val oldId = existing.single()
         val old = if (p.stopLossOrderId == oldId.toString()) "止损" else "止盈"
         val cancelId = "$requestId-c"
         val cancel = sendWrite(accountId, cancelId, "cancel", oldId, "order/cancelorder",
-            buildJsonObject { put("orderId", oldId); put("clOrdId", tag(cancelId)); put("isAutomated", false) })
+            buildJsonObject { put("orderId", oldId); put("clOrdId", tag(cancelId)); put("isAutomated", automatedMutations) })
         if (!cancel.accepted) return cancel.copy(message = "撤销原${old}${if (cancel.outcome == CommandOutcome.UNKNOWN) "的结果未知" else "未成功"}，未下 OCO：${cancel.message}")
         val settled = withTimeoutOrNull(REPLACE_WAIT_MS) { while (lock.withLock { "$accountId/$cancelId" in awaiting }) delay(50); true } == true
         if (!settled) return TradeResult(false, "已请求撤销原$old，服务器 ${REPLACE_WAIT_MS / 1_000} 秒内未确认，未下 OCO；请同步账户后核对", outcome = CommandOutcome.UNKNOWN)
@@ -2161,7 +2166,7 @@ class TradovateBroker(
             }
         }
         if (problem != null) return TradeResult(false, problem)
-        val result = sendWrite(accountId, requestId, "protect", null, "order/placeoco", protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit))
+        val result = sendWrite(accountId, requestId, "protect", null, "order/placeoco", protectionBody(accountId, requestId, p, spec, stopLoss, takeProfit, automatedMutations))
         return when {
             result.accepted -> result.copy(message = "已撤销原$old，止损+止盈已作为 OCO 重新提交：${result.message}")
             result.outcome == CommandOutcome.UNKNOWN -> result.copy(message = "原${old}已撤销；${result.message}")
@@ -2170,7 +2175,7 @@ class TradovateBroker(
     }
 
     /** Exit orders for [p]: one plain stop or limit, or with both prices an OCO pair (stop first), each carrying the protection tag. */
-    private fun protectionBody(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?): JsonObject {
+    private fun protectionBody(accountId: String, requestId: String, p: Position, spec: Instrument, stopLoss: Long?, takeProfit: Long?, automatedMutations: Boolean): JsonObject {
         val legs = listOfNotNull(stopLoss?.let { true to it }, takeProfit?.let { false to it })
         fun leg(stop: Boolean, price: Long) = buildJsonObject {
             put("action", if (p.side == Side.BUY) "Sell" else "Buy"); put("orderType", if (stop) "Stop" else "Limit")
@@ -2180,7 +2185,7 @@ class TradovateBroker(
         return buildJsonObject {
             put("accountId", accountId.toLong()); put("symbol", spec.symbol); put("orderQty", p.lotsHundredths / 100)
             leg(legs[0].first, legs[0].second).forEach { (key, value) -> put(key, value) }
-            put("clOrdId", tag(requestId)); put("isAutomated", false)
+            put("clOrdId", tag(requestId)); put("isAutomated", automatedMutations)
             legs.getOrNull(1)?.let { (stop, price) -> put("other", leg(stop, price)) }
         }
     }

@@ -37,6 +37,7 @@ class CopyPendingOrderSubmitterTest {
         override val catalog = MutableStateFlow(BrokerCatalog(instruments, accounts))
         override val market = MutableStateFlow(MarketSnapshot(quotes = mapOf("MESZ6" to Quote(10_050, 10_100, 1000))))
         override fun openSession(accountId: String) = when (accountId) { source.account.id -> source; follower.account.id -> follower; else -> error("unknown") }
+        override fun openAutomatedSession(accountId: String): AccountSession = openSession(accountId)
         override fun history(symbol: String, timeframe: Timeframe): List<Candle> = emptyList()
     }
 

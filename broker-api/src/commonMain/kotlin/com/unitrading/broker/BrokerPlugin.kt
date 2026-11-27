@@ -45,6 +45,8 @@ interface BrokerPlugin {
     suspend fun resynchronize() {}
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession
+    /** Optional session for automated follow orders and mutations; null when the broker cannot safely provide it. */
+    fun openAutomatedSession(accountId: String): AccountSession? = null
     fun history(symbol: String, timeframe: Timeframe): List<Candle>
     /** Fetch replay history without truncating it to the live chart's cache size. */
     suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {
