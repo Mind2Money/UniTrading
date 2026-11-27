@@ -36,11 +36,18 @@ internal data class DrawingToolPrefs(
     val valuesTooltip: Boolean = false,
     val removeLocked: Boolean = false,
     val favoritesBarVisible: Boolean = true,
+    /** Positions are in dp so restoring on a device with a different density remains predictable. */
+    val favoritesWorkspacePosition: FavoriteBarPosition? = null,
+    val favoritesChartOffset: FavoriteBarPosition? = null,
+    val newDrawingSyncScope: DrawingSyncScope = DrawingSyncScope.LOCAL,
     /** The look a tool starts with after "设为默认". */
     /** A tool's look as saved before [toolDefaults] existed; read for a tool without one, never written again. */
     val defaults: Map<DrawingTool, DrawingStyle> = emptyMap(),
     val toolDefaults: Map<DrawingTool, DrawingDefaults> = emptyMap(),
 )
+
+@Serializable
+internal data class FavoriteBarPosition(val x: Float, val y: Float)
 
 /**
  * What a tool's settings dialog sets, saved as the tool's default so new drawings of the tool start with it: the look
@@ -146,21 +153,44 @@ class DrawingLibrary(internal val store: SnapshotStore, saveDispatcher: Coroutin
  * drawings another chart added since.
  */
 internal class DrawingHistory {
-    private val undone = ArrayDeque<List<Drawing>>()
-    private val redone = ArrayDeque<List<Drawing>>()
+    private data class Change(val before: List<Drawing>, val after: List<Drawing>)
+    private val undone = ArrayDeque<Change>()
+    private val redone = ArrayDeque<Change>()
     var canUndo by mutableStateOf(false); private set
     var canRedo by mutableStateOf(false); private set
 
     /** A step from [before] to a new list. */
-    fun record(before: List<Drawing>) {
-        undone.addLast(before)
+    fun record(before: List<Drawing>, after: List<Drawing>) {
+        undone.addLast(Change(before, after))
         if (undone.size > 100) undone.removeFirst()
         redone.clear()
         refresh()
     }
     /** The list before the last step, or null when there is none; [current] can be brought back with [redo]. */
-    fun undo(current: List<Drawing>): List<Drawing>? = undone.removeLastOrNull()?.also { redone.addLast(current); refresh() }
-    fun redo(current: List<Drawing>): List<Drawing>? = redone.removeLastOrNull()?.also { undone.addLast(current); refresh() }
+    fun undo(current: List<Drawing>): List<Drawing>? {
+        val change = undone.lastOrNull() ?: return null
+        val result = apply(current, change.after, change.before) ?: return null
+        undone.removeLast(); redone.addLast(change); refresh(); return result
+    }
+    fun redo(current: List<Drawing>): List<Drawing>? {
+        val change = redone.lastOrNull() ?: return null
+        val result = apply(current, change.before, change.after) ?: return null
+        redone.removeLast(); undone.addLast(change); refresh(); return result
+    }
+    /** Preserve unrelated edits made in another chart; never overwrite a conflicting edit to the same drawing. */
+    private fun apply(current: List<Drawing>, from: List<Drawing>, to: List<Drawing>): List<Drawing>? {
+        if (current == from) return to
+        val fromById = from.associateBy { it.id }; val toById = to.associateBy { it.id }
+        val changed = (fromById.keys + toById.keys).filter { fromById[it] != toById[it] }.toSet()
+        if (changed.isEmpty()) return null
+        val currentById = current.associateBy { it.id }
+        if (changed.any { currentById[it] != fromById[it] }) return null
+        val result = current.mapNotNull { if (it.id in changed) toById[it.id] else it }.toMutableList()
+        to.forEachIndexed { index, drawing ->
+            if (drawing.id in changed && drawing.id !in currentById) result.add(index.coerceAtMost(result.size), drawing)
+        }
+        return result
+    }
     private fun refresh() { canUndo = undone.isNotEmpty(); canRedo = redone.isNotEmpty() }
 }
 
@@ -174,6 +204,8 @@ class ChartDrawings internal constructor(
     private val library: DrawingLibrary,
     /** Defaults are global even when each pane keeps its own drawing library. */
     private val defaultsLibrary: DrawingLibrary = library,
+    private val layoutLibrary: DrawingLibrary? = null,
+    private val globalLibrary: DrawingLibrary? = null,
 ) {
     init {
         // Merge the old per-chart favorites once; subsequent edits use the common library only.
@@ -187,16 +219,28 @@ class ChartDrawings internal constructor(
     constructor(store: SnapshotStore, saveDispatcher: CoroutineDispatcher = Dispatchers.Default) : this(DrawingLibrary(store, saveDispatcher))
 
     private val store get() = library.store
-    private val saveScope get() = library.scope
     private val prefs get() = library.prefs
     var notice: String?
         get() = library.notice
         private set(value) { library.notice = value }
 
     var symbol by mutableStateOf(""); private set
+    private fun scopedLibraries(): List<DrawingLibrary> = listOfNotNull(library, layoutLibrary, globalLibrary).distinct()
+    private fun libraryFor(scope: DrawingSyncScope): DrawingLibrary = when (scope) {
+        DrawingSyncScope.LOCAL -> library
+        DrawingSyncScope.LAYOUT -> layoutLibrary ?: library
+        DrawingSyncScope.GLOBAL -> globalLibrary ?: library
+    }
+    private fun drawingsFor(target: String): List<Drawing> = scopedLibraries().flatMap { it.lists[target].orEmpty() }
+    private fun setDrawingsFor(target: String, value: List<Drawing>) {
+        scopedLibraries().forEach { layer ->
+            val next = value.filter { libraryFor(it.syncScope) === layer }
+            if (layer.lists[target].orEmpty() != next) layer.lists[target] = next
+        }
+    }
     var drawings: List<Drawing>
-        get() = library.lists[symbol].orEmpty()
-        private set(value) { library.lists[symbol] = value }
+        get() = drawingsFor(symbol)
+        private set(value) { setDrawingsFor(symbol, value) }
 
     // Toolbar state --------------------------------------------------------------------------------------------------
     var tool by mutableStateOf<DrawingTool?>(null); private set
@@ -221,7 +265,19 @@ class ChartDrawings internal constructor(
     var favoritesBarVisible: Boolean
         get() = defaultsLibrary.prefs.favoritesBarVisible
         set(value) { defaultsLibrary.updatePrefs { it.copy(favoritesBarVisible = value) } }
+    internal val favoriteWorkspacePosition: FavoriteBarPosition? get() = defaultsLibrary.prefs.favoritesWorkspacePosition
+    internal val favoriteChartOffset: FavoriteBarPosition? get() = defaultsLibrary.prefs.favoritesChartOffset
+    internal fun setFavoriteWorkspacePosition(x: Float, y: Float) {
+        if (x.isFinite() && y.isFinite()) defaultsLibrary.updatePrefs { it.copy(favoritesWorkspacePosition = FavoriteBarPosition(x, y)) }
+    }
+    internal fun setFavoriteChartOffset(x: Float, y: Float) {
+        if (x.isFinite() && y.isFinite()) defaultsLibrary.updatePrefs { it.copy(favoritesChartOffset = FavoriteBarPosition(x, y)) }
+    }
     val favorites: List<DrawingTool> get() = defaultsLibrary.prefs.favorites
+    val supportsDrawingSync: Boolean get() = layoutLibrary != null && globalLibrary != null
+    var newDrawingSyncScope: DrawingSyncScope
+        get() = if (supportsDrawingSync) defaultsLibrary.prefs.newDrawingSyncScope else DrawingSyncScope.LOCAL
+        set(value) { if (supportsDrawingSync) defaultsLibrary.updatePrefs { it.copy(newDrawingSyncScope = value) } }
     var lockDrawings by mutableStateOf(false)
     var lockIndicators by mutableStateOf(false)
     var hideDrawings by mutableStateOf(false)
@@ -273,7 +329,7 @@ class ChartDrawings internal constructor(
     var settingsId by mutableStateOf<String?>(null); private set
     var pendingImageId by mutableStateOf<String?>(null); private set
     internal var tooltipAt by mutableStateOf<Offset?>(null); private set
-    internal val images get() = library.images
+    internal val images get() = scopedLibraries().fold(emptyMap<String, ImageBitmap>()) { result, layer -> result + layer.images }
 
     private var placed = 0
     private var scenes: List<DrawingScene> = emptyList()
@@ -327,7 +383,7 @@ class ChartDrawings internal constructor(
         loadImages(drawings)
     }
 
-    suspend fun flush(): Boolean = library.flush()
+    suspend fun flush(): Boolean = (scopedLibraries() + defaultsLibrary).distinct().all { it.flush() }
 
     /** Copy the selected symbol to a new chart without linking later edits between charts. */
     suspend fun copySymbolFrom(source: ChartDrawings, symbol: String) {
@@ -349,13 +405,13 @@ class ChartDrawings internal constructor(
 
     /** Records [next] as the symbol's list; `before` goes on the undo stack. */
     private fun commit(next: List<Drawing>, before: List<Drawing> = drawings) {
-        history.record(before)
+        history.record(before, next)
         drawings = next
         persist()
         onRecorded?.invoke()
     }
 
-    private fun persist() { library.save() }
+    private fun persist() { scopedLibraries().forEach { it.save() } }
 
     fun undo() { undoForSymbol(symbol) }
 
@@ -363,8 +419,8 @@ class ChartDrawings internal constructor(
 
     /** Restore the original instrument without changing the chart's currently selected symbol. */
     internal fun undoForSymbol(target: String): Boolean {
-        val previous = library.history(target).undo(library.lists[target].orEmpty()) ?: return false
-        library.lists[target] = previous
+        val previous = library.history(target).undo(drawingsFor(target)) ?: return false
+        setDrawingsFor(target, previous)
         if (target == symbol) {
             if (previous.none { it.id == selectedId }) selectedId = null
         } else notice = "已撤销 $target 的绘图更改"
@@ -373,8 +429,8 @@ class ChartDrawings internal constructor(
     }
 
     internal fun redoForSymbol(target: String): Boolean {
-        val next = library.history(target).redo(library.lists[target].orEmpty()) ?: return false
-        library.lists[target] = next
+        val next = library.history(target).redo(drawingsFor(target)) ?: return false
+        setDrawingsFor(target, next)
         if (target != symbol) notice = "已重做 $target 的绘图更改"
         persist()
         return true
@@ -386,6 +442,33 @@ class ChartDrawings internal constructor(
 
     // Edits from menus and panels -----------------------------------------------------------------------------------
     fun update(value: Drawing) { if (drawings.any { it.id == value.id }) commit(drawings.map { if (it.id == value.id) value else it }) }
+    /** Move just this drawing to another local scope, keeping its image available for undo and restart. */
+    suspend fun changeSyncScope(id: String, scope: DrawingSyncScope): Boolean {
+        if (!supportsDrawingSync) return false
+        val original = drawings.firstOrNull { it.id == id } ?: return false
+        if (original.syncScope == scope) return true
+        val source = libraryFor(original.syncScope)
+        val target = libraryFor(scope)
+        val imageId = original.imageId
+        if (imageId != null && source !== target) {
+            try {
+                source.imageWrites.toList().forEach { it.join() }
+                val bitmap = withContext(Dispatchers.Default) {
+                    val data = source.store.read(IMAGE_KEY_PREFIX + imageId) ?: error("图片尚未保存")
+                    target.store.write(IMAGE_KEY_PREFIX + imageId, data)
+                    decodeStoredImage(data)
+                }
+                target.images[imageId] = source.images[imageId] ?: bitmap
+            } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel }
+              catch (_: Exception) { notice = "切换同步范围失败，图片未能保存。"; return false }
+        }
+        if (drawings.firstOrNull { it.id == id } != original) {
+            notice = "绘图已发生变化，请重新切换同步范围。"
+            return false
+        }
+        update(original.copy(syncScope = scope))
+        return true
+    }
     /** Shows [value] on the chart without recording it, while a settings dialog is open. */
     internal fun preview(value: Drawing) = replace(value)
     fun select(id: String?) { selectedId = id; menuAt = null }
@@ -415,7 +498,7 @@ class ChartDrawings internal constructor(
     fun addHorizontalLine(point: DrawingPoint) {
         menuAt = null
         if (drawings.size >= MAX_DRAWINGS_PER_SYMBOL) { notice = "每个品种最多 $MAX_DRAWINGS_PER_SYMBOL 个绘图。"; return }
-        val line = defaultsFor(DrawingTool.HORIZONTAL_LINE, newDrawing(DrawingTool.HORIZONTAL_LINE, newId(), listOf(point)))
+        val line = defaultsFor(DrawingTool.HORIZONTAL_LINE, newDrawing(DrawingTool.HORIZONTAL_LINE, newId(), listOf(point))).copy(syncScope = newDrawingSyncScope)
         hideDrawings = false
         commit(drawings + line)
         selectedId = line.id
@@ -471,10 +554,12 @@ class ChartDrawings internal constructor(
         if (encoded == null) { remove(drawingId); return }
         val bitmap = runCatching { decodeDrawingImage(encoded) }.getOrNull()
         if (bitmap == null) { remove(drawingId); return }
+        val drawing = drawings.firstOrNull { it.id == drawingId } ?: return
+        val owner = libraryFor(drawing.syncScope)
         val imageId = newId()
-        images[imageId] = bitmap
+        owner.images[imageId] = bitmap
         val text = encodeDrawingImage(encoded)
-        library.imageWrites += saveScope.launch { runCatching { store.write(IMAGE_KEY_PREFIX + imageId, text) } }
+        owner.imageWrites += owner.scope.launch { runCatching { owner.store.write(IMAGE_KEY_PREFIX + imageId, text) } }
         drawings.firstOrNull { it.id == drawingId }?.let { d ->
             val width = 200.0
             val height = width * bitmap.height / bitmap.width.coerceAtLeast(1)
@@ -483,10 +568,13 @@ class ChartDrawings internal constructor(
     }
 
     private fun loadImages(list: List<Drawing>) {
-        list.mapNotNull { it.imageId }.filterNot { it in images }.forEach { id ->
-            saveScope.launch {
-                val bitmap = runCatching { store.read(IMAGE_KEY_PREFIX + id)?.takeIf { it.isNotEmpty() }?.let(::decodeStoredImage) }.getOrNull()
-                if (bitmap != null) kotlinx.coroutines.withContext(Dispatchers.Main) { images[id] = bitmap }
+        list.filter { it.imageId != null }.forEach { drawing ->
+            val id = drawing.imageId ?: return@forEach
+            val owner = libraryFor(drawing.syncScope)
+            if (id in owner.images) return@forEach
+            owner.scope.launch {
+                val bitmap = runCatching { owner.store.read(IMAGE_KEY_PREFIX + id)?.takeIf { it.isNotEmpty() }?.let(::decodeStoredImage) }.getOrNull()
+                if (bitmap != null) kotlinx.coroutines.withContext(Dispatchers.Main) { owner.images[id] = bitmap }
             }
         }
     }
@@ -524,7 +612,7 @@ class ChartDrawings internal constructor(
 
     private fun startDraft(value: DrawingTool, first: DrawingPoint, ctx: DrawingContext) {
         val points = if (value.anchors == 1 || value.anchors == FREEHAND) listOf(first) else listOf(first, first)
-        var fresh = defaultsFor(value, newDrawing(value, newId(), points, if (value == DrawingTool.ICON) iconGlyph else null))
+        var fresh = defaultsFor(value, newDrawing(value, newId(), points, if (value == DrawingTool.ICON) iconGlyph else null)).copy(syncScope = newDrawingSyncScope)
         if (value == DrawingTool.TABLE) {
             val plot = ctx.coords.plot
             val x = ctx.coords.x(first.timeMs)

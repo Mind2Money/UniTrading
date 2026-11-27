@@ -625,6 +625,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
             chartOpening = true
             scope.launch {
                 try {
+                    if (!runtime.prepareNewDrawingLayout(id)) error("新布局的绘图设置无法保存")
                     runtime.drawingsForChart(id).copySymbolFrom(runtime.drawingsForChart(sourceId), sourceSymbol)
                     if (!runtime.indicatorsForChart(id).apply(sourceIndicators)) error("指标设置无法保存")
                     parkedCharts = parkedCharts + (id to ChartSlot(id, sourceSymbol, sourceFrame))

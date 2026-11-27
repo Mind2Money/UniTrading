@@ -83,6 +83,8 @@ data class ChartPreferences(
     val selectedWorkspace: String = "main",
     /** Visual order of all workspaces, including the main and temporarily detached tabs. */
     val workspaceOrder: List<String> = emptyList(),
+    /** Drawing generations distinguish a new workspace from a closed workspace whose visible id was reused. */
+    val drawingLayoutEpochs: Map<String, Long> = emptyMap(),
     /** The desktop chart is locked: the mouse wheel moves it through time instead of zooming. */
     val chartLocked: Boolean = false,
     /** Whether historical fills and trade markers are shown on charts. */
@@ -102,6 +104,9 @@ data class ChartPreferences(
     private fun minutes(value: Int): Int = if (value in 1..Timeframe.MAX_SECONDS / Timeframe.MINUTE) value * Timeframe.MINUTE else -1
 
     fun validate() {
+        require(drawingLayoutEpochs.size <= MAX_EXTRA_CHARTS && drawingLayoutEpochs.all { (id, value) ->
+            id.isNotBlank() && id.length <= 16 && value in 0 until Long.MAX_VALUE
+        }) { "绘图布局标识无效" }
         require(chartSessions.size <= 64 && chartSessions.keys.all { it.isNotBlank() && it.length <= 64 }) { "图表时段设置无效" }
         require((favoriteLengths + customLengths + listOfNotNull(lastLength)).all { it in 1..Timeframe.MAX_SECONDS }) { "周期超出范围" }
         require(favoriteLengths.distinct() == favoriteLengths && customLengths.distinct() == customLengths) { "周期重复" }
@@ -161,6 +166,14 @@ class ChartPreferencesController(private val store: SnapshotStore) {
     })
 
     suspend fun apply(value: ChartPreferences): Boolean = saveMutex.withLock { persist(value) }
+
+    /** Reserve a new drawing generation before reusing a closed workspace id. */
+    suspend fun advanceDrawingLayoutEpoch(workspace: String): Boolean = saveMutex.withLock {
+        val current = preferences.value
+        val previous = current.drawingLayoutEpochs[workspace] ?: 0L
+        if (previous >= Long.MAX_VALUE - 1) { error.value = "绘图布局标识已用尽"; return@withLock false }
+        persist(current.copy(drawingLayoutEpochs = current.drawingLayoutEpochs + (workspace to previous + 1)))
+    }
 
     private suspend fun persist(value: ChartPreferences): Boolean {
         value.validate()

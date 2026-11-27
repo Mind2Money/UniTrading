@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -550,7 +551,16 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .then(drawingLayer?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
+                        .then(drawingLayer?.takeIf { chrome.onReplayStartSelection == null }?.let { Modifier.drawingCursor(it).drawingInput(it) } ?: Modifier)
+                        .pointerInput(accountKey, instrument.symbol, timeframe) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (currentReplayStartSelection != null) event.changes.firstOrNull { it.pressed && it.type == PointerType.Touch }
+                                        ?.position?.takeIf { it.x in left..right && it.y in top..currentPlotBottom }?.let { hoverPoint = it }
+                                }
+                            }
+                        }
                         .semantics {
                             contentDescription = "${instrument.name}K线。双指张合缩放，双指移动平移；拖动图表平移；" + (if (locked) "图表已锁定，滚轮前后移动图表；" else "滚轮缩放时间，在右侧价格轴上滚动缩放价格；") + "上下滑动右侧价格轴缩放价格，左右滑动底部时间轴缩放时间。拖动指标窗口上沿调整高度。订单线可拖动预览，线上按钮可平仓或撤单，右键或长按打开同样的操作，从 TP、SL 按钮拖动到目标价设置止盈止损。在空白处点右键或长按可选择订单并打开下单栏。" +
                                 (actions.tradingKeys?.let {
@@ -565,6 +575,7 @@ fun TradingChart(
                         .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio) {
                             /** The menu of the order line at [point], or else the plot's own; whether one opened. */
                             fun openChartMenu(point: Offset, touch: Boolean): Boolean {
+                                if (currentReplayStartSelection != null) return false
                                 if ((if (axis.left) point.x < left else point.x > right) && point.y in top..currentPlotBottom) { axisPage = 0; axisMenu = true; return true }
                                 if (point.x !in left..right || point.y !in top..currentPlotBottom) return false
                                 val line = lineAt(point, currentTags, currentLines, currentScale, (if (touch) 14 else 8) * density.density)
@@ -940,6 +951,23 @@ fun TradingChart(
                             textMeasurer, labelStyle, colors, axis.left, slots, periodMs, paneTextBudget, pineGeometryLimit, ::barX)
                         drawingFrame?.let { frame -> drawFullHeightScenes(frame.scenes.filter { (objectRanks[drawingLayerKey(it.drawing.id)] ?: 0L) >= paneRank } + listOfNotNull(frame.draft), plotRect, bounds.top, bounds.bottom) }
                     }
+                    if (chrome.onReplayStartSelection != null && visible.isNotEmpty()) {
+                        val hovered = hoverPoint?.takeIf { it.x in left..right && it.y in top..bottom }
+                        val reference = chrome.replayStartReferenceTime?.let { at -> visible.indexOfLast { it.timeMs <= at }.takeIf { it >= 0 } }
+                        val index = (hovered?.let { visibleIndex(it.x) } ?: reference ?: 0).coerceIn(0, visible.lastIndex)
+                        val boundary = barX((range.first + index).toDouble()).coerceIn(left, right)
+                        if (boundary < right) {
+                            drawRect(brush = Brush.horizontalGradient(
+                                colors = listOf(colors.Chart.copy(alpha = .08f), colors.Chart.copy(alpha = .96f)),
+                                startX = boundary, endX = right), topLeft = Offset(boundary, top), size = Size(right - boundary, bottom - top))
+                        }
+                        drawLine(colors.Brand, Offset(boundary, top), Offset(boundary, bottom), 1.5.dp.toPx())
+                        val label = "回放: ${chartBarDateTime(visible[index].timeMs, timeframe, chrome.chartTimeZone.zoneId)}"
+                        val width = textMeasurer.measure(label, labelStyle).size.width + labelPadding * 2
+                        val startX = (boundary - width / 2).coerceIn(left, maxOf(left, right - width))
+                        drawRect(colors.Brand, Offset(startX, bottom + 1f), Size(width, labelHeight + labelPadding * 2))
+                        text(label, startX + labelPadding, bottom + 1f + labelPadding, colors.OnBrand)
+                    }
                     drawLine(colors.Border, Offset(if (axis.left) left else right, top), Offset(if (axis.left) left else right, bottom))
                     drawLine(colors.Border, Offset(left, bottom), Offset(right, bottom))
                     drawingLayer?.let { drawLayerMarks(it, labelStyle, textMeasurer, if (axis.left) 0f else right + 4.dp.toPx(), if (axis.left) left - 4.dp.toPx() else this.size.width, bottom + 1f) { price -> axisPrice(price.roundToLong()) } }
@@ -1246,6 +1274,7 @@ class ChartChrome(
     val objectLayers: ChartObjectLayers? = null,
     /** When choosing a replay start, a tap selects a visible bar instead of a chart action. */
     val onReplayStartSelection: ((Long) -> Unit)? = null,
+    val replayStartReferenceTime: Long? = null,
 )
 
 /** `2026-11-10 09:30` in UTC, or `2026-11-10 09:30:05` with [seconds]. */

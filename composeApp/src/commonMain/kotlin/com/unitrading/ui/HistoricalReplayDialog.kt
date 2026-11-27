@@ -658,6 +658,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                     val index = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
                                     chooseStartIndex(index)
                                 } else null,
+                                replayStartReferenceTime = if (selectingBar) current.timeMs else null,
                                 showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh) {

@@ -86,6 +86,32 @@ private fun CheckRow(label: String, tag: String, checked: Boolean, onToggle: () 
 }
 
 @Composable
+private fun DrawingSyncButton(drawings: ChartDrawings) {
+    var open by remember { mutableStateOf(false) }
+    val mode = drawings.newDrawingSyncScope
+    Box(Modifier.fillMaxWidth().height(ButtonHeight)) {
+        Box(Modifier.align(Alignment.CenterStart).padding(start = 4.dp).size(32.dp).clip(MaterialTheme.shapes.small)
+            .background(if (mode == DrawingSyncScope.LOCAL) Color.Transparent else MaterialTheme.colorScheme.secondaryContainer)
+            .clickable(role = Role.Button) { open = true }.testTag("drawing-sync-menu")
+            .semantics { contentDescription = "新绘图同步范围：${mode.label}" }, contentAlignment = Alignment.Center) {
+            Icon(if (mode == DrawingSyncScope.GLOBAL) AppIcons.Language else AppIcons.Link, null, Modifier.size(24.dp),
+                tint = if (mode == DrawingSyncScope.LOCAL) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+        }
+        DropdownMenu(open, { open = false }, offset = DpOffset(DrawingToolbarWidth, -ButtonHeight)) {
+            DrawingSyncScope.entries.forEach { choice ->
+                MenuRow(if (choice == DrawingSyncScope.GLOBAL) AppIcons.Language else AppIcons.Link, choice.label,
+                    "drawing-sync-${choice.name}", selected = mode == choice,
+                    trailing = { if (mode == choice) Icon(AppIcons.Check, "当前同步范围", Modifier.size(18.dp)) }) {
+                    drawings.newDrawingSyncScope = choice; open = false
+                }
+            }
+            Text("仅影响新绘图；全局同步仅在本机生效", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelSmall, color = TradingColors.Muted)
+        }
+    }
+}
+
+@Composable
 private fun ToolRow(drawings: ChartDrawings, tool: DrawingTool, close: () -> Unit) {
     val favorite = drawings.isFavorite(tool)
     MenuRow(DrawingIcons.of(tool), tool.label, "drawing-tool-${tool.name}", drawings.tool == tool, trailing = {
@@ -199,6 +225,7 @@ internal fun DrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemo
             CheckRow("隐藏所有", "drawing-hide-all", hideAll) { val next = !hideAll; drawings.hideDrawings = next; drawings.hideIndicators = next; drawings.hideTrading = next; close() }
             if (drawings.hiddenCount > 0) MenuRow(null, "显示 ${drawings.hiddenCount} 个已隐藏的绘图", "drawing-show-hidden") { drawings.showHidden(); close() }
         }
+        if (drawings.supportsDrawingSync) DrawingSyncButton(drawings)
         DividerLine(Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
         val count = drawings.drawingCount()
         ToolbarButton(AppIcons.Delete, "移除对象", "drawing-remove", false, { drawings.removeAllDrawings() }) { close ->
@@ -218,15 +245,20 @@ internal fun DrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemo
 @Composable
 internal fun FavoriteDrawingsBar(drawings: ChartDrawings, modifier: Modifier = Modifier, onDrag: ((Offset) -> Unit)? = null) {
     if (drawings.favorites.isEmpty() || !drawings.favoritesBarVisible) return
-    var offset by remember { mutableStateOf(IntOffset.Zero) }
+    val density = LocalDensity.current.density
+    val savedOffset = drawings.favoriteChartOffset
+    val offset = if (onDrag != null || savedOffset == null) IntOffset.Zero else IntOffset((savedOffset.x * density).roundToInt(), (savedOffset.y * density).roundToInt())
     val currentOnDrag by rememberUpdatedState(onDrag)
     Surface(modifier.offset { offset }.testTag("drawing-favorites"), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(width = 16.dp, height = 36.dp).testTag("drawing-favorites-drag").pointerInput(Unit) {
+            Box(Modifier.size(width = 16.dp, height = 36.dp).testTag("drawing-favorites-drag").pointerInput(drawings, density) {
                 detectDragGestures { change, amount ->
                     change.consume()
                     if (currentOnDrag != null) currentOnDrag?.invoke(amount)
-                    else offset = IntOffset(offset.x + amount.x.roundToInt(), offset.y + amount.y.roundToInt())
+                    else {
+                        val before = drawings.favoriteChartOffset ?: FavoriteBarPosition(0f, 0f)
+                        drawings.setFavoriteChartOffset(before.x + amount.x / density, before.y + amount.y / density)
+                    }
                 }
             }, contentAlignment = Alignment.Center) { Icon(AppIcons.DragIndicator, contentDescription = "拖动收藏栏", Modifier.size(14.dp), tint = TradingColors.Muted) }
             drawings.favorites.forEach { tool ->
@@ -246,7 +278,8 @@ internal fun WorkspaceFavoriteDrawingsBar(drawings: ChartDrawings) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         var size by remember { mutableStateOf(IntSize.Zero) }
-        var position by remember { mutableStateOf<Offset?>(null) }
+        val saved = drawings.favoriteWorkspacePosition
+        var position by remember(drawings, density.density) { mutableStateOf(saved?.let { Offset(it.x * density.density, it.y * density.density) }) }
         val maxX = (constraints.maxWidth - size.width).coerceAtLeast(0).toFloat()
         val maxY = (constraints.maxHeight - size.height).coerceAtLeast(0).toFloat()
         val startX = (maxX - with(density) { 92.dp.toPx() }).coerceAtLeast(0f)
@@ -257,8 +290,10 @@ internal fun WorkspaceFavoriteDrawingsBar(drawings: ChartDrawings) {
         FavoriteDrawingsBar(drawings,
             Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }.onSizeChanged { size = it },
             onDrag = { delta ->
-                val before = position ?: Offset(startX, startY)
-                position = Offset((before.x + delta.x).coerceIn(0f, maxX), (before.y + delta.y).coerceIn(0f, maxY))
+                val before = Offset(x, y)
+                val moved = Offset((before.x + delta.x).coerceIn(0f, maxX), (before.y + delta.y).coerceIn(0f, maxY))
+                position = moved
+                drawings.setFavoriteWorkspacePosition(moved.x / density.density, moved.y / density.density)
             })
     }
 }

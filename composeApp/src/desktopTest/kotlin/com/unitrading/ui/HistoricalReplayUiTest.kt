@@ -149,6 +149,9 @@ class HistoricalReplayUiTest {
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         val chart = compose.onNodeWithTag("trading-chart")
         val size = chart.fetchSemanticsNode().size
+        chart.performMouseInput { moveTo(Offset(size.width * .32f, size.height * .5f)) }
+        val preview = File("../artifacts/tablet-replay/desktop-replay-gradient.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", preview)
         chart.performMouseInput { click(Offset(size.width * .7f, size.height * .5f)) }
         compose.onNodeWithTag("replay-cancel-bar").assertDoesNotExist()
         compose.onNodeWithTag("replay-play").assertIsEnabled()
