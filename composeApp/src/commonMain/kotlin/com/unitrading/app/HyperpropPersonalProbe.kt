@@ -14,9 +14,13 @@ import kotlinx.serialization.json.*
 import kotlin.random.Random
 import kotlin.time.Clock
 
-internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?, val accountType: String? = null) {
+internal data class HyperpropAccountCheck(val id: String, val number: String, val firm: String?, val balance: String?, val accountType: String? = null, val markets: Set<String>? = null) {
     /** Two independent server-provided indicators are required before main-window test trading is enabled. */
-    val isPractice: Boolean get() = number.startsWith("PRACTICE-", ignoreCase = true) && accountType?.lowercase() in setOf("practice", "demo", "sandbox")
+    val isPractice: Boolean get() = number.startsWith("PRACTICE-", ignoreCase = true) &&
+        (accountType?.lowercase() in setOf("practice", "demo", "sandbox") ||
+            (accountType?.equals("evaluation", ignoreCase = true) == true && firm?.equals("Hyperprop Practice", ignoreCase = true) == true))
+    /** HDL perpetuals must not be mistaken for CME dated contracts. Null means the server omitted market data. */
+    val onlyPerpetualMarkets: Boolean get() = markets?.let { it.none { market -> market.uppercase() in setOf("CME", "CBOT", "NYMEX", "COMEX") } } == true
 }
 internal data class HyperpropCheck(val scope: String, val accounts: List<HyperpropAccountCheck>)
 internal data class HyperpropPendingOrder(val id: String, val accountId: String, val contract: String, val side: String, val type: String, val quantity: String, val price: String?, val filledQuantity: String? = null)
@@ -42,8 +46,12 @@ internal fun parseHyperpropCheck(sessionText: String, accountsText: String): Hyp
         val item = entry.jsonObject
         val id = item.stringValue("id") ?: error("账户 ID 缺失")
         require(id in allowed) { "服务器返回未授权账户" }
+        val markets = item["markets"]?.let { marketData ->
+            require(marketData is JsonArray) { "账户市场格式错误" }
+            marketData.map { (it as? JsonPrimitive)?.contentOrNull ?: error("账户市场格式错误") }.toSet()
+        }
         HyperpropAccountCheck(id, item.stringValue("account_number") ?: id,
-            (item["organization"] as? JsonObject)?.stringValue("name"), item.stringValue("current_balance"), item.stringValue("account_type"))
+            (item["organization"] as? JsonObject)?.stringValue("name"), item.stringValue("current_balance"), item.stringValue("account_type"), markets)
     } ?: error("账户列表缺失")
     require(accounts.map { it.id }.distinct().size == accounts.size) { "账户列表包含重复项" }
     return HyperpropCheck(scope, accounts)
@@ -128,13 +136,19 @@ internal class HyperpropPersonalSession private constructor(private val client: 
             val status = read("/trade/commands/$id").dataObject()
             when (status.stringValue("status")) {
                 "succeeded" -> return HyperpropCommand(id, "服务器已处理；请刷新订单和持仓核对", true)
-                "failed" -> return HyperpropCommand(id, "服务器处理失败；请到 Hyperprop 核对", false)
+                "failed" -> {
+                    val error = status.stringValue("error")
+                    val reason = if (error?.contains("Account does not have access to the CME market", ignoreCase = true) == true)
+                        "账户没有 CME 市场权限，请选择 CME 模拟账户" else "服务器处理失败；请到 Hyperprop 核对"
+                    return HyperpropCommand(id, reason, false)
+                }
             }
         }
         return HyperpropCommand(id, "仍在处理，请到 Hyperprop 核对后再操作")
     }
     suspend fun submit(accountId: String, contract: String, side: String, kind: String, quantity: Int, price: String): HyperpropCommand {
-        require(check.accounts.any { it.id == accountId }) { "账户未授权" }
+        val account = check.accounts.firstOrNull { it.id == accountId } ?: error("账户未授权")
+        require(!account.onlyPerpetualMarkets) { "当前账户仅支持永续合约，请选择 CME 期货账户" }
         return command("/trade/order", hyperpropOrderBody(accountId, contract, side, kind, quantity, price))
     }
     suspend fun cancel(order: HyperpropPendingOrder): HyperpropCommand {

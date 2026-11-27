@@ -170,6 +170,8 @@ internal class HyperpropChartBroker(
 
     private fun entryError(account: AccountInfo, request: OrderRequest): String? {
         if (account.readOnly) return "仅明确标识的模拟账户可在主界面测试下单"
+        if (personal.check.accounts.firstOrNull { it.id == account.id }?.onlyPerpetualMarkets == true)
+            return "当前账户没有期货市场权限，请选择 CME 期货账户"
         if (!ready.value || uncertain.value || mutating.value || !source.market.value.connected || !source.market.value.tradingReady)
             return "账户或行情尚未就绪，请先核对连接"
         val snapshot = snapshots.getValue(account.id).value

@@ -8,6 +8,13 @@ import kotlin.test.*
 class HyperpropSnapshotTest {
     private val spec = Instrument("MESZ6", "MES", "futures", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000)
     private fun obj(s: String) = Json.parseToJsonElement(s).jsonObject
+    @Test fun acceptsPositionsEnvelopeAndRejectsMissingPositions() {
+        val response = obj("""{"success":true,"data":{"account_versions":{},"positions":[{"positionId":"p","account_id":"a","contract":"MESZ6","quantity":1,"avg_entry_price":5485.20}]}}""")
+        assertEquals("p", hyperpropPositions(response, "a", listOf(spec)).single().id)
+        assertEquals(548520L, hyperpropPositions(response, "a", listOf(spec)).single().entryPrice)
+        assertTrue(hyperpropPositions(obj("""{"success":true,"data":{"account_versions":{},"positions":[]}}"""), "a", listOf(spec)).isEmpty())
+        assertFails { hyperpropPositions(obj("""{"success":true,"data":{"account_versions":{}}}"""), "a", listOf(spec)) }
+    }
     @Test fun mapsShortAndFractionalFillWithoutInventingProtection() {
         val positions = hyperpropPositions(obj("""{"success":true,"data":[{"positionId":"p-rest","account_id":"a","contract":"MESZ6","quantity":-2,"avg_entry_price":5485.25,"state_version":7}]}"""), "a", listOf(spec))
         assertEquals(Side.SELL, positions.single().side); assertEquals(548525L, positions.single().entryPrice)

@@ -10,6 +10,16 @@ private fun JsonObject.rows(): List<JsonObject> {
     return (this["data"] as? JsonArray)?.map { it as? JsonObject ?: error("交易数据格式错误") }
         ?: error("交易数据不可用")
 }
+private fun JsonObject.positionRows(): List<JsonObject> {
+    require((this["success"] as? JsonPrimitive)?.booleanOrNull == true) { "持仓读取失败" }
+    val data = this["data"]
+    val positions = when (data) {
+        is JsonArray -> data
+        is JsonObject -> data["positions"] as? JsonArray ?: error("持仓列表不可用")
+        else -> error("持仓数据不可用")
+    }
+    return positions.map { it as? JsonObject ?: error("持仓数据格式错误") }
+}
 private fun specFor(contract: String, specs: List<Instrument>): Instrument =
     specs.firstOrNull { !it.isContinuous && it.symbol == contract }
         ?: specs.firstOrNull { it.executionSymbol == contract }
@@ -17,6 +27,10 @@ private fun specFor(contract: String, specs: List<Instrument>): Instrument =
 private fun exactPrice(row: JsonObject, field: String, spec: Instrument): Long =
     row.text(field)?.let { parseFixed(it, spec.priceDecimals) }?.takeIf { it > 0 && it % spec.tickSize == 0L }
         ?: throw IllegalArgumentException("$field 价格不可用或与最小变动不匹配")
+// A multi-fill average can lie between ticks even though every execution is tick-aligned.
+private fun positionAveragePrice(row: JsonObject, spec: Instrument): Long =
+    row.text("avg_entry_price")?.let { parseFixed(it, spec.priceDecimals) }?.takeIf { it > 0 }
+        ?: throw IllegalArgumentException("持仓均价不可用或超出精度")
 private fun time(value: String?): Long = value?.let { runCatching { Instant.parse(it).toEpochMilliseconds() }.getOrNull() } ?: 0L
 
 internal fun hyperpropAccountFigures(data: JsonObject, accountId: String, nowMs: Long): AccountSnapshot {
@@ -32,7 +46,7 @@ internal fun hyperpropAccountFigures(data: JsonObject, accountId: String, nowMs:
 }
 
 /** Parse only confirmed server positions; unknown data fails the entire snapshot instead of appearing flat. */
-internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List<Instrument>): List<Position> = data.rows().mapNotNull { row ->
+internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List<Instrument>): List<Position> = data.positionRows().mapNotNull { row ->
     val returnedAccount = row.text("account_id") ?: throw IllegalArgumentException("持仓缺少账户标识")
     if (returnedAccount != accountId) return@mapNotNull null
     val qty = row.text("quantity")?.toLongOrNull() ?: throw IllegalArgumentException("持仓数量不可用")
@@ -41,7 +55,7 @@ internal fun hyperpropPositions(data: JsonObject, accountId: String, specs: List
     val contract = row.text("contract") ?: throw IllegalArgumentException("持仓缺少到期合约")
     val spec = specFor(contract, specs)
     Position(id = row.text("positionId") ?: row.text("position_id") ?: "$accountId:$contract", symbol = contract, side = if (qty > 0) Side.BUY else Side.SELL,
-        lotsHundredths = kotlin.math.abs(qty) * 100, entryPrice = exactPrice(row, "avg_entry_price", spec),
+        lotsHundredths = kotlin.math.abs(qty) * 100, entryPrice = positionAveragePrice(row, spec),
         openedAtMs = time(row.text("opened_at")), marginMicros = 0, protectionEditable = false, feesKnown = false,
         version = row.text("state_version")?.toLongOrNull()?.takeIf { it > 0 } ?: 0,
         protectionNote = "保护单关系尚未确认")

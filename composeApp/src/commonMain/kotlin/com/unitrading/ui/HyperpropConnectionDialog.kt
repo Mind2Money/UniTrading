@@ -60,6 +60,7 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                 Button(onClick = { action { val connected = HyperpropPersonalSession.connect(key); session = connected; accountId = connected.check.accounts.firstOrNull()?.id ?: ""; key = "" } }, enabled = !busy && key.isNotBlank()) { Text("连接") }
             } else {
                 Text(if (active.check.scope == "trade") "读写密钥 · 测试交易" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
+                Text("本次密钥授权了 ${active.check.accounts.size} 个账户；如缺少账户，请在 Hyperprop 检查个人密钥及账户授权。", style = MaterialTheme.typography.bodySmall)
                 Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情。只有服务器明确标识的模拟账户允许测试下单。", style = MaterialTheme.typography.bodySmall)
                 Box {
                     val source = feeds.firstOrNull { it.descriptor.id == selectedFeed } ?: feeds.firstOrNull()
@@ -82,6 +83,9 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                         active.check.accounts.forEach { account -> DropdownMenuItem(text = { Text(listOfNotNull(account.number, account.firm).joinToString(" · ")) }, onClick = { accountId = account.id; pending = emptyList(); menuOpen = false }) }
                     }
                 }
+                active.check.accounts.firstOrNull { it.id == accountId }?.markets?.let { markets ->
+                    Text("该账户市场：${markets.sorted().joinToString("、").ifEmpty { "无" }}", style = MaterialTheme.typography.bodySmall)
+                }
                 Text("独立测试窗口：手动输入到期合约；暂不关联图表行情、持仓或止盈止损。请使用自己的模拟账户。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 OutlinedTextField(contract, { contract = it.uppercase() }, label = { Text("到期合约，例如 MESZ6") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -93,7 +97,10 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                 OutlinedTextField(quantity, { quantity = it }, label = { Text("数量（张）") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
                 if (kind != "market") OutlinedTextField(price, { price = it }, label = { Text(if (kind == "limit") "限价" else "触发价") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
                 Button(onClick = {
-                    try { hyperpropOrderBody(accountId, contract, side, kind, quantity.toIntOrNull() ?: 0, price); confirmOrder = true }
+                    try {
+                        require(active.check.accounts.firstOrNull { it.id == accountId }?.onlyPerpetualMarkets != true) { "当前账户没有期货市场权限，请选择 CME 期货账户" }
+                        hyperpropOrderBody(accountId, contract, side, kind, quantity.toIntOrNull() ?: 0, price); confirmOrder = true
+                    }
                     catch (e: IllegalArgumentException) { message = e.message ?: "请检查订单" }
                 }, enabled = !busy && active.check.scope == "trade" && accountId.isNotBlank()) { Text("检查并提交订单") }
                 HorizontalDivider()
