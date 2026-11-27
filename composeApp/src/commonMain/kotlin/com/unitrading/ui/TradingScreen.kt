@@ -98,6 +98,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
     // language) still shows the unread ones.
     val unreadFailures by runtime.accountRisk.unreadFailures.collectAsState()
     LaunchedEffect(runtime) { runtime.accountRisk.monitor(runtime.registry) }
+    LaunchedEffect(runtime) { runtime.copyTrading.monitor() }
     val theme by runtime.theme.settings.collectAsState()
     val aliases by runtime.accountAliases.aliases.collectAsState()
     /** The notice of [failure]. One shows at a time, so they share an id, below zero where no other notice has one. */
