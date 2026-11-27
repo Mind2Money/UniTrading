@@ -39,10 +39,9 @@ internal class CopyPendingOrderSubmitter(
             val rev = leader.copyRevision ?: return null
             if (destination.copyRevision != rev || leader.copyEpoch == null || leader.copyEpoch != destination.copyEpoch ||
                 !leader.copyPositionsComplete || !destination.copyPositionsComplete || !leader.copyOrdersComplete || !destination.copyOrdersComplete) return null
-            val originIds = sources.acceptedIds(broker.descriptor.id, leaderId, groupId) ?: return null
+            val origin = sources.acceptedSource(broker.descriptor.id, leaderId, groupId, sourceOrderId) ?: return null
+            val originIds = setOf(sourceOrderId)
             val order = leader.orders.singleOrNull { it.id == sourceOrderId } ?: return null
-            val origin = sources.read()?.singleOrNull { it.brokerId == broker.descriptor.id && it.leaderId == leaderId &&
-                it.groupId == groupId && it.brokerOrderId == sourceOrderId && it.state == CopySourceState.ACCEPTED } ?: return null
             val sourceRequest = origin.request ?: return null
             if (sourceRequest.symbol != order.request.symbol || sourceRequest.side != order.request.side ||
                 sourceRequest.kind != order.request.kind || sourceRequest.lotsHundredths != order.request.lotsHundredths ||

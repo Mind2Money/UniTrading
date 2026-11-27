@@ -1909,7 +1909,13 @@ class TradovateBroker(
                 // Unknown statuses fail closed; live orders are never inferred from the UI's filtered list.
                 copyOrdersClear = identifiable && orders.all { it.str("ordStatus") in setOf("Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") },
                 copyOrdersComplete = identifiable && orders.all { it.str("ordStatus") in setOf("Working", "Suspended", "Filled", "Completed", "Cancelled", "Canceled", "Rejected", "Expired") } &&
-                    pending.size == active.size)
+                    pending.size == active.size,
+                copyOrderLifecycle = orders.mapNotNull { row ->
+                    val id = row.long("id") ?: return@mapNotNull null
+                    val status = row.str("ordStatus") ?: return@mapNotNull null
+                    val filled = classifier.filledQuantity(id)
+                    CopyOrderLifecycle(id.toString(), status, book.orderVersion(id)?.long("id"), checkedMultiply(filled, 100))
+                })
             nextFlows.getOrPut(account.id) { MutableStateFlow(snapshot) }.value = snapshot
         }
         incompleteAccounts = incomplete.toSet()

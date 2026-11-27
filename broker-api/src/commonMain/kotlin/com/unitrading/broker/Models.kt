@@ -280,6 +280,9 @@ data class ClosedTrade(
 data class ActivityEvent(val timeMs: Long, val message: String)
 @Serializable
 data class Execution(val id: String, val symbol: String, val side: Side, val lotsHundredths: Long, val price: Long, val timeMs: Long, val orderId: String)
+/** Broker-provided order status, including terminal orders omitted from the display's pending-order list. */
+@Serializable
+data class CopyOrderLifecycle(val id: String, val status: String, val version: Long?, val filledLotsHundredths: Long?)
 @Serializable
 data class DailyPnl(
     val totalMicros: Long,
@@ -318,6 +321,7 @@ data class AccountSnapshot(
     val copyOrdersClear: Boolean = false,
     /** True only when every active broker order is represented in this account's order snapshot. */
     val copyOrdersComplete: Boolean = false,
+    val copyOrderLifecycle: List<CopyOrderLifecycle> = emptyList(),
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

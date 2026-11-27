@@ -77,6 +77,13 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
         own.filter { it.state == CopySourceState.ACCEPTED && it.groupId == groupId }.mapNotNull { it.brokerOrderId }.toSet()
     }
 
+    suspend fun acceptedSource(brokerId: String, leaderId: String, groupId: String, orderId: String): CopySourceOrder? = mutex.withLock {
+        if (unreadable || listOf(brokerId, leaderId, groupId, orderId).any(String::isBlank)) return@withLock null
+        val own = records.filter { it.brokerId == brokerId && it.leaderId == leaderId }
+        if (own.any { it.state == CopySourceState.INTENDED || it.state == CopySourceState.UNCERTAIN }) return@withLock null
+        own.singleOrNull { it.groupId == groupId && it.brokerOrderId == orderId && it.state == CopySourceState.ACCEPTED }
+    }
+
     private fun transition(requestId: String, transform: (CopySourceOrder) -> CopySourceOrder?): Boolean {
         if (unreadable) return false
         val index = records.indexOfFirst { it.requestId == requestId }

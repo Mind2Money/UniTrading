@@ -2,6 +2,7 @@ package com.unitrading.app
 
 import com.unitrading.broker.OrderRole
 import com.unitrading.broker.PendingOrder
+import com.unitrading.broker.CopyOrderLifecycle
 
 /** Explicit broker identifiers are required: a matching price or symbol is never proof of an order link. */
 internal data class CopyPendingLink(val leaderOrderId: String, val followerOrderId: String, val followerAccountId: String)
@@ -22,15 +23,22 @@ internal object CopyOrderMutationPlanner {
         else -> null
     }
 
-    fun changePrice(link: CopyPendingLink, leaderId: String, followerId: String, follower: PendingOrder?, price: Long): CopyOrderMutation {
+    fun changePrice(link: CopyPendingLink, leaderId: String, followerId: String, source: PendingOrder?, follower: PendingOrder?,
+        price: Long, originConfirmed: Boolean): CopyOrderMutation {
+        if (!originConfirmed || source == null || source.id != leaderId || source.request.entryPrice != price || source.role != OrderRole.ENTRY)
+            return CopyOrderMutation.Stop("主挂单修改来源或服务器状态未确认")
         linked(link, leaderId, followerId, follower)?.let { return CopyOrderMutation.Stop(it) }
-        if (price <= 0) return CopyOrderMutation.Stop("目标价格无效")
+        if (price <= 0 || source.request.symbol != follower!!.request.symbol || source.request.side != follower.request.side ||
+            source.request.kind != follower.request.kind) return CopyOrderMutation.Stop("目标价格或订单不匹配")
         return CopyOrderMutation.ChangePrice(follower!!.id, follower.version, price)
     }
 
-    fun cancel(link: CopyPendingLink, leaderId: String, followerId: String, follower: PendingOrder?): CopyOrderMutation {
+    fun cancel(link: CopyPendingLink, leaderId: String, followerId: String, source: CopyOrderLifecycle?, follower: PendingOrder?,
+        originConfirmed: Boolean): CopyOrderMutation {
         // A partially filled linked entry can still have a working remainder. Cancelling that remainder is safe;
         // the executor must separately reconcile the already filled position after broker confirmation.
+        if (!originConfirmed || source == null || source.id != leaderId || source.status !in setOf("Cancelled", "Canceled"))
+            return CopyOrderMutation.Stop("主挂单撤销来源或服务器状态未确认")
         if (link.leaderOrderId.isBlank() || link.followerOrderId.isBlank() || link.followerAccountId.isBlank() ||
             link.leaderOrderId != leaderId || link.followerAccountId != followerId || follower == null ||
             follower.id != link.followerOrderId || follower.role != OrderRole.ENTRY)

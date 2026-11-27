@@ -90,4 +90,15 @@ class CopyTradingBrokerTest {
         assertTrue(broker.openSession("100").cancelOrder("manual-cancel", "710").accepted)
         assertEquals(false, wire.requests.last { it.path == "order/cancelorder" }.body?.bool("isAutomated"))
     }
+
+    @Test fun terminalOrderStatusRemainsAvailableAfterItLeavesPendingOrders() = runTest {
+        val wire = MockTradovateWire()
+        val broker = TradovateBroker(session(), wire, backgroundScope, { now })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        wire.account.entity("order", json("""{"id":710,"accountId":100,"contractId":200,"action":"Buy","ordStatus":"Canceled"}""").jsonObject)
+        runCurrent()
+        val snapshot = broker.openSession("100").state.value
+        assertTrue(snapshot.orders.none { it.id == "710" })
+        assertEquals("Canceled", snapshot.copyOrderLifecycle.single { it.id == "710" }.status)
+    }
 }

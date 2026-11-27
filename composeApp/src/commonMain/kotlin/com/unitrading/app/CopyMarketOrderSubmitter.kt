@@ -52,10 +52,9 @@ internal class CopyMarketOrderSubmitter(
                 destination.orders.any { it.request.symbol == symbol } || leader.orders.any { it.request.symbol == symbol && it.isProtection } ||
                 leader.positions.any { it.symbol == symbol && (it.stopLoss != null || it.takeProfit != null) } ||
                 destination.positions.any { it.symbol == symbol && (it.stopLoss != null || it.takeProfit != null) }) return null
-            val registered = sources.read() ?: return null
-            val originIds = sources.acceptedIds(broker.descriptor.id, leaderId, groupId) ?: return null
-            val origin = registered.singleOrNull { it.brokerId == broker.descriptor.id && it.leaderId == leaderId &&
-                it.brokerOrderId == fill.orderId && it.groupId == groupId && it.state == CopySourceState.ACCEPTED && it.kind == OrderKind.MARKET } ?: return null
+            val origin = sources.acceptedSource(broker.descriptor.id, leaderId, groupId, fill.orderId) ?: return null
+            if (origin.kind != OrderKind.MARKET) return null
+            val originIds = setOf(fill.orderId)
             val brokerOrderId = origin.brokerOrderId ?: return null
             val sourceRequest = origin.request ?: return null
             if (sourceRequest.symbol != symbol || sourceRequest.stopLoss != null || sourceRequest.takeProfit != null) return null
