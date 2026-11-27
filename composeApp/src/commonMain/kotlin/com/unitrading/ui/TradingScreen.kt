@@ -1449,7 +1449,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         }, singleRow = singleLine)
                     val persistentReplayCache = LocalChartPlatform.current != ChartPlatform.IOS
                     if (replaySetup) ReplaySetupDialog(plugin, runtime.replayHistory, persistentReplayCache, catalog.instruments, selectedInstrument, chartPreferences.chartTimeZone,
-                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, onDismiss = { replaySetup = false }, onReady = { ready ->
+                        market.simulatedTimeMs, selectedFrame, intervals, chartPreferences.sessionForChart(target) == ChartSession.REGULAR, tablet = tablet, onDismiss = { replaySetup = false }, onReady = { ready ->
                             replaySetup = false; replayPrepared = ready; replayGeneration++; replayError = ready.warnings.takeIf { it.isNotEmpty() }?.joinToString("；")
                             replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear()
                             replaySeries.clear(); replaySeries.putAll(ready.data); replayLoading.clear(); replayRevision++
@@ -1459,7 +1459,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                                 chartPreferences.chartTimeZone, ready.data[chosen.symbol to replaySourceFrame].orEmpty(), indicatorSettings.indicators.toList(),
                                 replaySourceFrame, ready.instruments, intervals, priceAxis, skipConfirmation, ready.riskConfig)
                         })
-                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals,
+                    replayInput?.let { input -> HistoricalReplayDialog(input, replayRevision, records = runtime.replayRecords, intervals = intervals, tablet = tablet,
                         history = { sym, frame -> replaySeries[sym to frame].orEmpty() },
                         watch = { sym, frame ->
                             val series = sym to frame

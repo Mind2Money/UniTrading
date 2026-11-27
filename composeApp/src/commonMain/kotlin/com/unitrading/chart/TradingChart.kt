@@ -1080,6 +1080,7 @@ fun TradingChart(
                         // A market order takes no price: it fills at the quote, as the trading keys' does.
                         onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price.takeUnless { order.kind == OrderKind.MARKET }) },
                         stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection, phone = phoneMenu,
+                        compact = chrome.compactContextMenu,
                         desktopActions = if (!menu.desktop && !phoneMenu) null else PlotMenuActions(
                             copyPrice = { clipboard.setText(AnnotatedString(instrument.formatPrice(menu.price))) },
                             pasteDrawing = chrome.drawings?.takeIf { it.canPaste }?.let { drawings -> { drawings.paste() } },
@@ -1217,6 +1218,8 @@ class ChartChrome(
     val keyboardTrading: Boolean = false,
     /** A phone uses a smaller plot menu for touch and mouse input alike. */
     val phoneContextMenu: Boolean = false,
+    /** Compact menu sizing without changing the set of tablet or desktop actions. */
+    val compactContextMenu: Boolean = false,
     /** Display-only quote for an unconfirmed continuous route; never used for placing orders. */
     val statusQuote: Quote? = null,
     val domVisible: Boolean = false,

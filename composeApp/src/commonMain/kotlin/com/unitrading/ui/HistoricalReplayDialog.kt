@@ -70,6 +70,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
     historyError: String? = null,
     intervals: IntervalOptions = input.intervals,
+    tablet: Boolean = false,
     onDismiss: () -> Unit) {
     var selected by remember(input) { mutableStateOf(input.instrument) }
     var fineSnapshot by remember(input) { mutableStateOf<List<Candle>?>(null) }
@@ -93,8 +94,8 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     }
     }
     Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, dismissOnClickOutside = false)) {
-        Surface(Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f).testTag("historical-replay"),
-            shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
+        Surface((if (tablet) Modifier.fillMaxSize() else Modifier.fillMaxWidth(.96f).fillMaxHeight(.94f)).testTag("historical-replay"),
+            shape = if (tablet) RoundedCornerShape(0.dp) else MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface) {
             val bars = loaded?.first.orEmpty()
             if (loaded == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -110,7 +111,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
                     } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError,
-                    records = records, temporaryRecords = temporaryRecords, intervals = intervals, onDismiss = onDismiss)
+                    records = records, temporaryRecords = temporaryRecords, intervals = intervals, tablet = tablet, onDismiss = onDismiss)
             }
         }
     }
@@ -121,7 +122,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
     revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?,
-    temporaryRecords: MutableList<ReplayRecord>, intervals: IntervalOptions, onDismiss: () -> Unit) {
+    temporaryRecords: MutableList<ReplayRecord>, intervals: IntervalOptions, tablet: Boolean, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
     var sourceFrame by remember { mutableStateOf(initialFrame) }
@@ -530,7 +531,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
             checkedAdd(sum, checkedAdd(gross, -checkedAdd(p.entryFeeMicros, commission(spec, p.lotsHundredths))))
         }
     }.getOrNull() }
-    Column(Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 2.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = if (tablet) 0.dp else 4.dp, vertical = if (tablet) 0.dp else 2.dp)) {
         Surface(Modifier.fillMaxWidth().testTag("replay-header"), shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 38.dp).padding(start = 4.dp, end = 2.dp),
@@ -546,7 +547,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         }
         Spacer(Modifier.height(4.dp))
         visibleReplayHistoryError(historyError)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("replay-history-error")) }
-        Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(if (tablet) 6.dp else 12.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 ChartToolbar(spec, input.instruments, { sym ->
                     if (sym != spec.symbol) {
@@ -622,7 +623,8 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                                 allIndicators = indicatorSettings.indicators,
                                 onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                                 objectLayers = objectLayers,
-                                desktopAxisStyle = true, showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
+                                desktopAxisStyle = true, tabletCompactAxis = tablet, compactContextMenu = tablet,
+                                showNavigation = false, showWatermark = true, chartTimeZone = input.zone))
                         if (!useSource && visible.isEmpty()) Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                             Text(if (brokerBars.isEmpty()) "正在向券商获取 ${frame.label} 历史…" else "当前回放时刻没有已完成的 ${frame.label} 历史",
@@ -721,11 +723,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
             }
 
-            if (panelOpen) Surface(Modifier.widthIn(min = 260.dp, max = 310.dp).fillMaxHeight().testTag("replay-side-panel"),
+            if (panelOpen) Surface(Modifier.widthIn(min = if (tablet) 240.dp else 260.dp, max = if (tablet) 272.dp else 310.dp).fillMaxHeight().testTag("replay-side-panel"),
                 shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                Column(Modifier.fillMaxSize().padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.fillMaxSize().padding(if (tablet) 8.dp else 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (tablet) 6.dp else 10.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("本地模拟", style = MaterialTheme.typography.titleMedium)
@@ -741,7 +743,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             onDraft = { draft = it; showDraft = true }, preview = draftPreview, busy = false,
                             onSubmit = { requestOrder(draft.side, draft.kind, if (draft.kind == OrderKind.MARKET) null else ticketSpec.parsePrice(draft.entry)) },
                             modifier = Modifier.weight(1f).fillMaxWidth().testTag("replay-order-ticket"), skipConfirmation = input.skipConfirmation,
-                            accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false,
+                            accountName = "回放模拟账户", showPriceExplanation = false, showEstimates = false, compactFloating = tablet,
                             onClose = { panelOpen = false }, closeLabel = "收起下单面板", closeTag = "replay-order-collapse")
                         if (state.pending.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = 150.dp)
                             .verticalScroll(rememberScrollState()).testTag("replay-pending-list")) {
@@ -777,14 +779,14 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
             }
             VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            NavigationRail(Modifier.width(72.dp).fillMaxHeight().testTag("replay-panel-rail"), windowInsets = WindowInsets(0, 0, 0, 0)) {
+            NavigationRail(Modifier.width(if (tablet) 64.dp else 72.dp).fillMaxHeight().testTag("replay-panel-rail"), windowInsets = WindowInsets(0, 0, 0, 0)) {
                 NavigationRailItem(selected = panelOpen && sideTab == 0, onClick = { panelOpen = !panelOpen || sideTab != 0; sideTab = 0 }, icon = { Icon(AppIcons.OrderEntry, null) },
                     label = { Text("下单") }, modifier = Modifier.testTag("replay-tab-0"))
                 NavigationRailItem(selected = panelOpen && sideTab == 1, onClick = { panelOpen = !panelOpen || sideTab != 1; sideTab = 1 }, icon = { Icon(AppIcons.Analytics, null) },
                     label = { Text("分析") }, modifier = Modifier.testTag("replay-tab-1"))
             }
         }
-        Surface(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
+        if (!tablet) Surface(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
             color = TradingColors.Surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {

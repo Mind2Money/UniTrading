@@ -2,6 +2,7 @@ package com.unitrading.chart
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -104,17 +105,18 @@ private fun PlotMenuIcon(icon: ImageVector, name: String, tint: Color = Material
 internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundredths: Long?, onDismiss: () -> Unit,
     onReset: () -> Unit, onLine: (() -> Unit)?, onOrder: (PlotOrder) -> Unit,
     stopRequiredForSizing: Boolean = false, attached: String? = null, desktopActions: PlotMenuActions? = null,
-    phone: Boolean = false) {
+    phone: Boolean = false, compact: Boolean = false) {
     val colors = TradingColors
     val extended = menu.desktop || phone
     val shortcut = menu.desktop && !phone
-    val itemSize = if (phone) Modifier.height(44.dp) else Modifier
-    val itemText = if (phone) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
+    val compactVisual = phone || compact
+    val itemSize = if (phone) Modifier.height(44.dp) else if (compact) Modifier.heightIn(min = 44.dp) else Modifier
+    val itemText = if (compactVisual) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge
     Box(Modifier.offset { IntOffset(menu.at.x.roundToInt(), menu.at.y.roundToInt()) }) {
-        DropdownMenu(true, onDismiss, if (phone) Modifier.widthIn(min = 200.dp, max = 280.dp).testTag("phone-plot-menu") else Modifier.widthIn(min = 200.dp)) {
+        DropdownMenu(true, onDismiss, if (phone) Modifier.widthIn(min = 200.dp, max = 280.dp).testTag("phone-plot-menu") else if (compact) Modifier.widthIn(min = 200.dp, max = 300.dp).testTag("compact-plot-menu") else Modifier.widthIn(min = 200.dp)) {
             if (menu.longPress || (menu.desktop && desktopActions != null)) {
                 DropdownMenuItem(text = { Text(if (menu.longPress) "重置视图" else "重置图表视图", style = itemText) },
-                    leadingIcon = { PlotMenuIcon(AppIcons.RestartAlt, "reset", phone = phone) },
+                    leadingIcon = { PlotMenuIcon(AppIcons.RestartAlt, "reset", phone = compactVisual) },
                     trailingIcon = if (shortcut) ({ Text("Alt + R", style = MaterialTheme.typography.labelSmall, color = colors.Muted) }) else null,
                     onClick = { onDismiss(); onReset() }, modifier = itemSize.testTag("plot-reset"))
                 if (menu.desktop) DividerLine()
@@ -134,10 +136,10 @@ internal fun PlotContextMenu(menu: PlotMenu, instrument: Instrument, lotsHundred
                     DropdownMenuItem(
                         text = {
                             Text(plotOrderLabel(instrument, order, lotsHundredths, menu.price, stopRequiredForSizing, attached),
-                                color = if (order.side == Side.BUY) colors.UpText else colors.DownText, style = itemText, maxLines = if (phone) 2 else Int.MAX_VALUE)
+                                color = if (order.side == Side.BUY) colors.UpText else colors.DownText, style = itemText, maxLines = if (compactVisual) 2 else Int.MAX_VALUE)
                         },
                         leadingIcon = if (extended) ({ PlotMenuIcon(if (order.side == Side.BUY) AppIcons.ExpandLess else AppIcons.ExpandMore,
-                            "${order.side.name}-${order.kind.name}", if (order.side == Side.BUY) colors.UpText else colors.DownText, phone) }) else null,
+                            "${order.side.name}-${order.kind.name}", if (order.side == Side.BUY) colors.UpText else colors.DownText, compactVisual) }) else null,
                         trailingIcon = if (shortcut && desktopActions?.keyboardTrading == true && order.side == Side.SELL && order.kind == OrderKind.LIMIT) ({ Text("Alt + Shift + S") }) else null,
                         onClick = { onDismiss(); onOrder(order) },
                         modifier = itemSize.testTag("plot-menu-${order.side.name}-${order.kind.name}"),

@@ -65,6 +65,7 @@ internal fun isReplayFuture(instrument: Instrument): Boolean = instrument.isCont
 @Composable
 internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, persistentCache: Boolean, instruments: List<Instrument>, initial: Instrument,
     zone: ChartTimeZone, referenceTime: Long, initialFrame: Timeframe, intervals: IntervalOptions, initialRegular: Boolean,
+    tablet: Boolean = false,
     onDismiss: () -> Unit, onReady: (ReplayPrepared) -> Unit) {
     val today = remember(referenceTime, zone) { Instant.fromEpochMilliseconds(referenceTime.takeIf { it > 0 } ?: Clock.System.now().toEpochMilliseconds())
         .toLocalDateTime(TimeZone.of(zone.zoneId)).date }
@@ -101,9 +102,9 @@ internal fun ReplaySetupDialog(broker: BrokerPlugin, cache: ReplayHistoryCache, 
     val choices = (listOf(initial) + instruments + selected.values).distinctBy { it.symbol }
         .filter { isReplayFuture(it) && (it.symbol.contains(query, true) || it.name.contains(query, true)) }
     Dialog(onDismissRequest = { if (!loading) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.widthIn(max = 760.dp).fillMaxWidth(.94f).testTag("replay-setup"), shape = MaterialTheme.shapes.large,
+        Surface(Modifier.widthIn(max = if (tablet) 650.dp else 760.dp).fillMaxWidth(.94f).testTag("replay-setup"), shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.heightIn(max = 860.dp).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.heightIn(max = if (tablet) 700.dp else 860.dp).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     AppLogo(36.dp)
                     Column(Modifier.weight(1f)) {
