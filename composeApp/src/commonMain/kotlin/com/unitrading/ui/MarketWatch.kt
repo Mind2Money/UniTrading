@@ -32,6 +32,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Clock
 
 @Composable
 internal fun MarketWatch(
@@ -42,6 +43,8 @@ internal fun MarketWatch(
     panel: Boolean = false,
     /** Folds the desktop market panel; its button closes the title row's actions. */
     onClose: (() -> Unit)? = null,
+    /** Last bars already shown in open charts; display-only, never a live quote. */
+    chartCloses: Map<String, Candle> = emptyMap(),
     barActions: @Composable RowScope.() -> Unit = {},
 ) {
     val colors = TradingColors
@@ -61,6 +64,12 @@ internal fun MarketWatch(
     var refreshError by remember(plugin) { mutableStateOf<String?>(null) }
     val refreshScope = rememberCoroutineScope()
     val remote = plugin.descriptor.environment != BrokerEnvironment.LOCAL_DEMO
+    var clockMs by remember(plugin) { mutableLongStateOf(Clock.System.now().toEpochMilliseconds()) }
+    val connectedAt = remember(plugin, market.connected) { Clock.System.now().toEpochMilliseconds() }
+    LaunchedEffect(plugin, remote) {
+        if (remote) while (true) { clockMs = Clock.System.now().toEpochMilliseconds(); delay(1_000) }
+    }
+    val statusNow = if (remote) clockMs else market.simulatedTimeMs.takeIf { it > 0 } ?: market.quotes.values.maxOfOrNull { it.timeMs } ?: clockMs
     val symbols = lists[broker].orEmpty()
     val activity = remember(account) { marketActivities(account) }
     val quotes = rememberLazyListState()
@@ -151,10 +160,16 @@ internal fun MarketWatch(
                     }
                     items(results, key = { it.symbol }) { instrument ->
                         val included = instrument.symbol in symbols
+                        val status = marketSessionState(instrument, market.quotes[instrument.priceSymbol], market.connected, statusNow,
+                            if (remote) connectedAt else statusNow)
                         ListItem(headlineContent = { Text(instrument.symbol, style = type.titleSmall) },
                             supportingContent = {
                                 Column {
-                                    Text(instrument.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text(instrument.name, modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        StatusDot(if (status == MarketSessionState.OPEN) colors.Profit else colors.Muted,
+                                            Modifier.semantics { contentDescription = "市场状态：${status.label}" }, size = 6.dp)
+                                    }
                                     if (instrument.isContinuous) Text(watchSubtitle(instrument), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
                             },
@@ -182,9 +197,17 @@ internal fun MarketWatch(
                     if (instrument != null) {
                         // An unconfirmed continuous row keeps its last confirmed contract's prices; orders still wait.
                         key(plugin, instrument.priceSymbol, account.accountId) {
-                            MarketQuoteRow(instrument, market.quotes[instrument.priceSymbol],
+                            val quote = market.quotes[instrument.priceSymbol]
+                            val status = marketSessionState(instrument, quote, market.connected, statusNow, if (remote) connectedAt else statusNow)
+                            val reference = if (status != MarketSessionState.OPEN) chartCloses[instrument.symbol]?.close?.takeIf { it > 0 }?.let { it to "图表收盘" }
+                                ?: quote?.lastTrade?.let { it to "最近成交" }
+                                ?: Timeframe.presets.mapNotNull { frame ->
+                                    try { plugin.history(instrument.symbol, frame).lastOrNull() } catch (_: IllegalArgumentException) { null }
+                                }
+                                    .maxByOrNull { it.timeMs }?.close?.takeIf { it > 0 }?.let { it to "最近K线收盘" } else null
+                            MarketQuoteRow(instrument, quote,
                                 activity[instrument.priceSymbol] ?: MarketActivity(), symbol == selected,
-                                connected = market.connected, onClick = { onSymbol(symbol) })
+                                connected = market.connected, sessionState = status, reference = reference, onClick = { onSymbol(symbol) })
                         }
                     } else Text("$symbol · 等待合约加载", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), color = colors.Muted, style = type.bodySmall)
                 }
@@ -239,7 +262,8 @@ private data class ActivityMarker(val label: String, val count: Int, val color: 
 @Composable
 internal fun MarketQuoteRow(
     instrument: Instrument, quote: Quote?, activity: MarketActivity, selected: Boolean,
-    connected: Boolean = true, onClick: () -> Unit,
+    connected: Boolean = true, sessionState: MarketSessionState = if (!connected) MarketSessionState.DISCONNECTED else if (quote != null) MarketSessionState.OPEN else MarketSessionState.WAITING,
+    reference: Pair<Long, String>? = null, onClick: () -> Unit,
 ) {
     val colors = TradingColors
     val markers = listOf(
@@ -258,7 +282,7 @@ internal fun MarketQuoteRow(
     val askDirection = if (quote == null) 0 else comparable?.let { quote.ask.compareTo(it.ask) }?.takeIf { it != 0 } ?: lastAskDirection
     SideEffect { previous = quote; lastBidDirection = bidDirection; lastAskDirection = askDirection }
     fun quoteColor(direction: Int) = when {
-        !connected || quote == null -> colors.Muted
+        !connected || quote == null || sessionState != MarketSessionState.OPEN -> colors.Muted
         direction > 0 -> colors.UpText
         direction < 0 -> colors.DownText
         else -> colors.Ink
@@ -272,8 +296,14 @@ internal fun MarketQuoteRow(
         val stacked = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.15f
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val symbol: @Composable (Modifier) -> Unit = { m -> Column(m) {
-                Text(instrument.symbol, color = colors.Ink, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(instrument.symbol, color = colors.Ink, style = type.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    StatusDot(if (sessionState == MarketSessionState.OPEN) colors.Profit else colors.Muted,
+                        Modifier.testTag("market-session-${instrument.symbol}").semantics { contentDescription = "市场状态：${sessionState.label}" }, size = 6.dp)
+                }
                 Text(watchSubtitle(instrument), color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                reference?.let { (price, source) -> Text("$source ${instrument.formatPrice(price)}", Modifier.testTag("market-reference-${instrument.symbol}"),
+                    color = colors.Muted, style = type.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 Text("涨跌 $dailyChange", Modifier.testTag("market-change-${instrument.symbol}").semantics {
                     contentDescription = "当日涨跌幅 $dailyChange，按最新成交与券商结算价计算"
                 }, color = when { dailyDirection > 0 -> colors.UpText; dailyDirection < 0 -> colors.DownText; else -> colors.Muted },

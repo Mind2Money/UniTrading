@@ -1,8 +1,32 @@
 # Unreleased
 
+# v1.8.2
+
 ## 简体中文
 
+- 图表和行情列表显示推测的市场状态；休市或行情延迟时优先显示已加载图表的最近 K 线收盘价，不将历史价格作为实时买卖价或用于确认主力合约。
+- 手机图表价格轴按内容自动调整宽度；右键菜单移除对象树和图表模板，精简独立下单窗，图表订单预览支持修改数量和提交。平板全屏下单窗采用紧凑布局。
+- 手机图表支持收起和恢复账户栏，并提供适合窄屏的图表右键／长按菜单。
+- 修复回放图表周期收藏和自定义周期不能实时更新的问题，并让回放下单面板按可用高度显示，避免内容挤在一起。
+- Windows、macOS、iPad 和安卓平板支持图表全屏，隐藏侧栏和账户栏；图表下单入口打开居中的可拖动悬浮下单窗，桌面端可按 Esc 退出。
+- 优化历史回放控制栏，隐藏连续历史拼接提示；本交易日盈亏按平仓日归属，同时单列供风控使用的当日净值变化。
+- 限价单、突破单提交后及成交后可调整止损止盈，市价单成交后也可调整，价格允许超出初始金额；保护腿加量和账户交易锁定仍受原有检查。
+- Windows 标签栏与工具栏使用分界色，标签栏空白处支持拖动窗口。
+- Android、iOS 和平板长按图表空白处时，可从菜单重置图表视图；平板保留单独的重置视图按钮。
+- 移除各平台图表顶部重复的蓝色连续合约说明，行情和下单面板中的合约信息保留。
+
 ## English
+
+- Show inferred market status in charts and watchlists; prefer the latest already displayed chart close during a closed session or delayed feed without treating it as a live bid/ask or confirming a continuous contract.
+- Size the phone price axis to its labels, remove object tree and chart templates from the phone context menu, compact floating tickets, and allow chart-draft quantity editing and submission; use a compact ticket in tablet chart-only mode.
+- Let phone users collapse and restore the chart account bar, and provide a compact plot context menu for touch and mouse.
+- Keep replay interval favorites and custom intervals in sync with the main chart, and size the replay order panel to its available height.
+- Add chart-only mode on desktop and tablets, with a centered, movable non-modal order ticket; Escape exits on desktop.
+- Refine playback controls, hide the continuous-history caveat, and show close-day trade P&L alongside the daily equity change used by risk limits.
+- Adjust protection beyond the initial cash amounts after submitting limit or stop entries and after fills; increased leg quantities and account trading locks retain their checks.
+- Distinguish the Windows tab row from the chart toolbar and allow dragging the window from empty title-row space.
+- Reset the chart view from the long-press menu on Android, iOS, and tablets; tablets also keep a dedicated reset button.
+- Remove the redundant blue continuous-contract banner above charts on all platforms; contract details remain in the watchlist and order panel.
 
 # v1.8.1
 

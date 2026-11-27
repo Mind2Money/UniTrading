@@ -95,6 +95,15 @@ class WindowsTitleBarUiTest {
             robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
             robot.waitForIdle()
             assertTrue(events.contains("order:c1,main"), "The native window did not reorder the tabs")
+            // Drag the title-row blank space between the tabs and window controls, not the tab itself.
+            val before = frame.locationOnScreen
+            robot.mouseMove(before.x + 650, before.y + 20)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            for (step in 1..12) { robot.mouseMove(before.x + 650 + step * 5, before.y + 20 + step * 3); robot.delay(20) }
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+            robot.waitForIdle()
+            val after = frame.locationOnScreen
+            assertTrue(after.x >= before.x + 30 && after.y >= before.y + 15, "Blank title-row drag must move the window: $before -> $after")
         } finally {
             SwingUtilities.invokeAndWait { frame.dispose() }
         }

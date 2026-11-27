@@ -26,6 +26,7 @@ import com.unitrading.broker.Timeframe
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.PriceScale
+import com.unitrading.chart.OrderTagButtons
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
@@ -47,8 +48,8 @@ class MobileLayoutTest {
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
 
-    private fun render(width: Dp = 400.dp, height: Dp = 800.dp, fontScale: Float = 1f) {
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale)) {
+    private fun render(width: Dp = 400.dp, height: Dp = 800.dp, fontScale: Float = 1f, platform: ChartPlatform = ChartPlatform.DESKTOP) {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f, fontScale), LocalChartPlatform provides platform) {
             Box(Modifier.requiredSize(width, height).testTag("test-host")) { TradingScreen(runtime) }
         } }
         compose.waitForIdle()
@@ -58,6 +59,50 @@ class MobileLayoutTest {
         ImageIO.write(compose.onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", target)
     }
     private fun height(tag: String) = compose.onNodeWithTag(tag).fetchSemanticsNode().size.height
+
+    @Test fun marketListKeepsTheLoadedChartCloseWhenQuoteIsStale() = phoneTest {
+        val broker = OfflineOrderBroker()
+        broker.market.value = broker.market.value.copy(quotes = broker.market.value.quotes.mapValues { (_, quote) -> quote.copy(timeMs = 1L) })
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
+        compose.onNodeWithTag("trading-chart").assertExists()
+        compose.onNodeWithTag("nav-0").performClick()
+        compose.onNodeWithTag("market-reference-TESTZ6", useUnmergedTree = true).assertTextContains("图表收盘 5485.00")
+        assertTrue(broker.placed.isEmpty())
+    }
+
+    @Test fun phoneContextOrderAllowsChartQuantityEditAndRequiresConfirmation() = phoneTest {
+        val broker = OfflineOrderBroker()
+        val offline = TradingRuntime(MemorySnapshotStore(), listOf(broker)).apply { paused.value = true }
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalChartPlatform provides ChartPlatform.ANDROID) {
+            Box(Modifier.requiredSize(400.dp, 800.dp)) { TradingScreen(offline) }
+        } }
+        compose.waitForIdle()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val state = chart.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.StateDescription]
+            .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+        val y = PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(),
+            state.getValue("plotTop").toFloat(), state.getValue("plotBottom").toFloat()).y(549_000)
+        chart.performTouchInput { longClick(Offset(width * .7f, y)) }
+        compose.onNodeWithTag("plot-menu-BUY-LIMIT").performClick()
+        assertTrue(broker.placed.isEmpty(), "Choosing a draft must not send an order")
+        fun tapTag(hint: String) {
+            val center = assertNotNull(chart.fetchSemanticsNode().config[OrderTagButtons][hint]).center
+            chart.performTouchInput { click(center) }
+            compose.waitForIdle()
+        }
+        tapTag("编辑下单数量")
+        compose.onNodeWithTag("chart-draft-quantity").performTextReplacement("2")
+        compose.onNodeWithContentDescription("关闭数量编辑").performClick()
+        tapTag("提交买入订单")
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty(), "The chart button must still request confirmation")
+        compose.onNodeWithTag("confirm-action").performClick()
+        compose.waitUntil(timeoutMillis = 5_000) { broker.placed.isNotEmpty() }
+        assertEquals(200L, broker.placed.single().lotsHundredths)
+    }
 
     @Test fun historyToggleSurvivesLeavingAndReturningToChart() = phoneTest {
         render()
@@ -141,7 +186,7 @@ class MobileLayoutTest {
 
     @Test fun legendFoldWithItsIndicatorListIsRememberedAcrossTabsAndRestarts() = phoneTest {
         runBlocking { assertTrue(runtime.indicators.apply(IndicatorSettings(listOf(IndicatorConfig("m", IndicatorKind.MA))))) }
-        render()
+        render(platform = ChartPlatform.ANDROID)
         compose.onNodeWithTag("indicator-readout").assertExists()
         compose.onNodeWithTag("legend-toggle").performClick()
         compose.onNodeWithTag("chart-readout").assertDoesNotExist()

@@ -120,7 +120,7 @@ internal fun WorkspaceTabStrip(
     onSelect: (String) -> Unit, onDetach: (String) -> Unit, onClose: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     modifier: Modifier = Modifier, canDetach: Boolean = true, touchSized: Boolean = false,
-    onAdd: (() -> Unit)? = null, canAdd: Boolean = true,
+    onAdd: (() -> Unit)? = null, canAdd: Boolean = true, titleBarStyle: Boolean = false,
 ) {
     val detach by rememberUpdatedState(onDetach)
     val reorder by rememberUpdatedState(onReorder)
@@ -157,7 +157,7 @@ internal fun WorkspaceTabStrip(
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         tabs.forEachIndexed { index, tab -> key(tab.id) {
             val active = tab.id == selected
-            val shape = RoundedCornerShape(7.dp)
+            val shape = if (titleBarStyle) RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp) else RoundedCornerShape(7.dp)
             val mine = held?.takeIf { it.id == tab.id }
             val target = held?.target(scroll.value, threshold) ?: index
             val shift = when {
@@ -168,11 +168,11 @@ internal fun WorkspaceTabStrip(
                 index in target until held.from -> held.widths[held.from] + spacing
                 else -> 0f
             }
-            Row(Modifier.height(if (touchSized) 38.dp else 32.dp).widthIn(min = 150.dp, max = 300.dp)
+            Row(Modifier.height(if (titleBarStyle) 40.dp else if (touchSized) 38.dp else 32.dp).widthIn(min = 150.dp, max = 300.dp)
                 .onGloballyPositioned { placements[tab.id] = it }.zIndex(if (mine != null) 1f else 0f)
                 .graphicsLayer { translationX = shift; if (mine != null) shadowElevation = 5.dp.toPx() }
-                .clip(shape).background(if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
-                .border(1.dp, if (active || mine != null) colors.primary.copy(alpha = .6f) else colors.outlineVariant, shape)
+                .clip(shape).background(if (titleBarStyle) { if (active) colors.surface else colors.surfaceContainerHigh } else if (active) colors.secondaryContainer else colors.surfaceContainerHigh)
+                .border(1.dp, if (titleBarStyle) { if (mine != null) colors.primary.copy(alpha = .6f) else androidx.compose.ui.graphics.Color.Transparent } else if (active || mine != null) colors.primary.copy(alpha = .6f) else colors.outlineVariant, shape)
                 .pointerInput(tab.id, canDetach) {
                     detectDragGestures(onDragStart = { position ->
                         val ids = currentTabs.map { it.id }
@@ -207,7 +207,7 @@ internal fun WorkspaceTabStrip(
                 Text(tab.symbol, Modifier.widthIn(max = 80.dp).testTag("workspace-symbol-${tab.id}"), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (active) colors.onSecondaryContainer else colors.onSurfaceVariant)
+                    color = if (active && !titleBarStyle) colors.onSecondaryContainer else colors.onSurfaceVariant)
                 Spacer(Modifier.width(5.dp))
                 Text(tab.price, Modifier.widthIn(max = 82.dp).testTag("workspace-price-${tab.id}"), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium, color = colors.onSurface)

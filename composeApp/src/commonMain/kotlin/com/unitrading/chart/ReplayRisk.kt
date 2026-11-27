@@ -7,6 +7,19 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 import com.unitrading.broker.multiplyDivide
 
+/** A trading day begins at 17:00 Chicago time, including daylight-saving transitions. */
+internal fun replayTradingDay(timeMs: Long): String {
+    val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(TimeZone.of("America/Chicago"))
+    return (if (local.hour >= 17) local.date.plus(1, DateTimeUnit.DAY) else local.date).toString()
+}
+
+/** P&L shown by trade attribution: close-day net results plus the current open positions' estimated P&L. */
+internal fun replayTradeDayPnl(timeMs: Long, trades: List<ReplayTrade>, floating: Long): Long {
+    val day = replayTradingDay(timeMs)
+    return trades.asSequence().filter { replayTradingDay(it.exitTimeMs) == day }
+        .fold(floating) { total, trade -> com.unitrading.broker.checkedAdd(total, trade.pnlMicros) }
+}
+
 /** Generic local rules, not a representation of a particular firm's evaluation contract. */
 internal enum class ReplayDrawdown { STATIC, EOD, TDD }
 internal enum class ReplayDailyLoss { SOFT, HARD, NONE }
@@ -43,8 +56,7 @@ internal data class ReplayRiskState(val threshold: Long, val highWater: Long, va
 
     /** EOD rolls at 17:00 Chicago and uses the preceding balance. */
     fun observe(config: ReplayRiskConfig, timeMs: Long, balance: Long, equity: Long): ReplayRiskState {
-        val local = Instant.fromEpochMilliseconds(timeMs).toLocalDateTime(TimeZone.of("America/Chicago"))
-        val day = (if (local.hour >= 17) local.date.plus(1, DateTimeUnit.DAY) else local.date).toString()
+        val day = replayTradingDay(timeMs)
         val high = when (config.mode) {
             ReplayDrawdown.STATIC -> config.initialMicros
             ReplayDrawdown.TDD -> maxOf(highWater, equity)

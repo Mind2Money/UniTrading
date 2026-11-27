@@ -1,6 +1,14 @@
 package com.unitrading.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -50,7 +58,17 @@ private object DesktopPanelWindows : PanelWindowHost {
     }.getOrDefault(false)
 
     @Composable
-    override fun Window(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit, onClose: () -> Unit, content: @Composable () -> Unit) = key(id) {
+    override fun Window(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit, onClose: () -> Unit, content: @Composable () -> Unit) =
+        WindowImpl(id, title, bounds, size, onBounds, onClose, null, content)
+
+    @Composable
+    override fun ChartWindow(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit,
+        onClose: () -> Unit, header: @Composable (Modifier) -> Unit, content: @Composable () -> Unit) =
+        WindowImpl(id, title, bounds, size, onBounds, onClose, header, content)
+
+    @Composable
+    private fun WindowImpl(id: String, title: String, bounds: WindowBounds?, size: DpSize, onBounds: (WindowBounds) -> Unit,
+        onClose: () -> Unit, header: (@Composable (Modifier) -> Unit)?, content: @Composable () -> Unit) = key(id) {
         // Read once: afterwards the window itself is the source of its bounds.
         val state = remember {
             val saved = bounds?.takeIf { it.valid && reachable(it, runCatching { GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { device -> device.defaultConfiguration.bounds } }.getOrDefault(emptyList())) }
@@ -66,6 +84,33 @@ private object DesktopPanelWindows : PanelWindowHost {
                 report(WindowBounds(position.x.value, position.y.value, windowSize.width.value, windowSize.height.value))
             }
         }
-        Window(onCloseRequest = onClose, state = state, title = title, icon = rememberVectorPainter(AppIcons.LogoTile)) { content() }
+        val customTitle = header != null && System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        Window(onCloseRequest = onClose, state = state, title = title, undecorated = customTitle, icon = rememberVectorPainter(AppIcons.LogoTile)) {
+            if (header == null) content() else Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().height(40.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .testTag("detached-title-toolbar-$id"), verticalAlignment = Alignment.CenterVertically) {
+                    if (customTitle) {
+                        WindowDraggableArea {
+                            Row(Modifier.fillMaxHeight().padding(start = 7.dp, end = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                AppLogo(20.dp); Spacer(Modifier.width(6.dp))
+                                Text("UniTrading · 交易终端", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
+                        }
+                        header(Modifier.widthIn(max = 340.dp).fillMaxHeight())
+                        WindowDraggableArea(Modifier.weight(1f).fillMaxHeight().testTag("detached-title-drag-area-$id")) { }
+                        WindowButton("最小化", "detached-window-minimize-$id", "−") { state.isMinimized = true }
+                        WindowButton(if (state.placement == WindowPlacement.Maximized) "还原" else "最大化", "detached-window-maximize-$id", "□") {
+                            state.placement = if (state.placement == WindowPlacement.Maximized) WindowPlacement.Floating else WindowPlacement.Maximized
+                        }
+                        WindowButton("收回标签", "detached-window-close-$id", "×", onClose)
+                    } else {
+                        AppLogo(20.dp, Modifier.padding(start = 4.dp))
+                        Text("UniTrading · 交易终端", Modifier.padding(horizontal = 6.dp), style = MaterialTheme.typography.labelMedium)
+                        header(Modifier.weight(1f))
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+            }
+        }
     }
 }

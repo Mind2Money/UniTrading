@@ -129,8 +129,8 @@ internal data class AccountBrackets(
     }
 
     /**
-     * Why an edit may not turn [before] into [after], or null. Both describe one pending entry, or one position written
-     * as the order that would open it: the price it enters at, its lots, and the stop loss and take profit it carries.
+     * Why an edit may not turn [before] into [after], or null. Both describe a pending entry, or a protection leg
+     * whose quantity is being increased, written as the order opening the corresponding position.
      *
      * The loss at the stop may grow no further than the loss amount, or than it already was, and a stop may not be
      * taken away; the profit at the target may fall no lower than the profit amount, or than it already was, and a

@@ -10,11 +10,9 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.unitrading.broker.Candle
@@ -51,6 +49,15 @@ class PineChartUiTest {
                 }
             }
         }
+    }
+
+    @Test fun touchResetIsAvailableWithoutQuotesOrDrawingTools() {
+        display()
+        val chart = compose.onNodeWithTag("trading-chart")
+        val size = chart.fetchSemanticsNode().size
+        chart.performTouchInput { longClick(Offset(size.width * .7f, size.height * .6f)) }
+        compose.onNodeWithTag("plot-reset").assertExists()
+        compose.onNodeWithTag("plot-menu-horizontal-line").assertDoesNotExist()
     }
 
     @Test fun scriptPaintsPriceCoordinatesObjectsAndAnIndependentPane() {

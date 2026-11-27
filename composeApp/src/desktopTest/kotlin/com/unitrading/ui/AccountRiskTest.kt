@@ -701,129 +701,73 @@ class AccountRiskTest {
         assertEquals(3, broker.placed.size)
     }
 
-    @Test fun anEditMayTightenButNotLoosenPastTheCashAmounts() = runTest {
+    @Test fun submittedOrdersAndFilledPositionsCanMoveProtectionBeyondInitialAmounts() = runTest {
         val broker = RiskFixture()
         val risk = controller()
         val session = risk.guard(broker, broker.openSession("100"))
-        // Long one from 5500 with the stop 80 ticks under it and the target 160 above; one more contract waits at 5490
-        // with the same distances. Each loses 100 at its stop and makes 200 at its target.
-        val entry = riskOrder("entry", Side.BUY, OrderKind.LIMIT, 100, 549_000, stop = 547_000, target = 553_000)
-        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)), listOf(entry))
-        assertTrue(session.modifyProtection("free", "held", 1, 540_000, null).accepted, "without a rule nothing is checked")
         assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
-        val loss = "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量"
-        val profit = "修改后的预估利润低于子账户设置；止盈只能设得更远"
-        fun refused(reason: String, result: TradeResult) = assertEquals(TradeResult(false, reason), result)
-
-        refused(loss, session.modifyProtection("loosen", "held", 1, 547_975, 554_000))
-        refused("该子账户设有风险金额，止损不能移除", session.modifyProtection("remove", "held", 1, null, 554_000))
-        refused(profit, session.modifyProtection("nearer", "held", 1, 548_000, 553_975))
-        refused("该子账户设有利润金额，止盈不能移除", session.modifyProtection("no-target", "held", 1, 548_000, null))
-        assertTrue(session.modifyProtection("tighten", "held", 1, 549_000, 555_000).accepted)
-        // The entry dragged away from its stop, its stop dragged away from it, and a second contract on the same stop.
-        refused(loss, session.modifyOrder("up", "entry", 1, 549_025))
-        refused(loss, session.modifyOrderProtection("loosen", "entry", 1, 546_975, 553_000))
-        refused(loss, session.changeOrder("more", "entry", 1, 549_000, 200))
-        refused("该子账户设有风险金额，止损不能移除", session.modifyOrderProtection("remove", "entry", 1, null, 553_000))
-        refused(profit, session.modifyOrderProtection("nearer", "entry", 1, 547_000, 552_975))
-        assertTrue(session.modifyOrder("down", "entry", 1, 548_500).accepted, "nearer its stop and further from its target")
-        assertTrue(session.modifyOrderProtection("tighten", "entry", 1, 548_000, 554_000).accepted)
-        assertTrue(session.changeOrder("same", "entry", 1, 549_000, 100).accepted)
-
-        // Two contracts on a stop that already loses 200, and no target: older than the rule. They may come closer and go
-        // no further than they are. A first target has to make the profit amount, which two contracts do 80 ticks up.
-        broker.hold("100", listOf(riskPosition(Side.BUY, 200, stop = 548_000)),
-            // An order placed by hand as the stop of that position carries none itself: the amounts do not reach it.
-            listOf(riskOrder("own-stop", Side.SELL, OrderKind.STOP, 200, 547_000)))
-        refused(loss, session.modifyProtection("older-loosen", "held", 1, 547_975, null))
-        refused(profit, session.modifyProtection("older-near-target", "held", 1, 548_500, 551_975))
-        assertTrue(session.modifyProtection("older-tighten", "held", 1, 548_500, 552_000).accepted)
-        assertTrue(session.modifyOrder("own-stop", "own-stop", 1, 546_000).accepted)
-
-        // Under sizing the loss amount is the risk, and no target is asked for.
-        val other = risk.guard(broker, broker.openSession("200"))
-        assertNull(risk.configureBrackets(broker, "200", AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 1_000)))
-        broker.hold("200", orders = listOf(riskOrder("sized", Side.BUY, OrderKind.LIMIT, 200, 549_000, stop = 548_000)))
-        refused(loss, other.changeOrder("more", "sized", 1, 549_000, 300))
-        refused(loss, other.modifyOrder("up", "sized", 1, 549_025))
-        assertTrue(other.modifyOrderProtection("target", "sized", 1, 548_000, 549_025).accepted)
-        assertEquals(listOf("protect:held:540000:null", "protect:held:549000:555000", "modify:entry:548500", "protect-order:entry:548000:554000",
-            "change:entry:549000:100", "protect:held:548500:552000", "modify:own-stop:546000", "protect-order:sized:548000:549025"), broker.events)
+        for (kind in listOf(OrderKind.LIMIT, OrderKind.STOP)) for (side in listOf(Side.BUY, Side.SELL)) {
+            val buy = side == Side.BUY
+            val stop = if (buy) 547_000L else 551_000L
+            val target = if (buy) 553_000L else 545_000L
+            val farther = if (buy) 546_000L else 552_000L
+            val closer = if (buy) 552_000L else 546_000L
+            val entry = riskOrder("entry", side, kind, 100, 549_000, stop = stop, target = target)
+            for (filled in listOf(0L, 50L)) {
+                broker.hold("100", orders = listOf(entry.copy(filledLotsHundredths = filled)))
+                assertTrue(session.modifyOrderProtection("stop", "entry", 1, farther, target).accepted, "$kind $side $filled")
+                assertTrue(session.modifyOrderProtection("target", "entry", 1, stop, closer).accepted, "$kind $side $filled")
+                assertEquals("该子账户设有风险金额，止损不能移除", session.modifyOrderProtection("remove", "entry", 1, null, target).message)
+                assertEquals("该子账户设有利润金额，止盈不能移除", session.modifyOrderProtection("remove-target", "entry", 1, stop, null).message)
+            }
+            val exit = if (buy) Side.SELL else Side.BUY
+            broker.hold("100", orders = listOf(entry.copy(filledLotsHundredths = 50, stopLossOrderId = "child"),
+                riskOrder("child", exit, OrderKind.STOP, 100, stop, OrderRole.STOP_LOSS)))
+            assertTrue(session.modifyOrder("child-stop", "child", 1, farther).accepted, "$kind $side shared child")
+        }
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000, target = 554_000)))
+        assertTrue(session.modifyProtection("long-stop", "held", 1, 547_000, 554_000).accepted)
+        assertTrue(session.modifyProtection("long-target", "held", 1, 548_000, 552_000).accepted)
+        assertEquals("该子账户设有风险金额，止损不能移除", session.modifyProtection("remove", "held", 1, null, 554_000).message)
+        broker.hold("100", listOf(riskPosition(Side.SELL, 100, stop = 552_000, target = 546_000)))
+        assertTrue(session.modifyProtection("short-stop", "held", 1, 553_000, 546_000).accepted)
+        assertTrue(session.modifyProtection("short-target", "held", 1, 552_000, 548_000).accepted)
     }
 
-    @Test fun aStopOrTargetChangedOnItsOwnIsHeldToTheAmountsWhereItMovesToCostThePosition() = runTest {
+    @Test fun filledProtectionLegPricesCanMoveButRaisingQuantityStillChecksRiskAndCoverage() = runTest {
         val broker = RiskFixture()
         val risk = controller()
         val session = risk.guard(broker, broker.openSession("100"))
         assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000, profit = 200_000_000)))
-        // Long 2 at 5499.50 from two brackets of 1 that the broker could not pair with the position: the legs of the one
-        // entered at 5500 are changed on their own. From the position's price its stop loses 97.50 and its target makes 202.50.
-        broker.hold("100", listOf(riskPosition(Side.BUY, 200).copy(entryPrice = 549_950)), listOf(
-            riskOrder("A", Side.SELL, OrderKind.STOP, 100, 548_000, OrderRole.STOP_LOSS, group = "a"),
-            riskOrder("TA", Side.SELL, OrderKind.LIMIT, 100, 554_000, OrderRole.TAKE_PROFIT, group = "a")))
-        val loss = TradeResult(false, "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量")
-        val profit = TradeResult(false, "修改后的预估利润低于子账户设置；止盈只能设得更远")
-        val beyond = TradeResult(false, "保护单数量不能超过持仓：超出的部分是不带止损的开仓。")
-        // Dragged to 5440 the stop would lose 297.50; one tick further loses 98.75, still within the amount.
-        assertEquals(loss, session.changeOrder("loosen", "A", 1, 544_000, 100))
-        assertTrue(session.changeOrder("tick", "A", 1, 547_975, 100).accepted)
-        assertTrue(session.modifyOrder("tighten", "A", 1, 549_000).accepted)
-        // Raised at its price to the whole long, the stop loses more: 195 for the two contracts, past the amount. At 5490 it
-        // may take the whole long, which loses 95 there; moved away for both it loses 197.50, and three would take more than
-        // the long, the rest opening a short with no stop.
-        assertEquals(loss, session.changeOrder("whole", "A", 1, 548_000, 200))
-        assertTrue(session.changeOrder("whole-tighter", "A", 1, 549_000, 200).accepted)
-        assertEquals(loss, session.changeOrder("whole-loosen", "A", 1, 547_975, 200))
-        assertEquals(beyond, session.changeOrder("more", "A", 1, 548_000, 300))
-        // The target may come a tick nearer and still make the amount, and no nearer than that; further is always fine.
-        assertTrue(session.changeOrder("nearer", "TA", 1, 553_975, 100).accepted)
-        assertEquals(profit, session.changeOrder("too-near", "TA", 1, 553_925, 100))
-        assertTrue(session.changeOrder("further", "TA", 1, 556_000, 100).accepted)
-        // Taking a leg away is a cancel, which no rule stops.
-        assertTrue(session.cancelOrder("cancel", "A").accepted)
-
-        // Long 1 after a partial close, with both legs of the bracket still at 2: each is cut to the position at its price,
-        // although the target then makes 100 where it made 200 for two contracts.
-        broker.hold("100", listOf(riskPosition(Side.BUY, 100)), listOf(
-            riskOrder("S", Side.SELL, OrderKind.STOP, 200, 549_000, OrderRole.STOP_LOSS, group = "s"),
-            riskOrder("T", Side.SELL, OrderKind.LIMIT, 200, 552_000, OrderRole.TAKE_PROFIT, group = "s")))
-        assertTrue(session.changeOrder("cut-target", "T", 1, 552_000, 100).accepted)
-        assertTrue(session.changeOrder("cut-stop", "S", 1, 549_000, 100).accepted)
-        // Moved, each is held to the long of 1 it can close: the stop at 5480 loses 100 there, the amount, and the target a
-        // tick nearer makes 98.75, less than the 100 it made.
-        assertTrue(session.changeOrder("loosen-for-one", "S", 1, 548_000, 200).accepted)
-        assertEquals(profit, session.changeOrder("nearer-for-two", "T", 1, 551_975, 200))
-        // Where the position has gone, a leg opens one of its own: it may not grow at all, and has nothing to be measured from.
-        broker.hold("100", orders = listOf(riskOrder("B", Side.SELL, OrderKind.STOP, 100, 548_000, OrderRole.STOP_LOSS, group = "b"),
-            riskOrder("TB", Side.SELL, OrderKind.LIMIT, 100, 552_000, OrderRole.TAKE_PROFIT, group = "b")))
-        assertEquals(beyond, session.changeOrder("orphan", "B", 1, 548_000, 1_000))
-        assertTrue(session.changeOrder("orphan-move", "B", 1, 547_000, 100).accepted)
-        assertEquals(listOf("change:A:547975:100", "modify:A:549000", "change:A:549000:200", "change:TA:553975:100", "change:TA:556000:100",
-            "cancel:A", "change:T:552000:100", "change:S:549000:100", "change:S:548000:200", "change:B:547000:100"), broker.events)
+        val loss = "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量"
+        val beyond = "保护单数量不能超过持仓：超出的部分是不带止损的开仓。"
+        for (side in listOf(Side.BUY, Side.SELL)) {
+            val exit = if (side == Side.BUY) Side.SELL else Side.BUY
+            val stop = if (side == Side.BUY) 548_000L else 552_000L
+            val farther = if (side == Side.BUY) 544_000L else 556_000L
+            val target = if (side == Side.BUY) 554_000L else 546_000L
+            val nearer = if (side == Side.BUY) 552_000L else 548_000L
+            broker.hold("100", listOf(riskPosition(side, 200)), listOf(
+                riskOrder("S", exit, OrderKind.STOP, 100, stop, OrderRole.STOP_LOSS, group = "a"),
+                riskOrder("T", exit, OrderKind.LIMIT, 100, target, OrderRole.TAKE_PROFIT, group = "a")))
+            assertTrue(session.modifyOrder("stop", "S", 1, farther).accepted, "$side")
+            assertTrue(session.modifyOrder("target", "T", 1, nearer).accepted, "$side")
+            assertEquals(loss, session.changeOrder("increase", "S", 1, farther, 200).message, "$side")
+            assertEquals(beyond, session.changeOrder("too-many", "S", 1, stop, 300).message, "$side")
+        }
+        assertEquals(4, broker.events.size)
     }
 
-    @Test fun aStopLegCannotBeLoosenedPastTheAmountInSeveralSteps() = runTest {
+    @Test fun sizingRiskStillBoundsPendingEntriesAfterPositionEditsAreFreed() = runTest {
         val broker = RiskFixture()
         val risk = controller()
         val session = risk.guard(broker, broker.openSession("100"))
-        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000)))
-        val loss = TradeResult(false, "修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量")
-        // Long 2 at 5500 from a bracket of 2 whose legs are changed on their own, as when a sell limit placed beside them
-        // left the broker unable to pair them. The stop at 5490 loses 100 for the two contracts.
-        fun legs(stopLots: Long, stopPrice: Long) = listOf(
-            riskOrder("S", Side.SELL, OrderKind.STOP, stopLots, stopPrice, OrderRole.STOP_LOSS, group = "s"),
-            riskOrder("T", Side.SELL, OrderKind.LIMIT, 200, 552_000, OrderRole.TAKE_PROFIT, group = "s"))
-        broker.hold("100", listOf(riskPosition(Side.BUY, 200)), legs(200, 549_000))
-        // Dragged to 5480 at once it would lose 200, twice the amount.
-        assertEquals(loss, session.changeOrder("straight", "S", 1, 548_000, 200))
-        // Cut to 1 contract and moved to 5480 it loses 100: allowed.
-        assertTrue(session.changeOrder("cut-and-move", "S", 1, 548_000, 100).accepted)
-        // Raised back to 2 contracts there it would lose 200 again, although its price stays where it is.
-        broker.hold("100", listOf(riskPosition(Side.BUY, 200)), legs(100, 548_000))
-        assertEquals(loss, session.changeOrder("raise-back", "S", 1, 548_000, 200))
-        // Raised where two contracts lose no more than the amount, it covers the long again.
-        assertTrue(session.changeOrder("raise-at-5490", "S", 1, 549_000, 200).accepted)
-        assertEquals(listOf("change:S:548000:100", "change:S:549000:200"), broker.events)
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 1_000)))
+        broker.hold("100", listOf(riskPosition(Side.BUY, 100, stop = 548_000)),
+            listOf(riskOrder("entry", Side.BUY, OrderKind.LIMIT, 200, 549_000, stop = 548_000)))
+        assertTrue(session.modifyProtection("held", "held", 1, 547_000, null).accepted)
+        assertEquals("修改后的预估亏损超出子账户风险设置；可以收紧止损或减少数量",
+            session.changeOrder("more", "entry", 1, 549_000, 300).message)
     }
 
     @Test fun withBracketsAnOrderAgainstThePositionRaisedStaysAnExitOrAStopForIt() = runTest {

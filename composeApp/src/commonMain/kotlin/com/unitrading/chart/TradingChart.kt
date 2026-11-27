@@ -67,29 +67,11 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 private enum class ChartDragMode { PRICE, TIME, PLOT, PANE, NONE }
-private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1)
+private data class PriceTag(val price: Long, val ink: Color, val background: Color, val priority: Int = 1, val reference: Boolean = false)
 private sealed interface PriceObject {
     val rank: Long
     data class Indicator(val item: ComputedIndicator, override val rank: Long) : PriceObject
     data class Drawing(val scene: DrawingScene, override val rank: Long) : PriceObject
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ContinuousRouteLabel(instrument: Instrument, color: Color) {
-    val label = "连续合约${instrument.symbol} ${instrument.executionLabel}"
-    val matching = instrument.tradeSymbolStatus?.takeIf {
-        instrument.tradeSymbol != null && it.startsWith("价格匹配")
-    }
-    val text: @Composable () -> Unit = {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp).testTag("continuous-route")
-            .then(if (matching != null) Modifier.semantics { stateDescription = matching } else Modifier),
-            style = MaterialTheme.typography.labelSmall, color = color)
-    }
-    if (matching != null) {
-        TooltipBox(TooltipDefaults.rememberPlainTooltipPositionProvider(),
-            { PlainTooltip { Text(matching) } }, rememberTooltipState(), focusable = false) { text() }
-    } else text()
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -193,13 +175,15 @@ fun TradingChart(
     val axis = chrome.priceAxis
     var axisMenu by remember { mutableStateOf(false) }
     var axisPage by remember { mutableStateOf(0) }
+    // The phone axis is measured from its displayed labels after the price scale is known.
+    var phonePriceColumn by remember(instrument.symbol) { mutableStateOf(with(density) { 48.dp.toPx() }) }
     // Tablets reclaim chart width, while long symbols and prices still receive enough space.
     val priceColumn = if (chrome.tabletCompactAxis) {
         val samples = listOfNotNull(instrument.symbol, quote?.bid?.let(instrument::formatPrice),
             quote?.ask?.let(instrument::formatPrice), candles.maxOfOrNull { it.high }?.let(instrument::formatPrice),
             candles.minOfOrNull { it.low }?.let(instrument::formatPrice), "00:00:00")
         maxOf(with(density) { 68.dp.toPx() }, samples.maxOf { textMeasurer.measure(it, TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")).size.width.toFloat() } + with(density) { 12.dp.toPx() })
-    } else with(density) { 84.dp.toPx() }
+    } else if (chrome.phoneContextMenu) phonePriceColumn else with(density) { 84.dp.toPx() }
     val innerMargin = with(density) { 12.dp.toPx() }
     val left = if (axis.left) priceColumn else innerMargin
     val right = (size.width - if (axis.left) innerMargin else priceColumn).coerceAtLeast(left + 1)
@@ -263,6 +247,9 @@ fun TradingChart(
         }
     }
     val nowMs = if (remote) wallClockMs.takeIf { it > 0 } else quote?.timeMs
+    val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
+    val connectedAt = remember(accountKey, instrument.symbol, connected) { if (remote) Clock.System.now().toEpochMilliseconds() else quote?.timeMs ?: 0L }
+    val marketState = marketSessionState(instrument, chrome.statusQuote ?: quote, connected, nowMs ?: 0L, connectedAt)
     val chartQuote = if (chrome.regularSession && (nowMs == null || !isRegularChartTime(nowMs))) {
         candles.lastOrNull()?.close?.let { close -> quote?.copy(bid = close, ask = close) }
     } else quote
@@ -324,10 +311,29 @@ fun TradingChart(
         low = if (logarithmic) safeBase.low.coerceAtLeast(1.0) else safeBase.low,
         logarithmic = logarithmic, inverted = axis.inverted)
     val ratio = remember(axis.lockRatio, axis.mode, instrument.symbol, timeframe) { doubleArrayOf(Double.NaN) }
+    fun resetView() {
+        viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN
+        selectedTrade = null; selectedExecution = null
+    }
     val scale = if (axis.lockRatio && drag == null) {
         if (!ratio[0].isFinite()) ratio[0] = configuredScale.barRatio(viewport.count, plotWidth)
         configuredScale.withBarRatio(ratio[0], viewport.count, plotWidth)
     } else configuredScale
+    if (chrome.phoneContextMenu) {
+        val samples = buildList {
+            add(instrument.symbol)
+            if (marketState != MarketSessionState.OPEN || chartQuote == null) add("${instrument.symbol} 收")
+            add(axisPrice(scale.price(top, instrument.tickSize)))
+            add(axisPrice(scale.price(plotBottom, instrument.tickSize)))
+            chartQuote?.let { add(axisPrice(it.bid)); add(axisPrice(it.ask)) }
+            if (axis.showCountdown) countdown?.let(::add)
+        }
+        val textStyle = TextStyle(fontSize = 11.sp, fontFeatureSettings = "tnum")
+        val measured = samples.maxOf { textMeasurer.measure(it, textStyle).size.width.toFloat() }
+        val desired = maxOf(with(density) { 44.dp.toPx() }, measured + with(density) { 14.dp.toPx() })
+        // Keep the plot and its hit regions stable while an order line is being dragged.
+        SideEffect { if (drag == null && phonePriceColumn != desired) phonePriceColumn = desired }
+    }
     var previousAxis by remember { mutableStateOf(Triple(axis.mode, axis.inverted, axis.left)) }
     LaunchedEffect(axis.mode, axis.inverted, axis.left) {
         val next = Triple(axis.mode, axis.inverted, axis.left)
@@ -445,7 +451,6 @@ fun TradingChart(
 
     // Folds at once on a toggle; the screen saves the choice and hands it back through [chrome] when the chart is rebuilt.
     var collapsed by remember(chrome.legendCollapsed) { mutableStateOf(chrome.legendCollapsed) }
-    val countdown = candles.lastOrNull()?.let { last -> nowMs?.let { barCountdown(last.timeMs, periodMs, it) } }
     val layers = listOf(
         ChartToggle("仓位", showPositions) { showPositions = !showPositions },
         ChartToggle("挂单", showOrders) { showOrders = !showOrders },
@@ -462,7 +467,6 @@ fun TradingChart(
     }
 
     Column(modifier.background(colors.Surface)) {
-        if (instrument.isContinuous) ContinuousRouteLabel(instrument, colors.Accent)
         if (compact && !chrome.sharedToolbar) {
             toolbar(Modifier.fillMaxWidth())
             DividerLine()
@@ -504,7 +508,7 @@ fun TradingChart(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Canvas(
                     Modifier.fillMaxSize().background(colors.Chart).onSizeChanged { size = it; chartMeasured = true }.testTag("trading-chart")
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             // Initial pass wins over drawing/order-line gestures. Once two fingers take
                             // ownership, consume through the LAST finger up: never commit a leftover drag.
                             awaitPointerEventScope {
@@ -552,12 +556,12 @@ fun TradingChart(
                                     if (actions.stopRequiredForSizing) "图表获得焦点后按 ${it.buy} 或 ${it.sell} 打开下单栏填写止损价。"
                                     else "已开启键盘下单：图表获得焦点后按 ${it.buy} 市价买入，按 ${it.sell} 市价卖出。"
                                 } ?: "")
-                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0}"
+                            stateDescription = "bars:${viewport.count};offset:${viewport.offset};low:${scale.low};high:${scale.high};auto:${manualScale == null};locked:$locked;panes:${panes.size};overlays:${overlays.size};cross:$crosshairState;plotBottom:$plotBottom;lockedTime:${chrome.lockedCrosshairTime ?: "none"};barStep:$step;barBody:${candleWidth.body};plotTop:$top;countdown:${countdown ?: "none"};history:${if (showHistory) trades.size + executions.size else 0};priceColumn:$priceColumn"
                             customActions = lines.flatMap { it.cells }.mapNotNull { cell -> cell.action?.let { action -> CustomAccessibilityAction(cell.hint) { currentActions.onLineAction(action); true } } }
                             set(OrderTagButtons, orderTags.flatMap { it.cells }.filter { it.cell.action != null || it.cell.drag != null }.associate { it.cell.hint to it.bounds })
                         }
                         .pointerHoverIcon(chartCursor)
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio) {
                             /** The menu of the order line at [point], or else the plot's own; whether one opened. */
                             fun openChartMenu(point: Offset, touch: Boolean): Boolean {
                                 if ((if (axis.left) point.x < left else point.x > right) && point.y in top..currentPlotBottom) { axisPage = 0; axisMenu = true; return true }
@@ -568,9 +572,9 @@ fun TradingChart(
                                     // Nothing under the pointer: the plot's own menu, at the price the crosshair shows there.
                                     val price = currentScale.price(point.y, instrument.tickSize)
                                     val orders = plotOrders(price, currentQuote, currentActions.entryKinds)
-                                    if (touch && orders.isEmpty() && currentDrawingLayer == null) return false
                                     val index = currentViewport.slotAt(((point.x - left) / plotWidth).toDouble(), currentTotal)
-                                    plotMenu = PlotMenu(point, price, orders, desktop = !touch, timeMs = slotTime(currentCandles, index, periodMs))
+                                    plotMenu = PlotMenu(point, price, orders, desktop = !touch,
+                                        timeMs = slotTime(currentCandles, index, periodMs), longPress = touch)
                                 }
                                 return true
                             }
@@ -617,7 +621,7 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, axis.left, axis.mode, axis.lockRatio) {
                             awaitPointerEventScope {
                                 while (true) {
                                     val event = awaitPointerEvent()
@@ -649,7 +653,7 @@ fun TradingChart(
                                 }
                             }
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, showHistory, panes.size, axis.left, axis.mode, axis.lockRatio) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, showHistory, panes.size, axis.left, axis.mode, axis.lockRatio) {
                             detectTapGestures(onTap = { point ->
                                 val button = currentTags.buttonAt(point, if (compact) 8 * density.density else 0f)
                                 if (button != null) {
@@ -673,7 +677,7 @@ fun TradingChart(
                                 }
                             }, onLongPress = { point -> crosshair = visibleIndex(point.x); crosshairY = point.y })
                         }
-                        .pointerInput(accountKey, instrument.symbol, timeframe, size, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
+                        .pointerInput(accountKey, instrument.symbol, timeframe, size, priceColumn, selectedPosition?.id, selectedPosition?.version, orderVersions, draft, panes.size, axis.left, axis.mode, axis.lockRatio, axis.fitAllBars) {
                             var mode = ChartDragMode.NONE
                             var labelDragOffset = 0f
                             detectDragGestures(
@@ -742,7 +746,7 @@ fun TradingChart(
                             // A key held down repeats its press, and an order that goes out at once must go out once: the repeats
                             // are swallowed until the key comes up. An order that asks first opens a dialog, which takes the keys.
                             else if (event.isAltPressed && !event.isShiftPressed && !event.isCtrlPressed && !event.isMetaPressed && event.key == Key.R) {
-                                viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN; selectedTrade = null; selectedExecution = null; true
+                                resetView(); true
                             }
                             else if (event.isShiftPressed && !event.isAltPressed && !event.isCtrlPressed && !event.isMetaPressed && event.key == Key.T && chrome.onOpenOrderAt != null) {
                                 hoverPoint?.takeIf { it.x in left..right && it.y in top..plotBottom }?.let { chrome.onOpenOrderAt.invoke(scale.price(it.y, instrument.tickSize)) }; true
@@ -857,12 +861,19 @@ fun TradingChart(
                     }
                     paintPriceObjects(false)
                     drawingFrame?.let { drawDrawingControls(it, plotRect, textMeasurer, colors.Chart) }
-                    chartQuote?.let {
+                    chartQuote?.takeIf { marketState == MarketSessionState.OPEN }?.let {
                         val y = scale.y(it.bid)
                         if (axis.showPriceLine) drawLine(colors.Accent.copy(alpha = .65f), Offset(left, y), Offset(right, y), 1f)
                         if (axis.showBidAsk) drawLine(colors.Muted.copy(alpha = .35f), Offset(left, scale.y(it.ask)), Offset(right, scale.y(it.ask)), 1f,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(2f, 4f)))
                         if (axis.showLastPrice) priceTags.add(PriceTag(it.bid, colors.OnBrand, colors.Brand, priority = 2))
+                    }
+                    // An unresolved continuous contract still has chart history. This is a historical close for display,
+                    // never a Bid/Ask or an input to the order, risk, or contract-matching paths.
+                    if (marketState != MarketSessionState.OPEN || chartQuote == null) candles.lastOrNull()?.close?.takeIf { it > 0 }?.let { close ->
+                        val y = scale.y(close)
+                        if (axis.showPriceLine) drawLine(colors.Muted.copy(alpha = .55f), Offset(left, y), Offset(right, y), 1f)
+                        if (axis.showLastPrice) priceTags.add(PriceTag(close, colors.Surface, colors.Muted, priority = 2, reference = true))
                     }
                     if (showHistory) executions.forEach { execution ->
                         val x = x(execution.timeMs)
@@ -934,7 +945,7 @@ fun TradingChart(
                     // Reserve a line above the live price for the contract name and one below for the countdown, so a
                     // position or order tag right next to the price moves aside instead of hiding them.
                     val centers = spreadLabelCenters(tags.map { scale.y(it.price) }, firstCenter, lastCenter, tagGap,
-                        tags.map { if (it.priority == 2) lineHeight else 0f }, tags.map { if (it.priority == 2 && countdown != null && axis.showCountdown) lineHeight else 0f })
+                        tags.map { if (it.priority == 2) lineHeight else 0f }, tags.map { if (it.priority == 2 && !it.reference && countdown != null && axis.showCountdown) lineHeight else 0f })
                     val tagLeft = if (axis.left) 0f else right + 4.dp.toPx()
                     val tagWidth = (if (axis.left) left - 4.dp.toPx() else size.width - tagLeft).coerceAtLeast(1f)
                     tags.zip(centers).forEachIndexed { index, (tag, center) ->
@@ -947,9 +958,9 @@ fun TradingChart(
                             val roomBelow = centers.getOrNull(index + 1)?.let { it - center } ?: Float.MAX_VALUE
                             if (roomAbove >= lineHeight * 2) {
                                 drawRect(tag.background, Offset(tagLeft, center - lineHeight * 1.5f), Size(tagWidth, lineHeight))
-                                text(instrument.symbol, tagLeft + labelPadding, center - lineHeight * 1.5f + labelPadding, tag.ink)
+                                text(instrument.symbol + if (tag.reference) " 收" else "", tagLeft + labelPadding, center - lineHeight * 1.5f + labelPadding, tag.ink)
                             }
-                            if (axis.showCountdown && countdown != null && roomBelow >= lineHeight * 2) {
+                            if (!tag.reference && axis.showCountdown && countdown != null && roomBelow >= lineHeight * 2) {
                                 drawRect(tag.background, Offset(tagLeft, center + lineHeight / 2), Size(tagWidth, lineHeight))
                                 text(countdown, tagLeft + labelPadding, center + lineHeight / 2 + labelPadding, tag.ink)
                             }
@@ -1063,13 +1074,13 @@ fun TradingChart(
                 }
                 lineMenu?.let { menu -> LineContextMenu(menu, { lineMenu = null }) { action -> actions.onLineAction(action) } }
                 plotMenu?.let { menu ->
-                    PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null },
+                    val phoneMenu = chrome.phoneContextMenu && (menu.longPress || menu.desktop)
+                    PlotContextMenu(menu, instrument, actions.entryLots, { plotMenu = null }, onReset = ::resetView,
                         onLine = drawingLayer?.let { layer -> { layer.addHorizontalLine(menu.at, menu.price) } },
                         // A market order takes no price: it fills at the quote, as the trading keys' does.
                         onOrder = { order -> actions.onEntryOrder(order.side, order.kind, menu.price.takeUnless { order.kind == OrderKind.MARKET }) },
-                        stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection,
-                        desktopActions = if (!menu.desktop) null else PlotMenuActions(
-                            reset = { viewport = ChartViewport(); manualScale = null; ratio[0] = Double.NaN; selectedTrade = null; selectedExecution = null },
+                        stopRequiredForSizing = actions.stopRequiredForSizing, attached = actions.attachedProtection, phone = phoneMenu,
+                        desktopActions = if (!menu.desktop && !phoneMenu) null else PlotMenuActions(
                             copyPrice = { clipboard.setText(AnnotatedString(instrument.formatPrice(menu.price))) },
                             pasteDrawing = chrome.drawings?.takeIf { it.canPaste }?.let { drawings -> { drawings.paste() } },
                             openOrder = chrome.onOpenOrderAt?.let { open -> { open(menu.price) } },
@@ -1090,7 +1101,7 @@ fun TradingChart(
                 if (legendShown) Column(Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 96.dp)
                     .onPlaced { legendArea = Rect(it.positionInParent(), it.size.toSize()) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!compact && !chrome.sharedToolbar) toolbar(Modifier)
-                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact,
+                    ChartLegend(instrument, timeframe, bar, previous, quote, connected, collapsed, { collapsed = !collapsed; chrome.onLegendCollapsed(collapsed) }, onSide, readout, compact = compact, marketState = marketState,
                         keysHint = actions.tradingKeys?.let {
                             tradingKeysHint(it, chartFocused, instrument, actions.entryLots, actions.instantOrders, actions.stopRequiredForSizing, actions.attachedProtection)
                         }, keysLive = chartFocused, zoneId = chrome.chartTimeZone.zoneId, zoneLabel = chrome.chartTimeZoneLabel ?: chrome.chartTimeZone.label)
@@ -1104,13 +1115,14 @@ fun TradingChart(
                     onZoomOut = { viewport = viewport.zoomAt(2.5f, .5f, candles.size, maxVisibleCandleCount(plotWidth)) },
                     onEarlier = { viewport = viewport.copy(offset = viewport.offset + viewport.count / 2).bounded(candles.size) },
                     onLater = { viewport = viewport.copy(offset = viewport.offset - viewport.count / 2).bounded(candles.size) },
-                    onReset = { viewport = ChartViewport(); manualScale = null; selectedTrade = null; selectedExecution = null },
+                    onReset = ::resetView,
                     locked = locked.takeIf { chrome.onLocked != null && !compact },
                     onLocked = { chrome.onLocked?.invoke(!locked) },
                     // On phones the small control sits bottom-left, away from the newest bars at the right edge.
-                    modifier = if (compact) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
+                    modifier = if (compact || chrome.tabletCompactAxis) Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = navigationBottom)
                         else Modifier.align(Alignment.BottomCenter).padding(bottom = navigationBottom),
                     compact = compact,
+                    resetOnly = chrome.tabletCompactAxis,
                 )
                 paneLayout.takeUnless { chrome.drawings?.lockIndicators == true }.orEmpty().forEachIndexed { index, pane ->
                     key(pane.id) {
@@ -1135,12 +1147,12 @@ fun TradingChart(
                 }
                 drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
-                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false })
+                    objectLayers, chrome.onIndicatorChanges, { showObjectTree = false }, phone = chrome.phoneContextMenu)
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,
                     chrome.allIndicators ?: indicators, axis, { template ->
                         chrome.onApplyTemplate.invoke(template)
                         if (template.axis.fitAllBars) { manualScale = null; ratio[0] = Double.NaN }
-                    }, { showTemplates = false })
+                    }, { showTemplates = false }, phone = chrome.phoneContextMenu)
                 if (showChartSettings) ChartSettingsDialog(axis, showHistory, chrome.onPriceAxis,
                     { visible -> setHistory(visible) },
                     { chrome.onPriceAxis(axis.copy(fitAllBars = true)); manualScale = null; ratio[0] = Double.NaN }, onIndicators,
@@ -1203,6 +1215,10 @@ class ChartChrome(
     val allIndicators: List<IndicatorConfig>? = null,
     val onOpenOrderAt: ((Long) -> Unit)? = null,
     val keyboardTrading: Boolean = false,
+    /** A phone uses a smaller plot menu for touch and mouse input alike. */
+    val phoneContextMenu: Boolean = false,
+    /** Display-only quote for an unconfirmed continuous route; never used for placing orders. */
+    val statusQuote: Quote? = null,
     val domVisible: Boolean = false,
     val onDomToggle: (() -> Unit)? = null,
     val sharedToolbar: Boolean = false,

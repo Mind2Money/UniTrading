@@ -200,8 +200,12 @@ class ProtectionUiTest {
         }
         compose.onNodeWithText("毛 +100.00 USD").assertExists()
         compose.onNodeWithText("毛 -50.00 USD").assertExists()
+        if (compose.onAllNodesWithTag("desktop-trade-tab-ORDERS").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("desktop-trade-tab-ORDERS").performClick()
         compose.onNodeWithTag("trade-terminal").performScrollToKey("section-orders")
-        compose.onNodeWithText("挂单 0").assertExists()
+        compose.onNode(hasText("挂单 0") and hasAnyAncestor(hasTestTag("terminal-section-orders"))).assertExists()
+        if (compose.onAllNodesWithTag("desktop-trade-tab-POSITIONS").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("desktop-trade-tab-POSITIONS").performClick()
         compose.onNodeWithTag("trade-terminal").performScrollToKey("position-100:200")
         compose.onNodeWithTag("cancel-order-702").performClick()
         compose.onNodeWithTag("confirm-action").assertExists()
@@ -269,6 +273,8 @@ class ProtectionUiTest {
     @Test fun unresolvedRowsCannotBeEditedAsEntries() {
         val broker = OfflineProtectionBroker(unresolved = true)
         render(broker)
+        if (compose.onAllNodesWithTag("desktop-trade-tab-ORDERS").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("desktop-trade-tab-ORDERS").performClick()
         compose.onNodeWithTag("trade-terminal").performScrollToKey("order-701")
         compose.onNode(hasText("关联待确认") and hasAnyAncestor(hasTestTag("order-role-701"))).assertExists()
         compose.onNodeWithTag("edit-order-701").assertIsNotEnabled()
@@ -282,6 +288,8 @@ class ProtectionUiTest {
     @Test fun anUnpairedOrderChangesOnItsOwnFromTheTradeList() {
         val broker = OfflineProtectionBroker(unresolved = true, standalone = true)
         render(broker)
+        if (compose.onAllNodesWithTag("desktop-trade-tab-ORDERS").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("desktop-trade-tab-ORDERS").performClick()
         compose.onNodeWithTag("trade-terminal").performScrollToKey("order-702")
         compose.onNodeWithTag("edit-order-702").assertIsEnabled().assertTextContains("单独改单").performClick()
         compose.onNodeWithTag("standalone-order-dialog").assertExists()

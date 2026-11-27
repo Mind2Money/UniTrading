@@ -63,6 +63,21 @@ class ReplayDailyRiskTest {
         assertFalse(next.dailyLossHit)
         assertEquals(49_000L, next.dayOpeningBalance)
     }
+    @Test fun tradeDayPnlAttributesWholeNetResultToCloseDayWithoutChangingRiskEquity() {
+        val spec = com.unitrading.broker.Instrument("MCL", "MCL", "期货", 2, tickSize = 1,
+            tickValueMicrosPerLot = 1_000_000, minLotsHundredths = 100, lotStepHundredths = 100,
+            quantityDecimals = 0, commissionMicrosPerLot = 1_000_000)
+        val before = at("2026-11-23T22:58:00Z")
+        val after = at("2026-11-23T23:01:00Z")
+        val opened = ReplayState(0).open(spec, com.unitrading.broker.Candle(before, 8_000, 8_000, 8_000, 8_000),
+            com.unitrading.broker.Side.BUY, 100, null, null)
+        val closed = opened.close(spec, opened.positions.single(), 8_400, after, "平仓")
+        assertEquals(398_000_000L, closed.trades.single().pnlMicros)
+        assertEquals(0L, replayTradeDayPnl(before, closed.trades, 0))
+        assertEquals(398_000_000L, replayTradeDayPnl(after, closed.trades, 0))
+        assertEquals(398_000_000L, replayTradeDayPnl(after, emptyList(), 398_000_000L), "open position remains visible")
+    }
+
     @Test fun overnightFloatingGainIsNotCountedAgainNextDay() {
         val cfg = ReplayRiskConfig(50_000, 5_000, 3_000, ReplayDrawdown.STATIC,
             maxDailyLossMicros = 1_000, dailyLossMode = ReplayDailyLoss.HARD)

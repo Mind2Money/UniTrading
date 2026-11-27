@@ -50,9 +50,9 @@ class MobileOrderPagesTest {
     private val plugin = runtime.registry.plugins.first()
     private val session = plugin.openSession(plugin.accounts.first().id)
 
-    private fun render(layout: OrderPanelLayout? = null) {
+    private fun render(layout: OrderPanelLayout? = null, platform: ChartPlatform = ChartPlatform.DESKTOP) {
         if (layout != null) runBlocking { assertTrue(runtime.tradingPreferences.setOrderPanelLayout(layout)) }
-        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f)) {
+        compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.75f), LocalChartPlatform provides platform) {
             Box(Modifier.requiredSize(400.dp, 800.dp).testTag("test-host")) { TradingScreen(runtime) }
         } }
         compose.waitForIdle()
@@ -79,7 +79,7 @@ class MobileOrderPagesTest {
     private fun handle() = compose.onNodeWithTag("order-sheet-handle", useUnmergedTree = true)
 
     @Test fun theSheetOpensByDefaultAndTheSettingsSwitchToTheDockThePopupAndBack() = phoneTest {
-        render()
+        render(platform = ChartPlatform.ANDROID)
         assertEquals(OrderPanelLayout.SHEET, TradingPreferences().orderPanelLayout)
         assertEquals(OrderPanelLayout.SHEET, runtime.tradingPreferences.preferences.value.orderPanelLayout)
         val closed = height("trading-chart")
@@ -128,7 +128,7 @@ class MobileOrderPagesTest {
     }
 
     @Test fun choosePopupAndReturnToTheChartWithoutChangingItsHeight() = phoneTest {
-        render()
+        render(platform = ChartPlatform.ANDROID)
         val chartHeight = height("trading-chart")
         choose(OrderPanelLayout.POPUP, from = OrderPanelLayout.SHEET)
         compose.onNodeWithTag("open-order").performClick()

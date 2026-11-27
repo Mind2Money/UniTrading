@@ -45,8 +45,7 @@ class ContinuousContractUiTest {
         }
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(plugin)).apply { paused.value = true }
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(.6f)) { TradingScreen(runtime) } }
-        compose.onNodeWithTag("continuous-route", useUnmergedTree = true).assertTextEquals("连续合约@TEST ${dated.symbol}")
-            .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "价格匹配（非券商确认）"))
+        compose.onNodeWithTag("continuous-route", useUnmergedTree = true).assertDoesNotExist()
         compose.runOnIdle {
             assertEquals("@TEST", chartSymbol)
             assertEquals(dated.symbol, previewed?.symbol)
@@ -57,7 +56,7 @@ class ContinuousContractUiTest {
         compose.runOnIdle {
             changes.value = changes.value.copy(instruments = listOf(alias.copy(tradeSymbol = null, tradeSymbolStatus = "主力无法确认：日成交量查询超时")) + demo.instruments)
         }
-        compose.onNodeWithTag("continuous-route").assertTextContains("主力无法确认：日成交量查询超时", substring = true)
+        compose.onNodeWithTag("continuous-route", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithTag("confirm-action").assertDoesNotExist()
         compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.runOnIdle { assertNull(submitted) }

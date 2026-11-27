@@ -38,7 +38,7 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
     }
     @Test fun hardStopCanDiscardTheSession() {
@@ -65,10 +65,32 @@ class ReplayDailyLossUiTest {
         assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
         compose.runOnIdle { assertEquals("每日软止损自动平仓", records.list().single().trades.single().reason) }
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithText("已触及每日软止损，下一交易日前禁止开仓").assertExists()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
+    }
+
+    @Test fun overnightCloseShowsFullTradePnlAndSeparateDailyRiskEquity() {
+        val mcl = Instrument("MCL", "Micro Crude Oil", "期货", 2, tickSize = 1,
+            tickValueMicrosPerLot = 1_000_000, minLotsHundredths = 100, lotStepHundredths = 100,
+            quantityDecimals = 0, commissionMicrosPerLot = 1_000_000)
+        val first = Instant.parse("2026-11-23T22:58:00Z").toEpochMilli()
+        val timeline = listOf(Candle(first, 8_000, 8_000, 8_000, 8_000),
+            Candle(first + 60_000, 8_300, 8_300, 8_300, 8_300),
+            Candle(Instant.parse("2026-11-23T23:01:00Z").toEpochMilli(), 8_400, 8_400, 8_400, 8_400))
+        val config = ReplayRiskConfig(50_000_000_000, 2_000_000_000, 3_000_000_000, ReplayDrawdown.STATIC,
+            allowOvernight = true, dailyLossMode = ReplayDailyLoss.NONE)
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(mcl, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, timeline, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("review-order").performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        compose.onNodeWithTag("replay-next").performClick()
+        closePositionOnChart()
+        compose.onNodeWithTag("replay-daily-pnl").assertTextContains("+398.00", substring = true)
+        compose.onNodeWithTag("replay-realized").assertTextContains("+398.00", substring = true)
+        compose.onNodeWithTag("replay-daily-equity").assertTextContains("+100.00", substring = true)
     }
 
     @Test fun softStopRemainsLockedUntilTheNextChicagoTradingDay() {
@@ -83,15 +105,15 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, timeline, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-realized").assertTextContains("-5.00", substring = true)
         compose.onNodeWithTag("replay-consistency-status").assertTextContains("每日", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("review-order").assertIsEnabled()
     }
 
     @Test fun softStopPreventsALaterTotalLossOnTheSameCandle() {
@@ -100,11 +122,11 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithText("回放考核失败").assertDoesNotExist()
         compose.onNodeWithTag("replay-realized").assertTextContains("-5.00", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
     }
 
     @Test fun aGapBeyondTheTotalLossStillFailsTheEvaluation() {
@@ -115,7 +137,7 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, gap, emptyList(), skipConfirmation = true, riskConfig = config)) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithText("回放考核失败").assertIsDisplayed()
         compose.onNodeWithText("账户触及最大总亏损。").assertExists()
@@ -138,18 +160,18 @@ class ReplayDailyLossUiTest {
             ChartTimeZone.SHANGHAI, timeline, emptyList(), rawFrame = Timeframe.M1, skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement("100")
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         if (addPending || adverseAddition) {
             compose.onNodeWithTag("order-kind-LIMIT").performScrollTo().performClick()
             compose.onNodeWithTag(if (adverseAddition) "order-side-BUY" else "order-side-SELL").performScrollTo().performClick()
             compose.onNodeWithTag("order-quantity").performScrollTo().performTextReplacement(if (adverseAddition) "100" else "1")
             compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement(if (adverseAddition) "82.42" else "82.48")
-            compose.onNodeWithTag("review-order").performScrollTo().performClick()
+            compose.onNodeWithTag("review-order").performClick()
             val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
             assertTrue(buttons.keys.any { it.startsWith("撤单 ") })
             if (secondAdverse) {
                 compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("82.37")
-                compose.onNodeWithTag("review-order").performScrollTo().performClick()
+                compose.onNodeWithTag("review-order").performClick()
             }
         }
         compose.onNodeWithTag("replay-next").performClick()
@@ -161,22 +183,22 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("replay-realized").assertTextContains("+1200.00", substring = true)
         compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
         compose.onNodeWithTag("replay-consistency-status").assertTextContains("已触及", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
         assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
         compose.runOnIdle { assertEquals("一致性自动平仓", records.list().single().trades.single().reason) }
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("review-order").assertIsEnabled()
     }
 
     @Test fun mclSoftLossFlattensBeforeTheSameBarRalliesPastConsistency() {
         val records = openHundredMclLots(8_237, addPending = true)
         compose.onNodeWithTag("replay-realized").assertTextContains("-1000.00", substring = true)
         compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         val buttons = compose.onNodeWithTag("trading-chart").fetchSemanticsNode().config[OrderTagButtons]
         assertFalse(buttons.keys.any { it.startsWith("平仓 ") })
         assertFalse(buttons.keys.any { it.startsWith("撤单 ") })
@@ -184,15 +206,15 @@ class ReplayDailyLossUiTest {
         val size = chart.fetchSemanticsNode().size
         chart.performMouseInput { moveTo(Offset(size.width * .7f, size.height * .65f)); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.onNodeWithTag("plot-menu-BUY-MARKET").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         chart.fetchSemanticsNode().config[OrderTagButtons]["提交买入订单"]?.let { action -> chart.performMouseInput { click(action.center) } }
         assertFalse(chart.fetchSemanticsNode().config[OrderTagButtons].keys.any { it.startsWith("平仓 ") })
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
         compose.runOnIdle { assertEquals("每日软止损自动平仓", records.list().single().trades.single().reason) }
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.onNodeWithTag("replay-next").performClick()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("review-order").assertIsEnabled()
     }
 
     @Test fun mclSoftStopRecalculatesAfterAPendingAdditionFillsFirst() {
@@ -200,7 +222,7 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithText("回放考核失败").assertDoesNotExist()
         compose.onNodeWithTag("replay-realized").assertTextContains("-1100.00", substring = true)
         compose.onNodeWithTag("replay-floating").assertTextContains("0.00", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 2 }
         compose.runOnIdle { assertTrue(records.list().single().trades.all { it.reason == "每日软止损自动平仓" }) }
     }
@@ -219,11 +241,11 @@ class ReplayDailyLossUiTest {
         compose.onNodeWithTag("order-entry").performScrollTo().performTextReplacement("99.00")
         compose.onNodeWithTag("order-tp-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("order-tp").performScrollTo().performTextReplacement("103.50")
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-realized").assertTextContains("+20.00", substring = true)
         compose.onNodeWithTag("replay-consistency-status").assertTextContains("已触及", substring = true)
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithTag("review-order").assertIsNotEnabled()
         compose.waitUntil(5_000) { records.list().singleOrNull()?.trades?.size == 1 }
         compose.runOnIdle { assertEquals("一致性自动平仓", records.list().single().trades.single().reason) }
     }
@@ -232,7 +254,7 @@ class ReplayDailyLossUiTest {
         open(ReplayDailyLoss.NONE, records)
         compose.onNodeWithText("回放考核失败").assertDoesNotExist()
         compose.onNodeWithText("最大日亏损 · 无止损").assertExists()
-        compose.onNodeWithTag("review-order").performScrollTo().assertIsEnabled()
+        compose.onNodeWithTag("review-order").assertIsEnabled()
     }
     @Test fun noDailyStopStillFailsWhenTheTotalDrawdownIsHit() {
         val records = ReplayRecords(MemorySnapshotStore())
@@ -241,7 +263,7 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithText("回放考核失败").assertIsDisplayed()
         compose.onNodeWithText("账户触及最大总亏损。").assertExists()
@@ -253,9 +275,9 @@ class ReplayDailyLossUiTest {
         compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
             ChartTimeZone.SHANGHAI, bars, emptyList(), skipConfirmation = true, riskConfig = config), records = records) {} } }
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("review-order").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         closePositionOnChart()
-        compose.onNodeWithTag("review-order").performScrollTo().performClick()
+        compose.onNodeWithTag("review-order").performClick()
         compose.onNodeWithTag("replay-next").performClick()
         compose.onNodeWithTag("replay-failure-save").performClick()
         compose.runOnIdle { assertEquals(1, records.list().single().trades.size) }

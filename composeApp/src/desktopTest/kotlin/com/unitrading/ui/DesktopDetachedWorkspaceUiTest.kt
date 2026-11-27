@@ -8,9 +8,11 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,58 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class DesktopDetachedWorkspaceUiTest {
+    @Test fun detachedFullscreenUsesItsOwnAccountAndRestoresPanels() = runDesktopComposeUiTest(width = 1600, height = 1000) {
+        val broker = RiskFixture(children = listOf(AccountInfo("100", "主窗口账户"), AccountInfo("200", "子窗口账户")))
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }
+        val windows = FakePanelWindows(strip = 760.dp)
+        setContent { CompositionLocalProvider(LocalDensity provides Density(1f), LocalChartPlatform provides ChartPlatform.DESKTOP,
+            LocalPanelWindowHost provides windows) {
+            Box(Modifier.requiredSize(1600.dp, 1000.dp)) { TradingScreen(runtime) }
+        } }
+        onNodeWithTag("chart-new-workspace").performClick()
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithTag("workspace-tab-c1").fetchSemanticsNodes().isNotEmpty() }
+        onNodeWithTag("detach-workspace-c1").performClick()
+        waitUntil(timeoutMillis = 10_000) { "chart-c1" in windows.open }
+        val child = hasAnyAncestor(hasTestTag("fake-window-chart-c1"))
+        val title = hasAnyAncestor(hasTestTag("detached-title-toolbar-chart-c1"))
+        onNode(hasTestTag("drag-workspace-c1") and title).assertExists()
+        onNode(hasTestTag("dock-workspace-c1") and title).assertExists()
+        onNode(hasTestTag("quick-account-picker") and child).performClick()
+        onNodeWithTag("quick-account-200").performClick()
+        onNode(hasTestTag("chart-fullscreen") and child).performScrollTo().performClick()
+        onNode(hasTestTag("chart-fullscreen") and child).assertTextContains("退出全屏")
+        onNode(hasTestTag("detached-rail-c1") and child).assertDoesNotExist()
+        onNode(hasTestTag("detached-account-strip-c1") and child).assertDoesNotExist()
+        onNode(hasTestTag("drawing-toolbar") and child).assertDoesNotExist()
+        onNodeWithTag("desktop-panel-rail").assertExists()
+        onNode(hasTestTag("legend-buy") and child).performClick()
+        onNode(hasTestTag("fullscreen-order-ticket") and child).assertExists()
+        onNode(hasTestTag("order-sl-enabled") and child).performScrollTo().performClick()
+        onNode(hasTestTag("order-sl") and child).performTextReplacement("5498.00")
+        val chart = onNode(hasTestTag("trading-chart") and child)
+        val size = chart.fetchSemanticsNode().size
+        val y = chart.chartAxis(1f).y(549_800L)
+        chart.performTouchInput { down(Offset(size.width * .20f, y)); moveBy(Offset(0f, 6f)); moveBy(Offset(0f, 18f)); up() }
+        val stop = onNode(hasTestTag("order-sl") and child).fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+        assertTrue(stop != "5498.00", "Dragging on the child chart should update its floating order")
+        onNode(hasTestTag("review-order") and child).performClick()
+        onNode(hasText("子窗口账户", substring = true) and hasAnyAncestor(hasTestTag("desktop-order-confirmation"))).assertExists()
+        onNodeWithTag("cancel-order-review").performClick()
+        assertTrue(broker.events.none { it.startsWith("place:") })
+        onNode(hasTestTag("fullscreen-ticket-close") and child).performClick()
+        chart.performMouseInput {
+            moveTo(Offset(size.width * .35f, size.height * .6f))
+            press(MouseButton.Secondary); release(MouseButton.Secondary)
+        }
+        onNodeWithTag("plot-menu-SELL-MARKET").performClick()
+        onNode(hasTestTag("fullscreen-order-ticket") and child).assertExists()
+        assertTrue(broker.events.none { it.startsWith("place:") })
+        onNode(hasTestTag("chart-fullscreen") and child).performScrollTo().performClick()
+        onNode(hasTestTag("fullscreen-order-ticket") and child).assertDoesNotExist()
+        onNode(hasTestTag("detached-rail-c1") and child).assertExists()
+        onNode(hasTestTag("detached-account-strip-c1") and child).assertExists()
+    }
+
     @Test fun detachedWindowHasIndependentRailAndOrdersFollowItsChart() = runDesktopComposeUiTest(width = 1600, height = 1000) {
         val source = OfflineOrderBroker()
         val depthWatches = mutableListOf<String?>()
