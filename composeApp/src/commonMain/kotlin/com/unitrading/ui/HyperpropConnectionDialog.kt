@@ -59,9 +59,9 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                 OutlinedTextField(key, { key = it }, label = { Text("个人 API 密钥（hpp_）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
                 Button(onClick = { action { val connected = HyperpropPersonalSession.connect(key); session = connected; accountId = connected.check.accounts.firstOrNull()?.id ?: ""; key = "" } }, enabled = !busy && key.isNotBlank()) { Text("连接") }
             } else {
-                Text(if (active.check.scope == "trade") "读写密钥 · 测试交易" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
+                Text(if (active.check.scope == "trade") "读写密钥 · 可对授权账户发出交易指令" else "只读密钥 · 无法下单或撤单", style = MaterialTheme.typography.bodySmall)
                 Text("本次密钥授权了 ${active.check.accounts.size} 个账户；如缺少账户，请在 Hyperprop 检查个人密钥及账户授权。", style = MaterialTheme.typography.bodySmall)
-                Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情。只有服务器明确标识的模拟账户允许测试下单。", style = MaterialTheme.typography.bodySmall)
+                Text("连接到主图：选择已登录的 Tradovate / Rithmic 行情。读写密钥可操作已授权的模拟及非模拟账户；交易前请核对账户。", style = MaterialTheme.typography.bodySmall)
                 Box {
                     val source = feeds.firstOrNull { it.descriptor.id == selectedFeed } ?: feeds.firstOrNull()
                     OutlinedButton({ feedMenu = true }, enabled = !busy && feeds.isNotEmpty()) { Text(source?.descriptor?.name ?: "请先登录行情来源") }
@@ -76,17 +76,17 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
                     transferred = active
                     onAttached(broker.descriptor.id)
                     onDismiss()
-                }, enabled = !busy && feeds.isNotEmpty()) { Text("连接主图（模拟测试）") }
+                }, enabled = !busy && feeds.isNotEmpty()) { Text("连接主图") }
                 Box {
-                    OutlinedButton({ menuOpen = true }, enabled = !busy) { Text(active.check.accounts.firstOrNull { it.id == accountId }?.let { listOfNotNull(it.number, it.firm).joinToString(" · ") } ?: "选择账户") }
+                    OutlinedButton({ menuOpen = true }, enabled = !busy) { Text(active.check.accounts.firstOrNull { it.id == accountId }?.let { listOfNotNull(it.number, it.firm, it.accountType ?: "账户类型未提供").joinToString(" · ") } ?: "选择账户") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        active.check.accounts.forEach { account -> DropdownMenuItem(text = { Text(listOfNotNull(account.number, account.firm).joinToString(" · ")) }, onClick = { accountId = account.id; pending = emptyList(); menuOpen = false }) }
+                        active.check.accounts.forEach { account -> DropdownMenuItem(text = { Text(listOfNotNull(account.number, account.firm, account.accountType ?: "账户类型未提供").joinToString(" · ")) }, onClick = { accountId = account.id; pending = emptyList(); menuOpen = false }) }
                     }
                 }
                 active.check.accounts.firstOrNull { it.id == accountId }?.markets?.let { markets ->
                     Text("该账户市场：${markets.sorted().joinToString("、").ifEmpty { "无" }}", style = MaterialTheme.typography.bodySmall)
                 }
-                Text("独立测试窗口：手动输入到期合约；暂不关联图表行情、持仓或止盈止损。请使用自己的模拟账户。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
+                Text("独立测试窗口：手动输入到期合约；暂不关联图表行情、持仓或止盈止损。", style = MaterialTheme.typography.bodySmall, color = TradingColors.Muted)
                 OutlinedTextField(contract, { contract = it.uppercase() }, label = { Text("到期合约，例如 MESZ6") }, singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("buy" to "买入", "sell" to "卖出").forEach { (v, label) -> FilterChip(side == v, { side = v }, label = { Text(label) }, enabled = !busy) }
@@ -117,7 +117,7 @@ internal fun HyperpropConnectionDialog(runtime: TradingRuntime, onAttached: (Str
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         } }, confirmButton = { TextButton(onDismiss, enabled = !busy) { Text("关闭") } })
     if (confirmOrder && active != null) AlertDialog(onDismissRequest = { confirmOrder = false }, title = { Text("确认提交 Hyperprop 订单") },
-        text = { Text("账户：${active.check.accounts.firstOrNull { it.id == accountId }?.number}\n合约：$contract\n方向：${if (side == "buy") "买入" else "卖出"}\n类型：$kind\n数量：$quantity 张${if (kind != "market") "\n价格：$price" else ""}") },
+        text = { Text("账户：${active.check.accounts.firstOrNull { it.id == accountId }?.number}\n账户类型：${active.check.accounts.firstOrNull { it.id == accountId }?.accountType ?: "未提供"}\n合约：$contract\n方向：${if (side == "buy") "买入" else "卖出"}\n类型：$kind\n数量：$quantity 张${if (kind != "market") "\n价格：$price" else ""}") },
         confirmButton = { Button(onClick = { confirmOrder = false; action { val outcome = active.submit(accountId, contract, side, kind, quantity.toInt(), price); message = "${outcome.status} · 命令 ${outcome.id}" } }) { Text("确认提交") } },
         dismissButton = { TextButton({ confirmOrder = false }) { Text("返回") } })
     cancelOrder?.let { order -> AlertDialog(onDismissRequest = { cancelOrder = null }, title = { Text("确认撤单") }, text = { Text("撤销 ${order.contract} ${order.side} ${order.type} ${order.quantity} 张？") },

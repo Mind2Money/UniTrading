@@ -139,7 +139,7 @@ internal class HyperpropPersonalSession private constructor(private val client: 
                 "failed" -> {
                     val error = status.stringValue("error")
                     val reason = if (error?.contains("Account does not have access to the CME market", ignoreCase = true) == true)
-                        "账户没有 CME 市场权限，请选择 CME 模拟账户" else "服务器处理失败；请到 Hyperprop 核对"
+                        "账户没有 CME 市场权限，请选择有 CME 权限的账户" else "服务器处理失败；请到 Hyperprop 核对"
                     return HyperpropCommand(id, reason, false)
                 }
             }

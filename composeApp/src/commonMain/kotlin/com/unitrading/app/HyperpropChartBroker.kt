@@ -15,9 +15,9 @@ internal class HyperpropChartBroker(
 ) : BrokerPlugin by source {
     internal val chartSourceId: String = source.descriptor.id
     override val descriptor = BrokerDescriptor("hyperprop-${source.descriptor.id}", "Hyperprop · 行情 ${source.descriptor.name}",
-        "个人 API 的账户数据；行情来自 ${source.descriptor.name}。仅明确标识的模拟账户允许主界面测试下单。", simulated = false, environment = BrokerEnvironment.HYPERPROP)
-    override val accounts = personal.check.accounts.map { AccountInfo(it.id, listOfNotNull(it.number, it.firm).joinToString(" · "),
-        readOnly = personal.check.scope != "trade" || !it.isPractice) }
+        "个人 API 的账户数据；行情来自 ${source.descriptor.name}。交易权限由个人密钥及 Hyperprop 账户授权决定。", simulated = false, environment = BrokerEnvironment.HYPERPROP)
+    override val accounts = personal.check.accounts.map { AccountInfo(it.id, listOfNotNull(it.number, it.firm, it.accountType ?: "账户类型未提供").joinToString(" · "),
+        readOnly = personal.check.scope != "trade") }
     override val instruments get() = source.instruments
     override val capabilities = BrokerCapabilities(orderKinds = OrderKind.entries.toSet(), modifyProtection = true, modifyPendingOrders = false,
         hedging = false, resynchronize = true, addProtection = false, removeProtection = false, atomicProtectionEdit = false,
@@ -67,7 +67,7 @@ internal class HyperpropChartBroker(
                 account.id to figures.copy(positions = hyperpropBindProtections(positions, orders), orders = orders)
             }
             next.forEach { (id, snapshot) -> snapshots.getValue(id).value = snapshot }
-            status.value = if (uncertain.value) "交易结果待核对，请到 Hyperprop 核对后重新连接" else "Hyperprop 账户已同步 · 仅模拟账户可交易"
+            status.value = if (uncertain.value) "交易结果待核对，请到 Hyperprop 核对后重新连接" else "Hyperprop 账户已同步 · 交易权限以密钥和账户授权为准"
             ready.value = true
         } finally { syncLock.unlock() }
     }
@@ -136,7 +136,7 @@ internal class HyperpropChartBroker(
     }
 
     private fun checkMutable(account: AccountInfo) {
-        require(!account.readOnly) { "仅明确标识的模拟账户可操作" }
+        require(!account.readOnly) { "当前密钥没有交易权限" }
         require(ready.value && !uncertain.value && !mutating.value) { "账户状态未确认，请在 Hyperprop 核对" }
     }
 
@@ -169,7 +169,7 @@ internal class HyperpropChartBroker(
     }
 
     private fun entryError(account: AccountInfo, request: OrderRequest): String? {
-        if (account.readOnly) return "仅明确标识的模拟账户可在主界面测试下单"
+        if (account.readOnly) return "当前密钥没有交易权限"
         if (personal.check.accounts.firstOrNull { it.id == account.id }?.onlyPerpetualMarkets == true)
             return "当前账户没有期货市场权限，请选择 CME 期货账户"
         if (!ready.value || uncertain.value || mutating.value || !source.market.value.connected || !source.market.value.tradingReady)
