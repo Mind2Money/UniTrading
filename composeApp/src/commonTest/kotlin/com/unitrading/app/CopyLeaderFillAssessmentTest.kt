@@ -57,4 +57,13 @@ class CopyLeaderFillAssessmentTest {
                 previous = mapOf("MESZ6" to 1), seen = mapOf(first.id to first)))
         }
     }
+    @Test fun oppositeSideFillsAtTheSameTimeAreAmbiguousEvenWithAnInterleavedSymbol() {
+        val sell = first.copy(id = "z", side = Side.SELL, orderId = "sell-order")
+        val other = first.copy(id = "m", symbol = "MNQZ6", orderId = "other-order")
+        val buy = first.copy(id = "a")
+        val sellOrigin = origin.copy(requestId = "sell-request", brokerOrderId = "sell-order", request = request.copy(side = Side.SELL))
+        val otherOrigin = origin.copy(requestId = "other-request", brokerOrderId = "other-order", request = request.copy(symbol = "MNQZ6"))
+        assertIs<CopyLeaderFillResult.Blocked>(assess(snapshot(listOf(buy, other, sell), listOf(position())),
+            orders = listOf(origin, sellOrigin, otherOrigin)))
+    }
 }

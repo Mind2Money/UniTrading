@@ -36,7 +36,7 @@ internal object CopyLeaderFillAssessment {
         val lastSeenTime = previouslySeen.values.groupBy { it.symbol }.mapValues { (_, fills) -> fills.maxOf { it.timeMs } }
         if (fresh.any { fill -> lastSeenTime[fill.symbol]?.let { fill.timeMs <= it } == true })
             return stop("出现延迟或顺序不明的历史成交，请重新核对")
-        if (fresh.zipWithNext().any { (a, b) -> a.timeMs == b.timeMs && (a.symbol == b.symbol && a.side != b.side) })
+        if (fresh.groupBy { it.symbol to it.timeMs }.values.any { fills -> fills.map { it.side }.distinct().size > 1 })
             return stop("成交顺序无法确认，请核对")
         val net = previousNet.toMutableMap()
         val events = mutableListOf<CopyLeaderEvent>()
