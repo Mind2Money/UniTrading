@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
 import com.unitrading.broker.*
@@ -94,9 +95,10 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                             clearing = false
                         }
                     }
-                }) { Text("是，撤单并平仓") }
+                }, modifier = Modifier.testTag("copy-cleanup-confirm")) { Text("是，撤单并平仓") }
             },
-            dismissButton = { TextButton({ cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" }) { Text("否，保留现状") } },
+            dismissButton = { TextButton({ cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" },
+                modifier = Modifier.testTag("copy-cleanup-cancel")) { Text("否，保留现状") } },
         )
     }
     cleanupResults?.let { results -> FlattenResults(results) { cleanupResults = null } }
@@ -146,7 +148,8 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     accounts.forEach { account ->
                         val input = inputs[account.id] ?: CopyFollowerInput()
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Checkbox(account.id in selected, { checked -> selected = if (checked) selected + account.id else selected - account.id })
+                            Checkbox(account.id in selected, { checked -> selected = if (checked) selected + account.id else selected - account.id },
+                                modifier = Modifier.testTag("copy-follower-${account.id}"))
                             Text(account.name, Modifier.padding(top = 12.dp))
                         }
                         if (account.id in selected) {
@@ -177,7 +180,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                                 notice = null; error = "设置保存失败，请检查账户及本机存储。"
                             }
                         }
-                    }, enabled = !clearing && valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
+                    }, modifier = Modifier.testTag("copy-save-settings"), enabled = !clearing && valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
                     Button({}, enabled = false) { Text("开发中，暂不可启动") }
                 }
             }
