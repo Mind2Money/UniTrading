@@ -101,4 +101,24 @@ class CopyTradingBrokerTest {
         assertTrue(snapshot.orders.none { it.id == "710" })
         assertEquals("Canceled", snapshot.copyOrderLifecycle.single { it.id == "710" }.status)
     }
+
+    @Test fun liquidationWithoutOrderIdNeverReportsContractAsClosingOrder() = runTest {
+        val base = MockTradovateWire().apply {
+            snapshot = JsonObject(snapshot + ("positions" to json("""[{"id":1,"accountId":100,"contractId":200,"netPos":1,"netPrice":5500}]""")))
+        }
+        val wire = object : TradovateWire by base {
+            override suspend fun request(hosts: TradovateHosts, token: String, method: String, path: String, body: JsonObject?): JsonElement {
+                val result = base.request(hosts, token, method, path, body)
+                return if (path == "order/liquidateposition") JsonObject(emptyMap()) else result
+            }
+        }
+        val broker = TradovateBroker(session(), wire, backgroundScope, { now })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val session = broker.openSession("100")
+        val position = session.state.value.positions.single()
+        val result = session.closePosition("manual-close", position.id)
+        assertTrue(result.accepted)
+        assertNull(result.entityId)
+        assertEquals(200L, base.requests.last { it.path == "order/liquidateposition" }.body?.long("contractId"))
+    }
 }

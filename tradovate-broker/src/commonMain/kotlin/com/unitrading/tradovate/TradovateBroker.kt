@@ -2319,7 +2319,10 @@ class TradovateBroker(
                     }
                     reconcile(); publish()
                 }
-                TradeResult(true, "Tradovate 已受理，最终结果以服务器订单/成交更新为准", response.long("orderId")?.toString() ?: entity?.toString())
+                // For liquidation, entity is a contract ID, not an order ID. If Tradovate omits orderId,
+                // do not let copy trading mistake that contract ID for proof of the closing order.
+                val receiptId = response.long("orderId")?.toString() ?: entity?.toString().takeUnless { kind == "close" }
+                TradeResult(true, "Tradovate 已受理，最终结果以服务器订单/成交更新为准", receiptId)
             }
         } catch (cancel: CancellationException) {
             withContext(NonCancellable) { lock.withLock { unknownCommands.add(key); publish() } }
@@ -2365,7 +2368,8 @@ class TradovateBroker(
             unknownCommands.remove(key)
             attemptedRecovery.remove(key)
             results[key]?.let { (signature, result) ->
-                if (result.outcome == CommandOutcome.UNKNOWN) results[key] = signature to TradeResult(true, "服务器状态已确认；未重发指令", wait.entity?.toString())
+                if (result.outcome == CommandOutcome.UNKNOWN) results[key] = signature to TradeResult(true, "服务器状态已确认；未重发指令",
+                    wait.entity?.toString().takeUnless { wait.kind == "close" })
             }
         }
     }
