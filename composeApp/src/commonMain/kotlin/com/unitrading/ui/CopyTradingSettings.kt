@@ -79,10 +79,13 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                         try {
                             val targets = review.map { FlattenTarget(broker, it.account) }
                             val results = runtime.accountRisk.flattenAccounts(runtime.registry, targets)
-                            cleanupResults = results
+                            val check = inspect(review.map { it.account.id })
+                            cleanupResults = if (check == CopyStartPreparation.Ready) results else results.map { result ->
+                                if (result.confirmed) result.copy(confirmed = false, note = "处理已提交，但完整账户状态尚未核对，请检查券商。") else result
+                            }
                             if (results.any { !it.confirmed }) {
                                 notice = null; error = "部分账户未确认空仓且无挂单，请核对券商后再操作。"
-                            } else when (val check = inspect(review.map { it.account.id })) {
+                            } else when (check) {
                                 CopyStartPreparation.Ready -> { error = null; notice = "所选账户已核对为空仓且无挂单；跟单功能仍在开发中。" }
                                 is CopyStartPreparation.NeedsCleanup -> { notice = null; error = "所选账户仍有持仓或挂单，请重新核对。" }
                                 is CopyStartPreparation.Blocked -> { notice = null; error = check.reason }
