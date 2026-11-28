@@ -38,7 +38,7 @@ class StartupUpdateGateTest {
         compose.onNodeWithTag("content").assertDoesNotExist()
         updates.check.value = UpdateCheck.Failed("UPDATE_UNAVAILABLE")
         compose.onNodeWithTag("startup-update-retry-check").performClick()
-        assertEquals(2, updates.checks)
+        compose.waitUntil(5_000) { updates.checks == 2 }
         updates.check.value = UpdateCheck.Current("v1.8.3")
         compose.onNodeWithTag("content").assertIsDisplayed()
     }
