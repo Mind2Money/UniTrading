@@ -28,6 +28,8 @@ class CopyStartPreparationTest {
     @Test fun incompleteUnknownOrInconsistentSnapshotsNeverLookEmpty() {
         assertIs<CopyStartPreparation.Blocked>(inspect(books - "leader"))
         assertIs<CopyStartPreparation.Blocked>(inspect(books + ("leader" to book("leader").copy(copyOrdersClear = false))))
+        val order = PendingOrder("order", OrderRequest("MESZ6", Side.BUY, OrderKind.LIMIT, 100, 10_000), 0)
+        assertIs<CopyStartPreparation.Blocked>(inspect(books + ("leader" to book("leader").copy(orders = listOf(order)))))
         assertIs<CopyStartPreparation.Blocked>(inspect(books + ("follower" to book("follower").copy(copyPositionsComplete = false))))
         assertIs<CopyStartPreparation.Blocked>(inspect(books + ("follower" to book("follower").copy(copyRevision = 8))))
         assertIs<CopyStartPreparation.Blocked>(inspect(ids = listOf("leader", "leader")))

@@ -26,6 +26,7 @@ internal object CopyStartPreparationInspector {
             return stop("所选账户持仓或挂单数据不完整，请同步后再试")
         if (books.map { it.copyEpoch to it.copyRevision }.distinct().size != 1) return stop("账户快照不同步，请重新核对")
         if (books.any { !it.copyOrdersClear && it.orders.isEmpty() }) return stop("券商挂单状态尚未完全确认")
+        if (books.any { it.copyOrdersClear && it.orders.isNotEmpty() }) return stop("券商挂单数据不一致，请重新同步")
         val exposure = books.mapIndexed { i, book -> CopyAccountExposure(accounts[i], book.positions.size, book.orders.size) }
         return if (exposure.any { it.positions > 0 || it.orders > 0 }) CopyStartPreparation.NeedsCleanup(exposure)
         else CopyStartPreparation.Ready
