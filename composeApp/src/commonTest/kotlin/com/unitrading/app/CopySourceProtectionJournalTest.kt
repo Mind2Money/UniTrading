@@ -11,7 +11,8 @@ class CopySourceProtectionJournalTest {
     private fun snapshot(position: Position = this.position) = AccountSnapshot("leader", 0, positions = listOf(position),
         executions = listOf(execution), copyRevision = 7, copyEpoch = 1, copyPositionsComplete = true, copyOrdersComplete = true)
     private val change = CopySourceProtection("tradovate-demo-42", "leader", "group", "entry", "fill", "leader:1", "MESZ6", "change",
-        previousVersion = 3, previousRevision = 7, epoch = 1, previousStop = 9_900, previousTarget = 10_200,
+        previousVersion = 3, previousRevision = 7, epoch = 1, expectedSide = Side.BUY, expectedLotsHundredths = 100,
+        previousStop = 9_900, previousTarget = 10_200,
         requestedStop = 9_925, requestedTarget = 10_200)
     private suspend fun fixture(): CopySourceProtectionJournal {
         val store = MemorySnapshotStore()
@@ -38,6 +39,8 @@ class CopySourceProtectionJournalTest {
         val changed = position.copy(version = 4, stopLoss = 9_925)
         assertFalse(journal.confirm("change", snapshot(changed)))
         assertFalse(journal.confirm("change", snapshot(changed).copy(copyRevision = 8, copyEpoch = 2)))
+        assertFalse(journal.confirm("change", snapshot(changed.copy(side = Side.SELL)).copy(copyRevision = 8)))
+        assertFalse(journal.confirm("change", snapshot(changed.copy(lotsHundredths = 200)).copy(copyRevision = 8)))
         assertFalse(journal.confirm("change", snapshot(position.copy(version = 4)).copy(copyRevision = 8)))
         assertTrue(journal.confirm("change", snapshot(changed).copy(copyRevision = 8)))
         assertEquals(CopySourceProtectionState.CONFIRMED, journal.read()!!.single().state)
@@ -49,5 +52,50 @@ class CopySourceProtectionJournalTest {
         assertFalse(journal.accepted("change"))
         assertFalse(journal.confirm("change", snapshot(position.copy(version = 4, stopLoss = 9_925)).copy(copyRevision = 8)))
         assertFalse(journal.begin(change.copy(requestId = "second"), snapshot()))
+    }
+    @Test fun captureRecordsBeforeSendingAndWaitsForSnapshot() = runTest {
+        val journal = fixture()
+        var calls = 0
+        var stopped = false
+        val capture = CopySourceProtectionCapture(journal) { stopped = true }
+        val result = capture.submit(change, snapshot(), true) {
+            calls++
+            assertEquals(CopySourceProtectionState.INTENDED, journal.read()!!.single().state)
+            TradeResult(true, "accepted")
+        }
+        assertTrue(result.accepted)
+        assertFalse(stopped)
+        assertEquals(1, calls)
+        assertEquals(CopySourceProtectionState.ACCEPTED, journal.read()!!.single().state)
+        assertTrue(journal.confirm("change", snapshot(position.copy(version = 4, stopLoss = 9_925)).copy(copyRevision = 8)))
+    }
+    @Test fun captureNeverSendsWhenOriginIsNotProven() = runTest {
+        val journal = fixture()
+        var calls = 0
+        var stopped = false
+        val capture = CopySourceProtectionCapture(journal) { stopped = true }
+        val result = capture.submit(change.copy(sourceOrderId = "outside"), snapshot(), true) {
+            calls++
+            TradeResult(true, "unexpected")
+        }
+        assertFalse(result.accepted)
+        assertTrue(stopped)
+        assertEquals(0, calls)
+    }
+    @Test fun captureStopsOnUnknownAndDoesNotResend() = runTest {
+        val journal = fixture()
+        var calls = 0
+        var stopped = false
+        val capture = CopySourceProtectionCapture(journal) { stopped = true }
+        val result = capture.submit(change, snapshot(), true) {
+            calls++
+            error("connection lost")
+        }
+        assertEquals(CommandOutcome.UNKNOWN, result.outcome)
+        assertTrue(stopped)
+        assertEquals(1, calls)
+        assertEquals(CopySourceProtectionState.UNCERTAIN, journal.read()!!.single().state)
+        assertFalse(capture.submit(change, snapshot(), true) { calls++; TradeResult(true, "unexpected") }.accepted)
+        assertEquals(1, calls)
     }
 }

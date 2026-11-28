@@ -2,6 +2,7 @@ package com.unitrading.app
 
 import com.unitrading.broker.AccountSnapshot
 import com.unitrading.broker.Position
+import com.unitrading.broker.Side
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -25,6 +26,8 @@ internal data class CopySourceProtection(
     val previousVersion: Long,
     val previousRevision: Long,
     val epoch: Long,
+    val expectedSide: Side,
+    val expectedLotsHundredths: Long,
     val previousStop: Long?,
     val previousTarget: Long?,
     val requestedStop: Long?,
@@ -39,7 +42,7 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
     private val mutex = Mutex()
     private fun valid(row: CopySourceProtection): Boolean = listOf(row.brokerId, row.leaderId, row.groupId, row.sourceOrderId,
         row.sourceExecutionId, row.positionId, row.symbol, row.requestId).all(String::isNotBlank) && row.previousVersion > 0 &&
-        row.previousRevision > 0 && row.epoch > 0 &&
+        row.previousRevision > 0 && row.epoch > 0 && row.expectedLotsHundredths > 0 &&
         listOfNotNull(row.previousStop, row.previousTarget, row.requestedStop, row.requestedTarget).all { it > 0 } &&
         (row.previousStop != row.requestedStop || row.previousTarget != row.requestedTarget)
     private val loaded = runCatching {
@@ -62,6 +65,7 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
         val request = origin.request ?: return@withLock false
         val position = snapshot.positions.singleOrNull { it.id == row.positionId } ?: return@withLock false
         if (request.symbol != row.symbol || position.symbol != row.symbol || position.side != request.side ||
+            position.side != row.expectedSide || position.lotsHundredths != row.expectedLotsHundredths ||
             position.version != row.previousVersion || position.stopLoss != row.previousStop || position.takeProfit != row.previousTarget ||
             !position.protectionEditable || position.lotsHundredths <= 0 ||
             snapshot.executions.none { it.id == row.sourceExecutionId && it.orderId == row.sourceOrderId && it.symbol == row.symbol &&
@@ -86,7 +90,8 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
             row.takeIf { it.state == CopySourceProtectionState.ACCEPTED && snapshot.accountId == it.leaderId &&
                 (snapshot.copyRevision ?: 0L) > it.previousRevision && snapshot.copyEpoch == it.epoch &&
                 snapshot.copyPositionsComplete && snapshot.copyOrdersComplete && position != null &&
-                position.symbol == it.symbol && position.version > it.previousVersion && position.protectionEditable &&
+                position.symbol == it.symbol && position.side == it.expectedSide && position.lotsHundredths == it.expectedLotsHundredths &&
+                position.version > it.previousVersion && position.protectionEditable &&
                 position.stopLoss == it.requestedStop && position.takeProfit == it.requestedTarget }
                 ?.copy(state = CopySourceProtectionState.CONFIRMED)
         }
