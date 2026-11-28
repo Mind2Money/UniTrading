@@ -66,4 +66,21 @@ class CopyLeaderFillAssessmentTest {
         assertIs<CopyLeaderFillResult.Blocked>(assess(snapshot(listOf(buy, other, sell), listOf(position())),
             orders = listOf(origin, sellOrigin, otherOrigin)))
     }
+    @Test fun allSymbolsKeepSeparatePositionsAndUseEachFollowersSizing() {
+        val mnq = first.copy(id = "mnq-fill", symbol = "MNQZ6", side = Side.SELL,
+            lotsHundredths = 200, orderId = "mnq-order", timeMs = 2000)
+        val mnqOrigin = origin.copy(requestId = "mnq-request", brokerOrderId = "mnq-order",
+            request = request.copy(symbol = "MNQZ6", side = Side.SELL))
+        val shortMnq = position(200).copy(id = "leader:mnq", symbol = "MNQZ6", side = Side.SELL)
+        val result = assertIs<CopyLeaderFillResult.Ready>(assess(snapshot(listOf(first, mnq), listOf(position(), shortMnq)),
+            orders = listOf(origin, mnqOrigin)))
+        assertEquals(mapOf("MESZ6" to 1, "MNQZ6" to -2), result.netBySymbol)
+        val events = result.events.map { assertIs<CopyLeaderEvent.EntryOrExit>(it) }
+        val fixed = CopyFollower("fixed", 1, 10, fixedContracts = 2)
+        val multiple = CopyFollower("multiple", 3, 10)
+        val a = assertIs<CopyFillPlan.Ready>(CopyExecutionPlanner.plan(events[0].fill, setOf("source-order"), "leader", fixed, 0))
+        val b = assertIs<CopyFillPlan.Ready>(CopyExecutionPlanner.plan(events[1].fill, setOf("mnq-order"), "leader", multiple, 0))
+        assertEquals(2, a.followerAfter)
+        assertEquals(-6, b.followerAfter)
+    }
 }
