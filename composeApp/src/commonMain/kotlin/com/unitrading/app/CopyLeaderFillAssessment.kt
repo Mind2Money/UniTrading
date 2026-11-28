@@ -4,7 +4,8 @@ import com.unitrading.broker.*
 
 internal sealed interface CopyLeaderEvent {
     data class EntryOrExit(val fill: CopySourceFill, val symbol: String) : CopyLeaderEvent
-    data class ProtectionFill(val executionId: String, val orderId: String, val entryOrderId: String, val symbol: String) : CopyLeaderEvent
+    data class ProtectionFill(val executionId: String, val orderId: String, val entryOrderId: String, val symbol: String,
+        val signedContracts: Int, val leaderBefore: Int, val leaderAfter: Int) : CopyLeaderEvent
 }
 internal sealed interface CopyLeaderFillResult {
     data class Ready(val events: List<CopyLeaderEvent>, val netBySymbol: Map<String, Int>, val observedExecutions: Map<String, Execution>) : CopyLeaderFillResult
@@ -56,7 +57,7 @@ internal object CopyLeaderFillAssessment {
             if (afterLong !in -100_000L..100_000L) return stop("主账户仓位数量无效")
             val after = afterLong.toInt()
             if (after == 0) net.remove(fill.symbol) else net[fill.symbol] = after
-            if (protectionEntry != null) events += CopyLeaderEvent.ProtectionFill(fill.id, fill.orderId, protectionEntry, fill.symbol)
+            if (protectionEntry != null) events += CopyLeaderEvent.ProtectionFill(fill.id, fill.orderId, protectionEntry, fill.symbol, signed, before, after)
             else events += CopyLeaderEvent.EntryOrExit(CopySourceFill(fill.id, fill.orderId, snapshot.accountId, signed, before, after,
                 if (request.kind == OrderKind.MARKET) CopySourceExecutionMode.FOLLOW_FILLS else CopySourceExecutionMode.INDEPENDENT_PENDING), fill.symbol)
         }
