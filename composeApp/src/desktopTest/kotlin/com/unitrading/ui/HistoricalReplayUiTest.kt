@@ -314,7 +314,12 @@ class HistoricalReplayUiTest {
         val inside = at + Offset(6f, 6f)
         chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
-        compose.onNodeWithTag("drawing-context-menu").assertExists()
+        val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", diagnostic)
+        if (compose.onAllNodesWithTag("drawing-context-menu").fetchSemanticsNodes().isEmpty()) {
+            val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().size
+            throw AssertionError("Drawing menu absent; roots=$roots; " + compose.onAllNodes(isRoot(), useUnmergedTree = true).onLast().printToString())
+        }
         compose.onNodeWithTag("drawing-menu-icon-create-order", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("drawing-menu-sync-GLOBAL").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.drawings.drawings.any { it.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION } }

@@ -34,3 +34,10 @@ jobs:
                   for failure in case.findall('failure'):
                       print(f"{case.get('classname')}.{case.get('name')}: {failure.get('message')}\n{failure.text}")
           PY
+      - name: Upload replay drawing test image
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: replay-drawing-debug
+          path: artifacts/replay-drawing-debug.png
+          if-no-files-found: ignore
