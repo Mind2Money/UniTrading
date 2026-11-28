@@ -8,7 +8,7 @@ internal fun replayStepCandidates(chart: Timeframe): List<Timeframe> {
     val oneSecond = Timeframe.ofSeconds(1)
     val bases = if (chart.seconds < 10 * Timeframe.MINUTE) listOf(oneSecond, Timeframe.M1)
         else listOf(oneSecond) + listOf(1, 3, 5, 10, 15, 30).map(Timeframe::ofMinutes)
-    return (bases.filter { it.seconds <= chart.seconds && chart.seconds % it.seconds == 0 } + chart)
+    return (bases.filter { it.seconds <= chart.seconds && (chart.seconds < 10 * Timeframe.MINUTE || chart.seconds % it.seconds == 0) } + chart)
         .distinct().sortedBy { it.seconds }
 }
 

@@ -16,6 +16,7 @@ class ReplayStepTest {
     @Test fun visibleChoicesFollowChartAndDivisibility() {
         val second = Timeframe.ofSeconds(1)
         assertEquals(listOf(second, Timeframe.M1, Timeframe.ofMinutes(8)), replayStepCandidates(Timeframe.ofMinutes(8)))
+        assertEquals(listOf(second, Timeframe.M1, Timeframe.ofSeconds(90)), replayStepCandidates(Timeframe.ofSeconds(90)))
         assertEquals(listOf(second) + listOf(1, 3, 5, 15).map(Timeframe::ofMinutes), replayStepCandidates(Timeframe.M15))
         assertEquals(listOf(second) + listOf(1, 5, 10).map(Timeframe::ofMinutes), replayStepCandidates(Timeframe.ofMinutes(10)))
         assertEquals(listOf(second) + listOf(1, 3, 5, 10, 15, 30, 60).map(Timeframe::ofMinutes), replayStepCandidates(Timeframe.H1))
