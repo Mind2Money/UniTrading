@@ -110,6 +110,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     val accountAliases: AccountAliasesController by lazy { AccountAliasesController(store) }
     internal val accountRisk by lazy { AccountRiskController(store) }
     internal val copyTrading by lazy { CopyTradingController(registry, accountRisk, store) }
+    internal val copyTradingConfiguration by lazy { CopyTradingConfiguration(store) }
     internal val analyticsCache by lazy { AnalyticsTradeCache(store) }
     internal val replayHistory by lazy { ReplayHistoryCache(store) }
     internal val replayRecords by lazy { ReplayRecords(store) }
