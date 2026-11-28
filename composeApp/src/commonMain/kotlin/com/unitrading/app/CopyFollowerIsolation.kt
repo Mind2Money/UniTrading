@@ -1,6 +1,10 @@
 package com.unitrading.app
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 internal enum class CopyFollowerRunState { RUNNING, WAITING_FOR_RECONNECT, NEEDS_REVIEW, STOPPED }
+@Serializable
 internal data class CopyFollowerRunStatus(val state: CopyFollowerRunState, val reason: String? = null)
 
 /** Plans account-local pauses and reconnects. No trading or retry is performed here. */

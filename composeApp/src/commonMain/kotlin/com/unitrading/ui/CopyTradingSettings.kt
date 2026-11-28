@@ -31,6 +31,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
             (follower.fixedContracts ?: follower.multiplier).toString(), follower.maxContracts.toString())) }
     } }
     var error by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf(false) }
     var confirmRecovery by remember { mutableStateOf(false) }
     val leader = catalog.accounts.firstOrNull { it.id == selectedLeader }
@@ -117,11 +118,16 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     }
                     if (accounts.isEmpty()) Text("当前连接没有其他可交易子账户")
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    notice?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     OutlinedButton(onClick = {
                         scope.launch {
                             val config = CopySavedConfiguration(broker.descriptor.id, selectedLeader,
                                 followers.map { CopySavedFollower(it.accountId, it.fixedContracts, it.multiplier, it.maxContracts) }, dated?.symbol)
-                            error = if (runtime.copyTradingConfiguration.save(config)) "设置已保存；跟单功能仍在开发中。" else "设置保存失败，请检查账户及本机存储。"
+                            if (runtime.copyTradingConfiguration.save(config)) {
+                                error = null; notice = "设置已保存；跟单功能仍在开发中。"
+                            } else {
+                                notice = null; error = "设置保存失败，请检查账户及本机存储。"
+                            }
                         }
                     }, enabled = valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
                     Button({ confirm = true }, enabled = false) { Text("开发中，暂不可启动") }
