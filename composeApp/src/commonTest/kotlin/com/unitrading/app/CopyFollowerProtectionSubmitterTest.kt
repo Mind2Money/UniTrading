@@ -66,7 +66,7 @@ class CopyFollowerProtectionSubmitterTest {
         val journal = CopyFollowerProtectionJournal(store, origins, dispatches, CopyPendingOrderJournal(store))
         val broker = Broker(Session(AccountInfo("leader", "Leader"), snapshot("leader", leaderAfter, sourceFill, 8)),
             Session(AccountInfo("follower", "Follower"), snapshot("follower", follower, targetFill, 8)), spec)
-        val service = CopyFollowerProtectionSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), origins, journal)
+        val service = CopyFollowerProtectionSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), origins, journal, now = { 1000 })
         return Fixture(broker, service, journal)
     }
     @Test fun confirmedSourceChangeIsSentOnceAndWaitsForFollowerState() = runTest {
@@ -89,6 +89,15 @@ class CopyFollowerProtectionSubmitterTest {
         val f = fixture()
         f.broker.target.state.value = f.broker.target.state.value.copy(executions = emptyList())
         assertIs<CopyFollowerProtectionSubmission.Stopped>(f.service.submit(f.broker, "leader", "group", "follower", "source-change", "copy-change"))
+        assertEquals(0, f.broker.target.writes)
+    }
+    @Test fun invalidOrUnavailableFollowerPriceDoesNotSendProtection() = runTest {
+        val f = fixture()
+        for (quotes in listOf(emptyMap(), mapOf("MESZ6" to Quote(9_900, 9_925, 1000)),
+            mapOf("MESZ6" to Quote(10_000, 10_025, -20_000)))) {
+            f.broker.market.value = MarketSnapshot(quotes = quotes)
+            assertIs<CopyFollowerProtectionSubmission.Stopped>(f.service.submit(f.broker, "leader", "group", "follower", "source-change", "copy-change"))
+        }
         assertEquals(0, f.broker.target.writes)
     }
 }

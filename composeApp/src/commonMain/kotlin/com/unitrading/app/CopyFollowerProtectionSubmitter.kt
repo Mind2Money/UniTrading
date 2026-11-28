@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Clock
 
 internal sealed interface CopyFollowerProtectionSubmission {
     data object Accepted : CopyFollowerProtectionSubmission
@@ -15,7 +16,8 @@ internal sealed interface CopyFollowerProtectionSubmission {
 
 /** Isolated Demo executor; the caller must stop only the affected follower on failure. */
 internal class CopyFollowerProtectionSubmitter(private val registry: BrokerRegistry, private val risk: AccountRiskController,
-    private val origins: CopySourceProtectionJournal, private val journal: CopyFollowerProtectionJournal) {
+    private val origins: CopySourceProtectionJournal, private val journal: CopyFollowerProtectionJournal,
+    private val now: () -> Long = { Clock.System.now().toEpochMilliseconds() }) {
     suspend fun submit(broker: BrokerPlugin, leaderId: String, groupId: String, followerId: String,
         sourceMutationId: String, requestId: String): CopyFollowerProtectionSubmission {
         fun stopped(reason: String) = CopyFollowerProtectionSubmission.Stopped(reason)
@@ -47,9 +49,14 @@ internal class CopyFollowerProtectionSubmitter(private val registry: BrokerRegis
             val spec = broker.catalog.value.instruments.singleOrNull { it.symbol == origin.symbol } ?: return null
             val plan = CopyProtectionPlanner.plan(true, leaderPosition, followerPosition, spec.tickSize)
             if (plan is CopyProtectionAction.Stop) return null
+            if (plan is CopyProtectionAction.Change) {
+                val quote = broker.market.value.quotes[origin.symbol] ?: return null
+                if (quote.bid <= 0 || quote.ask < quote.bid || now() - quote.timeMs !in -5_000L..15_000L ||
+                    positionProtectionError(spec, followerPosition, quote, plan.stopLoss, plan.takeProfit) != null) return null
+            }
             return Prepared(rev, epoch, origin, leaderPosition, followerPosition, plan)
         }
-        val first = prepared() ?: return stopped("主账户保护操作或跟随账户状态不可确认")
+        val first = prepared() ?: return stopped("主账户保护操作、当前行情或跟随账户状态不可确认，请核对")
         if (first.action == CopyProtectionAction.Unchanged) return CopyFollowerProtectionSubmission.Unchanged
         val follower = first.follower
         val (leg, nextStop, nextTarget) = when (val action = first.action) {
