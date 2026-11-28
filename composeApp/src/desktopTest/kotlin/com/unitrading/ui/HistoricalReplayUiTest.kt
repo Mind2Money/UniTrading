@@ -308,11 +308,16 @@ class HistoricalReplayUiTest {
         val size = chart.fetchSemanticsNode().size
         val at = Offset(size.width * .58f, size.height * .75f)
         chart.performMouseInput { moveTo(at); click() }
+        compose.waitForIdle()
+        compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
         chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("drawing-context-menu").assertExists()
         compose.onNodeWithTag("drawing-menu-icon-create-order", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("drawing-menu-sync-GLOBAL").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.drawings.drawings.any { it.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION } }
         chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
         compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
         compose.onNodeWithTag("replay-pending-list").assertExists()
