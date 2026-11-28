@@ -58,6 +58,44 @@ class ChartContextMenuUiTest {
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
 
+    @Test fun drawingMenuAlignsIconsAndMarksSelectedVisibility() {
+        render()
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        rightClick(548_500)
+        for (tag in listOf("order", "visibility", "objects", "copy", "sync-LOCAL", "sync-LAYOUT", "sync-GLOBAL", "lock", "hide", "remove", "settings"))
+            compose.onNodeWithTag("drawing-menu-icon-$tag", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-clone").assertDoesNotExist()
+        compose.onNodeWithTag("drawing-menu-visibility").performClick()
+        for (mode in listOf("CURRENT_AND_ABOVE", "CURRENT_AND_BELOW", "CURRENT", "ALL"))
+            compose.onNodeWithTag("drawing-menu-icon-visibility-$mode", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility-ALL").assertIsSelected()
+        compose.onNodeWithTag("drawing-menu-visibility-check-ALL", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility-CURRENT").performClick()
+        rightClick(548_500)
+        compose.onNodeWithTag("drawing-menu-visibility").performClick()
+        compose.onNodeWithTag("drawing-menu-visibility-CURRENT").assertIsSelected()
+        compose.onNodeWithTag("drawing-menu-visibility-check-CURRENT", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility-ALL").assertIsNotSelected()
+    }
+
+    @Test fun positionDrawingAlwaysRequiresConfirmationAndOrderRiskBlocksCreation() {
+        render(skipConfirmation = true)
+        compose.runOnIdle { runtime.drawings.chooseTool(com.unitrading.chart.drawing.DrawingTool.LONG_POSITION) }
+        val at = pointAt(549_000)
+        chart().performMouseInput { click(at) }
+        compose.waitUntil(5_000) { runtime.drawings.selected?.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION }
+        rightClick(549_000)
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty(), "A drawing must require confirmation even when skip-confirmation is enabled")
+        compose.onNodeWithTag("cancel-order-review").performClick()
+        runBlocking { assertNull(runtime.accountRisk.configureBrackets(broker, "100", com.unitrading.app.AccountBrackets(loss = 100_000_000))) }
+        rightClick(549_000)
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        assertTrue(broker.placed.isEmpty(), "The order-risk mode must prevent creation")
+    }
+
     @Test fun chartMenuReopensTheRightHandTicketAndPrefillsTheOrder() {
         render(skipConfirmation = true)
         compose.onNodeWithTag("rail-order").performClick()
@@ -205,7 +243,8 @@ class ChartContextMenuUiTest {
         compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
         compose.onNode(hasText("关闭") and hasAnyAncestor(hasTestTag("chart-object-tree"))).performClick()
         rightClick(548_500)
-        compose.onNodeWithTag("drawing-menu-front").performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-menu-order").performClick()
+        compose.onNodeWithTag("drawing-menu-front").performClick()
         compose.waitUntil(5_000) {
             val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
             (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)

@@ -39,6 +39,14 @@ internal object DrawingIcons {
     val Locked get() = cached("locked", "M8 13H20V23H8ZM10 13V9A4 4 0 0 1 18 9V13")
     val Unlocked get() = cached("unlocked", "M8 13H20V23H8ZM10 13V9A4 4 0 0 1 17.5 7")
     val Clone get() = cached("clone", "M9 9H23V23H9ZM5 19V5H19")
+    val LayerFront get() = cached("layerFront", "M5 5H23M14 23V9M9 14L14 9L19 14")
+    val LayerBack get() = cached("layerBack", "M5 23H23M14 5V19M9 14L14 19L19 14")
+    val LayerForward get() = cached("layerForward", "M14 22V7M9 12L14 7L19 12")
+    val LayerBackward get() = cached("layerBackward", "M14 6V21M9 16L14 21L19 16")
+    val TimeAbove get() = cached("timeAbove", "M5 7H23V23H5ZM5 11H23M9 4V9M19 4V9M14 20V14M11 17L14 14L17 17")
+    val TimeBelow get() = cached("timeBelow", "M5 7H23V23H5ZM5 11H23M9 4V9M19 4V9M14 14V20M11 17L14 20L17 17")
+    val TimeCurrent get() = cached("timeCurrent", "M5 7H23V23H5ZM5 11H23M9 4V9M19 4V9", ring(14f, 17f, 2.5f))
+    val TimeAll get() = cached("timeAll", "M5 7H23V23H5ZM5 11H23M9 4V9M19 4V9M9 15H11M13 15H15M17 15H19M9 19H11M13 19H15M17 19H19")
 
     fun of(tool: DrawingTool): ImageVector = when (tool) {
         DrawingTool.TREND_LINE -> cached("trend", "M6 22L22 6", dots(6, 22, 22, 6))

@@ -180,6 +180,9 @@ enum class IntervalBucket(val label: String) {
     }
 }
 
+@Serializable
+enum class DrawingTimeVisibility { ALL, CURRENT, CURRENT_AND_ABOVE, CURRENT_AND_BELOW }
+
 /** Absolute bar time and price in the instrument's integer price units; freehand strokes keep fractions of both. */
 @Serializable
 data class DrawingPoint(val timeMs: Long, val price: Double)
@@ -232,9 +235,21 @@ data class Drawing(
     val locked: Boolean = false,
     val hidden: Boolean = false,
     val hiddenIntervals: Set<IntervalBucket> = emptySet(),
+    val timeVisibility: DrawingTimeVisibility = DrawingTimeVisibility.ALL,
+    val visibilityReferenceSeconds: Int? = null,
     val syncScope: DrawingSyncScope = DrawingSyncScope.LOCAL,
 ) {
     fun param(key: String, fallback: Double = 0.0): Double = params[key] ?: fallback
+    fun visibleOn(timeframe: Timeframe): Boolean {
+        if (hidden || IntervalBucket.of(timeframe) in hiddenIntervals) return false
+        val reference = visibilityReferenceSeconds ?: return true
+        return when (timeVisibility) {
+            DrawingTimeVisibility.ALL -> true
+            DrawingTimeVisibility.CURRENT -> timeframe.seconds == reference
+            DrawingTimeVisibility.CURRENT_AND_ABOVE -> timeframe.seconds >= reference
+            DrawingTimeVisibility.CURRENT_AND_BELOW -> timeframe.seconds <= reference
+        }
+    }
 }
 
 private fun level(value: Double, color: String, visible: Boolean = true, value2: Double? = null) = DrawingLevel(value, color, visible, value2)

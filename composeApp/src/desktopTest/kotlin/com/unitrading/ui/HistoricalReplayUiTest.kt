@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.graphics.toPixelMap
 import java.io.File
 import javax.imageio.ImageIO
 import com.unitrading.app.ThemeSettings
@@ -51,6 +52,24 @@ class HistoricalReplayUiTest {
             val missing = compose.onAllNodesWithText("当前图表没有足够的历史 K 线，请等待数据加载后重试。").fetchSemanticsNodes().size
             throw AssertionError("Replay not ready: dialog=$dialog loading=$loading missing=$missing", error)
         }
+    }
+
+    @Test fun secondStepLoadsSupportedHistoryAtTheCurrentReplayTime() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val start = 1_700_000_040_000L
+        val bars = (0..3).map { Candle(start + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        val seconds = (0..240).map { Candle(start + it * 1_000L, 10_000, 10_025, 9_975, 10_000) }
+        var requested = false
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), secondHistory = true),
+            history = { _, frame -> if (frame == Timeframe.ofSeconds(1)) seconds else emptyList() },
+            watch = { _, frame -> if (frame == Timeframe.ofSeconds(1)) requested = true }) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-period-menu").performClick()
+        compose.onNodeWithTag("replay-step-1s").assertIsEnabled().performClick()
+        compose.onNodeWithTag("replay-period-menu").assertTextContains("1秒")
+        assertTrue(requested)
     }
 
     @Test fun replayIntervalsShareLiveSettingsWithoutRestartingTheSimulation() {
@@ -162,8 +181,8 @@ class HistoricalReplayUiTest {
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
         val bars = (0..20).map { index -> Candle(1_700_000_000_000L + index * 60_000L,
             10_000, 10_025, if (index == 10) 9_900 else 9_975, 10_000) }
-        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
-            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M15, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), rawFrame = Timeframe.M1)) {} } }
         awaitReplay()
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("order-sl").performTextClearance()
@@ -272,6 +291,55 @@ class HistoricalReplayUiTest {
         assertTrue(chartHistory() == "0")
         compose.onNodeWithTag("replay-history-toggle").performClick()
         assertTrue(chartHistory() == "1")
+    }
+
+    @Test fun replayDrawingMenuSharesGlobalDrawingsAndOrdersOnlyInReplay() {
+        val broker = OfflineOrderBroker()
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
+        compose.setContent { TradingScreen(runtime) }
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
+        compose.onNodeWithTag("open-historical-replay").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
+        awaitReplay()
+        val toolbarMenu = hasTestTag("drawing-group-FORECAST-menu") and hasAnyAncestor(hasTestTag("historical-replay"))
+        compose.onNode(toolbarMenu).performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-tool-LONG_POSITION").performClick()
+        val chart = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("historical-replay")))
+        val size = chart.fetchSemanticsNode().size
+        val at = Offset(size.width * .58f, size.height * .75f)
+        chart.performMouseInput { moveTo(at); click() }
+        compose.waitForIdle()
+        compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
+        // Find a solid interior point of the red stop area in the rendered chart. Autoscaling and
+        // the side panel can move a newly placed drawing away from its original click position.
+        val pixels = chart.captureToImage().toPixelMap()
+        fun isStopFill(x: Int, y: Int): Boolean {
+            val c = pixels[x, y]
+            return c.red > .16f && c.red > c.green * 1.7f && c.red > c.blue * 1.4f && c.green < .2f && c.blue < .2f
+        }
+        val inside = (pixels.height / 5 until pixels.height * 9 / 10 step 3).asSequence().flatMap { y ->
+            (pixels.width / 3 until pixels.width * 4 / 5 step 3).asSequence().map { x -> x to y }
+        }.firstOrNull { (x, y) -> isStopFill(x, y) && isStopFill(x + 4, y) && isStopFill(x, y + 4) }
+            ?.let { (x, y) -> Offset(x.toFloat(), y.toFloat()) }
+            ?: throw AssertionError("No rendered stop area found")
+        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
+        val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
+        ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", diagnostic)
+        if (compose.onAllNodesWithTag("drawing-menu-create-order").fetchSemanticsNodes().isEmpty()) {
+            val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().size
+            throw AssertionError("Drawing menu absent; roots=$roots; " + compose.onAllNodes(isRoot(), useUnmergedTree = true).onLast().printToString())
+        }
+        compose.onNodeWithTag("drawing-menu-icon-create-order", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-sync-GLOBAL").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.drawings.drawings.any { it.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION } }
+        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("replay-pending-list").assertExists()
+        assertTrue(broker.placed.isEmpty(), "A replay drawing must never submit to the broker")
     }
 
     @Test fun openingReplayFromConnectedWorkspaceNeverSendsBrokerOrders() {

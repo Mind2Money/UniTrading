@@ -3,13 +3,18 @@ package com.unitrading.chart
 import com.unitrading.broker.Candle
 import com.unitrading.broker.Timeframe
 
-/** Only offer intervals that can be advanced with actual loaded source bars. */
+/** Visible choices depend on the active chart, even when finer data is not available. */
+internal fun replayStepCandidates(chart: Timeframe): List<Timeframe> {
+    val oneSecond = Timeframe.ofSeconds(1)
+    val bases = if (chart.seconds < 10 * Timeframe.MINUTE) listOf(oneSecond, Timeframe.M1)
+        else listOf(oneSecond) + listOf(1, 3, 5, 10, 15, 30).map(Timeframe::ofMinutes)
+    return (bases.filter { it.seconds <= chart.seconds && (chart.seconds < 10 * Timeframe.MINUTE || chart.seconds % it.seconds == 0) } + chart)
+        .distinct().sortedBy { it.seconds }
+}
+
+/** Only enable choices supported by the loaded source bars. */
 internal fun replayStepOptions(chart: Timeframe, source: Timeframe): List<Timeframe> {
-    val candidates = (listOf(1, 5, 15, 30).map(Timeframe::ofSeconds) +
-        listOf(1, 3, 5, 15, 30, 60, 1440).map(Timeframe::ofMinutes) + listOf(source, chart)).distinct().sortedBy { it.seconds }
-    // Limit work per update: second-level histories should not synchronously replay tens of thousands of bars at once.
-    return candidates.filter { it.seconds >= source.seconds && it.seconds % source.seconds == 0 && it.seconds / source.seconds <= 3600 }
-        .ifEmpty { listOf(source) }
+    return replayStepCandidates(chart).filter { it.seconds >= source.seconds && it.seconds % source.seconds == 0 }
 }
 
 internal fun replayStepLabel(frame: Timeframe): String = when {

@@ -27,6 +27,7 @@ import com.unitrading.broker.money
 
 /** Explain what will be rechecked without changing the order or weakening the broker's checks. */
 internal fun placeConfirmationDisclosure(order: OrderRequest, bracketsApply: Boolean, bracketsEnabled: Boolean, sizeByRisk: Boolean): String = when {
+    order.fromPositionDrawing -> "绘图手数按合约步长向下取整。提交时会重新校验报价、账户状态和订单风控。"
     sizeByRisk && bracketsApply && order.kind == OrderKind.MARKET -> "提交时按最新报价复核风险，必要时减少手数。"
     bracketsApply && order.kind == OrderKind.MARKET -> "提交时按最新报价重算自动止损止盈，实际成交价可能与预估不同。"
     bracketsEnabled && !bracketsApply -> (if (sizeByRisk) "减仓单按输入的数量提交，不按风险计算手数。" else "减仓单不附加子账户止损止盈。") +

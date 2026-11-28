@@ -60,7 +60,7 @@ class TradingRuntime(private val store: SnapshotStore, additionalPlugins: List<c
     private val chartIndicatorControllers = mutableMapOf<String, IndicatorController>()
     private val chartDrawingControllers = mutableMapOf<String, com.unitrading.chart.drawing.ChartDrawings>()
     private val layoutDrawingLibraries = mutableMapOf<String, com.unitrading.chart.drawing.DrawingLibrary>()
-    private val globalDrawings by lazy { com.unitrading.chart.drawing.DrawingLibrary(chartStore("drawing-sync-global")) }
+    internal val globalDrawings by lazy { com.unitrading.chart.drawing.DrawingLibrary(chartStore("drawing-sync-global")) }
     private val chartObjectLayers = mutableMapOf<String, com.unitrading.chart.ChartObjectLayers>()
     private val chartUndoControllers = mutableMapOf<String, ChartUndoCoordinator>()
     private fun chartStore(id: String): SnapshotStore {

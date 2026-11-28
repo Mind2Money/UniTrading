@@ -4,9 +4,29 @@ import androidx.compose.ui.geometry.Offset
 import com.unitrading.app.MemorySnapshotStore
 import com.unitrading.broker.Timeframe
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ChartDrawingsTest {
+    @Test fun replayScopesShareOnlyTheSelectedLayoutOrGlobalLibrary() = runTest {
+        fun library() = DrawingLibrary(MemorySnapshotStore(), Dispatchers.Unconfined)
+        val defaults = library(); val layout = library(); val global = library()
+        val replayOne = ChartDrawings(library(), defaults, layout, global).apply { bind("MES") }
+        val replayTwo = ChartDrawings(library(), defaults, layout, global).apply { bind("MES") }
+        val otherLayout = ChartDrawings(library(), defaults, library(), global).apply { bind("MES") }
+        val otherSymbol = ChartDrawings(library(), defaults, library(), global).apply { bind("NQ") }
+        replayOne.addHorizontalLine(DrawingPoint(START, 40_000.0))
+        val id = replayOne.drawings.single().id
+        assertTrue(replayTwo.drawings.isEmpty()); assertTrue(otherLayout.drawings.isEmpty())
+        assertTrue(replayOne.changeSyncScope(id, DrawingSyncScope.LAYOUT))
+        assertEquals(id, replayTwo.drawings.single().id); assertTrue(otherLayout.drawings.isEmpty())
+        assertTrue(replayOne.changeSyncScope(id, DrawingSyncScope.GLOBAL))
+        assertEquals(id, replayTwo.drawings.single().id); assertEquals(id, otherLayout.drawings.single().id)
+        assertTrue(otherSymbol.drawings.isEmpty())
+        assertTrue(replayOne.changeSyncScope(id, DrawingSyncScope.LOCAL))
+        assertTrue(replayTwo.drawings.isEmpty()); assertTrue(otherLayout.drawings.isEmpty())
+    }
+
     @Test fun closingOneSplitChartKeepsTheOtherLayerHandlerConnected() {
         val first = Any()
         val second = Any()
