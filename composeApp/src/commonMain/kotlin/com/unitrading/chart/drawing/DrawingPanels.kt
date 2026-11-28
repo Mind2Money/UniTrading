@@ -163,7 +163,7 @@ internal fun DrawingContextMenu(layer: DrawingLayer, onObjects: (() -> Unit)? = 
                 DropdownMenu(orderMenu, { orderMenu = false }, offset = androidx.compose.ui.unit.DpOffset(280.dp, (-48).dp)) {
                     listOf(Triple("置于顶层", "front", Int.MAX_VALUE), Triple("置于底层", "back", Int.MIN_VALUE),
                         Triple("上移一层", "forward", 1), Triple("下移一层", "backward", -1)).forEach { (label, tag, amount) ->
-                        item(label, tag, when (tag) { "front" -> AppIcons.ExpandLess; "back" -> AppIcons.ExpandMore; "forward" -> AppIcons.ExpandLess; else -> AppIcons.ExpandMore }) { orderMenu = false; drawings.moveOrder(d.id, amount) }
+                        item(label, tag, when (tag) { "front" -> DrawingIcons.LayerFront; "back" -> DrawingIcons.LayerBack; "forward" -> DrawingIcons.LayerForward; else -> DrawingIcons.LayerBackward }) { orderMenu = false; drawings.moveOrder(d.id, amount) }
                     }
                 }
             }
@@ -175,7 +175,12 @@ internal fun DrawingContextMenu(layer: DrawingLayer, onObjects: (() -> Unit)? = 
                         DrawingTimeVisibility.CURRENT to "仅当前时间周期", DrawingTimeVisibility.ALL to "所有时间周期").forEach { (mode, label) ->
                         val isSelected = d.timeVisibility == mode && d.hiddenIntervals.isEmpty()
                         DropdownMenuItem(text = { Text(label) },
-                            leadingIcon = { Icon(AppIcons.Calendar, null, Modifier.size(20.dp)) },
+                            leadingIcon = { Icon(when (mode) {
+                                DrawingTimeVisibility.CURRENT_AND_ABOVE -> DrawingIcons.TimeAbove
+                                DrawingTimeVisibility.CURRENT_AND_BELOW -> DrawingIcons.TimeBelow
+                                DrawingTimeVisibility.CURRENT -> DrawingIcons.TimeCurrent
+                                DrawingTimeVisibility.ALL -> DrawingIcons.TimeAll
+                            }, null, Modifier.size(20.dp).testTag("drawing-menu-icon-visibility-${mode.name}")) },
                             trailingIcon = { if (isSelected) Icon(AppIcons.Check, "当前可见性", Modifier.size(20.dp).testTag("drawing-menu-visibility-check-${mode.name}")) },
                             onClick = {
                                 drawings.update(d.copy(timeVisibility = mode, visibilityReferenceSeconds = timeframe.seconds, hiddenIntervals = emptySet()))
@@ -184,9 +189,8 @@ internal fun DrawingContextMenu(layer: DrawingLayer, onObjects: (() -> Unit)? = 
                     }
                 }
             }
-            DropdownMenuItem(text = { Text("对象树") }, leadingIcon = { Icon(AppIcons.OrderBook, null, Modifier.size(20.dp).testTag("drawing-menu-icon-objects")) }, enabled = onObjects != null, onClick = { drawings.closeMenu(); onObjects?.invoke() }, modifier = Modifier.testTag("drawing-menu-objects"))
+            DropdownMenuItem(text = { Text("对象树") }, leadingIcon = { Icon(AppIcons.Layers, null, Modifier.size(20.dp).testTag("drawing-menu-icon-objects")) }, enabled = onObjects != null, onClick = { drawings.closeMenu(); onObjects?.invoke() }, modifier = Modifier.testTag("drawing-menu-objects"))
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item("克隆", "clone", DrawingIcons.Clone) { drawings.clone(d.id) }
             item("复制", "copy", DrawingIcons.Clone) { drawings.copySelected(); drawings.closeMenu() }
             if (onPositionOrder != null && d.tool in listOf(DrawingTool.LONG_POSITION, DrawingTool.SHORT_POSITION)) {
                 item("创建挂单…", "create-order", AppIcons.OrderEntry) { drawings.closeMenu(); onPositionOrder(d) }

@@ -62,9 +62,12 @@ class ChartContextMenuUiTest {
         render()
         compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
         rightClick(548_500)
-        for (tag in listOf("order", "visibility", "objects", "clone", "copy", "sync-LOCAL", "sync-LAYOUT", "sync-GLOBAL", "lock", "hide", "remove", "settings"))
+        for (tag in listOf("order", "visibility", "objects", "copy", "sync-LOCAL", "sync-LAYOUT", "sync-GLOBAL", "lock", "hide", "remove", "settings"))
             compose.onNodeWithTag("drawing-menu-icon-$tag", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-clone").assertDoesNotExist()
         compose.onNodeWithTag("drawing-menu-visibility").performClick()
+        for (mode in listOf("CURRENT_AND_ABOVE", "CURRENT_AND_BELOW", "CURRENT", "ALL"))
+            compose.onNodeWithTag("drawing-menu-icon-visibility-$mode", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("drawing-menu-visibility-ALL").assertIsSelected()
         compose.onNodeWithTag("drawing-menu-visibility-check-ALL", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("drawing-menu-visibility-CURRENT").performClick()
