@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private data class CopyFollowerInput(val fixed: Boolean = false, val quantity: String = "1", val maximum: String = "1")
+private data class PendingCopyCleanup(val config: CopySavedConfiguration, val accounts: List<CopyAccountExposure>)
 
 @Composable
 internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, leaderId: String, onDismiss: () -> Unit) {
@@ -34,7 +35,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var confirmRecovery by remember { mutableStateOf(false) }
-    var cleanup by remember { mutableStateOf<List<CopyAccountExposure>?>(null) }
+    var cleanup by remember { mutableStateOf<PendingCopyCleanup?>(null) }
     var cleanupResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
     var clearing by remember { mutableStateOf(false) }
     val leader = catalog.accounts.firstOrNull { it.id == selectedLeader }
@@ -56,15 +57,23 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
             ?: return CopyStartPreparation.Blocked("无法读取所选账户，请检查连接")
         return CopyStartPreparationInspector.inspect(ids, broker.catalog.value, broker.market.value, snapshots)
     }
+    suspend fun save(config: CopySavedConfiguration) {
+        if (runtime.copyTradingConfiguration.save(config)) {
+            error = null; notice = "设置已保存；跟单功能仍在开发中。"
+        } else {
+            notice = null; error = "设置保存失败，请检查账户及本机存储。"
+        }
+    }
+    fun cancelCleanup() { cleanup = null; onDismiss() }
 
     cleanup?.let { review ->
         AlertDialog(
-            onDismissRequest = { cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" },
+            onDismissRequest = ::cancelCleanup,
             title = { Text("所选账户有持仓或挂单") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("是否撤销以下所选账户的全部挂单，并平掉全部持仓？未选择的子账户不受影响。")
-                    review.forEach { row ->
+                    review.accounts.forEach { row ->
                         ConfirmationAccount(broker, row.account, "持仓 ${row.positions} · 挂单 ${row.orders}")
                     }
                     Text("处理会使用账户在执行时的最新状态。跟单功能尚未完成，本次处理不会启动跟单。",
@@ -77,16 +86,16 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     clearing = true
                     scope.launch {
                         try {
-                            val targets = review.map { FlattenTarget(broker, it.account) }
+                            val targets = review.accounts.map { FlattenTarget(broker, it.account) }
                             val results = runtime.accountRisk.flattenAccounts(runtime.registry, targets)
-                            val check = inspect(review.map { it.account.id })
+                            val check = inspect(review.accounts.map { it.account.id })
                             cleanupResults = if (check == CopyStartPreparation.Ready) results else results.map { result ->
                                 if (result.confirmed) result.copy(confirmed = false, note = "处理已提交，但完整账户状态尚未核对，请检查券商。") else result
                             }
                             if (results.any { !it.confirmed }) {
                                 notice = null; error = "部分账户未确认空仓且无挂单，请核对券商后再操作。"
                             } else when (check) {
-                                CopyStartPreparation.Ready -> { error = null; notice = "所选账户已核对为空仓且无挂单；跟单功能仍在开发中。" }
+                                CopyStartPreparation.Ready -> save(review.config)
                                 is CopyStartPreparation.NeedsCleanup -> { notice = null; error = "所选账户仍有持仓或挂单，请重新核对。" }
                                 is CopyStartPreparation.Blocked -> { notice = null; error = check.reason }
                             }
@@ -100,8 +109,8 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     }
                 }, modifier = Modifier.testTag("copy-cleanup-confirm")) { Text("是，撤单并平仓") }
             },
-            dismissButton = { TextButton({ cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" },
-                modifier = Modifier.testTag("copy-cleanup-cancel")) { Text("否，保留现状") } },
+            dismissButton = { TextButton(::cancelCleanup,
+                modifier = Modifier.testTag("copy-cleanup-cancel")) { Text("否，退出且不保存") } },
         )
     }
     cleanupResults?.let { results -> FlattenResults(results) { cleanupResults = null } }
@@ -169,18 +178,18 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     notice?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     OutlinedButton(onClick = {
+                        val config = CopySavedConfiguration(broker.descriptor.id, selectedLeader,
+                            followers.map { CopySavedFollower(it.accountId, it.fixedContracts, it.multiplier, it.maxContracts) }, symbol = null)
+                        clearing = true
                         scope.launch {
-                            val config = CopySavedConfiguration(broker.descriptor.id, selectedLeader,
-                                followers.map { CopySavedFollower(it.accountId, it.fixedContracts, it.multiplier, it.maxContracts) }, symbol = null)
-                            if (runtime.copyTradingConfiguration.save(config)) {
-                                error = null; notice = "设置已保存；跟单功能仍在开发中。"
+                            try {
                                 when (val check = inspect(listOf(config.leaderId) + config.followers.map { it.accountId })) {
-                                    CopyStartPreparation.Ready -> Unit
-                                    is CopyStartPreparation.NeedsCleanup -> cleanup = check.accounts
-                                    is CopyStartPreparation.Blocked -> error = check.reason
+                                    CopyStartPreparation.Ready -> save(config)
+                                    is CopyStartPreparation.NeedsCleanup -> { error = null; notice = null; cleanup = PendingCopyCleanup(config, check.accounts) }
+                                    is CopyStartPreparation.Blocked -> { notice = null; error = check.reason }
                                 }
-                            } else {
-                                notice = null; error = "设置保存失败，请检查账户及本机存储。"
+                            } finally {
+                                clearing = false
                             }
                         }
                     }, modifier = Modifier.testTag("copy-save-settings"), enabled = !clearing && valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
