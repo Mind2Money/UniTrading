@@ -325,13 +325,13 @@ class HistoricalReplayUiTest {
             inside = Offset(size.width * fraction, currentScale().y(entry) + 20f)
             chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
             compose.waitForIdle()
-            if (compose.onAllNodesWithTag("drawing-context-menu").fetchSemanticsNodes().isNotEmpty()) break
+            if (compose.onAllNodesWithTag("drawing-menu-create-order").fetchSemanticsNodes().isNotEmpty()) break
             compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.Escape) }
             compose.waitForIdle()
         }
         val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
         ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", diagnostic)
-        if (compose.onAllNodesWithTag("drawing-context-menu").fetchSemanticsNodes().isEmpty()) {
+        if (compose.onAllNodesWithTag("drawing-menu-create-order").fetchSemanticsNodes().isEmpty()) {
             val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().size
             throw AssertionError("Drawing menu absent; roots=$roots; " + compose.onAllNodes(isRoot(), useUnmergedTree = true).onLast().printToString())
         }
