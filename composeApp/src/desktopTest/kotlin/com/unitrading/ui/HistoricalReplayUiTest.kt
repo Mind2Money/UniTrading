@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.graphics.toAwtImage
+import androidx.compose.ui.graphics.toPixelMap
 import java.io.File
 import javax.imageio.ImageIO
 import com.unitrading.app.ThemeSettings
@@ -24,7 +24,6 @@ import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.ReplayDrawdown
-import com.unitrading.chart.PriceScale
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.OrderTagButtons
@@ -309,26 +308,23 @@ class HistoricalReplayUiTest {
         val chart = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("historical-replay")))
         val size = chart.fetchSemanticsNode().size
         val at = Offset(size.width * .58f, size.height * .75f)
-        fun currentScale(): PriceScale {
-            val state = chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription]
-                .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
-            return PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(),
-                state.getValue("plotTop").toFloat(), state.getValue("plotBottom").toFloat())
-        }
-        val entry = currentScale().price(at.y, broker.spec.tickSize)
         chart.performMouseInput { moveTo(at); click() }
         compose.waitForIdle()
         compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
-        // The chart can auto-fit after creating a drawing; find the entry again on the new scale.
-        var inside = Offset.Zero
-        for (fraction in listOf(.50f, .54f, .58f, .62f, .46f, .66f)) {
-            inside = Offset(size.width * fraction, currentScale().y(entry) + 20f)
-            chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
-            compose.waitForIdle()
-            if (compose.onAllNodesWithTag("drawing-menu-create-order").fetchSemanticsNodes().isNotEmpty()) break
-            compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.Escape) }
-            compose.waitForIdle()
+        // Find a solid interior point of the red stop area in the rendered chart. Autoscaling and
+        // the side panel can move a newly placed drawing away from its original click position.
+        val pixels = chart.captureToImage().toPixelMap()
+        fun isStopFill(x: Int, y: Int): Boolean {
+            val c = pixels[x, y]
+            return c.red > .16f && c.red > c.green * 1.7f && c.red > c.blue * 1.4f && c.green < .2f && c.blue < .2f
         }
+        val inside = (pixels.height / 5 until pixels.height * 9 / 10 step 3).asSequence().flatMap { y ->
+            (pixels.width / 3 until pixels.width * 4 / 5 step 3).asSequence().map { x -> x to y }
+        }.firstOrNull { (x, y) -> isStopFill(x, y) && isStopFill(x + 4, y) && isStopFill(x, y + 4) }
+            ?.let { (x, y) -> Offset(x.toFloat(), y.toFloat()) }
+            ?: throw AssertionError("No rendered stop area found")
+        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.waitForIdle()
         val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
         ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", diagnostic)
         if (compose.onAllNodesWithTag("drawing-menu-create-order").fetchSemanticsNodes().isEmpty()) {
