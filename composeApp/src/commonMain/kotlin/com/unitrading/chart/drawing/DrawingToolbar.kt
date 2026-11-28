@@ -40,6 +40,18 @@ private val MenuItemHeight = 34.dp
 /** Material's height of a tab that holds only text. */
 private val TextTabHeight = 48.dp
 
+/** A tablet can reclaim chart width while retaining an accessible control to reopen the tools. */
+@Composable
+internal fun TabletDrawingToolbar(drawings: ChartDrawings, indicatorCount: Int, onRemoveIndicators: () -> Unit, tag: String) {
+    var open by remember(drawings) { mutableStateOf(true) }
+    Column(Modifier.fillMaxHeight().width(if (open) DrawingToolbarWidth else 36.dp)) {
+        IconButton(onClick = { open = !open }, modifier = Modifier.size(36.dp).testTag(tag)) {
+            Icon(if (open) AppIcons.ChevronLeft else AppIcons.ChevronRight, if (open) "收起绘图工具" else "展开绘图工具")
+        }
+        if (open) DrawingToolbar(drawings, indicatorCount, onRemoveIndicators, Modifier.weight(1f))
+    }
+}
+
 /** One button of the toolbar; [menu] adds the arrow that opens its flyout. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable

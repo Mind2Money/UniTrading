@@ -1181,7 +1181,7 @@ fun TradingChart(
                         )
                     }
                 }
-                drawingLayer?.let { DrawingChartOverlays(it, compact, chrome.showDrawingFavorites) }
+                drawingLayer?.let { DrawingChartOverlays(it, compact && !chrome.tabletCompactAxis, chrome.showDrawingFavorites) }
                 if (showObjectTree && chrome.drawings != null) ChartObjectsDialog(chrome.drawings, chrome.allIndicators ?: indicators,
                     objectLayers, chrome.onIndicatorChanges, { showObjectTree = false }, phone = chrome.phoneContextMenu)
                 if (showTemplates && chrome.templates != null && chrome.onApplyTemplate != null) ChartTemplatesDialog(chrome.templates,

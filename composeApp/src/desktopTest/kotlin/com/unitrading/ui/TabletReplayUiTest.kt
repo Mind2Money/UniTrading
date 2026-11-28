@@ -42,8 +42,16 @@ class TabletReplayUiTest {
             waitUntil(timeoutMillis = 15_000) { onAllNodesWithTag("replay-order-ticket").fetchSemanticsNodes().isNotEmpty() }
             val replay = onNodeWithTag("historical-replay").fetchSemanticsNode().boundsInRoot
             assertTrue(abs(replay.width - width) < 2f && abs(replay.height - height) < 2f, "Replay should fill the available window: $replay")
-            onNodeWithTag("replay-account-strip").assertDoesNotExist()
+            onNodeWithTag("replay-account-strip").assertExists()
+            onNodeWithTag("replay-daily-pnl").assertExists()
+            onNodeWithTag("replay-account-strip-toggle").performClick()
             onNodeWithTag("replay-daily-pnl").assertDoesNotExist()
+            onNodeWithTag("replay-account-strip-toggle").performClick()
+            onNodeWithTag("replay-daily-pnl").assertExists()
+            onNodeWithTag("replay-tablet-drawing-toggle").performClick()
+            onNodeWithTag("drawing-toolbar").assertDoesNotExist()
+            onNodeWithTag("replay-tablet-drawing-toggle").performClick()
+            onNodeWithTag("drawing-toolbar").assertExists()
             val controls = onNodeWithTag("replay-controls").fetchSemanticsNode().boundsInRoot
             val startButton = onNodeWithTag("replay-reset").fetchSemanticsNode().boundsInRoot
             val periodButton = onNodeWithTag("replay-period-menu").fetchSemanticsNode().boundsInRoot
@@ -71,7 +79,8 @@ class TabletReplayUiTest {
             onNodeWithTag("replay-period-menu").performClick()
             onNodeWithTag("replay-step-1s").assertIsNotEnabled()
             ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(out, "${platform.name.lowercase()}-${width}x${height}-period-menu.png"))
-            onNodeWithTag("replay-step-15").performScrollTo().performClick()
+            onNodeWithTag("replay-step-15").assertDoesNotExist()
+            onNodeWithTag("replay-step-1").performScrollTo().performClick()
             onNodeWithTag("replay-order-collapse").performClick()
             val chart = onAllNodesWithTag("trading-chart").onLast()
             val size = chart.fetchSemanticsNode().size

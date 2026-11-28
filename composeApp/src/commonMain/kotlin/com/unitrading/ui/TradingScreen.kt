@@ -1311,7 +1311,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                     val chartCompact = compact || maxWidth < 600.dp
                     val chartShort = chartCompact && maxHeight < 550.dp
                     Row(Modifier.fillMaxSize()) {
-                    if (!workspaceFullscreen(chartWorkspace) && !shared && (!chartCompact || drawings.toolbarOpen)) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size, { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
+                    if (!workspaceFullscreen(chartWorkspace) && !shared) {
+                        if (tablet) com.unitrading.chart.drawing.TabletDrawingToolbar(drawings, chartIndicatorSettings.indicators.size,
+                            { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } }, "tablet-drawing-toggle-$chartId")
+                        else if (!chartCompact || drawings.toolbarOpen) com.unitrading.chart.drawing.DrawingToolbar(drawings, chartIndicatorSettings.indicators.size,
+                            { scope.launch { indicatorController.apply(com.unitrading.app.IndicatorSettings()) } })
+                    }
                     TradingChart("$brokerId/$displayedAccountId/${plugin.hashCode()}", shownInstrument, shownQuote, shownCandles, shownTimeframe, { frame -> activateChart(chartId); timeframe = frame },
                         displayedAccount.positions.filter { it.symbol == shownExecution },
                         displayedAccount.trades.filter { it.symbol == shownExecution },
@@ -1502,8 +1507,12 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             DividerLine()
                         }
                         Row(Modifier.weight(1f).fillMaxWidth()) {
-                            if (!workspaceFullscreen(workspace)) com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
-                                { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                            if (!workspaceFullscreen(workspace)) {
+                                if (tablet) com.unitrading.chart.drawing.TabletDrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
+                                    { scope.launch { indicatorController.apply(IndicatorSettings()) } }, "tablet-drawing-toggle-$workspace")
+                                else com.unitrading.chart.drawing.DrawingToolbar(currentDrawings, indicatorSettings.indicators.size,
+                                    { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                            }
                             key(workspace) {
                                 ChartSplitWorkspace(layoutOf(workspace), selected, { id, cellModifier -> chartView(id, cellModifier, true) },
                                     Modifier.weight(1f).fillMaxHeight(), chartId = { id ->

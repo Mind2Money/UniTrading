@@ -1,5 +1,15 @@
 # Unreleased
 
+## 简体中文
+
+- 回放更新步长仅显示符合当前图表周期的选项，不再列出更高周期；没有对应源数据的选项不可用。
+- 平板主图与回放图表的绘图工具栏可以收起和展开，回放底部账户统计栏支持收起和展开。
+
+## English
+
+- Show only replay steps permitted by the current chart interval; disable choices unsupported by the loaded source data.
+- Let tablet users collapse drawing tools on the main and replay charts, and collapse the replay account statistics strip.
+
 # v1.8.3
 
 ## 简体中文

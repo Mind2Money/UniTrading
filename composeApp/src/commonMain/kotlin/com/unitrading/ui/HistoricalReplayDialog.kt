@@ -38,6 +38,7 @@ import com.unitrading.broker.*
 import com.unitrading.chart.*
 import com.unitrading.chart.drawing.ChartDrawings
 import com.unitrading.chart.drawing.DrawingToolbar
+import com.unitrading.chart.drawing.TabletDrawingToolbar
 import com.unitrading.chart.drawing.DrawingLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -167,6 +168,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var orderToConfirm by remember { mutableStateOf<ReplayOrderIntent?>(null) }
     var sideTab by remember { mutableIntStateOf(0) }
     var panelOpen by remember { mutableStateOf(true) }
+    var accountStripOpen by remember { mutableStateOf(true) }
     val riskConfig = input.riskConfig
     var showFailure by remember { mutableStateOf(false) }
     var showSuccess by remember { mutableStateOf(false) }
@@ -181,7 +183,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     var requestedRegularChart by remember { mutableStateOf<String?>(null) }
     var priceAxis by remember { mutableStateOf(input.priceAxis) }
     val stepChoices = remember(chartFrame, sourceFrame) { replayStepOptions(chartFrame, sourceFrame) }
-    val selectedStep = if (autoStep) stepChoices.first() else stepFrame.takeIf { it in stepChoices } ?: stepChoices.first()
+    val selectedStep = if (autoStep) stepChoices.firstOrNull() ?: chartFrame else stepFrame.takeIf { it in stepChoices } ?: stepChoices.firstOrNull() ?: chartFrame
     var showIndicators by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(true) }
     val indicatorController = remember { IndicatorController(MemorySnapshotStore()) }
@@ -317,6 +319,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         message = "禁止过夜：已按截止前最后一根可用 K 线收盘价平仓，并撤销挂单。"
     }
     fun step() {
+        if (selectedStep !in stepChoices) { playing = false; message = "当前回放数据不支持所选图表周期的步长"; return }
         if (state.index >= bars.lastIndex) { playing = false; return }
         val last = replayStepEnd(bars, state.index, selectedStep)
         while (state.index < last) {
@@ -613,7 +616,9 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         }
                     }, singleRow = true)
                 Row(Modifier.weight(1f).fillMaxWidth()) {
-                DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { indicatorController.apply(IndicatorSettings()) } })
+                if (tablet) TabletDrawingToolbar(drawings, indicatorSettings.indicators.size,
+                    { scope.launch { indicatorController.apply(IndicatorSettings()) } }, "replay-tablet-drawing-toggle")
+                else DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { indicatorController.apply(IndicatorSettings()) } })
                 ChartSplitWorkspace(layout, activeChart, { id, cellModifier ->
                     val frame = frames[id] ?: input.timeframe
                     val cellRegular = chartSessions[id] ?: input.regular
@@ -775,11 +780,11 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                     }
                     VerticalDivider(Modifier.height(24.dp).padding(horizontal = 4.dp), color = colors.outlineVariant)
                     IconButton(onClick = { playing = !playing; started = true },
-                        enabled = !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
+                        enabled = stepChoices.isNotEmpty() && !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
                         modifier = Modifier.size(buttonSize).testTag("replay-play")) {
                         Icon(if (playing) AppIcons.Pause else AppIcons.PlayArrow, if (playing) "暂停" else "播放", Modifier.size(if (tablet) 24.dp else 21.dp))
                     }
-                    IconButton(onClick = { playing = false; step() }, enabled = !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
+                    IconButton(onClick = { playing = false; step() }, enabled = stepChoices.isNotEmpty() && !selectingBar && state.index < bars.lastIndex && !risk.failed && !risk.targetReached,
                         modifier = Modifier.size(buttonSize).testTag("replay-next")) {
                         Icon(AppIcons.ChevronRight, "前进一步", Modifier.size(if (tablet) 24.dp else 21.dp))
                     }
@@ -802,9 +807,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         TextButton(onClick = { periodMenu = true }, modifier = Modifier.height(buttonSize).testTag("replay-period-menu"),
                             contentPadding = PaddingValues(horizontal = if (tablet) 12.dp else 8.dp)) { Text(stepLabel(selectedStep), fontWeight = FontWeight.SemiBold) }
                         DropdownMenu(periodMenu, { periodMenu = false }, modifier = Modifier.widthIn(min = 220.dp).heightIn(max = if (tablet) 560.dp else 500.dp)) {
-                            DropdownMenuItem(text = { Text("1 tick · 当前数据不支持") }, onClick = {}, enabled = false)
-                            val options = (listOf(Timeframe.ofSeconds(1), Timeframe.M1, Timeframe.ofMinutes(3), Timeframe.M5, Timeframe.M15) + stepChoices)
-                                .distinct().sortedBy { it.seconds }
+                            val options = replayStepCandidates(chartFrame)
                             options.forEach { frame ->
                                 val available = frame in stepChoices
                                 DropdownMenuItem(text = { Text(stepLabel(frame) + if (available) "" else " · 不可用") },
@@ -822,9 +825,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 }
             }
         }
-        if (!tablet) Surface(Modifier.fillMaxWidth().padding(top = 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
+        Surface(Modifier.fillMaxWidth().padding(top = if (tablet) 3.dp else 8.dp).testTag("replay-account-strip"), shape = MaterialTheme.shapes.small,
             color = TradingColors.Surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (tablet) IconButton(onClick = { accountStripOpen = !accountStripOpen }, modifier = Modifier.size(40.dp).testTag("replay-account-strip-toggle")) {
+                Icon(if (accountStripOpen) AppIcons.ExpandMore else AppIcons.ExpandLess, if (accountStripOpen) "收起账户信息" else "展开账户信息")
+            }
+            if (!tablet || accountStripOpen) Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(horizontal = if (tablet) 4.dp else 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 val balance = realized?.let { runCatching { checkedAdd(riskConfig.initialMicros, it) }.getOrNull() }
                 val equity = if (balance != null && floating != null) runCatching { checkedAdd(balance, floating) }.getOrNull() else null
@@ -845,6 +852,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 Metric("一致性 · ${riskConfig.consistencyPercent}%", riskConfig.consistencyLimitMicros?.let { "每日 ${money(it)}${if (risk.consistencyHit) " · 已触及" else ""}" } ?: "关闭", valueTag = "replay-consistency-status")
                 Metric("持仓过夜", if (riskConfig.allowOvernight) "允许" else "禁止 · ${replayCutoffText(riskConfig.overnightCutoffMinutes)} 芝加哥")
                 Metric("交易统计", "成交 ${state.trades.size} 笔 · 胜 ${state.trades.count { it.pnlMicros > 0 }} · 负 ${state.trades.count { it.pnlMicros < 0 }}", valueTag = "replay-trade-count")
+            }
             }
         }
     }

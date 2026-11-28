@@ -162,8 +162,8 @@ class HistoricalReplayUiTest {
             minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
         val bars = (0..20).map { index -> Candle(1_700_000_000_000L + index * 60_000L,
             10_000, 10_025, if (index == 10) 9_900 else 9_975, 10_000) }
-        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
-            ChartTimeZone.SHANGHAI, bars, emptyList())) {} } }
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M15, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), rawFrame = Timeframe.M1)) {} } }
         awaitReplay()
         compose.onNodeWithTag("order-sl-enabled").performScrollTo().performClick()
         compose.onNodeWithTag("order-sl").performTextClearance()
