@@ -98,4 +98,27 @@ class CopySourceProtectionJournalTest {
         assertFalse(capture.submit(change, snapshot(), true) { calls++; TradeResult(true, "unexpected") }.accepted)
         assertEquals(1, calls)
     }
+    @Test fun storageFailurePausesFollowersAndAllowsLeaderProtection() = runTest {
+        val backing = MemorySnapshotStore()
+        val store = object : SnapshotStore {
+            override fun read(key: String): String? = backing.read(key)
+            override fun write(key: String, value: String) {
+                if (key == "copy-source-protections-v1") error("disk full")
+                backing.write(key, value)
+            }
+        }
+        val sources = CopySourceOrders(store)
+        assertTrue(sources.begin(CopySourceOrder("tradovate-demo-42", "leader", "entry-request", "group",
+            request = OrderRequest("MESZ6", Side.BUY, OrderKind.MARKET, 100))))
+        assertTrue(sources.accepted("entry-request", "entry"))
+        val journal = CopySourceProtectionJournal(store, sources)
+        var paused = false
+        val result = CopySourceProtectionCapture(journal) { paused = true }.submit(change, snapshot(), true) {
+            assertTrue(paused)
+            TradeResult(true, "accepted")
+        }
+        assertTrue(result.accepted)
+        assertTrue(paused)
+        assertTrue(journal.read()!!.isEmpty())
+    }
 }

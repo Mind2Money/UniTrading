@@ -11,9 +11,18 @@ import kotlinx.coroutines.withContext
 internal class CopySourceProtectionCapture(private val journal: CopySourceProtectionJournal, private val stop: (String) -> Unit) {
     suspend fun submit(row: CopySourceProtection, snapshot: AccountSnapshot, active: Boolean, send: suspend () -> TradeResult): TradeResult {
         if (!active) return send()
-        if (!journal.begin(row, snapshot)) {
-            stop("主账户保护单来源或状态无法确认，跟单已停止")
-            return TradeResult(false, "无法保存跟单记录，未提交主账户保护操作")
+        when (journal.beginResult(row, snapshot)) {
+            CopySourceBeginResult.STORAGE_FAILED -> {
+                stop("保护单跟单记录无法保存，相关跟随账户已暂停")
+                return try { send().let { it.copy(message = "${it.message}；跟随账户已暂停，请核对") } }
+                catch (cancel: CancellationException) { throw cancel }
+                catch (_: Exception) { TradeResult(false, "主账户保护操作结果未知，请在券商端核对，未自动重发", outcome = CommandOutcome.UNKNOWN) }
+            }
+            CopySourceBeginResult.UNSAFE -> {
+                stop("主账户保护单来源或状态无法确认，跟单已暂停")
+                return TradeResult(false, "主账户保护操作无法确认，请核对后再操作")
+            }
+            CopySourceBeginResult.RECORDED -> Unit
         }
         val result = try { send() } catch (cancel: CancellationException) {
             withContext(NonCancellable) { journal.uncertain(row.requestId); stop("主账户保护操作结果未知，请核对") }

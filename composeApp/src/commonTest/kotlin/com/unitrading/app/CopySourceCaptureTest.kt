@@ -20,7 +20,7 @@ class CopySourceCaptureTest {
         assertEquals("order-1", journal.read()!!.single().brokerOrderId)
     }
 
-    @Test fun missingStorageStopsBeforeSending() = runTest {
+    @Test fun failedStoragePausesFollowersBeforeAllowingLeaderOrder() = runTest {
         val storage = object : SnapshotStore {
             override fun read(key: String): String? = null
             override fun write(key: String, value: String) = error("disk full")
@@ -29,10 +29,11 @@ class CopySourceCaptureTest {
         var stopped = false
         val capture = CopySourceCapture(CopySourceOrders(storage)) { stopped = true }
         val result = capture.submit("tradovate", "leader", "group", "leader", "user", request, true) {
+            assertTrue(stopped)
             sent = true; TradeResult(true, "accepted", "order")
         }
-        assertFalse(result.accepted)
-        assertFalse(sent)
+        assertTrue(result.accepted)
+        assertTrue(sent)
         assertTrue(stopped)
     }
 

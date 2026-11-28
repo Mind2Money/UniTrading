@@ -54,23 +54,26 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
     private var records = loaded.getOrDefault(emptyList())
 
     /** A same-group app entry and its exact leader execution must be visible in a complete broker snapshot. */
-    suspend fun begin(row: CopySourceProtection, snapshot: AccountSnapshot): Boolean = mutex.withLock {
+    suspend fun begin(row: CopySourceProtection, snapshot: AccountSnapshot): Boolean =
+        beginResult(row, snapshot) == CopySourceBeginResult.RECORDED
+
+    suspend fun beginResult(row: CopySourceProtection, snapshot: AccountSnapshot): CopySourceBeginResult = mutex.withLock {
         if (unreadable || !valid(row) || row.state != CopySourceProtectionState.INTENDED || records.any { it.requestId == row.requestId } ||
             snapshot.accountId != row.leaderId || snapshot.copyRevision != row.previousRevision || snapshot.copyEpoch != row.epoch ||
-            !snapshot.copyPositionsComplete || !snapshot.copyOrdersComplete) return@withLock false
+            !snapshot.copyPositionsComplete || !snapshot.copyOrdersComplete) return@withLock CopySourceBeginResult.UNSAFE
         if (records.any { it.brokerId == row.brokerId && it.leaderId == row.leaderId && it.groupId == row.groupId &&
                 it.state in setOf(CopySourceProtectionState.INTENDED, CopySourceProtectionState.ACCEPTED, CopySourceProtectionState.UNCERTAIN) })
-            return@withLock false
-        val origin = sources.acceptedSource(row.brokerId, row.leaderId, row.groupId, row.sourceOrderId) ?: return@withLock false
-        val request = origin.request ?: return@withLock false
-        val position = snapshot.positions.singleOrNull { it.id == row.positionId } ?: return@withLock false
+            return@withLock CopySourceBeginResult.UNSAFE
+        val origin = sources.acceptedSource(row.brokerId, row.leaderId, row.groupId, row.sourceOrderId) ?: return@withLock CopySourceBeginResult.UNSAFE
+        val request = origin.request ?: return@withLock CopySourceBeginResult.UNSAFE
+        val position = snapshot.positions.singleOrNull { it.id == row.positionId } ?: return@withLock CopySourceBeginResult.UNSAFE
         if (request.symbol != row.symbol || position.symbol != row.symbol || position.side != request.side ||
             position.side != row.expectedSide || position.lotsHundredths != row.expectedLotsHundredths ||
             position.version != row.previousVersion || position.stopLoss != row.previousStop || position.takeProfit != row.previousTarget ||
             !position.protectionEditable || position.lotsHundredths <= 0 ||
             snapshot.executions.none { it.id == row.sourceExecutionId && it.orderId == row.sourceOrderId && it.symbol == row.symbol &&
-                it.side == request.side && it.lotsHundredths > 0 }) return@withLock false
-        persist(records + row)
+                it.side == request.side && it.lotsHundredths > 0 }) return@withLock CopySourceBeginResult.UNSAFE
+        if (persist(records + row)) CopySourceBeginResult.RECORDED else CopySourceBeginResult.STORAGE_FAILED
     }
 
     suspend fun accepted(requestId: String): Boolean = mutex.withLock {
