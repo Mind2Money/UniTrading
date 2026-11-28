@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.unitrading.app.*
 import com.unitrading.broker.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private data class CopyFollowerInput(val fixed: Boolean = false, val quantity: String = "1", val maximum: String = "1")
@@ -32,6 +33,9 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     var error by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var confirmRecovery by remember { mutableStateOf(false) }
+    var cleanup by remember { mutableStateOf<List<CopyAccountExposure>?>(null) }
+    var cleanupResults by remember { mutableStateOf<List<FlattenOutcome>?>(null) }
+    var clearing by remember { mutableStateOf(false) }
     val leader = catalog.accounts.firstOrNull { it.id == selectedLeader }
     fun follower(accountId: String): CopyFollower? {
         val input = inputs[accountId] ?: CopyFollowerInput()
@@ -45,6 +49,58 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     val valid = leader != null && !leader.readOnly && selected.isNotEmpty() &&
         followers.size == selected.size
 
+    fun inspect(ids: List<String>): CopyStartPreparation {
+        if (runtime.registry.plugins.none { it === broker }) return CopyStartPreparation.Blocked("券商连接已变化，请重新选择账户")
+        val snapshots = runCatching { ids.associateWith { broker.openSession(it).state.value } }.getOrNull()
+            ?: return CopyStartPreparation.Blocked("无法读取所选账户，请检查连接")
+        return CopyStartPreparationInspector.inspect(ids, broker.catalog.value, broker.market.value, snapshots)
+    }
+
+    cleanup?.let { review ->
+        AlertDialog(
+            onDismissRequest = { cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" },
+            title = { Text("所选账户有持仓或挂单") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("是否撤销以下所选账户的全部挂单，并平掉全部持仓？未选择的子账户不受影响。")
+                    review.forEach { row ->
+                        ConfirmationAccount(broker, row.account, "持仓 ${row.positions} · 挂单 ${row.orders}")
+                    }
+                    Text("处理会使用账户在执行时的最新状态。跟单功能尚未完成，本次处理不会启动跟单。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    cleanup = null
+                    clearing = true
+                    scope.launch {
+                        try {
+                            val targets = review.map { FlattenTarget(broker, it.account) }
+                            val results = runtime.accountRisk.flattenAccounts(runtime.registry, targets)
+                            cleanupResults = results
+                            if (results.any { !it.confirmed }) {
+                                notice = null; error = "部分账户未确认空仓且无挂单，请核对券商后再操作。"
+                            } else when (val check = inspect(review.map { it.account.id })) {
+                                CopyStartPreparation.Ready -> { error = null; notice = "所选账户已核对为空仓且无挂单；跟单功能仍在开发中。" }
+                                is CopyStartPreparation.NeedsCleanup -> { notice = null; error = "所选账户仍有持仓或挂单，请重新核对。" }
+                                is CopyStartPreparation.Blocked -> { notice = null; error = check.reason }
+                            }
+                        } catch (cancel: CancellationException) {
+                            throw cancel
+                        } catch (_: Exception) {
+                            notice = null; error = "账户处理结果无法确认，请到券商核对。"
+                        } finally {
+                            clearing = false
+                        }
+                    }
+                }) { Text("是，撤单并平仓") }
+            },
+            dismissButton = { TextButton({ cleanup = null; notice = "设置已保存；持仓和挂单未处理，不能启动跟单。" }) { Text("否，保留现状") } },
+        )
+    }
+    cleanupResults?.let { results -> FlattenResults(results) { cleanupResults = null } }
+
     if (confirmRecovery) AlertDialog(
         onDismissRequest = { confirmRecovery = false },
         title = { Text("同步并核对待确认订单") },
@@ -56,12 +112,13 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
         dismissButton = { TextButton({ confirmRecovery = false }) { Text("取消") } },
     )
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!clearing) onDismiss() },
         title = { Text("账户跟单") },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(status.message, color = if (status.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("跟单功能仍在开发，当前不能启动。正式实现将只跟随 UniTrading 发出的订单。")
+                if (clearing) Text("正在处理所选账户，请等待券商确认。")
                 recovery?.let { record ->
                     Text("有未确认订单：${record.symbol}，账户 ${record.accountIds.joinToString()}。请核对券商端。", color = MaterialTheme.colorScheme.error)
                     OutlinedButton({ confirmRecovery = true }) { Text("同步并核对") }
@@ -111,15 +168,20 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                                 followers.map { CopySavedFollower(it.accountId, it.fixedContracts, it.multiplier, it.maxContracts) }, symbol = null)
                             if (runtime.copyTradingConfiguration.save(config)) {
                                 error = null; notice = "设置已保存；跟单功能仍在开发中。"
+                                when (val check = inspect(listOf(config.leaderId) + config.followers.map { it.accountId })) {
+                                    CopyStartPreparation.Ready -> Unit
+                                    is CopyStartPreparation.NeedsCleanup -> cleanup = check.accounts
+                                    is CopyStartPreparation.Blocked -> error = check.reason
+                                }
                             } else {
                                 notice = null; error = "设置保存失败，请检查账户及本机存储。"
                             }
                         }
-                    }, enabled = valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
+                    }, enabled = !clearing && valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
                     Button({}, enabled = false) { Text("开发中，暂不可启动") }
                 }
             }
         },
-        confirmButton = { TextButton(onDismiss) { Text("关闭") } },
+        confirmButton = { TextButton(onDismiss, enabled = !clearing) { Text("关闭") } },
     )
 }
