@@ -19,14 +19,21 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     val recovery by runtime.copyTrading.recovery.collectAsState()
     val scope = rememberCoroutineScope()
     val catalog by broker.catalog.collectAsState()
-    val accounts = catalog.accounts.filter { it.id != leaderId && !it.readOnly }
-    var selected by remember(broker, leaderId) { mutableStateOf(emptySet<String>()) }
-    var symbol by remember(broker) { mutableStateOf("") }
-    val inputs = remember(broker, leaderId) { mutableStateMapOf<String, CopyFollowerInput>() }
+    val savedConfigurations by runtime.copyTradingConfiguration.configurations.collectAsState()
+    val saved = savedConfigurations[broker.descriptor.id]
+    var selectedLeader by remember(broker) { mutableStateOf(saved?.leaderId ?: leaderId) }
+    var leaderMenu by remember { mutableStateOf(false) }
+    val accounts = catalog.accounts.filter { it.id != selectedLeader && !it.readOnly }
+    var selected by remember(broker) { mutableStateOf(saved?.followers?.map { it.accountId }?.toSet() ?: emptySet()) }
+    var symbol by remember(broker) { mutableStateOf(saved?.symbol.orEmpty()) }
+    val inputs = remember(broker) { mutableStateMapOf<String, CopyFollowerInput>().apply {
+        saved?.followers?.forEach { follower -> put(follower.accountId, CopyFollowerInput(follower.fixedContracts != null,
+            (follower.fixedContracts ?: follower.multiplier).toString(), follower.maxContracts.toString())) }
+    } }
     var error by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf(false) }
     var confirmRecovery by remember { mutableStateOf(false) }
-    val leader = catalog.accounts.firstOrNull { it.id == leaderId }
+    val leader = catalog.accounts.firstOrNull { it.id == selectedLeader }
     fun follower(accountId: String): CopyFollower? {
         val input = inputs[accountId] ?: CopyFollowerInput()
         val quantity = input.quantity.toIntOrNull() ?: return null
@@ -55,7 +62,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
         title = { Text("确认启动 Demo 跟单") },
         text = { Text("主账户：${leader?.name}\n跟随账户：${selectedFollowers.joinToString("、") { account -> val input = inputs[account.id] ?: CopyFollowerInput(); "${account.name}（${if (input.fixed) "固定 ${input.quantity} 张" else "${input.quantity} 倍"}，最多 ${input.maximum} 张）" }}\n合约：${dated?.symbol}\n\n跟单功能尚未完成，暂不能启动。") },
         confirmButton = { TextButton({
-            val settings = CopyPlanSettings(leaderId, followers, dated!!.symbol)
+            val settings = CopyPlanSettings(selectedLeader, followers, dated!!.symbol)
             error = runtime.copyTrading.start(broker, settings)
             confirm = false
         }) { Text("确认启动") } },
@@ -63,7 +70,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
     )
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("账户跟单 · Demo 验证") },
+        title = { Text("账户跟单") },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(status.message, color = if (status.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -76,8 +83,20 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     Text("当前主账户：${status.settings?.leaderId.orEmpty()} · ${status.settings?.symbol.orEmpty()} · ${status.settings?.followers?.size ?: 0} 个跟随账户")
                     OutlinedButton({ runtime.copyTrading.stop() }) { Text("停止跟单") }
                 } else {
-                    Text("主账户：${leader?.name ?: leaderId}")
-                    if (broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO) Text("请切换到 Tradovate Demo 后使用。", color = MaterialTheme.colorScheme.error)
+                    Text("主账户")
+                    Box {
+                        OutlinedButton({ leaderMenu = true }) { Text(leader?.name ?: "选择主账户") }
+                        DropdownMenu(expanded = leaderMenu, onDismissRequest = { leaderMenu = false }) {
+                            catalog.accounts.filter { !it.readOnly }.forEach { account ->
+                                DropdownMenuItem(text = { Text(account.name) }, onClick = {
+                                    selectedLeader = account.id
+                                    selected = selected - account.id
+                                    leaderMenu = false
+                                })
+                            }
+                        }
+                    }
+                    if (!broker.descriptor.id.startsWith("tradovate-")) Text("请先连接 Tradovate。", color = MaterialTheme.colorScheme.error)
                     OutlinedTextField(symbol, { symbol = it.trim().uppercase() }, label = { Text("到期合约，如 MESZ6") }, singleLine = true)
                     Text("选择跟随账户（只能在当前连接内选择）")
                     accounts.forEach { account ->
@@ -98,6 +117,13 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                     }
                     if (accounts.isEmpty()) Text("当前连接没有其他可交易子账户")
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            val config = CopySavedConfiguration(broker.descriptor.id, selectedLeader,
+                                followers.map { CopySavedFollower(it.accountId, it.fixedContracts, it.multiplier, it.maxContracts) }, dated?.symbol)
+                            error = if (runtime.copyTradingConfiguration.save(config)) "设置已保存；跟单功能仍在开发中。" else "设置保存失败，请检查账户及本机存储。"
+                        }
+                    }, enabled = valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
                     Button({ confirm = true }, enabled = false) { Text("开发中，暂不可启动") }
                 }
             }

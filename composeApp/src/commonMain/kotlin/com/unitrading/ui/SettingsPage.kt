@@ -124,7 +124,7 @@ internal fun SettingsPage(
 
             SettingsSection("交易") {
                 val copyStatus by runtime.copyTrading.status.collectAsState()
-                SettingsRow("账户跟单 · Demo 验证", copyStatus.message, AppIcons.AccountCircle, "settings-copy-trading",
+                SettingsRow("账户跟单", copyStatus.message, AppIcons.AccountCircle, "settings-copy-trading",
                     { showCopyTrading = true })
                 if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
