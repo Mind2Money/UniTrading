@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.graphics.toAwtImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -319,9 +320,15 @@ class HistoricalReplayUiTest {
         compose.waitForIdle()
         compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
         // The chart can auto-fit after creating a drawing; find the entry again on the new scale.
-        val inside = Offset(at.x, currentScale().y(entry) + 6f)
-        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
-        compose.waitForIdle()
+        var inside = Offset.Zero
+        for (fraction in listOf(.50f, .54f, .58f, .62f, .46f, .66f)) {
+            inside = Offset(size.width * fraction, currentScale().y(entry) + 20f)
+            chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+            compose.waitForIdle()
+            if (compose.onAllNodesWithTag("drawing-context-menu").fetchSemanticsNodes().isNotEmpty()) break
+            compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.Escape) }
+            compose.waitForIdle()
+        }
         val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
         ImageIO.write(compose.onNodeWithTag("historical-replay").captureToImage().toAwtImage(), "png", diagnostic)
         if (compose.onAllNodesWithTag("drawing-context-menu").fetchSemanticsNodes().isEmpty()) {
