@@ -47,15 +47,19 @@ internal class CopySourceOrders(private val store: SnapshotStore) {
     }
     private var unreadable = loaded.isFailure
     private var records = loaded.getOrDefault(emptyList())
+    private val unrecordedRequests = mutableSetOf<String>()
 
     suspend fun begin(order: CopySourceOrder): Boolean = beginResult(order) == CopySourceBeginResult.RECORDED
 
     suspend fun beginResult(order: CopySourceOrder): CopySourceBeginResult = mutex.withLock {
         if (unreadable || order.brokerId.isBlank() || order.leaderId.isBlank() || order.requestId.isBlank() || order.groupId.isBlank() ||
             (order.request != null && (order.request.automated || order.request.kind != order.kind || order.request.symbol.isBlank())) ||
-            order.state != CopySourceState.INTENDED || order.brokerOrderId != null || records.any { it.requestId == order.requestId })
+            order.state != CopySourceState.INTENDED || order.brokerOrderId != null || order.requestId in unrecordedRequests || records.any { it.requestId == order.requestId })
             return@withLock CopySourceBeginResult.UNSAFE
-        if (persist(records + order)) CopySourceBeginResult.RECORDED else CopySourceBeginResult.STORAGE_FAILED
+        if (persist(records + order)) CopySourceBeginResult.RECORDED else {
+            unrecordedRequests += order.requestId
+            CopySourceBeginResult.STORAGE_FAILED
+        }
     }
 
     suspend fun accepted(requestId: String, brokerOrderId: String): Boolean = mutex.withLock {

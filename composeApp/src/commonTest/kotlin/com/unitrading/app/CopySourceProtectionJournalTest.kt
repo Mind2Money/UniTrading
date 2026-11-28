@@ -113,12 +113,16 @@ class CopySourceProtectionJournalTest {
         assertTrue(sources.accepted("entry-request", "entry"))
         val journal = CopySourceProtectionJournal(store, sources)
         var paused = false
-        val result = CopySourceProtectionCapture(journal) { paused = true }.submit(change, snapshot(), true) {
+        val capture = CopySourceProtectionCapture(journal) { paused = true }
+        val result = capture.submit(change, snapshot(), true) {
             assertTrue(paused)
             TradeResult(true, "accepted")
         }
         assertTrue(result.accepted)
         assertTrue(paused)
         assertTrue(journal.read()!!.isEmpty())
+        var retried = false
+        assertFalse(capture.submit(change, snapshot(), true) { retried = true; TradeResult(true, "unexpected") }.accepted)
+        assertFalse(retried)
     }
 }

@@ -35,6 +35,12 @@ class CopySourceCaptureTest {
         assertTrue(result.accepted)
         assertTrue(sent)
         assertTrue(stopped)
+        sent = false
+        val retry = capture.submit("tradovate", "leader", "group", "leader", "user", request, true) {
+            sent = true; TradeResult(true, "unexpected", "duplicate")
+        }
+        assertFalse(retry.accepted)
+        assertFalse(sent)
     }
 
     @Test fun remembersWhetherSourceWasAnIndependentPendingOrder() = runTest {

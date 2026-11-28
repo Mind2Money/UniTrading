@@ -35,4 +35,9 @@ class CopyProtectionExitPlannerTest {
         assertIs<CopyProtectionExitAction.Stop>(plan(snapshot(executions = emptyList())))
         assertIs<CopyProtectionExitAction.Stop>(plan(snapshot().copy(copyOrdersComplete = false)))
     }
+    @Test fun partialLeaderProtectionFillDoesNotTriggerFullExit() {
+        val partial = event.copy(leaderBefore = 2, leaderAfter = 1)
+        assertIs<CopyProtectionExitAction.Stop>(CopyProtectionExitPlanner.fullExit(partial, "follower", "follower-pos", snapshot(),
+            1, setOf("stop", "target"), emptySet(), mapOf(fill.id to fill), true, false))
+    }
 }

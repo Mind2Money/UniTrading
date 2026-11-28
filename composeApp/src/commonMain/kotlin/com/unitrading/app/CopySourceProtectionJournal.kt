@@ -52,13 +52,14 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
     }
     private val unreadable = loaded.isFailure
     private var records = loaded.getOrDefault(emptyList())
+    private val unrecordedRequests = mutableSetOf<String>()
 
     /** A same-group app entry and its exact leader execution must be visible in a complete broker snapshot. */
     suspend fun begin(row: CopySourceProtection, snapshot: AccountSnapshot): Boolean =
         beginResult(row, snapshot) == CopySourceBeginResult.RECORDED
 
     suspend fun beginResult(row: CopySourceProtection, snapshot: AccountSnapshot): CopySourceBeginResult = mutex.withLock {
-        if (unreadable || !valid(row) || row.state != CopySourceProtectionState.INTENDED || records.any { it.requestId == row.requestId } ||
+        if (unreadable || !valid(row) || row.state != CopySourceProtectionState.INTENDED || row.requestId in unrecordedRequests || records.any { it.requestId == row.requestId } ||
             snapshot.accountId != row.leaderId || snapshot.copyRevision != row.previousRevision || snapshot.copyEpoch != row.epoch ||
             !snapshot.copyPositionsComplete || !snapshot.copyOrdersComplete) return@withLock CopySourceBeginResult.UNSAFE
         if (records.any { it.brokerId == row.brokerId && it.leaderId == row.leaderId && it.groupId == row.groupId &&
@@ -73,7 +74,10 @@ internal class CopySourceProtectionJournal(private val store: SnapshotStore, pri
             !position.protectionEditable || position.lotsHundredths <= 0 ||
             snapshot.executions.none { it.id == row.sourceExecutionId && it.orderId == row.sourceOrderId && it.symbol == row.symbol &&
                 it.side == request.side && it.lotsHundredths > 0 }) return@withLock CopySourceBeginResult.UNSAFE
-        if (persist(records + row)) CopySourceBeginResult.RECORDED else CopySourceBeginResult.STORAGE_FAILED
+        if (persist(records + row)) CopySourceBeginResult.RECORDED else {
+            unrecordedRequests += row.requestId
+            CopySourceBeginResult.STORAGE_FAILED
+        }
     }
 
     suspend fun accepted(requestId: String): Boolean = mutex.withLock {
