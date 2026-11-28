@@ -113,4 +113,28 @@ class CopyMarketOrderSubmitterTest {
         assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", CopyFollower("follower", 1, 2), "MESZ6", fill, "copy-a"))
         assertTrue(target.writes.isEmpty())
     }
+
+    @Test fun multipleLeaderPartialFillsWaitForEachConfirmedFollowerOrder() = runTest {
+        val first = Execution("fill-1", "MESZ6", Side.BUY, 100, 10_100, 1000, "source-order")
+        val second = first.copy(id = "fill-2", timeMs = 2000)
+        val source = FakeSession(AccountInfo("leader", "Leader"), state("leader", listOf(position(Side.BUY, 2)), listOf(first, second)))
+        val target = FakeSession(AccountInfo("follower", "Follower"), state("follower"))
+        val broker = FakeBroker(source, target, spec)
+        val store = MemorySnapshotStore()
+        val journal = CopyDispatchJournal(store)
+        val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store), journal)
+        val follower = CopyFollower("follower", 1, 5, fixedContracts = 2)
+        val fill1 = CopySourceFill("fill-1", "source-order", "leader", 1, 0, 1)
+        val fill2 = CopySourceFill("fill-2", "source-order", "leader", 1, 1, 2)
+        val evidence = CopyLeaderFillEvidence(emptyMap(), emptyMap(), emptyMap(), true)
+        val afterFirst = CopyLeaderFillEvidence(mapOf("MESZ6" to 1), mapOf(first.id to first), emptyMap(), true)
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill1, "incomplete", evidence.copy(executionHistoryComplete = false)))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill2, "out-of-order", evidence))
+        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill1, "first", evidence))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill2, "too-early", afterFirst))
+        target.state.value = state("follower", listOf(position(Side.BUY, 2)))
+        assertTrue(journal.confirmed("first", "target-1", 2, 2, true))
+        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill2, "second", afterFirst))
+        assertEquals(listOf(200L, 200L), target.writes.map { it.lotsHundredths })
+    }
 }
