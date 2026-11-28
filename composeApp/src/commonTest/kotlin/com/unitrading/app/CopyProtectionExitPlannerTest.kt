@@ -35,9 +35,22 @@ class CopyProtectionExitPlannerTest {
         assertIs<CopyProtectionExitAction.Stop>(plan(snapshot(executions = emptyList())))
         assertIs<CopyProtectionExitAction.Stop>(plan(snapshot().copy(copyOrdersComplete = false)))
     }
-    @Test fun partialLeaderProtectionFillDoesNotTriggerFullExit() {
+    @Test fun onlyExactConfirmedExitFillCanCompleteTheOperation() {
+        val exit = fill.copy(id = "close-fill", side = Side.SELL, orderId = "close-order")
+        val flat = snapshot(emptyList(), emptyList(), listOf(fill, exit))
+        val evidence = CopyProtectionCloseEvidence("close-order", 200)
+        assertIs<CopyProtectionExitAction.Finished>(CopyProtectionExitPlanner.fullExit(event, "follower", "follower-pos", flat,
+            1, setOf("stop", "target"), setOf("stop", "target"), mapOf(fill.id to fill), true, false, evidence))
+        assertIs<CopyProtectionExitAction.Stop>(CopyProtectionExitPlanner.fullExit(event, "follower", "follower-pos", flat,
+            1, setOf("stop", "target"), setOf("stop", "target"), mapOf(fill.id to fill), true, false, evidence.copy(lotsHundredths = 100)))
+    }
+    @Test fun partialLeaderProtectionFillClosesFollowerAndRequiresReview() {
         val partial = event.copy(leaderBefore = 2, leaderAfter = 1)
-        assertIs<CopyProtectionExitAction.Stop>(CopyProtectionExitPlanner.fullExit(partial, "follower", "follower-pos", snapshot(),
+        assertIs<CopyProtectionExitAction.Cancel>(CopyProtectionExitPlanner.fullExit(partial, "follower", "follower-pos", snapshot(),
             1, setOf("stop", "target"), emptySet(), mapOf(fill.id to fill), true, false))
+        assertIs<CopyProtectionExitAction.Close>(CopyProtectionExitPlanner.fullExit(partial, "follower", "follower-pos", snapshot(emptyList()),
+            1, setOf("stop", "target"), setOf("stop", "target"), mapOf(fill.id to fill), true, false))
+        assertIs<CopyProtectionExitAction.Stop>(CopyProtectionExitPlanner.fullExit(partial, "follower", "follower-pos", snapshot(emptyList(), emptyList()),
+            1, setOf("stop", "target"), setOf("stop", "target"), mapOf(fill.id to fill), true, false))
     }
 }

@@ -9,21 +9,32 @@ internal sealed interface CopyProtectionExitAction {
     data class Stop(val reason: String) : CopyProtectionExitAction
 }
 
+/** Only provide this after the exact closing order is broker-confirmed and its durable intent is reconciled. */
+internal data class CopyProtectionCloseEvidence(val orderId: String, val lotsHundredths: Long)
+
 /** Plans a single step only; the caller must persist each intent and confirm it at the broker before planning again. */
 internal object CopyProtectionExitPlanner {
     fun fullExit(event: CopyLeaderEvent.ProtectionFill, followerId: String, followerPositionId: String,
         snapshot: AccountSnapshot, expectedEpoch: Long, protectionOrderIds: Set<String>, confirmedCancelledIds: Set<String>,
-        previousExecutions: Map<String, Execution>, executionHistoryComplete: Boolean, unresolved: Boolean): CopyProtectionExitAction {
+        previousExecutions: Map<String, Execution>, executionHistoryComplete: Boolean, unresolved: Boolean,
+        confirmedClose: CopyProtectionCloseEvidence? = null): CopyProtectionExitAction {
         fun stop(reason: String) = CopyProtectionExitAction.Stop(reason)
-        if (event.leaderBefore == 0 || event.leaderAfter != 0 || event.leaderBefore.toLong() + event.signedContracts != 0L ||
+        if (event.leaderBefore == 0 || event.signedContracts == 0 || (event.leaderBefore > 0) == (event.signedContracts > 0) ||
+            event.leaderBefore.toLong() + event.signedContracts != event.leaderAfter.toLong() ||
+            (event.leaderAfter != 0 && (event.leaderBefore > 0) != (event.leaderAfter > 0)) ||
             event.symbol.isBlank() || event.executionId.isBlank() || followerId.isBlank() || followerPositionId.isBlank())
-            return stop("主账户保护成交不是已确认的全部平仓")
+            return stop("主账户保护成交无法确认")
         if (unresolved || !executionHistoryComplete || snapshot.accountId != followerId || snapshot.copyEpoch != expectedEpoch ||
             snapshot.copyRevision == null || !snapshot.copyPositionsComplete || !snapshot.copyOrdersComplete ||
             !protectionOrderIds.containsAll(confirmedCancelledIds) || protectionOrderIds.any(String::isBlank)) return stop("账户或保护单状态无法确认")
         val allFills = snapshot.executions.associateBy { it.id }
+        val newFills = snapshot.executions.filter { it.id !in previousExecutions && it.symbol == event.symbol }
+        val closeSide = if (event.leaderBefore > 0) Side.SELL else Side.BUY
+        val verifiedClose = confirmedClose != null && confirmedClose.orderId.isNotBlank() && confirmedClose.lotsHundredths > 0 &&
+            newFills.isNotEmpty() && newFills.all { it.orderId == confirmedClose.orderId && it.side == closeSide && it.lotsHundredths > 0 } &&
+            newFills.sumOf { it.lotsHundredths } == confirmedClose.lotsHundredths && snapshot.positions.none { it.symbol == event.symbol }
         if (allFills.size != snapshot.executions.size || previousExecutions.any { (id, row) -> id != row.id || allFills[id] != row } ||
-            snapshot.executions.any { it.id !in previousExecutions && it.symbol == event.symbol })
+            (newFills.isNotEmpty() && !verifiedClose) || (confirmedClose != null && !verifiedClose))
             return stop("跟随账户出现新的成交或成交历史不完整，请核对")
         val positions = snapshot.positions.filter { it.symbol == event.symbol }
         if (positions.size > 1) return stop("跟随账户仓位无法确认")
@@ -38,7 +49,8 @@ internal object CopyProtectionExitPlanner {
             protectionOrderIds.any { it !in activeIds && it !in confirmedCancelledIds }) return stop("保护单撤销结果尚未确认")
         val cancel = activeIds.sorted().firstOrNull()
         if (cancel != null) return CopyProtectionExitAction.Cancel(cancel)
-        if (position == null) return CopyProtectionExitAction.Finished
+        if (position == null) return if (event.leaderAfter == 0) CopyProtectionExitAction.Finished
+            else stop("跟随账户已全平，主账户仍有仓位；请核对后恢复")
         return CopyProtectionExitAction.Close(position.id, if (position.side == Side.BUY) Side.SELL else Side.BUY, position.lotsHundredths)
     }
 }
