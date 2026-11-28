@@ -310,13 +310,15 @@ class HistoricalReplayUiTest {
         chart.performMouseInput { moveTo(at); click() }
         compose.waitForIdle()
         compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
-        chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        // Open from inside the shaded position area, away from the entry line and its handle.
+        val inside = at + Offset(6f, 6f)
+        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
         compose.onNodeWithTag("drawing-context-menu").assertExists()
         compose.onNodeWithTag("drawing-menu-icon-create-order", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("drawing-menu-sync-GLOBAL").performScrollTo().performClick()
         compose.waitUntil(5_000) { runtime.drawings.drawings.any { it.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION } }
-        chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
         compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
         compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
