@@ -33,6 +33,9 @@ internal object CopyLeaderFillAssessment {
         val all = snapshot.executions.associateBy { it.id }
         if (previouslySeen.any { (id, fill) -> all[id] != fill }) return stop("成交历史缺失或已变化，请重新核对")
         val fresh = snapshot.executions.filterNot { it.id in previouslySeen }.sortedWith(compareBy<Execution> { it.timeMs }.thenBy { it.id })
+        val lastSeenTime = previouslySeen.values.groupBy { it.symbol }.mapValues { (_, fills) -> fills.maxOf { it.timeMs } }
+        if (fresh.any { fill -> lastSeenTime[fill.symbol]?.let { fill.timeMs <= it } == true })
+            return stop("出现延迟或顺序不明的历史成交，请重新核对")
         if (fresh.zipWithNext().any { (a, b) -> a.timeMs == b.timeMs && (a.symbol == b.symbol && a.side != b.side) })
             return stop("成交顺序无法确认，请核对")
         val net = previousNet.toMutableMap()

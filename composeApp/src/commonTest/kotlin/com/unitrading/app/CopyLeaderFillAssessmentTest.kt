@@ -49,4 +49,12 @@ class CopyLeaderFillAssessmentTest {
         assertIs<CopyLeaderFillResult.Blocked>(assess(snapshot(listOf(first), emptyList())))
         assertIs<CopyLeaderFillResult.Blocked>(assess(snapshot(listOf(first), listOf(position())), complete = false))
     }
+    @Test fun delayedAndSimultaneousEarlierFillsDoNotGetAppliedAfterCheckpoint() {
+        val earlier = second.copy(timeMs = first.timeMs - 1)
+        val simultaneous = second.copy(timeMs = first.timeMs)
+        for (late in listOf(earlier, simultaneous)) {
+            assertIs<CopyLeaderFillResult.Blocked>(assess(snapshot(listOf(first, late), listOf(position(200))),
+                previous = mapOf("MESZ6" to 1), seen = mapOf(first.id to first)))
+        }
+    }
 }
