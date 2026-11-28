@@ -53,6 +53,24 @@ class HistoricalReplayUiTest {
         }
     }
 
+    @Test fun secondStepLoadsSupportedHistoryAtTheCurrentReplayTime() {
+        val instrument = Instrument("MES", "MES", "期货", 2, tickSize = 25, tickValueMicrosPerLot = 1_250_000,
+            minLotsHundredths = 100, lotStepHundredths = 100, quantityDecimals = 0)
+        val start = 1_700_000_040_000L
+        val bars = (0..3).map { Candle(start + it * 60_000L, 10_000, 10_025, 9_975, 10_000) }
+        val seconds = (0..240).map { Candle(start + it * 1_000L, 10_000, 10_025, 9_975, 10_000) }
+        var requested = false
+        compose.setContent { TradingTheme { HistoricalReplayDialog(ReplayInput(instrument, Timeframe.M1, false,
+            ChartTimeZone.SHANGHAI, bars, emptyList(), secondHistory = true),
+            history = { _, frame -> if (frame == Timeframe.ofSeconds(1)) seconds else emptyList() },
+            watch = { _, frame -> if (frame == Timeframe.ofSeconds(1)) requested = true }) {} } }
+        awaitReplay()
+        compose.onNodeWithTag("replay-period-menu").performClick()
+        compose.onNodeWithTag("replay-step-1s").assertIsEnabled().performClick()
+        compose.onNodeWithTag("replay-period-menu").assertTextContains("1秒")
+        assertTrue(requested)
+    }
+
     @Test fun replayIntervalsShareLiveSettingsWithoutRestartingTheSimulation() {
         val broker = OfflineOrderBroker()
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = false).apply { paused.value = true }

@@ -54,7 +54,7 @@ internal data class ReplayInput(val instrument: Instrument, val timeframe: Timef
     val rawFrame: Timeframe = timeframe, val instruments: List<Instrument> = listOf(instrument),
     val intervals: IntervalOptions = IntervalOptions(), val priceAxis: PriceAxisSettings = PriceAxisSettings(),
     val skipConfirmation: Boolean = false,
-    val riskConfig: ReplayRiskConfig = defaultReplayRiskConfig())
+    val riskConfig: ReplayRiskConfig = defaultReplayRiskConfig(), val secondHistory: Boolean = false)
 
 /** Hide the broker's continuous-series caveat in replay, without hiding actual data-loading errors. */
 internal fun visibleReplayHistoryError(message: String?): String? = message?.split("；")
@@ -809,9 +809,10 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                         DropdownMenu(periodMenu, { periodMenu = false }, modifier = Modifier.widthIn(min = 220.dp).heightIn(max = if (tablet) 560.dp else 500.dp)) {
                             val options = replayStepCandidates(chartFrame)
                             options.forEach { frame ->
-                                val available = frame in stepChoices
+                                val canLoadSecond = frame == Timeframe.ofSeconds(1) && input.secondHistory && sourceFrame.seconds > 1
+                                val available = frame in stepChoices || canLoadSecond
                                 DropdownMenuItem(text = { Text(stepLabel(frame) + if (available) "" else " · 不可用") },
-                                    onClick = { stepFrame = frame; autoStep = false; periodMenu = false }, enabled = available,
+                                    onClick = { stepFrame = frame; autoStep = false; periodMenu = false; if (canLoadSecond) requestFinerHistory(frame) }, enabled = available,
                                     modifier = Modifier.heightIn(min = if (tablet) 48.dp else 40.dp).testTag("replay-step-${frame.id}"),
                                     trailingIcon = if (selectedStep == frame) ({ Icon(AppIcons.Check, "当前更新周期", Modifier.size(18.dp)) }) else null)
                             }

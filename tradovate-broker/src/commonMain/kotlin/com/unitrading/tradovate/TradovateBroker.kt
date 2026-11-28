@@ -38,7 +38,7 @@ class TradovateBroker(
         if (credentials.environment == TradovateEnvironment.DEMO) BrokerEnvironment.REMOTE_DEMO else BrokerEnvironment.LIVE)
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
         addProtection = false, removeProtection = false, atomicProtectionEdit = false, modifyOrderQuantity = true, ocoProtection = true,
-        tradingDayPnl = true)
+        tradingDayPnl = true, secondHistory = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments

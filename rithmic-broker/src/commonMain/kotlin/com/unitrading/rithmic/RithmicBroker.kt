@@ -53,7 +53,7 @@ class RithmicBroker(
     // A pending entry's bracket is a distance in ticks, which a new entry price takes along.
     override val capabilities = BrokerCapabilities(hedging = false, resynchronize = true,
         addProtection = false, removeProtection = false, atomicProtectionEdit = false, ocoProtection = true,
-        bracketsFollowEntry = true)
+        bracketsFollowEntry = true, secondHistory = true)
     private val mutableCatalog = MutableStateFlow(BrokerCatalog(emptyList(), emptyList()))
     override val catalog: StateFlow<BrokerCatalog> = mutableCatalog.asStateFlow()
     override val instruments get() = catalog.value.instruments

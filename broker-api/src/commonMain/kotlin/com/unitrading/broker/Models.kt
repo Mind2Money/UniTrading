@@ -154,6 +154,8 @@ data class BrokerCapabilities(
      * moving the entry moves them too. Elsewhere they stay at the prices they had.
      */
     val bracketsFollowEntry: Boolean = false,
+    /** The broker adapter can request one-second historical bars; availability still depends on the contract and range. */
+    val secondHistory: Boolean = false,
 ) {
     /** Whether an open position can take a stop loss or take profit it does not have yet. */
     val addPositionProtection: Boolean get() = addProtection || ocoProtection
