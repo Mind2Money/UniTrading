@@ -58,6 +58,24 @@ class ChartContextMenuUiTest {
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
 
+    @Test fun positionDrawingAlwaysRequiresConfirmationAndOrderRiskBlocksCreation() {
+        render(skipConfirmation = true)
+        compose.runOnIdle { runtime.drawings.chooseTool(com.unitrading.chart.drawing.DrawingTool.LONG_POSITION) }
+        val at = pointAt(549_000)
+        chart().performMouseInput { click(at) }
+        compose.waitUntil(5_000) { runtime.drawings.selected?.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION }
+        rightClick(549_000)
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("confirm-action").assertExists()
+        assertTrue(broker.placed.isEmpty(), "A drawing must require confirmation even when skip-confirmation is enabled")
+        compose.onNodeWithTag("cancel-order-review").performClick()
+        runBlocking { assertNull(runtime.accountRisk.configureBrackets(broker, "100", com.unitrading.app.AccountBrackets(loss = 100_000_000))) }
+        rightClick(549_000)
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("confirm-action").assertDoesNotExist()
+        assertTrue(broker.placed.isEmpty(), "The order-risk mode must prevent creation")
+    }
+
     @Test fun chartMenuReopensTheRightHandTicketAndPrefillsTheOrder() {
         render(skipConfirmation = true)
         compose.onNodeWithTag("rail-order").performClick()

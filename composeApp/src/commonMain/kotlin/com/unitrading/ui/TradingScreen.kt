@@ -1169,6 +1169,9 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         showNotice("当前子账户已启用订单风控或风控无法读取，不能从多头或空头仓位绘图创建挂单。", attention = true)
                         return
                     }
+                    if (!instrument.currency.equals(session.account.currency, ignoreCase = true)) {
+                        showNotice("合约与子账户币种不同，无法按绘图风险计算手数。", attention = true); return
+                    }
                     val currentQuote = instrument.executionSymbol?.let { plugin.market.value.quotes[it] } ?: quote
                     val candidate = try {
                         requireNotNull(currentQuote) { "当前报价不可用，请等待有效行情" }
