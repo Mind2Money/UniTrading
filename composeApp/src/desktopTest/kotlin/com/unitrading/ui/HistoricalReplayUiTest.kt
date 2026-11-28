@@ -23,6 +23,7 @@ import com.unitrading.app.TradingRuntime
 import com.unitrading.broker.*
 import com.unitrading.chart.ReplayRiskConfig
 import com.unitrading.chart.ReplayDrawdown
+import com.unitrading.chart.PriceScale
 import com.unitrading.chart.IndicatorConfig
 import com.unitrading.chart.IndicatorKind
 import com.unitrading.chart.OrderTagButtons
@@ -307,11 +308,18 @@ class HistoricalReplayUiTest {
         val chart = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("historical-replay")))
         val size = chart.fetchSemanticsNode().size
         val at = Offset(size.width * .58f, size.height * .75f)
+        fun currentScale(): PriceScale {
+            val state = chart.fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+                .split(';').associate { it.substringBefore(':') to it.substringAfter(':') }
+            return PriceScale(state.getValue("low").toDouble(), state.getValue("high").toDouble(),
+                state.getValue("plotTop").toFloat(), state.getValue("plotBottom").toFloat())
+        }
+        val entry = currentScale().price(at.y, broker.spec.tickSize)
         chart.performMouseInput { moveTo(at); click() }
         compose.waitForIdle()
         compose.onNode(hasTestTag("drawing-bar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
-        // Open from inside the shaded position area, away from the entry line and its handle.
-        val inside = at + Offset(6f, 6f)
+        // The chart can auto-fit after creating a drawing; find the entry again on the new scale.
+        val inside = Offset(at.x, currentScale().y(entry) + 6f)
         chart.performMouseInput { moveTo(inside); press(MouseButton.Secondary); release(MouseButton.Secondary) }
         compose.waitForIdle()
         val diagnostic = File("../artifacts/replay-drawing-debug.png").also { it.parentFile.mkdirs() }
