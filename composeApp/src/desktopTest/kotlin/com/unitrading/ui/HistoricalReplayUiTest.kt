@@ -292,6 +292,33 @@ class HistoricalReplayUiTest {
         assertTrue(chartHistory() == "1")
     }
 
+    @Test fun replayDrawingMenuSharesGlobalDrawingsAndOrdersOnlyInReplay() {
+        val broker = OfflineOrderBroker()
+        val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }
+        compose.setContent { TradingScreen(runtime) }
+        compose.onNodeWithTag("quick-login-picker").performClick()
+        compose.onNodeWithTag("quick-login-${broker.descriptor.id}").performClick()
+        compose.onNodeWithTag("open-historical-replay").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-begin").performScrollTo().performClick()
+        awaitReplay()
+        val toolbarMenu = hasTestTag("drawing-group-FORECAST-menu") and hasAnyAncestor(hasTestTag("historical-replay"))
+        compose.onNode(toolbarMenu).performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-tool-LONG_POSITION").performClick()
+        val chart = compose.onNode(hasTestTag("trading-chart") and hasAnyAncestor(hasTestTag("historical-replay")))
+        val size = chart.fetchSemanticsNode().size
+        val at = Offset(size.width * .58f, size.height * .75f)
+        chart.performMouseInput { moveTo(at); click() }
+        chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("drawing-menu-icon-create-order", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-sync-GLOBAL").performScrollTo().performClick()
+        compose.waitUntil(5_000) { runtime.drawings.drawings.any { it.tool == com.unitrading.chart.drawing.DrawingTool.LONG_POSITION } }
+        chart.performMouseInput { moveTo(at); press(MouseButton.Secondary); release(MouseButton.Secondary) }
+        compose.onNodeWithTag("drawing-menu-create-order").performScrollTo().performClick()
+        compose.onNodeWithTag("replay-confirm-order").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("replay-pending-list").assertExists()
+        assertTrue(broker.placed.isEmpty(), "A replay drawing must never submit to the broker")
+    }
+
     @Test fun openingReplayFromConnectedWorkspaceNeverSendsBrokerOrders() {
         val broker = OfflineOrderBroker()
         val runtime = TradingRuntime(MemorySnapshotStore(), listOf(broker), includeDemoBrokers = true).apply { paused.value = true }

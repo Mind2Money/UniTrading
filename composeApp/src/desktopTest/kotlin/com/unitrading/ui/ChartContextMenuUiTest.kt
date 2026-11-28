@@ -58,6 +58,23 @@ class ChartContextMenuUiTest {
     }
     private fun item(name: String) = compose.onNodeWithTag("plot-menu-$name")
 
+    @Test fun drawingMenuAlignsIconsAndMarksSelectedVisibility() {
+        render()
+        compose.runOnIdle { runtime.drawings.addHorizontalLine(com.unitrading.chart.drawing.DrawingPoint(broker.time - 60_000, 548_500.0)) }
+        rightClick(548_500)
+        for (tag in listOf("order", "visibility", "objects", "clone", "copy", "sync-LOCAL", "sync-LAYOUT", "sync-GLOBAL", "lock", "hide", "remove", "settings"))
+            compose.onNodeWithTag("drawing-menu-icon-$tag", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility").performClick()
+        compose.onNodeWithTag("drawing-menu-visibility-ALL").assertIsSelected()
+        compose.onNodeWithTag("drawing-menu-visibility-check-ALL", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility-CURRENT").performClick()
+        rightClick(548_500)
+        compose.onNodeWithTag("drawing-menu-visibility").performClick()
+        compose.onNodeWithTag("drawing-menu-visibility-CURRENT").assertIsSelected()
+        compose.onNodeWithTag("drawing-menu-visibility-check-CURRENT", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("drawing-menu-visibility-ALL").assertIsNotSelected()
+    }
+
     @Test fun positionDrawingAlwaysRequiresConfirmationAndOrderRiskBlocksCreation() {
         render(skipConfirmation = true)
         compose.runOnIdle { runtime.drawings.chooseTool(com.unitrading.chart.drawing.DrawingTool.LONG_POSITION) }

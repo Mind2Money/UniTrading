@@ -14,11 +14,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -152,36 +154,42 @@ internal fun DrawingContextMenu(layer: DrawingLayer, onObjects: (() -> Unit)? = 
     var visibilityMenu by remember(d.id) { mutableStateOf(false) }
     Box(Modifier.offset { IntOffset(at.x.roundToInt(), at.y.roundToInt()) }) {
         DropdownMenu(true, { drawings.closeMenu() }, Modifier.widthIn(min = 280.dp).testTag("drawing-context-menu")) {
-            @Composable fun item(label: String, tag: String, onClick: () -> Unit) = DropdownMenuItem(text = { Text(label) }, onClick = onClick, modifier = Modifier.testTag("drawing-menu-$tag"))
+            @Composable fun item(label: String, tag: String, icon: ImageVector, onClick: () -> Unit) = DropdownMenuItem(
+                text = { Text(label) }, leadingIcon = { Icon(icon, null, Modifier.size(20.dp).testTag("drawing-menu-icon-$tag")) },
+                onClick = onClick, modifier = Modifier.testTag("drawing-menu-$tag"))
             Box {
-                DropdownMenuItem(text = { Text("视觉顺序") }, leadingIcon = { Icon(AppIcons.Layers, null) },
+                DropdownMenuItem(text = { Text("视觉顺序") }, leadingIcon = { Icon(AppIcons.Layers, null, Modifier.size(20.dp).testTag("drawing-menu-icon-order")) },
                     trailingIcon = { Icon(AppIcons.ChevronRight, null) }, onClick = { orderMenu = true }, modifier = Modifier.testTag("drawing-menu-order"))
                 DropdownMenu(orderMenu, { orderMenu = false }, offset = androidx.compose.ui.unit.DpOffset(280.dp, (-48).dp)) {
                     listOf(Triple("置于顶层", "front", Int.MAX_VALUE), Triple("置于底层", "back", Int.MIN_VALUE),
                         Triple("上移一层", "forward", 1), Triple("下移一层", "backward", -1)).forEach { (label, tag, amount) ->
-                        item(label, tag) { orderMenu = false; drawings.moveOrder(d.id, amount) }
+                        item(label, tag, when (tag) { "front" -> AppIcons.ExpandLess; "back" -> AppIcons.ExpandMore; "forward" -> AppIcons.ExpandLess; else -> AppIcons.ExpandMore }) { orderMenu = false; drawings.moveOrder(d.id, amount) }
                     }
                 }
             }
             Box {
-                DropdownMenuItem(text = { Text("时间周期可见性") }, trailingIcon = { Icon(AppIcons.ChevronRight, null) },
+                DropdownMenuItem(text = { Text("时间周期可见性") }, leadingIcon = { Icon(AppIcons.Calendar, null, Modifier.size(20.dp).testTag("drawing-menu-icon-visibility")) }, trailingIcon = { Icon(AppIcons.ChevronRight, null) },
                     onClick = { visibilityMenu = true }, modifier = Modifier.testTag("drawing-menu-visibility"))
                 DropdownMenu(visibilityMenu, { visibilityMenu = false }, offset = androidx.compose.ui.unit.DpOffset(280.dp, (-48).dp)) {
                     listOf(DrawingTimeVisibility.CURRENT_AND_ABOVE to "当前及以上时间周期", DrawingTimeVisibility.CURRENT_AND_BELOW to "当前及以下时间周期",
                         DrawingTimeVisibility.CURRENT to "仅当前时间周期", DrawingTimeVisibility.ALL to "所有时间周期").forEach { (mode, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = {
-                            drawings.update(d.copy(timeVisibility = mode, visibilityReferenceSeconds = timeframe.seconds, hiddenIntervals = emptySet()))
-                            visibilityMenu = false; drawings.closeMenu()
-                        }, modifier = Modifier.testTag("drawing-menu-visibility-${mode.name}"))
+                        val isSelected = d.timeVisibility == mode && d.hiddenIntervals.isEmpty()
+                        DropdownMenuItem(text = { Text(label) },
+                            leadingIcon = { Icon(AppIcons.Calendar, null, Modifier.size(20.dp)) },
+                            trailingIcon = { if (isSelected) Icon(AppIcons.Check, "当前可见性", Modifier.size(20.dp).testTag("drawing-menu-visibility-check-${mode.name}")) },
+                            onClick = {
+                                drawings.update(d.copy(timeVisibility = mode, visibilityReferenceSeconds = timeframe.seconds, hiddenIntervals = emptySet()))
+                                visibilityMenu = false; drawings.closeMenu()
+                            }, modifier = Modifier.testTag("drawing-menu-visibility-${mode.name}").semantics { selected = isSelected })
                     }
                 }
             }
-            DropdownMenuItem(text = { Text("对象树") }, enabled = onObjects != null, onClick = { drawings.closeMenu(); onObjects?.invoke() }, modifier = Modifier.testTag("drawing-menu-objects"))
+            DropdownMenuItem(text = { Text("对象树") }, leadingIcon = { Icon(AppIcons.OrderBook, null, Modifier.size(20.dp).testTag("drawing-menu-icon-objects")) }, enabled = onObjects != null, onClick = { drawings.closeMenu(); onObjects?.invoke() }, modifier = Modifier.testTag("drawing-menu-objects"))
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item("克隆", "clone") { drawings.clone(d.id) }
-            item("复制", "copy") { drawings.copySelected(); drawings.closeMenu() }
+            item("克隆", "clone", DrawingIcons.Clone) { drawings.clone(d.id) }
+            item("复制", "copy", DrawingIcons.Clone) { drawings.copySelected(); drawings.closeMenu() }
             if (onPositionOrder != null && d.tool in listOf(DrawingTool.LONG_POSITION, DrawingTool.SHORT_POSITION)) {
-                item("创建挂单…", "create-order") { drawings.closeMenu(); onPositionOrder(d) }
+                item("创建挂单…", "create-order", AppIcons.OrderEntry) { drawings.closeMenu(); onPositionOrder(d) }
             }
             if (drawings.supportsDrawingSync) {
                 DividerLine(Modifier.padding(vertical = 4.dp))
@@ -191,17 +199,19 @@ internal fun DrawingContextMenu(layer: DrawingLayer, onObjects: (() -> Unit)? = 
                         DrawingSyncScope.LAYOUT -> "同步到当前布局图表"
                         DrawingSyncScope.GLOBAL -> "本机全局同步"
                     }
-                    DropdownMenuItem(text = { Text(label) }, leadingIcon = { if (d.syncScope == choice) Icon(AppIcons.Check, "当前同步范围") },
+                    DropdownMenuItem(text = { Text(label) },
+                        leadingIcon = { Icon(when (choice) { DrawingSyncScope.LOCAL -> AppIcons.Close; DrawingSyncScope.LAYOUT -> AppIcons.Link; DrawingSyncScope.GLOBAL -> AppIcons.Language }, null, Modifier.size(20.dp).testTag("drawing-menu-icon-sync-${choice.name}")) },
+                        trailingIcon = { if (d.syncScope == choice) Icon(AppIcons.Check, "当前同步范围", Modifier.size(20.dp)) },
                         onClick = { scope.launch { drawings.changeSyncScope(d.id, choice); drawings.closeMenu() } }, modifier = Modifier.testTag("drawing-menu-sync-${choice.name}"))
                 }
             }
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item(if (d.locked) "解锁" else "锁定", "lock") { drawings.toggleLock(d.id) }
-            item("隐藏", "hide") { drawings.hide(d.id) }
-            item("移除", "remove") { drawings.remove(d.id) }
+            item(if (d.locked) "解锁" else "锁定", "lock", if (d.locked) DrawingIcons.Locked else DrawingIcons.Unlocked) { drawings.toggleLock(d.id) }
+            item("隐藏", "hide", AppIcons.VisibilityOff) { drawings.hide(d.id) }
+            item("移除", "remove", AppIcons.Delete) { drawings.remove(d.id) }
             DividerLine(Modifier.padding(vertical = 4.dp))
-            item("设置…", "settings") { drawings.openSettings(d.id) }
-            if (d.tool.hasText) item("编辑文字…", "text") { drawings.openText(d.id) }
+            item("设置…", "settings", AppIcons.Settings) { drawings.openSettings(d.id) }
+            if (d.tool.hasText) item("编辑文字…", "text", AppIcons.Edit) { drawings.openText(d.id) }
         }
     }
 }

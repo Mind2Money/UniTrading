@@ -1517,6 +1517,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             }
                         },
                         drawingDefaults = runtime.drawingLibrary,
+                        globalDrawings = runtime.globalDrawings,
                         historyError = replayError,
                         onDismiss = { replayGeneration++; replayJobs.values.toList().forEach { it.cancel() }; replayJobs.clear(); replaySeries.clear(); replayLoading.clear(); replayPrepared = null; replayError = null; replayInput = null }) }
                 }

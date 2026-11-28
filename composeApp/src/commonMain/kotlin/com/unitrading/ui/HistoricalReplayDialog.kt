@@ -71,6 +71,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
     records: ReplayRecords? = null,
     history: (String, Timeframe) -> List<Candle> = { _, _ -> emptyList() },
     watch: (String, Timeframe) -> Unit = { _, _ -> }, drawingDefaults: DrawingLibrary? = null,
+    globalDrawings: DrawingLibrary? = null,
     historyError: String? = null,
     intervals: IntervalOptions = input.intervals,
     tablet: Boolean = false,
@@ -113,7 +114,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
                 ReplayWorkspace(input.copy(instrument = selected), bars, rawFrame,
                     changeSymbol = { symbol -> input.instruments.firstOrNull { it.symbol == symbol }?.let {
                         selected = it; fineSnapshot = null; watch(symbol, input.rawFrame)
-                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, historyError = historyError,
+                    } }, history = history, watch = watch, revision = revision, drawingDefaults = drawingDefaults, globalDrawings = globalDrawings, historyError = historyError,
                     records = records, temporaryRecords = temporaryRecords, intervals = intervals, tablet = tablet, onDismiss = onDismiss)
             }
         }
@@ -124,7 +125,7 @@ internal fun HistoricalReplayDialog(input: ReplayInput, revision: Long = 0,
 private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initialFrame: Timeframe,
     changeSymbol: (String) -> Unit,
     history: (String, Timeframe) -> List<Candle>, watch: (String, Timeframe) -> Unit,
-    revision: Long, drawingDefaults: DrawingLibrary?, historyError: String?, records: ReplayRecords?,
+    revision: Long, drawingDefaults: DrawingLibrary?, globalDrawings: DrawingLibrary?, historyError: String?, records: ReplayRecords?,
     temporaryRecords: MutableList<ReplayRecord>, intervals: IntervalOptions, tablet: Boolean, onDismiss: () -> Unit) {
     val spec = input.instrument
     var bars by remember { mutableStateOf(initialBars) }
@@ -191,10 +192,20 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val indicatorSettings by indicatorController.settings.collectAsState()
     val scope = rememberCoroutineScope()
     LaunchedEffect(indicatorController) { indicatorController.apply(IndicatorSettings(input.indicators)) }
-    val drawings = remember(drawingDefaults) {
-        val local = DrawingLibrary(MemorySnapshotStore())
-        ChartDrawings(local, drawingDefaults ?: local).also { it.bind(spec.symbol) }
+    // Every split chart owns its local drawings. Layout drawings are shared only inside this replay;
+    // global drawings use the same on-device library as the main workspace.
+    val replayLibraries = remember(drawingDefaults, globalDrawings) {
+        val defaults = drawingDefaults ?: DrawingLibrary(MemorySnapshotStore())
+        val layout = DrawingLibrary(MemorySnapshotStore())
+        val global = globalDrawings ?: DrawingLibrary(MemorySnapshotStore())
+        Triple(defaults, layout, global)
     }
+    val replayDrawings = remember(replayLibraries) { mutableMapOf<String, ChartDrawings>() }
+    fun drawingsFor(id: String): ChartDrawings = replayDrawings.getOrPut(id) {
+        ChartDrawings(DrawingLibrary(MemorySnapshotStore()), replayLibraries.first, replayLibraries.second, replayLibraries.third)
+            .also { it.bind(spec.symbol) }
+    }
+    val drawings = drawingsFor(activeChart)
     remember(indicatorController, drawings, objectLayers) { ChartUndoCoordinator(indicatorController, drawings, objectLayers, scope) }.scope = scope
     val current = bars[state.index]
     val regularIndices = remember(bars, regular, sourceFrame) {
@@ -423,6 +434,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
     val ticketSpec = if (spec.isContinuous && spec.executionSymbol == null) spec.copy(isContinuous = false) else spec
     val replayQuote = Quote(current.close, current.close, current.timeMs)
     fun previewOrder(order: OrderRequest): OrderPreview = runCatching {
+        require(!selectingBar) { "请先选择回放起点或取消选择" }
         require(!risk.failed) { "已触及回撤限制" }
         require(!risk.targetReached) { "已达到盈利目标，不能新开仓" }
         require(!(risk.dailyLossHit && riskConfig.dailyLossMode == ReplayDailyLoss.SOFT)) { "已触及每日软止损，下一交易日前禁止开仓" }
@@ -436,6 +448,19 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
         else state.enqueue(spec, order.side, order.kind, order.lotsHundredths, price, order.stopLoss, order.takeProfit, current.close)
         OrderPreview(if (marketable) current.close else price, feesKnown = false, marginKnown = false)
     }.getOrElse { OrderPreview(null, errors = listOf(it.message ?: "模拟订单无效")) }
+    /** Prepare the same drawing order as the main chart, but only for the replay's private ledger. */
+    fun orderFromDrawing(drawing: com.unitrading.chart.drawing.Drawing) {
+        panelOpen = true; sideTab = 0; playing = false
+        val result = runCatching {
+            val order = com.unitrading.chart.drawing.positionDrawingOrder(drawing, ticketSpec, replayQuote)
+            val preview = previewOrder(order)
+            require(preview.valid) { preview.errors.firstOrNull() ?: "模拟订单无效" }
+            ReplayOrderIntent(order.side, order.kind, order.entryPrice, order.lotsHundredths, order.stopLoss, order.takeProfit)
+        }
+        result.onSuccess { order ->
+            playing = false; message = null; orderToConfirm = order
+        }.onFailure { message = it.message ?: "无法从绘图创建模拟挂单" }
+    }
     val draftRequest = draft.request(ticketSpec)
     val draftPreview = draftRequest?.let(::previewOrder)
     fun prepareDraft(side: Side, kind: OrderKind, price: Long?) {
@@ -621,6 +646,7 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                 else DrawingToolbar(drawings, indicatorSettings.indicators.size, { scope.launch { indicatorController.apply(IndicatorSettings()) } })
                 ChartSplitWorkspace(layout, activeChart, { id, cellModifier ->
                     val frame = frames[id] ?: input.timeframe
+                    val cellDrawings = drawingsFor(id)
                     val cellRegular = chartSessions[id] ?: input.regular
                     val useSource = frame.seconds >= sourceFrame.seconds && frame.seconds % sourceFrame.seconds == 0 &&
                         (frame.seconds < Timeframe.DAY || frame == sourceFrame) &&
@@ -652,12 +678,13 @@ private fun ReplayWorkspace(input: ReplayInput, initialBars: List<Candle>, initi
                             focusedTrade = null, draft = draftRequest.takeIf { showDraft }, preview = draftPreview.takeIf { showDraft }, orders = chartOrders, actions = localChartActions,
                             executions = openExecutions,
                             onSide = { side -> activeChart = id; playing = false; sideTab = 0; panelOpen = true; showDraft = true; draft = draft.withSide(side, ticketSpec, replayQuote) },
-                            modifier = Modifier.fillMaxSize(), indicators = if (drawings.hideIndicators) emptyList() else indicatorSettings.indicators,
-                            chrome = ChartChrome(drawings = drawings, showDrawingFavorites = false,
+                            modifier = Modifier.fillMaxSize(), indicators = if (cellDrawings.hideIndicators) emptyList() else indicatorSettings.indicators,
+                            chrome = ChartChrome(drawings = cellDrawings, showDrawingFavorites = false,
                                 priceAxis = priceAxis, onPriceAxis = { priceAxis = it }, sharedToolbar = true, showHistory = showHistory,
                                 allIndicators = indicatorSettings.indicators,
                                 onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                                 objectLayers = objectLayers,
+                                onDrawingPositionOrder = { drawing -> activeChart = id; orderFromDrawing(drawing) },
                                 desktopAxisStyle = true, tabletCompactAxis = tablet, compactContextMenu = tablet,
                                 onReplayStartSelection = if (selectingBar) { at ->
                                     val index = bars.binarySearch { it.timeMs.compareTo(at) }.let { if (it < 0) -it - 1 else it }
