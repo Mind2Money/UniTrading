@@ -59,6 +59,18 @@ class CopyTradingBrokerTest {
         assertFalse(order.copy(automated = false).automated)
     }
 
+    @Test fun liveAutomatedSessionRequiresExplicitOptIn() = runTest {
+        val wire = MockTradovateWire()
+        val liveSession = TradovateSession(TradovateEnvironment.LIVE, "synthetic-audit-token-only-123456", null, 42, "audit", 4_102_444_800_000)
+        val broker = TradovateBroker(liveSession, wire, backgroundScope, { now })
+        broker.connect(); broker.watch("MESZ6", Timeframe.M5); runCurrent()
+        val revision = assertNotNull(broker.openSession("100").state.value.copyRevision)
+        assertNull(broker.openAutomatedSession("100", revision))
+        assertNull(broker.openAutomatedSession("100", revision, allowLive = false))
+        assertNotNull(broker.openAutomatedSession("100", revision, allowLive = true))
+        assertTrue(wire.requests.none { it.path.startsWith("order/") })
+    }
+
     @Test fun automatedSessionMarksCancellationAndRejectsManualNewOrders() = runTest {
         val wire = MockTradovateWire().apply {
             snapshot = JsonObject(snapshot + mapOf(

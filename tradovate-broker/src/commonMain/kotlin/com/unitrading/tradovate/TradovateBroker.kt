@@ -1967,6 +1967,8 @@ class TradovateBroker(
     override fun openSession(accountId: String): AccountSession = session(accountId, automatedRevision = null)
     override fun openAutomatedSession(accountId: String, expectedRevision: Long): AccountSession? =
         if (credentials.environment == TradovateEnvironment.DEMO && expectedRevision > 0) session(accountId, automatedRevision = expectedRevision) else null
+    override fun openAutomatedSession(accountId: String, expectedRevision: Long, allowLive: Boolean): AccountSession? =
+        if (expectedRevision > 0 && (credentials.environment == TradovateEnvironment.DEMO || allowLive)) session(accountId, automatedRevision = expectedRevision) else null
 
     private fun session(accountId: String, automatedRevision: Long?): AccountSession {
         val automatedMutations = automatedRevision != null
