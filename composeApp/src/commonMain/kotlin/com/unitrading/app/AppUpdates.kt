@@ -54,7 +54,7 @@ interface AppUpdates {
     /** When the last check finished; null before the first one. */
     val checkedAtMs: StateFlow<Long?>
     val progress: StateFlow<UpdateProgress>
-    /** Reads the public release metadata. Only ever called from an explicit press. */
+    /** Reads the public release metadata at startup or on an explicit check. */
     fun checkNow()
     /** Downloads, verifies and prepares [release], then installs it unless something now holds it back. */
     fun start(release: ReleasePackage)

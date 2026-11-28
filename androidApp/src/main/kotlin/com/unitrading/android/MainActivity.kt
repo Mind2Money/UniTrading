@@ -21,6 +21,8 @@ import com.unitrading.app.ReleaseUpdater
 import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
+import com.unitrading.ui.TradingTheme
+import com.unitrading.ui.StartupUpdateGate
 import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
 import kotlinx.coroutines.CoroutineScope
@@ -50,7 +52,9 @@ class MainActivity : ComponentActivity() {
                     else SystemBarStyle.dark(Color.TRANSPARENT)
                 enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
             }
-            LicenseGate(model.license, model.runtime.theme) { TradingScreen(model.runtime, login, updates = model.updates) }
+            LicenseGate(model.license, model.runtime.theme) { TradingTheme(theme) {
+                StartupUpdateGate(model.updates) { TradingScreen(model.runtime, login, updates = model.updates) }
+            } }
         }
     }
 

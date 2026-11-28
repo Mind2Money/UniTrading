@@ -31,6 +31,7 @@ import com.unitrading.app.updateBlock
 import com.unitrading.app.TradingRuntime
 import com.unitrading.app.SnapshotStore
 import com.unitrading.ui.AppIcons
+import com.unitrading.ui.StartupUpdateGate
 import com.unitrading.ui.LicenseGate
 import com.unitrading.ui.TradingScreen
 import java.io.File
@@ -135,7 +136,9 @@ private fun desktopApplication(args: Array<String>) = application {
     Window(onCloseRequest = ::requestClose, title = windowTitle, state = windowState, undecorated = customTitle,
         icon = rememberVectorPainter(AppIcons.LogoTile)) {
         val content: @Composable () -> Unit = {
-            LicenseGate(license, runtime.theme) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
+            LicenseGate(license, runtime.theme) { TradingTheme(runtime.theme.settings.collectAsState().value) {
+                StartupUpdateGate(updates) { TradingScreen(runtime, remember { if (localDemo) null else DesktopTradovateLogin() }, updates = updates) }
+            } }
         }
         if (customTitle) {
             val theme by runtime.theme.settings.collectAsState()

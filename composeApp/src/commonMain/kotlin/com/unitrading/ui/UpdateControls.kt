@@ -13,7 +13,7 @@ import com.unitrading.broker.BrokerRegistry
 import com.unitrading.chart.dateTime
 import kotlinx.coroutines.delay
 
-/** Version, update check and, where the app can replace itself, one-press update. Nothing here checks or downloads until the user presses a row. */
+/** Manual version check and update controls in settings. */
 @Composable
 internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: Boolean) {
     val check by updates.check.collectAsState()
@@ -61,7 +61,7 @@ internal fun AppUpdateRows(updates: AppUpdates, registry: BrokerRegistry, busy: 
         SettingsRow(if (available == null) "前往下载 ${it.version}" else "发布页", "查看 ${it.version} 更新说明或手动下载", AppIcons.OpenInNew, "update-release-page", { runCatching { links.openUri(it.pageUrl) } })
     }
     SettingsRow("更新日志", "在 GitHub 查看各版本的更新内容", AppIcons.ReceiptLong, "update-changelog", { runCatching { links.openUri(ReleasePages) } })
-    UpdateNote("只在点击时读取 GitHub 上的公开发布信息，不发送账户数据；不会在后台检查或下载。", "update-privacy", TradingColors.Muted)
+    UpdateNote("启动时自动检查公开版本信息；只有选择更新才会下载，不发送账户数据。", "update-privacy", TradingColors.Muted)
 }
 
 @Composable
@@ -108,7 +108,7 @@ private fun blockText(block: UpdateBlock): String = when (block) {
     UpdateBlock.ACCOUNT_UNCONFIRMED -> "账户未连接或未同步完成，无法确认没有持仓和挂单，暂时不能更新。"
 }
 
-private fun failureText(code: String): String = when (code) {
+internal fun failureText(code: String): String = when (code) {
     "UPDATE_DOWNLOAD" -> "下载失败，请检查网络和磁盘空间后重试。"
     "UPDATE_CORRUPT" -> "下载的文件大小或 SHA-256 与发布信息不符，已丢弃。"
     "UPDATE_PACKAGE" -> "新版本校验未通过，当前版本没有改动。"

@@ -2,11 +2,13 @@
 
 ## 简体中文
 
+- 保留首次授权验证；桌面端与 Android 每次启动时检查更新，发现新版本后可选择更新或继续进入。
 - 回放更新步长仅显示符合当前图表周期的选项，不再列出更高周期；没有对应源数据的选项不可用。
 - 平板主图与回放图表的绘图工具栏可以收起和展开，回放底部账户统计栏支持收起和展开。
 
 ## English
 
+- Keep first-launch activation and check for updates at desktop and Android startup, with a choice to update or continue.
 - Show only replay steps permitted by the current chart interval; disable choices unsupported by the loaded source data.
 - Let tablet users collapse drawing tools on the main and replay charts, and collapse the replay account statistics strip.
 
