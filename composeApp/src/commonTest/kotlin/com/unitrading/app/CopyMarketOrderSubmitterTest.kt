@@ -23,6 +23,8 @@ class CopyMarketOrderSubmitterTest {
         override suspend fun modifyProtection(requestId: String, positionId: String, expectedVersion: Long, stopLoss: Long?, takeProfit: Long?) = TradeResult(false, "unused")
     }
 
+    private val initialEvidence = CopyLeaderFillEvidence(emptyMap(), emptyMap(), emptyMap(), true)
+    private val priorLongEvidence = CopyLeaderFillEvidence(mapOf("MESZ6" to 1), emptyMap(), emptyMap(), true)
     private val spec = Instrument("MESZ6", "Micro ES", "Futures", 2, tickSize = 25, tickValueMicrosPerLot = 1,
         minLotsHundredths = 100, maxLotsHundredths = 10_000)
     private fun position(side: Side, quantity: Long = 1) = Position("position", "MESZ6", side, quantity * 100, 10_000, 0, marginMicros = 0)
@@ -58,8 +60,8 @@ class CopyMarketOrderSubmitterTest {
         val journal = CopyDispatchJournal(store)
         val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store), journal)
         val follower = CopyFollower("follower", 1, 5, fixedContracts = 2)
-        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-a"))
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-b"))
+        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-a", initialEvidence))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-b", initialEvidence))
         assertEquals(1, target.writes.size)
         assertEquals(200L, target.writes.single().lotsHundredths)
         assertTrue(target.writes.single().automated)
@@ -76,11 +78,11 @@ class CopyMarketOrderSubmitterTest {
         val journal = CopyDispatchJournal(store)
         val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store, Side.SELL), journal)
         val follower = CopyFollower("follower", 1, 5)
-        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "close"))
+        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "close", priorLongEvidence))
         target.state.value = state("follower")
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "open-early"))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "open-early", priorLongEvidence))
         assertTrue(journal.confirmed("close", "target-1", 1, 0, true))
-        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "open"))
+        assertIs<CopyMarketSubmission.Accepted>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "open", priorLongEvidence))
         assertEquals(listOf(Side.SELL, Side.SELL), target.writes.map { it.side })
     }
 
@@ -94,10 +96,10 @@ class CopyMarketOrderSubmitterTest {
         val journal = CopyDispatchJournal(store)
         val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store), journal)
         val follower = CopyFollower("follower", 1, 5)
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill.copy(orderId = "external"), "external"))
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "new-group", follower, "MESZ6", fill, "old-group"))
-        assertIs<CopyMarketSubmission.Review>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-a"))
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-b"))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill.copy(orderId = "external"), "external", initialEvidence))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "new-group", follower, "MESZ6", fill, "old-group", initialEvidence))
+        assertIs<CopyMarketSubmission.Review>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-a", initialEvidence))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", follower, "MESZ6", fill, "copy-b", initialEvidence))
         assertEquals(1, target.writes.size)
         assertEquals(CopyDispatchState.UNCERTAIN, journal.read()!!.single().state)
     }
@@ -110,7 +112,7 @@ class CopyMarketOrderSubmitterTest {
         val broker = FakeBroker(source, target, spec)
         val store = MemorySnapshotStore()
         val service = CopyMarketOrderSubmitter(BrokerRegistry(listOf(broker)), AccountRiskController(store), sources(store, stopLoss = 9_900), CopyDispatchJournal(store))
-        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", CopyFollower("follower", 1, 2), "MESZ6", fill, "copy-a"))
+        assertIs<CopyMarketSubmission.Stopped>(service.submit(broker, "leader", "group", CopyFollower("follower", 1, 2), "MESZ6", fill, "copy-a", initialEvidence))
         assertTrue(target.writes.isEmpty())
     }
 

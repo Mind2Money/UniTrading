@@ -25,7 +25,7 @@ internal class CopyMarketOrderSubmitter(
     private val journal: CopyDispatchJournal,
 ) {
     suspend fun submit(broker: BrokerPlugin, leaderId: String, groupId: String, follower: CopyFollower, symbol: String,
-        fill: CopySourceFill, requestId: String, evidence: CopyLeaderFillEvidence? = null): CopyMarketSubmission {
+        fill: CopySourceFill, requestId: String, evidence: CopyLeaderFillEvidence): CopyMarketSubmission {
         fun stopped(reason: String) = CopyMarketSubmission.Stopped(reason)
         if (!broker.descriptor.id.startsWith("tradovate-") || broker.descriptor.environment != BrokerEnvironment.REMOTE_DEMO ||
             registry.plugins.none { it === broker } || requestId.isBlank() || symbol.isBlank()) return stopped("仅允许已连接的 Tradovate Demo")
@@ -69,15 +69,11 @@ internal class CopyMarketOrderSubmitter(
             val execution = leader.executions.singleOrNull { it.id == fill.executionId && it.orderId == fill.orderId && it.symbol == symbol } ?: return null
             if (execution.side != sourceRequest.side || execution.lotsHundredths <= 0 || execution.lotsHundredths % 100 != 0L ||
                 execution.lotsHundredths / 100 * (if (execution.side == Side.BUY) 1 else -1) != fill.signedContracts.toLong()) return null
-            if (evidence == null) {
-                if (net(leader) != fill.leaderAfter) return null
-            } else {
-                val verified = CopyLeaderFillAssessment.assess(leader, broker.descriptor.id, groupId, sources.read(),
-                    evidence.previousNet, evidence.previouslySeen, evidence.managedProtectionOrders, evidence.executionHistoryComplete)
-                    as? CopyLeaderFillResult.Ready ?: return null
-                val next = verified.events.firstOrNull() as? CopyLeaderEvent.EntryOrExit ?: return null
-                if (next.fill != fill || next.symbol != symbol) return null
-            }
+            val verified = CopyLeaderFillAssessment.assess(leader, broker.descriptor.id, groupId, sources.read(),
+                evidence.previousNet, evidence.previouslySeen, evidence.managedProtectionOrders, evidence.executionHistoryComplete)
+                as? CopyLeaderFillResult.Ready ?: return null
+            val next = verified.events.firstOrNull() as? CopyLeaderEvent.EntryOrExit ?: return null
+            if (next.fill != fill || next.symbol != symbol) return null
             val before = net(destination) ?: return null
             val plan = CopyExecutionPlanner.plan(fill, originIds, leaderId, follower, before) as? CopyFillPlan.Ready ?: return null
             val direction = if (fill.signedContracts > 0) 1 else -1
