@@ -22,7 +22,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager --install 'platforms;android-37.0' 'platforms;android-37.2'
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d
-      - run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests com.unitrading.chart.ReplayStepTest --tests com.unitrading.ui.HistoricalReplayUiTest --tests com.unitrading.ui.TabletReplayUiTest --tests com.unitrading.ui.TabletChartFullscreenUiTest --no-daemon
+      - run: xvfb-run -a ./gradlew :composeApp:desktopTest --tests com.unitrading.chart.ReplayStepTest --tests com.unitrading.ui.HistoricalReplayUiTest --tests com.unitrading.ui.TabletReplayUiTest --tests com.unitrading.ui.TabletChartFullscreenUiTest --tests com.unitrading.chart.drawing.PositionDrawingOrderTest --tests com.unitrading.chart.drawing.ChartDrawingsTest --tests com.unitrading.ui.ChartContextMenuUiTest --tests com.unitrading.ui.AccountRiskTest --no-daemon
       - name: Print test failures
         if: failure()
         run: |

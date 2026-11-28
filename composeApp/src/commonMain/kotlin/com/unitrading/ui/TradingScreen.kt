@@ -1035,6 +1035,10 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                 }
                 fun placePreview(order: OrderRequest): OrderPreview {
                     val checked = session.preview(order).withCapacity(order, capacityFor(order))
+                    if (order.fromPositionDrawing) {
+                        val refusal = runtime.accountRisk.refusal(plugin, session, RiskCheck.Place(order))
+                        if (refusal != null) return checked.copy(errors = checked.errors + refusal)
+                    }
                     // A market order is repriced by the guard as it goes out. A priced entry has to meet the amounts as it
                     // stands; an order that just reduces the position has none to meet.
                     if (!checked.valid || order.kind == OrderKind.MARKET || !orderRule.bracketsApply(account, hedging, order)) return checked
@@ -1096,7 +1100,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             return
                         }
                     }
-                    if (skipConfirmation && action !is Confirmation.Reset) executeTrade(action)
+                    if (skipConfirmation && action !is Confirmation.Reset && (action !is Confirmation.Place || !action.request.fromPositionDrawing)) executeTrade(action)
                     else confirmation = action
                 }
                 // The order pages get this function as a reference and today compare it by instance. References to one local
@@ -1157,6 +1161,23 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                         return
                     }
                     reviewTrade(Confirmation.Place(protectedOrder, fromChart = true, fromKeys = fromKeys))
+                }
+                /** Drawings prepare a reviewed order, and never override a subaccount's order-risk configuration. */
+                fun orderFromPositionDrawing(drawing: com.unitrading.chart.drawing.Drawing) {
+                    if (busy || !accountContextCurrent()) return
+                    if (runtime.accountRisk.storageUnreadable.value || runtime.accountRisk.rules.value[plugin.descriptor.id]?.get(accountId)?.brackets?.enabled == true) {
+                        showNotice("当前子账户已启用订单风控或风控无法读取，不能从多头或空头仓位绘图创建挂单。", attention = true)
+                        return
+                    }
+                    val currentQuote = instrument.executionSymbol?.let { plugin.market.value.quotes[it] } ?: quote
+                    val candidate = try {
+                        requireNotNull(currentQuote) { "当前报价不可用，请等待有效行情" }
+                        com.unitrading.chart.drawing.positionDrawingOrder(drawing, instrument, currentQuote)
+                    } catch (error: IllegalArgumentException) { showNotice(error.message ?: "无法从绘图创建挂单", attention = true); return }
+                    if (candidate.kind !in plugin.capabilities.orderKinds) { showNotice("当前交易商不支持此类型的挂单", attention = true); return }
+                    val checked = placePreview(candidate)
+                    if (!checked.valid) { showNotice(checked.errors.firstOrNull() ?: "绘图订单参数无效", attention = true); return }
+                    reviewTrade(Confirmation.Place(candidate, fromChart = true))
                 }
                 /** Context-menu choices only prepare a draft; the user submits it from the order panel. */
                 fun prepareChartOrder(chartId: String, side: Side, kind: OrderKind, price: Long?) {
@@ -1364,6 +1385,7 @@ fun TradingScreen(runtime: TradingRuntime, login: TradovateLogin? = null, soundP
                             onIndicatorChanges = { configs -> scope.launch { indicatorController.apply(IndicatorSettings(configs)) } },
                             allIndicators = chartIndicatorSettings.indicators,
                             objectLayers = runtime.objectLayersForChart(chartId),
+                            onDrawingPositionOrder = { drawing -> onActive { orderFromPositionDrawing(drawing) } },
                             keyboardTrading = tradingPreferences.keyboardTrading,
                             phoneContextMenu = phoneScreen,
                             onOpenOrderAt = if (OrderKind.LIMIT !in plugin.capabilities.orderKinds) null else { price: Long -> onActive {

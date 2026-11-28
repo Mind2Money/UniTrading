@@ -415,7 +415,9 @@ internal class AccountRiskController(
         }
         return when (action) {
             is RiskCheck.Place -> newOrderExposure(snapshot, hedging, action.request).let { effect ->
-                paused(effect.harmless, covered = effect.reduces) ?: limits.refusal(action.request, effect, unit)
+                (if (action.request.fromPositionDrawing && unreadable.value) "无法读取订单风控设置，不能从仓位绘图创建挂单。"
+                    else if (action.request.fromPositionDrawing && rule.brackets.enabled) "当前子账户已启用订单风控，不能从多头或空头仓位绘图创建挂单。" else null)
+                    ?: paused(effect.harmless, covered = effect.reduces) ?: limits.refusal(action.request, effect, unit)
                     ?: rule.reductionRefusal(snapshot, hedging, action.request)
             }
             is RiskCheck.Change -> {

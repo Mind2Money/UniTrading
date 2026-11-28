@@ -205,7 +205,8 @@ class ChartContextMenuUiTest {
         compose.waitUntil(5_000) { (runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)[drawing] ?: 0) < 0 }
         compose.onNode(hasText("关闭") and hasAnyAncestor(hasTestTag("chart-object-tree"))).performClick()
         rightClick(548_500)
-        compose.onNodeWithTag("drawing-menu-front").performScrollTo().performClick()
+        compose.onNodeWithTag("drawing-menu-order").performClick()
+        compose.onNodeWithTag("drawing-menu-front").performClick()
         compose.waitUntil(5_000) {
             val ranks = runtime.objectLayersForChart("main").forSymbol(runtime.drawings.symbol)
             (ranks[drawing] ?: 0) > (ranks[indicator] ?: 0)

@@ -673,6 +673,23 @@ class AccountRiskTest {
         assertEquals(6, broker.placed.size)
     }
 
+    @Test fun drawingOrdersCannotBypassEitherOrderRiskModeEvenIfEnabledAfterReview() = runTest {
+        val broker = RiskFixture()
+        val risk = controller()
+        val session = risk.guard(broker, broker.openSession("100"))
+        val drawing = broker.request.copy(kind = OrderKind.LIMIT, entryPrice = 549_000, stopLoss = 548_000,
+            takeProfit = 551_000, fromPositionDrawing = true)
+        val message = "当前子账户已启用订单风控，不能从多头或空头仓位绘图创建挂单。"
+        assertNull(risk.refusal(broker, session, RiskCheck.Place(drawing)))
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(loss = 100_000_000)))
+        assertEquals(message, session.placeOrder("reviewed-before-risk", drawing).message)
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets(sizingRisk = 100_000_000, sizingMaxLots = 1_000)))
+        assertEquals(message, session.placeOrder("sizing", drawing).message)
+        assertTrue(broker.placed.isEmpty())
+        assertNull(risk.configureBrackets(broker, "100", AccountBrackets()))
+        assertTrue(session.placeOrder("risk-disabled", drawing).accepted)
+    }
+
     @Test fun aSizedOrderStaysUnderItsCeilingAndARuleWithoutOneRefusesEntries() = runTest {
         val broker = RiskFixture()
         val store = MemorySnapshotStore()
