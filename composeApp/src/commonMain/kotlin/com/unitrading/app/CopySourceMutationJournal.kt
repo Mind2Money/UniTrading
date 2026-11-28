@@ -45,12 +45,21 @@ internal class CopySourceMutationJournal(private val store: SnapshotStore, priva
     }
     private val unreadable = loaded.isFailure
     private var records = loaded.getOrDefault(emptyList())
+    private val unrecordedRequests = mutableSetOf<String>()
 
-    suspend fun begin(row: CopySourceMutation): Boolean = mutex.withLock {
-        if (unreadable || !valid(row) || row.state != CopySourceMutationState.INTENDED || records.any { it.requestId == row.requestId }) return@withLock false
-        val origin = sources.acceptedSource(row.brokerId, row.leaderId, row.groupId, row.sourceOrderId) ?: return@withLock false
-        if (origin.kind !in setOf(OrderKind.LIMIT, OrderKind.STOP)) return@withLock false
-        persist(records + row)
+    suspend fun begin(row: CopySourceMutation): Boolean = beginResult(row) == CopySourceBeginResult.RECORDED
+    suspend fun beginResult(row: CopySourceMutation): CopySourceBeginResult = mutex.withLock {
+        if (unreadable || !valid(row) || row.state != CopySourceMutationState.INTENDED || row.requestId in unrecordedRequests ||
+            records.any { it.requestId == row.requestId || (it.brokerId == row.brokerId && it.leaderId == row.leaderId &&
+                it.groupId == row.groupId && it.sourceOrderId == row.sourceOrderId &&
+                it.state in setOf(CopySourceMutationState.INTENDED, CopySourceMutationState.ACCEPTED, CopySourceMutationState.UNCERTAIN)) })
+            return@withLock CopySourceBeginResult.UNSAFE
+        val origin = sources.acceptedSource(row.brokerId, row.leaderId, row.groupId, row.sourceOrderId) ?: return@withLock CopySourceBeginResult.UNSAFE
+        if (origin.kind !in setOf(OrderKind.LIMIT, OrderKind.STOP)) return@withLock CopySourceBeginResult.UNSAFE
+        if (persist(records + row)) CopySourceBeginResult.RECORDED else {
+            unrecordedRequests += row.requestId
+            CopySourceBeginResult.STORAGE_FAILED
+        }
     }
 
     suspend fun accepted(requestId: String): Boolean = mutex.withLock {

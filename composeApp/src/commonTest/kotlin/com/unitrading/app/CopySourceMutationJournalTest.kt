@@ -44,4 +44,40 @@ class CopySourceMutationJournalTest {
         assertFalse(journal.accepted("change"))
         assertFalse(journal.begin(priceChange))
     }
+    @Test fun capturePersistsBeforeSendingAndSerializesChanges() = runTest {
+        val (journal, _) = fixture()
+        var paused = false
+        var sent = 0
+        val capture = CopySourceMutationCapture(journal) { paused = true }
+        assertTrue(capture.submit(priceChange, true) {
+            sent++
+            assertEquals(CopySourceMutationState.INTENDED, journal.read()!!.single().state)
+            TradeResult(true, "accepted")
+        }.accepted)
+        assertEquals(CopySourceMutationState.ACCEPTED, journal.read()!!.single().state)
+        assertFalse(capture.submit(priceChange.copy(requestId = "cancel", kind = CopySourceMutationKind.CANCEL_ENTRY, newPrice = null), true) {
+            sent++; TradeResult(true, "unexpected")
+        }.accepted)
+        assertTrue(paused)
+        assertEquals(1, sent)
+    }
+    @Test fun storageFailurePausesFollowersButAllowsLeaderMutation() = runTest {
+        val backing = MemorySnapshotStore()
+        val store = object : SnapshotStore {
+            override fun read(key: String): String? = backing.read(key)
+            override fun write(key: String, value: String) {
+                if (key == "copy-source-mutations-v1") error("disk full")
+                backing.write(key, value)
+            }
+        }
+        val sources = CopySourceOrders(store)
+        assertTrue(sources.begin(CopySourceOrder("tradovate-demo-42", "leader", "source-request", "group", kind = OrderKind.LIMIT)))
+        assertTrue(sources.accepted("source-request", "source"))
+        var paused = false
+        val capture = CopySourceMutationCapture(CopySourceMutationJournal(store, sources)) { paused = true }
+        assertTrue(capture.submit(priceChange, true) { assertTrue(paused); TradeResult(true, "accepted") }.accepted)
+        var duplicate = false
+        assertFalse(capture.submit(priceChange, true) { duplicate = true; TradeResult(true, "unexpected") }.accepted)
+        assertFalse(duplicate)
+    }
 }
