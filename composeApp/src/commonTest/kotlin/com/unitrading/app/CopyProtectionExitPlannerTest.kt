@@ -26,7 +26,7 @@ class CopyProtectionExitPlannerTest {
         val close = assertIs<CopyProtectionExitAction.Close>(plan(snapshot(emptyList()), setOf("stop", "target")))
         assertEquals(Side.SELL, close.side)
         assertEquals(200L, close.lotsHundredths)
-        assertIs<CopyProtectionExitAction.Finished>(plan(snapshot(emptyList(), emptyList()), setOf("stop", "target")))
+        assertIs<CopyProtectionExitAction.Stop>(plan(snapshot(emptyList(), emptyList()), setOf("stop", "target")))
     }
     @Test fun unknownOperationOrFollowerFillStopsBeforeCancelOrClose() {
         assertIs<CopyProtectionExitAction.Stop>(plan(snapshot(), unresolved = true))

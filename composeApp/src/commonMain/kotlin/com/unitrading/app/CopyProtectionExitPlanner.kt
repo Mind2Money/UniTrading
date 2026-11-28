@@ -49,6 +49,7 @@ internal object CopyProtectionExitPlanner {
             protectionOrderIds.any { it !in activeIds && it !in confirmedCancelledIds }) return stop("保护单撤销结果尚未确认")
         val cancel = activeIds.sorted().firstOrNull()
         if (cancel != null) return CopyProtectionExitAction.Cancel(cancel)
+        if (position == null && !verifiedClose) return stop("跟随账户已无仓位，但无法确认平仓来源；请核对")
         if (position == null) return if (event.leaderAfter == 0) CopyProtectionExitAction.Finished
             else stop("跟随账户已全平，主账户仍有仓位；请核对后恢复")
         return CopyProtectionExitAction.Close(position.id, if (position.side == Side.BUY) Side.SELL else Side.BUY, position.lotsHundredths)
