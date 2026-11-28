@@ -8,7 +8,7 @@ class CopyRecoveryCheckpointStoreTest {
     private fun account(id: String) = requireNotNull(CopyRecoveryAssessment.checkpoint(AccountSnapshot(id, 0, copyRevision = 7, copyEpoch = 1,
         copyPositionsComplete = true, copyOrdersComplete = true), true))
     private val checkpoint = CopyRecoveryCheckpoint("tradovate-demo-42", "group", "leader",
-        listOf("leader", "one", "two").associateWith(::account), mapOf("one" to CopyFollowerRunStatus(CopyFollowerRunState.RUNNING),
+        listOf("leader", "one", "two").associateWith { id -> account(id) }, mapOf("one" to CopyFollowerRunStatus(CopyFollowerRunState.RUNNING),
             "two" to CopyFollowerRunStatus(CopyFollowerRunState.NEEDS_REVIEW, "结果未知")))
     @Test fun runningAccountsWaitAfterRestartWhileFailedAccountsStayPaused() = runTest {
         val storage = MemorySnapshotStore()
