@@ -40,6 +40,7 @@ internal fun brandButtonColors() = ButtonDefaults.buttonColors(containerColor = 
 
 internal fun BrokerEnvironment.badgeLabel() = when {
     this == BrokerEnvironment.LOCAL_DEMO -> "本地模拟"
+    this == BrokerEnvironment.HYPERPROP -> "Hyperprop 账户"
     live -> "Live 实盘"
     else -> "远程 Demo"
 }

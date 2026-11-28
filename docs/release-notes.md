@@ -24,6 +24,7 @@
 
 ## 简体中文
 
+- Hyperprop 个人 API 在密钥具有交易权限时允许操作已授权的模拟和非模拟账户，账户类型会显示在账户选择中；接入仍处于验证阶段。
 - 图表和行情列表显示推测的市场状态；休市或行情延迟时优先显示已加载图表的最近 K 线收盘价，不将历史价格作为实时买卖价或用于确认主力合约。
 - 手机图表价格轴按内容自动调整宽度；右键菜单移除对象树和图表模板，精简独立下单窗，图表订单预览支持修改数量和提交。平板全屏下单窗采用紧凑布局。
 - 手机图表支持收起和恢复账户栏，并提供适合窄屏的图表右键／长按菜单。
@@ -37,6 +38,7 @@
 
 ## English
 
+- Permit trading on authorized Hyperprop practice and non-practice accounts with a trade-scoped personal API key; show the account type when available. The integration remains under validation.
 - Show inferred market status in charts and watchlists; prefer the latest already displayed chart close during a closed session or delayed feed without treating it as a live bid/ask or confirming a continuous contract.
 - Size the phone price axis to its labels, remove object tree and chart templates from the phone context menu, compact floating tickets, and allow chart-draft quantity editing and submission; use a compact ticket in tablet chart-only mode.
 - Let phone users collapse and restore the chart account bar, and provide a compact plot context menu for touch and mouse.

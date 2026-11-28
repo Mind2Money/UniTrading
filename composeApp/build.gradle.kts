@@ -54,6 +54,7 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.coroutines.test)
+            implementation("io.ktor:ktor-client-mock:3.1.0")
         }
         getByName("desktopTest").dependencies { implementation(compose.desktop.uiTestJUnit4) }
     }
