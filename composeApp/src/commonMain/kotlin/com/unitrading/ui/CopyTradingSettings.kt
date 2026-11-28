@@ -18,8 +18,7 @@ private data class PendingCopyCleanup(val config: CopySavedConfiguration, val ac
 
 @Composable
 internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, leaderId: String, onDismiss: () -> Unit) {
-    val status by runtime.copyTrading.status.collectAsState()
-    val recovery by runtime.copyTrading.recovery.collectAsState()
+    val recovery by runtime.copyLegacyRecovery.recovery.collectAsState()
     val scope = rememberCoroutineScope()
     val catalog by broker.catalog.collectAsState()
     val savedConfigurations by runtime.copyTradingConfiguration.configurations.collectAsState()
@@ -121,7 +120,7 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
         text = { Text("请先在券商端逐一检查原连接所有主账户和跟随账户的订单、成交及持仓，并处理完毕。确认后会重新同步，只有全部空仓且无挂单才能清除此记录。停止不会撤销已发送订单。") },
         confirmButton = { TextButton({
             confirmRecovery = false
-            scope.launch { error = runtime.copyTrading.clearRecovery(broker) }
+            scope.launch { error = runtime.copyLegacyRecovery.clearRecovery(broker) }
         }) { Text("已核对，重新同步") } },
         dismissButton = { TextButton({ confirmRecovery = false }) { Text("取消") } },
     )
@@ -130,17 +129,14 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
         title = { Text("账户跟单") },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(status.message, color = if (status.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("已停止", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("跟单功能仍在开发，当前不能启动。正式实现将只跟随 UniTrading 发出的订单。")
                 if (clearing) Text("正在处理所选账户，请等待券商确认。")
+                if (runtime.copyLegacyRecovery.unreadable) Text("旧版待核对订单记录无法读取，请检查券商账户。", color = MaterialTheme.colorScheme.error)
                 recovery?.let { record ->
                     Text("有未确认订单：${record.symbol}，账户 ${record.accountIds.joinToString()}。请核对券商端。", color = MaterialTheme.colorScheme.error)
                     OutlinedButton({ confirmRecovery = true }) { Text("同步并核对") }
                 }
-                if (status.running) {
-                    Text("当前主账户：${status.settings?.leaderId.orEmpty()} · ${status.settings?.symbol.orEmpty()} · ${status.settings?.followers?.size ?: 0} 个跟随账户")
-                    OutlinedButton({ runtime.copyTrading.stop() }) { Text("停止跟单") }
-                } else {
                     Text("主账户")
                     Box {
                         OutlinedButton({ leaderMenu = true }) { Text(leader?.name ?: "选择主账户") }
@@ -194,7 +190,6 @@ internal fun CopyTradingDialog(runtime: TradingRuntime, broker: BrokerPlugin, le
                         }
                     }, modifier = Modifier.testTag("copy-save-settings"), enabled = !clearing && valid && broker.descriptor.id.startsWith("tradovate-")) { Text("保存设置") }
                     Button({}, enabled = false) { Text("开发中，暂不可启动") }
-                }
             }
         },
         confirmButton = { TextButton(onDismiss, enabled = !clearing) { Text("关闭") } },
