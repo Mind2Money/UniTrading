@@ -13,7 +13,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -207,13 +206,11 @@ class ReleaseUpdater(
                 state.value = UpdateProgress.Ready(release.version)
             } catch (cancelled: CancellationException) {
                 withContext(NonCancellable) { runCatching { target.clear() } }
-                // cancel() publishes Idle; an old job must not overwrite a later retry.
+                state.value = UpdateProgress.Idle
                 throw cancelled
             } catch (failure: Exception) {
                 withContext(NonCancellable) { runCatching { target.clear() } }
-                val before = state.value
-                if (currentCoroutineContext().isActive && before !is UpdateProgress.Idle)
-                    state.compareAndSet(before, UpdateProgress.Failed((failure as? UpdateFailure)?.code ?: "UPDATE_DOWNLOAD", release.version))
+                state.value = UpdateProgress.Failed((failure as? UpdateFailure)?.code ?: "UPDATE_DOWNLOAD", release.version)
                 return@launch
             }
             handOff(release)
@@ -227,17 +224,9 @@ class ReleaseUpdater(
         var percent = -1L
         ReleaseTransfer.download(open(release), archive, release, { job.isActive }) { received ->
             val now = received * 100 / release.bytes
-            if (now != percent) {
-                percent = now
-                val before = state.value
-                if (job.isActive && before is UpdateProgress.Downloading)
-                    state.compareAndSet(before, UpdateProgress.Downloading(release.version, received, release.bytes))
-            }
+            if (now != percent) { percent = now; state.value = UpdateProgress.Downloading(release.version, received, release.bytes) }
         }
-        currentCoroutineContext().ensureActive()
-        val before = state.value
-        if (before !is UpdateProgress.Downloading || !state.compareAndSet(before, UpdateProgress.Preparing(release.version)))
-            throw CancellationException("Update cancelled")
+        state.value = UpdateProgress.Preparing(release.version)
         target.prepare(archive, release)
         currentCoroutineContext().ensureActive()
     }
