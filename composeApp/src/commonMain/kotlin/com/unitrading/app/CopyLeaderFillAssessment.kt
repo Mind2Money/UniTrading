@@ -7,14 +7,14 @@ internal sealed interface CopyLeaderEvent {
     data class ProtectionFill(val executionId: String, val orderId: String, val entryOrderId: String, val symbol: String) : CopyLeaderEvent
 }
 internal sealed interface CopyLeaderFillResult {
-    data class Ready(val events: List<CopyLeaderEvent>, val netBySymbol: Map<String, Int>, val observedExecutionIds: Set<String>) : CopyLeaderFillResult
+    data class Ready(val events: List<CopyLeaderEvent>, val netBySymbol: Map<String, Int>, val observedExecutions: Map<String, Execution>) : CopyLeaderFillResult
     data class Blocked(val reason: String) : CopyLeaderFillResult
 }
 
 /** Derives events from complete broker fills and exact app-origin IDs; it never follows an unexplained net-position change. */
 internal object CopyLeaderFillAssessment {
     fun assess(snapshot: AccountSnapshot, brokerId: String, groupId: String, origins: List<CopySourceOrder>?,
-        previousNet: Map<String, Int>, previouslySeen: Set<String>, managedProtectionOrders: Map<String, String>,
+        previousNet: Map<String, Int>, previouslySeen: Map<String, Execution>, managedProtectionOrders: Map<String, String>,
         executionHistoryComplete: Boolean): CopyLeaderFillResult {
         fun stop(reason: String) = CopyLeaderFillResult.Blocked(reason)
         if (brokerId.isBlank() || groupId.isBlank() || snapshot.accountId.isBlank() || !executionHistoryComplete ||
@@ -26,12 +26,12 @@ internal object CopyLeaderFillAssessment {
         val accepted = own.filter { it.groupId == groupId && it.state == CopySourceState.ACCEPTED }
         val sourceMap = accepted.associateBy { it.brokerOrderId }
         if (sourceMap.size != accepted.size || sourceMap.containsKey(null)) return stop("主账户订单关联不完整")
-        if (previousNet.any { it.key.isBlank() || it.value == 0 } || previouslySeen.any(String::isBlank) ||
+        if (previousNet.any { it.key.isBlank() || it.value == 0 } || previouslySeen.any { (id, fill) -> id.isBlank() || id != fill.id } ||
             snapshot.executions.any { it.id.isBlank() || it.orderId.isBlank() || it.symbol.isBlank() ||
                 it.lotsHundredths <= 0 || it.lotsHundredths % 100L != 0L || it.lotsHundredths > 100_000_00L } ||
             snapshot.executions.map { it.id }.distinct().size != snapshot.executions.size) return stop("成交数据不可识别")
-        val allIds = snapshot.executions.map { it.id }.toSet()
-        if (!allIds.containsAll(previouslySeen)) return stop("成交历史缺失，请重新核对")
+        val all = snapshot.executions.associateBy { it.id }
+        if (previouslySeen.any { (id, fill) -> all[id] != fill }) return stop("成交历史缺失或已变化，请重新核对")
         val fresh = snapshot.executions.filterNot { it.id in previouslySeen }.sortedWith(compareBy<Execution> { it.timeMs }.thenBy { it.id })
         if (fresh.zipWithNext().any { (a, b) -> a.timeMs == b.timeMs && (a.symbol == b.symbol && a.side != b.side) })
             return stop("成交顺序无法确认，请核对")
@@ -64,6 +64,6 @@ internal object CopyLeaderFillAssessment {
             reported[position.symbol] = (position.lotsHundredths / 100L).toInt() * if (position.side == Side.BUY) 1 else -1
         }
         if (net != reported) return stop("主账户仓位与成交记录不一致")
-        return CopyLeaderFillResult.Ready(events, net.toMap(), allIds)
+        return CopyLeaderFillResult.Ready(events, net.toMap(), all)
     }
 }
