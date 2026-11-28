@@ -182,6 +182,10 @@ data class OrderRequest(
     val takeProfit: Long? = null,
     /** Pins the reviewed continuous-to-dated mapping; never sent to the broker's order endpoint. */
     val sourceSymbol: String? = null,
+    /** Set by an automated strategy; defaults to manual for existing order entry paths. */
+    val automated: Boolean = false,
+    /** Internal copy-trading precondition; checked against the broker book immediately before submission. */
+    val copyExpectedRevision: Long? = null,
 )
 @Serializable
 data class OrderPreview(
@@ -276,6 +280,9 @@ data class ClosedTrade(
 data class ActivityEvent(val timeMs: Long, val message: String)
 @Serializable
 data class Execution(val id: String, val symbol: String, val side: Side, val lotsHundredths: Long, val price: Long, val timeMs: Long, val orderId: String)
+/** Broker-provided order status, including terminal orders omitted from the display's pending-order list. */
+@Serializable
+data class CopyOrderLifecycle(val id: String, val status: String, val version: Long?, val filledLotsHundredths: Long?)
 @Serializable
 data class DailyPnl(
     val totalMicros: Long,
@@ -304,6 +311,17 @@ data class AccountSnapshot(
     val dailyPnl: DailyPnl? = null,
     /** The broker's drawdown line and the room above it; null for an account without a known rule. */
     val drawdown: AccountDrawdown? = null,
+    /** Matching non-null revisions identify account views built from the same synchronized broker book. */
+    val copyRevision: Long? = null,
+    /** Changes on every broker account resynchronization; a running group must not silently resume. */
+    val copyEpoch: Long? = null,
+    /** False unless the adapter can account for every position in this book. */
+    val copyPositionsComplete: Boolean = false,
+    /** True only if all order statuses are understood and no order is active. */
+    val copyOrdersClear: Boolean = false,
+    /** True only when every active broker order is represented in this account's order snapshot. */
+    val copyOrdersComplete: Boolean = false,
+    val copyOrderLifecycle: List<CopyOrderLifecycle> = emptyList(),
 ) {
     val freeMarginMicros: Long get() = equityMicros - marginMicros
     val floatingPnlMicros: Long get() = equityMicros - balanceMicros

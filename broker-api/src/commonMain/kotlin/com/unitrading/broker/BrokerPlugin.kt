@@ -45,6 +45,11 @@ interface BrokerPlugin {
     suspend fun resynchronize() {}
     fun disconnect() {}
     fun openSession(accountId: String): AccountSession
+    /** Optional automated session pinned to a broker-book revision; null if this is not supported. */
+    fun openAutomatedSession(accountId: String, expectedRevision: Long): AccountSession? = null
+    /** A live session requires an explicit opt-in from the copy controller; the old overload stays Demo-only. */
+    fun openAutomatedSession(accountId: String, expectedRevision: Long, allowLive: Boolean): AccountSession? =
+        if (allowLive) null else openAutomatedSession(accountId, expectedRevision)
     fun history(symbol: String, timeframe: Timeframe): List<Candle>
     /** Fetch replay history without truncating it to the live chart's cache size. */
     suspend fun historicalRange(symbol: String, timeframe: Timeframe, startMs: Long, endMs: Long): HistoricalRangeResult {

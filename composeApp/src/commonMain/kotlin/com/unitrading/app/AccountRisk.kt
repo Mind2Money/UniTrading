@@ -537,6 +537,8 @@ internal class AccountRiskController(
             val rule = rule(broker, account.id)
             val snapshot = raw.state.value
             val hedging = broker.capabilities.hedging
+            if (request.copyExpectedRevision != null && rule.bracketsApply(snapshot, hedging, request))
+                return@submit TradeResult(false, "跟单验证版不支持金额止盈止损，请先关闭")
             if (!rule.bracketsApply(snapshot, hedging, request)) return@submit raw.placeOrder(requestId, request)
             val spec = broker.instruments.firstOrNull { it.symbol == request.symbol }
                 ?: return@submit TradeResult(false, "合约规格尚未加载")

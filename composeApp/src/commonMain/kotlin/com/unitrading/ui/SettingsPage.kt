@@ -83,6 +83,8 @@ internal fun SettingsPage(
     var chooseOrderLayout by remember { mutableStateOf(false) }
     var chooseChartTimeZone by remember { mutableStateOf(false) }
     var chooseChartSession by remember { mutableStateOf(false) }
+    var showCopyTrading by remember { mutableStateOf(false) }
+    if (showCopyTrading) CopyTradingDialog(runtime, plugin, accountId) { showCopyTrading = false }
 
     Column(modifier.background(colors.Surface).testTag("settings-page")) {
         PageTopBar("设置", actions = {
@@ -121,6 +123,8 @@ internal fun SettingsPage(
             }
 
             SettingsSection("交易") {
+                SettingsRow("账户跟单", "开发中", AppIcons.AccountCircle, "settings-copy-trading",
+                    { showCopyTrading = true })
                 if (showOrderLayout) SettingsRow("下单界面", "手机和紧凑窗口 · ${tradingPreferences.orderPanelLayout.label}", AppIcons.ViewQuilt, "settings-order-layout",
                     { chooseOrderLayout = true }, enabled = !busy)
                 if (showChartSessionControls) SettingsRow("图表交易时段", chartPreferences.sessionForChart("main").label, AppIcons.History, "settings-chart-session",
