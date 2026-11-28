@@ -49,9 +49,9 @@ class TabletReplayUiTest {
             onNodeWithTag("replay-account-strip-toggle").performClick()
             onNodeWithTag("replay-daily-pnl").assertExists()
             onNodeWithTag("replay-tablet-drawing-toggle").performClick()
-            onNodeWithTag("drawing-toolbar").assertDoesNotExist()
+            onNode(hasTestTag("drawing-toolbar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertDoesNotExist()
             onNodeWithTag("replay-tablet-drawing-toggle").performClick()
-            onNodeWithTag("drawing-toolbar").assertExists()
+            onNode(hasTestTag("drawing-toolbar") and hasAnyAncestor(hasTestTag("historical-replay"))).assertExists()
             val controls = onNodeWithTag("replay-controls").fetchSemanticsNode().boundsInRoot
             val startButton = onNodeWithTag("replay-reset").fetchSemanticsNode().boundsInRoot
             val periodButton = onNodeWithTag("replay-period-menu").fetchSemanticsNode().boundsInRoot
